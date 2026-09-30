@@ -71,6 +71,20 @@ class ReplayThroughCore(unittest.TestCase):
         out = self.replay(["B:corrupt:start=100,end=101,p=1.0"], "--expect-no-latch", "B",
                           "--expect-min", "crc_bad:3", "--expect-mode", "triplex")
         self.assertEqual(out["crc_bad"], "3")
+        # the damaged frame still used up a sequence number, so the next good frame is not a "gap"
+        self.assertEqual(out["seq_bad"], "0")
+
+    def test_F08_two_separate_corrupt_frames_in_one_window_do_not_isolate(self):  # TFC-FDIR-004
+        # Two bad samples inside the 5-frame window is below the 3-of-5 threshold. Before the
+        # SeqTracker fix each corrupt frame cost two samples (itself + a false sequence gap) -> latch.
+        out = self.replay(["B:corrupt:start=100,end=101,p=1.0", "B:corrupt:start=102,end=103,p=1.0"],
+                          "--expect-no-latch", "B", "--expect-mode", "triplex")
+        self.assertEqual((out["crc_bad"], out["seq_bad"]), ("6", "0"))
+
+    def test_F08_corruption_does_not_hide_a_real_sequence_gap(self):
+        out = self.replay(["B:corrupt:start=100,end=101,p=1.0", "B:seqgap:start=110,gap=4"],
+                          "--expect-no-latch", "B")
+        self.assertEqual((out["crc_bad"], out["seq_bad"]), ("3", "3"))
 
     def test_F08_persistent_corruption_isolates_the_node(self):
         self.replay(["B:corrupt:start=100,p=1.0"], "--expect-latch", "B:102", "--expect-mode", "duplex")

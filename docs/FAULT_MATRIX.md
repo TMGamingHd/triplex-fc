@@ -12,7 +12,7 @@ Detection times are in 10 ms frames. **Status is honest: only the rows marked Pa
 | F05 | IMU slow drift | SIL: ramp | Miscompare once past tolerance | Isolate | FDIR-002 | - | Not started |
 | F06 | IMU spike / noise burst | SIL: random outliers | Persistence filter rejects singles | No isolation on a single spike | FDIR-004 | `single_glitch_does_not_latch` | Passing (SIL, filter only) |
 | F07 | Wild / non-finite values | SIL: +-1e6, NaN | Miscompare, non-finite check | Isolate | FDIR-002 | `wild_values_isolated_without_output_excursion`, `nan_and_inf_are_treated_as_invalid` | Passing (SIL) |
-| F08 | Frame corruption | SIL/HIL: bit flip | CRC-8 | Frame dropped, counts as bad sample | IF-002 | `any_single_bit_flip_is_detected` | Passing (SIL) |
+| F08 | Frame corruption | SIL/HIL: bit flip | CRC-8 | Frame dropped, counts as bad sample | IF-002 | `any_single_bit_flip_is_detected`, `seq_tracker_damaged_frame_costs_one_sample_not_two`; peers e2e `test_F08_*` | Passing (SIL) |
 | F09 | Wrong-but-valid command (software bug) | SIL: replica outputs offset command | Vote miscompare, digest mismatch | Isolate | FDIR-011 | - | Not started |
 | F10 | Silent state divergence | SIL: perturb one replica's estimator | Digest mismatch | Flag and isolate | FDIR-011 | - | Not started |
 | F11 | Babbling node | HIL: node floods high-priority IDs | Rate monitor, schedule check | Ignore out-of-schedule IDs; bounded delay | FDIR-009 | - | Not started |

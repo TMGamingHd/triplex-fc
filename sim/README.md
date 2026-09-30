@@ -66,7 +66,7 @@ format is compatible with both.
 ## Tests
 ```bash
 cmake -S .. -B ../build/host -G Ninja -DTFC_SANITIZE=ON && cmake --build ../build/host
-python3 -m unittest discover -s tests -t .     # 51 tests: protocol, peers, faults, end-to-end through core/
+python3 -m unittest discover -s tests -t .     # 53 tests: protocol, peers, faults, end-to-end through core/
 ```
 `ctest --test-dir build/host` runs the same suite (`peers_e2e`). The end-to-end tests are skipped if
 `tfc_replay` has not been built.
