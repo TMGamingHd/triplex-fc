@@ -21,4 +21,4 @@ jobs:
       - name: clang-tidy (flight code)
         run: clang-tidy -p build tests/*.cpp
       - name: cppcheck
-        run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr -I core/include core/include
+        run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr --language=c++ --std=c++17 -I core/include core/include/tfc/*.hpp
