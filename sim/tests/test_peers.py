@@ -1,0 +1,200 @@
+# SPDX-License-Identifier: MIT
+import os
+import tempfile
+import unittest
+
+from tfc_peers import bus as B
+from tfc_peers import protocol as P
+from tfc_peers.faults import FaultSpecError, parse_fault
+from tfc_peers.peers import BABBLE_ID_BASE, FRAME_US, Scenario
+
+
+def traffic(nodes, faults, frames, seed=1):
+    sc = Scenario(nodes, [parse_fault(f) for f in faults], seed)
+    return [sc.frames(k) for k in range(frames)]
+
+
+def by_id(frames_k, can_id):
+    return [tf.frame for tf in frames_k if tf.frame.id == can_id]
+
+
+class HealthyTraffic(unittest.TestCase):
+    def test_one_frame_has_nine_scheduled_frames_in_order_within_10ms(self):
+        (k0,) = traffic([0, 1, 2], [], 1)
+        self.assertEqual(len(k0), 9)
+        times = [tf.t_us for tf in k0]
+        self.assertEqual(times, sorted(times))
+        self.assertTrue(all(0 <= t < FRAME_US for t in times))
+        ids = {tf.frame.id for tf in k0}
+        self.assertEqual(ids, {0x100, 0x101, 0x102, 0x110, 0x111, 0x112, 0x200, 0x201, 0x202})
+
+    def test_sensors_follow_architecture_schedule(self):
+        (k0,) = traffic([0], [], 1)
+        t = {tf.frame.id: tf.t_us for tf in k0}
+        self.assertTrue(1500 <= t[0x100] < 3000 and 1500 <= t[0x110] < 3000)  # sensor exchange
+        self.assertTrue(5000 <= t[0x200] < 6500)  # command slot
+
+    def test_healthy_replicas_send_identical_commands(self):
+        for k in traffic([0, 1, 2], [], 50):
+            cmds = [by_id(k, 0x200 + n)[0] for n in range(3)]
+            self.assertEqual({c.data[:6] for c in cmds}, {cmds[0].data[:6]})
+
+    def test_sensor_noise_is_independent_per_node(self):
+        (k0,) = traffic([1, 2], [], 1)
+        self.assertNotEqual(by_id(k0, 0x101)[0].data[:6], by_id(k0, 0x102)[0].data[:6])
+
+    def test_all_frames_have_good_crc_and_sequential_seq(self):
+        last = {}
+        for k, fk in enumerate(traffic([0, 1, 2], [], 300)):
+            for tf in fk:
+                self.assertTrue(P.check(tf.frame))
+                if tf.frame.id in last:
+                    self.assertTrue(P.seq_is_next(last[tf.frame.id], tf.frame.data[6]))
+                last[tf.frame.id] = tf.frame.data[6]
+
+    def test_deterministic_for_a_seed_and_different_across_seeds(self):
+        def flat(seed):
+            return [(tf.t_us, tf.frame.id, tf.frame.data) for fk in traffic([1, 2], [], 30, seed) for tf in fk]
+        self.assertEqual(flat(1), flat(1))
+        self.assertNotEqual(flat(1), flat(2))
+
+    def test_frames_must_be_requested_in_order(self):
+        sc = Scenario([1])
+        sc.frames(0)
+        with self.assertRaises(ValueError):
+            sc.frames(2)
+
+
+class FaultEffects(unittest.TestCase):
+    def gyro(self, fk, node):
+        return P.unpack_vec3(by_id(fk, 0x100 + node)[0], P.GYRO_LSB_DPS).values
+
+    def test_dropout_silences_only_that_node_inside_the_window(self):
+        t = traffic([0, 1, 2], ["B:dropout:start=10,end=20"], 30)
+        for k, fk in enumerate(t):
+            present = {tf.frame.id & 0xF for tf in fk if tf.frame.id in (0x101, 0x111, 0x201)}
+            self.assertEqual(bool(present), not 10 <= k < 20, f"frame {k}")
+            self.assertTrue(by_id(fk, 0x100) and by_id(fk, 0x102))
+
+    def test_bias_shifts_one_axis_by_magnitude(self):
+        healthy = traffic([1], [], 40)
+        faulty = traffic([1], ["B:bias:start=20,mag=3,axis=1"], 40)
+        for k in range(40):
+            dy = self.gyro(faulty[k], 1)[1] - self.gyro(healthy[k], 1)[1]
+            self.assertAlmostEqual(dy, 3.0 if k >= 20 else 0.0, delta=0.13, msg=f"frame {k}")
+
+    def test_drift_grows_linearly(self):
+        healthy = traffic([1], [], 60)
+        faulty = traffic([1], ["B:drift:start=10,rate=0.1"], 60)
+        for k in (10, 30, 59):
+            d = self.gyro(faulty[k], 1)[0] - self.gyro(healthy[k], 1)[0]
+            self.assertAlmostEqual(d, 0.1 * (k - 10 + 1), delta=0.13)
+
+    def test_stuck_freezes_output_bit_identically(self):
+        t = traffic([1], ["B:stuck:start=20"], 60)
+        frozen = {by_id(fk, 0x101)[0].data[:6] for fk in t[20:]}
+        frozen_a = {by_id(fk, 0x111)[0].data[:6] for fk in t[20:]}
+        self.assertEqual((len(frozen), len(frozen_a)), (1, 1))
+        self.assertNotEqual(frozen, {by_id(t[0], 0x101)[0].data[:6]})
+
+    def test_saturate_pins_outputs_to_full_scale(self):
+        t = traffic([1], ["B:saturate:start=5"], 8)
+        # sign alternates with frame parity: odd frames negative, even frames positive
+        self.assertEqual(self.gyro(t[5], 1), (-4096.0, -4096.0, -4096.0))
+        self.assertEqual(self.gyro(t[6], 1), (4095.875, 4095.875, 4095.875))
+
+    def test_spike_is_sparse_and_large(self):
+        healthy = traffic([1], [], 400)
+        faulty = traffic([1], ["B:spike:start=0,mag=20,p=0.05"], 400)
+        big = [k for k in range(400) if max(abs(a - b) for a, b in
+               zip(self.gyro(faulty[k], 1), self.gyro(healthy[k], 1))) > 15]
+        self.assertTrue(5 <= len(big) <= 40, len(big))
+
+    def test_corrupt_breaks_crc_on_some_frames_only(self):
+        t = traffic([1], ["B:corrupt:start=0,p=0.3"], 200)
+        flat = [tf.frame for fk in t for tf in fk]
+        bad = [f for f in flat if not P.check(f)]
+        self.assertTrue(0.15 * len(flat) < len(bad) < 0.45 * len(flat), (len(bad), len(flat)))
+
+    def test_seqgap_skips_sequence_once(self):
+        t = traffic([1], ["B:seqgap:start=10,gap=4"], 20)
+        seqs = [by_id(fk, 0x101)[0].data[6] for fk in t]
+        steps = [(b - a) & 0xFF for a, b in zip(seqs, seqs[1:])]
+        self.assertEqual([i + 1 for i, s in enumerate(steps) if s != 1], [10])
+        self.assertEqual(steps[9], 5)
+
+    def test_cmd_offset_changes_command_but_keeps_crc_valid(self):
+        healthy, faulty = traffic([1], [], 5), traffic([1], ["B:cmd_offset:start=2,mag=1.5"], 5)
+        for k in range(5):
+            h = P.unpack_cmd(by_id(healthy[k], 0x201)[0])
+            f = P.unpack_cmd(by_id(faulty[k], 0x201)[0])
+            self.assertAlmostEqual(f.pitch_deg - h.pitch_deg, 1.5 if k >= 2 else 0.0, places=3)
+
+    def test_digest_fault_changes_only_the_digest(self):
+        healthy, faulty = traffic([1], [], 5), traffic([1], ["B:digest:start=2,xor=16"], 5)
+        h, f = (P.unpack_cmd(by_id(x[3], 0x201)[0]) for x in (healthy, faulty))
+        self.assertEqual((h.pitch_deg, h.yaw_deg), (f.pitch_deg, f.yaw_deg))
+        self.assertEqual(h.digest ^ f.digest, 16)
+
+    def test_babble_adds_out_of_schedule_high_priority_frames(self):
+        t = traffic([1], ["B:babble:start=5,n=7"], 10)
+        self.assertEqual(len([tf for tf in t[4] if tf.frame.id < 0x100]), 0)
+        extra = [tf for tf in t[5] if tf.frame.id < 0x100]
+        self.assertEqual(len(extra), 7)
+        self.assertTrue(all(BABBLE_ID_BASE <= tf.frame.id < 0x100 and P.check(tf.frame) for tf in extra))
+
+    def test_fault_windows_are_respected(self):
+        t = traffic([1], ["B:bias:start=5,end=8,mag=50"], 12)
+        big = [k for k in range(12) if abs(self.gyro(t[k], 1)[0]) > 30]
+        self.assertEqual(big, [5, 6, 7])
+
+
+class FaultSpecParsing(unittest.TestCase):
+    def test_valid_spec(self):
+        f = parse_fault("b:bias:start=100,end=200,mag=2.5,axis=1")
+        self.assertEqual((f.node, f.kind, f.start, f.end), (1, "bias", 100, 200))
+        self.assertEqual((f.params["mag"], f.params["axis"], f.params["sensor"]), (2.5, 1, "gyro"))
+        self.assertEqual(str(parse_fault(str(f))), str(f))  # round-trips
+
+    def test_rejects_bad_specs(self):
+        for bad in ("B", "D:bias", "B:nope", "B:bias:mag", "B:bias:colour=red", "B:bias:start=5,end=5",
+                    "B:bias:axis=3", "B:bias:sensor=mag", "B:bias:start=-1"):
+            with self.subTest(bad), self.assertRaises(FaultSpecError):
+                parse_fault(bad)
+
+
+class Buses(unittest.TestCase):
+    def test_log_roundtrip_in_candump_format(self):
+        sc = Scenario([0, 1, 2], [parse_fault("C:corrupt:p=0.5")], 3)
+        lb = B.ListBus()
+        B.record(sc, lb, 20)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "x.log")
+            fb = B.LogBus(path, "vcan7")
+            for t, f in lb.sent:
+                fb.send(t, f)
+            fb.close()
+            with open(path) as fh:
+                first = fh.readline()
+            self.assertRegex(first, r"^\(0\.001500\) vcan7 100#[0-9A-F]{16}$")
+            back = list(B.read_log(path))
+        self.assertEqual([(t, f.id, f.data) for t, f in lb.sent], [(t, f.id, f.data) for t, _, f in back])
+
+    def test_read_log_rejects_garbage(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "bad.log")
+            with open(path, "w") as fh:
+                fh.write("not a candump line\n")
+            with self.assertRaises(ValueError):
+                list(B.read_log(path))
+
+    def test_realtime_runner_sends_everything_roughly_on_time(self):
+        lb = B.ListBus()
+        st = B.run_realtime(Scenario([1, 2]), lb, 5)
+        self.assertEqual(st["sent"], 30)
+        self.assertEqual(len(lb.sent), 30)
+        self.assertLess(st["late_p50_us"], 5000)  # generous: CI machines are noisy
+
+
+if __name__ == "__main__":
+    unittest.main()
