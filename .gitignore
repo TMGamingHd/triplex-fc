@@ -2,3 +2,11 @@ build/
 *.o
 .cache/
 compile_commands.json
+
+# West workspace (fetched by `west update`; see firmware/west.yml)
+.west/
+/zephyr/
+/modules/
+/bootloader/
+/tools/
+/firmware/build/

@@ -8,7 +8,7 @@ A desk-scale fault-tolerant flight computer: three redundant STM32 flight comput
 |---|---|
 | Architecture / requirements / fault matrix | Draft v0.1, in `docs/` |
 | `core/` voter, FDIR, protocol (C++17, header-only, no heap) | Done, 31 host tests passing under ASan+UBSan |
-| Firmware (Zephyr, Nucleo-G474RE) | Not started |
+| Firmware (Zephyr, Nucleo-G474RE) | M0 hello world builds on `native_sim` and `nucleo_g474re`; see [firmware/README.md](firmware/README.md) |
 | Simulator + motion platform | Not started |
 | Hardware fault campaign | Not started |
 
