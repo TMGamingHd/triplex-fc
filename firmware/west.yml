@@ -1,0 +1,23 @@
+# West manifest. The workspace root is the repo root (west uses the git root), so
+# zephyr/ and modules/ are checked out inside the repo and are git-ignored:
+#   python3 -m venv ../.venv && ../.venv/bin/pip install west   (venv location is your choice)
+#   west init -l firmware && west update --narrow -o=--depth=1
+# Zephyr is pinned to a release tag; bump deliberately in its own PR.
+manifest:
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.4.2
+      import:
+        # Only the modules this project needs (STM32G4 HAL, CMSIS, ST MEMS sensor lib, libc).
+        name-allowlist:
+          - cmsis
+          - cmsis_6
+          - hal_stm32
+          - hal_st
+          - picolibc
+  self:
+    path: firmware

@@ -22,3 +22,35 @@ jobs:
         run: clang-tidy -p build tests/*.cpp
       - name: cppcheck
         run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr --language=c++ --std=c++17 -I core/include core/include/tfc/*.hpp
+
+  firmware:
+    # Builds the Zephyr app for the host (native_sim, runs it) and for the real board.
+    runs-on: ubuntu-24.04
+    env:
+      ZEPHYR_SDK_VERSION: "1.0.1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build device-tree-compiler gperf ccache
+      - name: Install west and Zephyr Python requirements
+        run: |
+          python3 -m venv ../.venv
+          ../.venv/bin/pip install -q west
+          ../.venv/bin/west init -l firmware
+          ../.venv/bin/west update --narrow -o=--depth=1
+          ../.venv/bin/pip install -q -r zephyr/scripts/requirements-base.txt
+      - name: Install Zephyr SDK (minimal + ARM toolchain)
+        run: |
+          wget -q https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZEPHYR_SDK_VERSION}/zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz
+          tar xf zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz -C "$HOME"
+          "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}/setup.sh" -t arm-zephyr-eabi -h -c
+      - name: Build and run on native_sim
+        run: |
+          . firmware/env.sh
+          west build -p always -b native_sim/native/64 firmware/app -d build/native_sim
+          build/native_sim/zephyr/zephyr.exe -stop_at=1 | tee run.log
+          grep -q "vote_milli=1010 status=0 disagree_mask=0x04" run.log
+      - name: Build for nucleo_g474re
+        run: |
+          . firmware/env.sh
+          west build -p always -b nucleo_g474re firmware/app -d build/nucleo_g474re
