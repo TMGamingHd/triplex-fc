@@ -20,7 +20,10 @@ ctest --test-dir build --output-on-failure
 ```
 
 ## CI
-The workflow is in `ci/ci.yml` (the tooling that copied this repo cannot write into `.github/`). When you create the GitHub repo, move it to `.github/workflows/ci.yml`. It has not been run on GitHub yet; the cppcheck step in particular is untested.
+The workflow is `.github/workflows/ci.yml` (runs on pull requests and on `main`). It has not been run on GitHub yet; the cppcheck step in particular is untested.
+
+## Contributing
+This repo uses GitHub Flow: `main` is always green, all work happens on short-lived branches and lands by squash-merged PR. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Docs
 [Architecture](docs/ARCHITECTURE.md) - [Requirements](docs/REQUIREMENTS.md) - [Fault matrix](docs/FAULT_MATRIX.md) - [Decisions](docs/DECISIONS.md) - [Milestones](docs/MILESTONES.md) - [What to publish](docs/PROOF.md)

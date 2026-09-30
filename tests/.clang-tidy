@@ -1,0 +1,4 @@
+# Tests keep the bug-finding checks but are exempt from style/size checks.
+# Headers under core/ are still linted with the strict root config.
+InheritParentConfig: true
+Checks: '-readability-braces-around-statements,-performance-enum-size'

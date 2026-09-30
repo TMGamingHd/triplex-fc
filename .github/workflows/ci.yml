@@ -1,5 +1,10 @@
 name: ci
-on: [push, pull_request]
+# GitHub Flow: every change arrives as a PR, so run on PRs and on main.
+# (Running on every branch push as well would duplicate the PR run.)
+on:
+  push:
+    branches: [main]
+  pull_request:
 jobs:
   sil:
     runs-on: ubuntu-24.04
@@ -16,4 +21,4 @@ jobs:
       - name: clang-tidy (flight code)
         run: clang-tidy -p build tests/*.cpp
       - name: cppcheck
-        run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr -I core/include core/include
+        run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr --language=c++ --std=c++17 -I core/include core/include/tfc/*.hpp
