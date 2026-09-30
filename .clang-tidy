@@ -1,0 +1,6 @@
+# Applied to flight-code headers only (see HeaderFilterRegex); tests are exempt.
+Checks: >
+  -*,bugprone-*,cert-*,clang-analyzer-*,performance-*,readability-braces-around-statements,
+  -bugprone-easily-swappable-parameters,-cert-err58-cpp
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'core/include/.*'
