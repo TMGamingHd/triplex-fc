@@ -48,9 +48,15 @@ These come from `docs/REQUIREMENTS.md` and are what reviewers check:
 - Because `main` is always releasable, tagging is just pointing at a commit. No release branches.
 
 ## One-time repository settings (maintainer)
+Already applied: squash-merge only, merge commits and rebase merges off, head branches auto-deleted.
+
+**Branch protection is not enabled yet:** GitHub blocks branch protection and rulesets on private repos under the
+free plan (API: "Upgrade to GitHub Pro or make this repository public"). Until the repo is public or the account is
+on Pro (the GitHub Student Developer Pack includes Pro), the rules below are followed by discipline, not enforced.
+
 In GitHub: Settings -> Rules (or Branches) -> protect `main`:
 - Require a pull request before merging
-- Require status check **`sil`** to pass (appears after the first CI run), branch up to date before merge
+- Require status checks **`sil`** and **`firmware`** to pass, branch up to date before merge
 - Block force pushes and deletions
 - (Optional, solo) leave "required approvals" at 0 so you can merge your own PRs; bring it to 1 once there is a second contributor
 
