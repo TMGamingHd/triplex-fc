@@ -29,5 +29,25 @@ if(TFC_SANITIZE)
   target_link_options(tfc_tests PRIVATE -fsanitize=address,undefined)
 endif()
 
+# Host tool: replays recorded bus traffic through core/ (see tools/replay/replay.cpp).
+add_executable(tfc_replay tools/replay/replay.cpp)
+target_link_libraries(tfc_replay PRIVATE tfc_core)
+target_compile_options(tfc_replay PRIVATE
+  -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror
+  -fno-exceptions -fno-rtti)
+if(TFC_SANITIZE)
+  target_compile_options(tfc_replay PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(tfc_replay PRIVATE -fsanitize=address,undefined)
+endif()
+
 enable_testing()
 add_test(NAME tfc_tests COMMAND tfc_tests)
+
+# End-to-end: Python virtual peers -> candump log -> tfc_replay (real core/ code).
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_FOUND)
+  add_test(NAME peers_e2e
+    COMMAND ${CMAKE_COMMAND} -E env TFC_REPLAY_BIN=$<TARGET_FILE:tfc_replay>
+            ${Python3_EXECUTABLE} -m unittest discover -s tests -t .
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/sim)
+endif()

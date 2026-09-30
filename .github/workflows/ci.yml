@@ -16,10 +16,10 @@ jobs:
         run: cmake -S . -B build -G Ninja -DTFC_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
       - name: Build (warnings are errors)
         run: cmake --build build
-      - name: Test
+      - name: Test (host unit tests + virtual-peers end-to-end)
         run: ctest --test-dir build --output-on-failure
       - name: clang-tidy (flight code)
-        run: clang-tidy -p build tests/*.cpp
+        run: clang-tidy -p build tests/*.cpp tools/replay/*.cpp
       - name: cppcheck
         run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr --language=c++ --std=c++17 -I core/include core/include/tfc/*.hpp
 

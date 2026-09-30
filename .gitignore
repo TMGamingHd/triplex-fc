@@ -8,5 +8,6 @@ compile_commands.json
 /zephyr/
 /modules/
 /bootloader/
-/tools/
 /firmware/build/
+__pycache__/
+*.pyc
