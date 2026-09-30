@@ -62,6 +62,47 @@ TFC_TEST(sequence_wraps_at_256) {
   CHECK(!seq_is_next(0, 2));
 }
 
+TFC_TEST(seq_tracker_accepts_first_frame_and_consecutive_frames) {
+  SeqTracker t;
+  CHECK(t.accept(200));  // first frame: nothing to compare against
+  CHECK(t.accept(201));
+  CHECK(t.accept(202));
+}
+
+TFC_TEST(seq_tracker_wraps_and_reports_real_gaps_once) {
+  SeqTracker t;
+  CHECK(t.accept(254));
+  CHECK(t.accept(255));
+  CHECK(t.accept(0));
+  CHECK(!t.accept(5));  // jumped ahead: reported...
+  CHECK(t.accept(6));   // ...once; it resynchronises on the frame it saw
+  CHECK(!t.accept(6));  // a repeated number is not "next"
+}
+
+TFC_TEST(seq_tracker_damaged_frame_costs_one_sample_not_two) {
+  SeqTracker t;
+  CHECK(t.accept(10));
+  t.note_damaged();     // frame 11 arrived with a bad CRC
+  CHECK(t.accept(12));  // the next good frame is NOT a gap
+  t.note_damaged();
+  t.note_damaged();     // two damaged frames in a row (13, 14)
+  CHECK(t.accept(15));
+}
+
+TFC_TEST(seq_tracker_damaged_frame_does_not_hide_a_real_gap) {
+  SeqTracker t;
+  CHECK(t.accept(10));
+  t.note_damaged();      // 11 damaged
+  CHECK(!t.accept(20));  // but 12..19 never arrived: still a gap
+}
+
+TFC_TEST(seq_tracker_damaged_before_first_good_frame_is_ignored) {
+  SeqTracker t;
+  t.note_damaged();
+  CHECK(t.accept(77));
+  CHECK(t.accept(78));
+}
+
 TFC_TEST(arbitration_priority_order) {
   CHECK(id::kSync < id::kGyroBase);
   CHECK(id::kGyroBase < id::kCmdBase);

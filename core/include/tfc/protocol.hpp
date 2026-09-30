@@ -151,4 +151,32 @@ constexpr bool seq_is_next(uint8_t last, uint8_t seq) noexcept {
   return static_cast<uint8_t>(last + 1U) == seq;
 }
 
+// Per-stream sequence check for one sender. A frame that arrives damaged (CRC failure) was
+// still sent, so it used up a sequence number: note_damaged() advances the expectation, and
+// one corrupted frame then costs one bad sample (the CRC failure) instead of two (the failure
+// plus a false "gap" on the next good frame). Real gaps are still reported. The first good
+// frame after construction is always accepted.
+class SeqTracker {
+ public:
+  // Feed the sequence number of a CRC-good frame. Returns false if it is not the expected next.
+  bool accept(uint8_t seq) noexcept {
+    const bool ok = !have_ || seq_is_next(last_, seq);
+    last_ = seq;
+    have_ = true;
+    return ok;
+  }
+
+  // A frame on this stream arrived but failed its CRC: its sequence number cannot be trusted,
+  // so assume it was the next one.
+  void note_damaged() noexcept {
+    if (have_) {
+      last_ = static_cast<uint8_t>(last_ + 1U);
+    }
+  }
+
+ private:
+  uint8_t last_ = 0U;
+  bool have_ = false;
+};
+
 }  // namespace tfc

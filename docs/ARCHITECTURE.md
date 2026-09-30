@@ -69,6 +69,8 @@ Bus load **target**: about 14 frames per 10 ms, roughly 20% of a 1 Mbit/s classi
 
 Missing / late / CRC-bad / out-of-sequence data is treated exactly like a miscompare for that channel.
 
+**Sequence tracking.** Each receiver tracks the expected sequence number per sender and per stream (`tfc::SeqTracker`). A frame that arrives with a bad CRC was still sent, so it consumes a sequence number: one corrupted frame costs exactly one bad sample (the CRC failure), not two (plus a false gap on the next good frame). A real gap, where frames never arrived, is still reported once.
+
 ## 5. FDIR (fault detection, isolation, recovery)
 
 - **Detect:** per-channel miscompare, timeout, CRC or sequence error, non-finite value, stuck-at (bit-identical output), digest mismatch.

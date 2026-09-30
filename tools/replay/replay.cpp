@@ -265,8 +265,7 @@ int main(int argc, char** argv) {
                                               tfc::ChannelMonitor(3, 5, 100, 3)};
   std::array<tfc::StuckDetector, kNodes> stuck{tfc::StuckDetector(kStuckLimit), tfc::StuckDetector(kStuckLimit),
                                                tfc::StuckDetector(kStuckLimit)};
-  std::array<std::array<bool, 3>, kNodes> have_seq{};
-  std::array<std::array<uint8_t, 3>, kNodes> last_seq{};
+  std::array<std::array<tfc::SeqTracker, 3>, kNodes> seq_tracker{};  // [node][stream: gyro, accel, cmd]
   std::array<long, kNodes> latch_frame{-1, -1, -1};
   std::map<std::string, unsigned long> stats{{"crc_bad", 0}, {"seq_bad", 0},       {"missing", 0},
                                              {"out_of_schedule", 0}, {"stuck_flags", 0}, {"digest_flags", 0},
@@ -324,14 +323,13 @@ int main(int argc, char** argv) {
       if (!ok) {
         r.crc_bad = true;
         ++stats["crc_bad"];
+        seq_tracker[node][stream].note_damaged();  // it was sent, so it used a sequence number
         continue;
       }
-      if (have_seq[node][stream] && !tfc::seq_is_next(last_seq[node][stream], seq)) {
+      if (!seq_tracker[node][stream].accept(seq)) {
         r.seq_bad = true;
         ++stats["seq_bad"];
       }
-      have_seq[node][stream] = true;
-      last_seq[node][stream] = seq;
     }
 
     uint8_t valid = 0U;
