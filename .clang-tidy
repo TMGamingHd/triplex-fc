@@ -1,4 +1,4 @@
-# Applied to flight-code headers only (see HeaderFilterRegex); tests are exempt.
+# Strict config for flight code in core/include. tests/.clang-tidy relaxes style checks for tests.
 Checks: >
   -*,bugprone-*,cert-*,clang-analyzer-*,performance-*,readability-braces-around-statements,
   -bugprone-easily-swappable-parameters,-cert-err58-cpp
