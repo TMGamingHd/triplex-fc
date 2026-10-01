@@ -6,12 +6,11 @@
 //              [--expect-latch NODE:FRAME | NODE:MIN-MAX] [--expect-no-latch NODE]
 //              [--expect-mode triplex|duplex|simplex|safe] [--expect-min STAT:N]
 //
-// Per 10 ms frame, per node (A/B/C): decode gyro, accel and command frames with
-// tfc::unpack_*, check CRC and sequence, vote every channel with tfc::vote3, cross-check the
-// state digest, run a tfc::StuckDetector, and feed a tfc::ChannelMonitor (3-of-5). Missing,
-// CRC-bad and out-of-sequence data count as a miscompare, as in docs/ARCHITECTURE.md.
-// This is a host model of FC-A's consensus + FDIR step, not the firmware; it makes the same
-// calls the firmware will make. Exit status: 0 ok, 1 an --expect-* failed, 2 usage/input error.
+// Each 10 ms frame of the log is fed to tfc::RedundancyManager, the same class the firmware
+// runs: it decodes gyro/accel/command frames, checks CRC and sequence, votes every channel,
+// cross-checks the state digest, runs the stuck detector, and feeds one 3-of-5 ChannelMonitor
+// per node (docs/ARCHITECTURE.md sections 4-5). This tool only reads the log and reports.
+// Exit status: 0 ok, 1 an --expect-* failed, 2 usage/input error.
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -22,17 +21,12 @@
 #include <string>
 #include <vector>
 
-#include "tfc/fault_monitor.hpp"
 #include "tfc/protocol.hpp"
-#include "tfc/voter.hpp"
+#include "tfc/redundancy.hpp"
 
 namespace {
 
-constexpr unsigned kNodes = 3;
 constexpr uint64_t kFrameUs = 10000U;
-constexpr uint16_t kStuckLimit = 20U;
-// Vote tolerances: gyro x3 (dps), accel x3 (g), command pitch/yaw (deg).
-constexpr std::array<float, 8> kTol = {1.0F, 1.0F, 1.0F, 0.02F, 0.02F, 0.02F, 0.01F, 0.01F};
 
 struct Logged {
   uint64_t t_us = 0;
@@ -88,59 +82,25 @@ bool parse_line(const std::string& s, Logged& out) {
   return true;
 }
 
-uint32_t fnv1a(const uint8_t* d, std::size_t n) {
-  uint32_t h = 2166136261U;
-  for (std::size_t i = 0; i < n; ++i) {
-    h = (h ^ d[i]) * 16777619U;
-  }
-  return h;
-}
-
-struct NodeRx {
-  bool gyro = false;
-  bool accel = false;
-  bool cmd = false;
-  bool crc_bad = false;
-  bool seq_bad = false;
-  std::array<float, 8> x{};  // gyro[3], accel[3], pitch, yaw
-  uint16_t digest = 0;
-  std::array<uint8_t, 12> raw{};  // gyro+accel payload bytes, for the stuck detector
-};
-
-// Mask of nodes whose digest disagrees with the majority (or both, when only two can be compared).
-uint8_t digest_outliers(uint8_t valid, const std::array<NodeRx, kNodes>& rx) {
-  const unsigned n = tfc::count_channels(valid);
-  if (n == 3U) {
-    const uint16_t a = rx[0].digest;
-    const uint16_t b = rx[1].digest;
-    const uint16_t c = rx[2].digest;
-    if (a == b && b == c) {
-      return 0U;
-    }
-    if (a == b) {
-      return 0x4U;
-    }
-    if (a == c) {
-      return 0x2U;
-    }
-    return b == c ? 0x1U : 0x7U;
-  }
-  if (n == 2U) {
-    uint16_t first = 0;
-    bool have = false;
-    for (unsigned i = 0; i < kNodes; ++i) {
-      if (((valid >> i) & 1U) == 0U) {
-        continue;
-      }
-      if (!have) {
-        first = rx[i].digest;
-        have = true;
-      } else if (rx[i].digest != first) {
-        return valid;
-      }
+std::string reason_text(uint8_t bits) {
+  struct Name {
+    uint8_t bit;
+    const char* text;
+  };
+  static const std::array<Name, 6> names = {{{tfc::reason::kMissing, "frame missing"},
+                                             {tfc::reason::kCrc, "CRC failure"},
+                                             {tfc::reason::kSeq, "sequence error"},
+                                             {tfc::reason::kVote, "vote disagreement"},
+                                             {tfc::reason::kDigest, "digest mismatch"},
+                                             {tfc::reason::kStuck, "stuck sensor"}}};
+  std::string out;
+  for (const Name& n : names) {
+    if ((bits & n.bit) != 0U) {
+      out += out.empty() ? "" : " + ";
+      out += n.text;
     }
   }
-  return 0U;
+  return out.empty() ? "(none)" : out;
 }
 
 const char* mode_name(tfc::Mode m) {
@@ -260,132 +220,34 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  // ---- the flight computer's per-frame step ----
-  std::array<tfc::ChannelMonitor, kNodes> mon{tfc::ChannelMonitor(3, 5, 100, 3), tfc::ChannelMonitor(3, 5, 100, 3),
-                                              tfc::ChannelMonitor(3, 5, 100, 3)};
-  std::array<tfc::StuckDetector, kNodes> stuck{tfc::StuckDetector(kStuckLimit), tfc::StuckDetector(kStuckLimit),
-                                               tfc::StuckDetector(kStuckLimit)};
-  std::array<std::array<tfc::SeqTracker, 3>, kNodes> seq_tracker{};  // [node][stream: gyro, accel, cmd]
-  std::array<long, kNodes> latch_frame{-1, -1, -1};
-  std::map<std::string, unsigned long> stats{{"crc_bad", 0}, {"seq_bad", 0},       {"missing", 0},
-                                             {"out_of_schedule", 0}, {"stuck_flags", 0}, {"digest_flags", 0},
-                                             {"vote_disagreements", 0}};
-
+  // ---- feed the log to the redundancy manager, one 10 ms frame at a time ----
+  tfc::RedundancyManager mgr;
+  std::array<long, tfc::kNodes> latch_frame{-1, -1, -1};
+  tfc::Mode mode = tfc::Mode::Triplex;
+  unsigned healthy = tfc::kNodes;
   for (std::size_t k = 0; k < frames.size(); ++k) {
-    std::array<NodeRx, kNodes> rx{};
+    mgr.begin_frame();
     for (const tfc::Frame& f : frames[k]) {
-      const uint32_t id = f.id;
-      unsigned stream = 0;
-      unsigned node = 0;
-      if (id >= tfc::id::kGyroBase && id < tfc::id::kGyroBase + kNodes) {
-        stream = 0;
-        node = id - tfc::id::kGyroBase;
-      } else if (id >= tfc::id::kAccelBase && id < tfc::id::kAccelBase + kNodes) {
-        stream = 1;
-        node = id - tfc::id::kAccelBase;
-      } else if (id >= tfc::id::kCmdBase && id < tfc::id::kCmdBase + kNodes) {
-        stream = 2;
-        node = id - tfc::id::kCmdBase;
-      } else {
-        const bool known = id == tfc::id::kSync || id == tfc::id::kActOut ||
-                           (id >= tfc::id::kHeartbeat && id < tfc::id::kHeartbeat + kNodes) || id >= tfc::id::kSim;
-        if (!known) {
-          ++stats["out_of_schedule"];
-        }
+      mgr.on_frame(f);
+    }
+    const tfc::FrameReport& rep = mgr.end_frame();
+    mode = rep.mode;
+    healthy = rep.healthy;
+    for (unsigned n = 0; n < tfc::kNodes; ++n) {
+      if (((rep.newly_latched >> n) & 1U) == 0U) {
         continue;
       }
-      NodeRx& r = rx[node];
-      uint8_t seq = 0;
-      bool ok = false;
-      if (stream == 2U) {
-        const tfc::DecodedCommand d = tfc::unpack_cmd(f);
-        ok = d.ok;
-        seq = d.seq;
-        if (ok) {
-          r.x[6] = d.cmd.pitch_deg;
-          r.x[7] = d.cmd.yaw_deg;
-          r.digest = d.cmd.state_digest;
-          r.cmd = true;
-        }
-      } else {
-        const bool is_gyro = stream == 0U;
-        const tfc::DecodedVec3 d = tfc::unpack_vec3(f, is_gyro ? tfc::kGyroLsbDps : tfc::kAccelLsbG);
-        ok = d.ok;
-        seq = d.seq;
-        if (ok) {
-          for (unsigned i = 0; i < 3U; ++i) {
-            r.x[(is_gyro ? 0U : 3U) + i] = d.x.v[i];
-          }
-          std::memcpy(r.raw.data() + (is_gyro ? 0U : 6U), f.data.data(), 6U);
-          (is_gyro ? r.gyro : r.accel) = true;
-        }
-      }
-      if (!ok) {
-        r.crc_bad = true;
-        ++stats["crc_bad"];
-        seq_tracker[node][stream].note_damaged();  // it was sent, so it used a sequence number
-        continue;
-      }
-      if (!seq_tracker[node][stream].accept(seq)) {
-        r.seq_bad = true;
-        ++stats["seq_bad"];
-      }
-    }
-
-    uint8_t valid = 0U;
-    std::array<bool, kNodes> good{};
-    for (unsigned n = 0; n < kNodes; ++n) {
-      const NodeRx& r = rx[n];
-      const bool present = r.gyro && r.accel && r.cmd;
-      if (!present && !r.crc_bad) {
-        ++stats["missing"];
-      }
-      good[n] = present && !r.crc_bad && !r.seq_bad;
-      if (good[n] && !mon[n].latched()) {
-        valid = static_cast<uint8_t>(valid | (1U << n));
-      }
-    }
-
-    uint8_t disagree = 0U;
-    for (unsigned ch = 0; ch < kTol.size(); ++ch) {
-      const std::array<float, 3> x = {rx[0].x[ch], rx[1].x[ch], rx[2].x[ch]};
-      disagree = static_cast<uint8_t>(disagree | tfc::vote3(x, valid, kTol[ch]).disagree_mask);
-    }
-    const uint8_t digest_bad = digest_outliers(valid, rx);
-    if (disagree != 0U) {
-      ++stats["vote_disagreements"];
-    }
-    if (digest_bad != 0U) {
-      ++stats["digest_flags"];
-    }
-
-    for (unsigned n = 0; n < kNodes; ++n) {
-      bool stuck_now = false;
-      if (good[n]) {
-        stuck_now = stuck[n].update(static_cast<int32_t>(fnv1a(rx[n].raw.data(), rx[n].raw.size())));
-      }
-      if (stuck_now) {
-        ++stats["stuck_flags"];
-      }
-      const bool bad = !good[n] || ((disagree >> n) & 1U) != 0U || ((digest_bad >> n) & 1U) != 0U || stuck_now;
-      if (mon[n].update(bad) && latch_frame[n] < 0) {
-        latch_frame[n] = static_cast<long>(k);
-        if (verbose) {
-          std::printf("frame %zu: node %c latched (missing/crc/seq=%d vote=%d digest=%d stuck=%d)\n", k,
-                      static_cast<char>('A' + n), good[n] ? 0 : 1, ((disagree >> n) & 1U) != 0U ? 1 : 0,
-                      ((digest_bad >> n) & 1U) != 0U ? 1 : 0, stuck_now ? 1 : 0);
-        }
+      latch_frame[n] = static_cast<long>(k);
+      if (verbose) {
+        std::printf("frame %zu: node %c latched because: %s\n", k, static_cast<char>('A' + n),
+                    reason_text(rep.reason[n]).c_str());
       }
     }
   }
 
-  unsigned healthy = 0;
-  for (unsigned n = 0; n < kNodes; ++n) {
-    healthy += mon[n].latched() ? 0U : 1U;
-  }
-  const tfc::Mode mode = tfc::mode_from_healthy(healthy);
+  const tfc::Counters& c = mgr.counters();
   std::printf("frames=%zu\n", frames.size());
-  for (unsigned n = 0; n < kNodes; ++n) {
+  for (unsigned n = 0; n < tfc::kNodes; ++n) {
     if (latch_frame[n] < 0) {
       std::printf("latch.%c=-\n", static_cast<char>('A' + n));
     } else {
@@ -393,6 +255,13 @@ int main(int argc, char** argv) {
     }
   }
   std::printf("healthy=%u\nmode=%s\n", healthy, mode_name(mode));
+  const std::map<std::string, unsigned long> stats{{"crc_bad", c.crc_bad},
+                                                   {"seq_bad", c.seq_bad},
+                                                   {"missing", c.missing},
+                                                   {"out_of_schedule", c.out_of_schedule},
+                                                   {"stuck_flags", c.stuck_flags},
+                                                   {"digest_flags", c.digest_flags},
+                                                   {"vote_disagreements", c.vote_disagreements}};
   for (const auto& kv : stats) {
     std::printf("%s=%lu\n", kv.first.c_str(), kv.second);
   }
