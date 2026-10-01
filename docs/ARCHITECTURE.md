@@ -57,6 +57,8 @@ Time-triggered rather than event-driven so behavior is predictable and jitter is
 
 Bus load **target**: about 14 frames per 10 ms, roughly 20% of a 1 Mbit/s classic CAN bus in the worst bit-stuffing case, leaving room for sim traffic.
 
+**SYNC frame.** `0x010`, payload = 32-bit frame number (little endian) | 2 reserved bytes | seq | CRC-8 (`tfc::pack_sync`). The frame number lets late joiners and restarted nodes agree on which frame it is; receivers lock their frame timer to its arrival.
+
 **Clock sync.** Each node runs a free-running frame timer aligned to the hardware RX timestamp of SYNC. The sync master is the lowest-numbered healthy FC; if SYNC is missing for 2 frames the next-lowest healthy FC takes over. This avoids making a single node the time authority.
 
 ## 4. Agreement and voting
@@ -68,6 +70,8 @@ Bus load **target**: about 14 frames per 10 ms, roughly 20% of a 1 Mbit/s classi
 5. **Known caveat.** CAN gives near-atomic broadcast but has a documented inconsistent-omission corner case (a receiver can miss a frame that others got, if the error occurs in the last bits). The digest cross-check is what catches the resulting divergence. This is a good write-up topic.
 
 Missing / late / CRC-bad / out-of-sequence data is treated exactly like a miscompare for that channel.
+
+**Boot order.** Nodes do not boot simultaneously. A peer that has never delivered a good sample is not judged for `startup_grace_frames` (configurable; 500 = 5 s on FC-A, 0 in the host tests). It does not vote and is not counted healthy, so the mode is Simplex until it joins; after the grace period, or at any time once it has been seen, a silent node latches out like any other.
 
 **Sequence tracking.** Each receiver tracks the expected sequence number per sender and per stream (`tfc::SeqTracker`). A frame that arrives with a bad CRC was still sent, so it consumes a sequence number: one corrupted frame costs exactly one bad sample (the CRC failure), not two (plus a false gap on the next good frame). A real gap, where frames never arrived, is still reported once.
 

@@ -1,15 +1,33 @@
 # Firmware (Zephyr)
 
 Zephyr v4.4.2 app that consumes `core/` as-is. Only drivers, threads and ISRs belong here.
-Status: M0 hello world builds and runs on `native_sim` and builds for `nucleo_g474re`.
+Status: **FC-A runs the 100 Hz frame loop** as sync master against virtual peers on `vcan0` (`native_sim`),
+and the same app builds for `nucleo_g474re` (FDCAN1 from the board file; not yet run on hardware, and it
+still uses a simulated IMU until the ISM330DHCX driver lands).
 
 ```
 firmware/
   west.yml       # pins Zephyr (v4.4.2) and the few modules we use
   env.sh         # source this: activates the venv, sets ZEPHYR_BASE and the SDK path
-  app/           # Zephyr application (fc = flight computer, act = voter come later)
-    CMakeLists.txt  prj.conf  src/main.cpp
+  app/
+    Kconfig                  # TFC_NODE_ID (this stage: 0 = A, the sync master)
+    prj.conf                 # C++17, no exceptions/RTTI, CAN, 100 us kernel tick
+    boards/native_sim_native_64.{conf,overlay}   # real-time clock; bus = host vcan0
+    src/main.cpp             # the frame loop (below)
+    src/sim_imu.hpp          # simulated IMU: same motion the peers feel (replace with the ISM330 driver)
 ```
+
+## What the app does (every 10 ms major frame)
+| t | FC-A |
+|---|---|
+| 0.0 ms | broadcasts **SYNC** (32-bit frame number) |
+| 1.5 ms | samples its IMU, broadcasts gyro + accel |
+| 5.0 ms | broadcasts its command + estimator digest |
+| 7.0 ms | hands every frame received to `tfc::RedundancyManager` (decode, CRC/sequence, 8-channel vote, digest check, stuck detector, 3-of-5 latch) and prints what it decided |
+
+Console: a status line each second (`A+ B+ C+` = all voting; `X` = latched out; `?` = no good data), and an
+event line whenever a node joins, latches out (with the reason in words), or the mode changes.
+A peer that has never been seen is not judged for the first 5 s (`startup_grace_frames`); once seen, it always is.
 
 ## One-time setup (Ubuntu)
 ```bash
@@ -34,21 +52,32 @@ cd ~/SpaceX/triplex-fc
 . firmware/env.sh            # once per terminal; puts `west` on PATH
 ```
 
-## Build and run on the host (`native_sim`)
-Runs the firmware as a normal Linux process. No hardware needed; this is what CI runs.
+## Run FC-A against the virtual peers (no hardware)
 ```bash
+sim/scripts/setup_vcan.sh                                   # once per boot (sudo): creates vcan0
 west build -p always -b native_sim/native/64 firmware/app -d build/native_sim
-build/native_sim/zephyr/zephyr.exe -stop_at=1
+
+# terminal 1: the flight computer (runs in real time; -stop_at=<s> ends it, Ctrl+C also works)
+build/native_sim/zephyr/zephyr.exe -stop_at=12
+
+# terminal 2, within a second or two: fake FC-B and FC-C that follow FC-A's SYNC; B gets a bias at frame 400
+cd sim && python3 -m tfc_peers run --follow-sync --nodes B,C --frames 750 --fault B:bias:start=400,mag=3
 ```
-Expected output:
+Expected FC-A console (frame numbers are absolute; the peers use SYNC's frame number):
 ```
-*** Booting Zephyr OS build dccb09599635 ***
-triplex-fc hello: vote_milli=1010 status=0 disagree_mask=0x04
-Stopped at 1.010s
+[frame 0] MODE TRIPLEX -> SIMPLEX
+[frame 44] node B joined the bus
+[frame 44] node C joined the bus
+[frame 44] MODE SIMPLEX -> TRIPLEX
+[frame 100] TRIPLEX  A+ B+ C+  | crc=0 seq=0 missing=0 vote=0 digest=0 stuck=0 tx_err=0
+[frame 402] node B LATCHED OUT: vote disagreement
+[frame 402] MODE TRIPLEX -> DUPLEX
+...
+[frame 796] node C LATCHED OUT: frame missing      <- the peers finished their 750 frames
 ```
-- `-stop_at=<s>` ends the run after `<s>` simulated seconds; without it the process idles forever (Ctrl+C).
-- Drop `-p always` for faster incremental rebuilds.
-- Use `native_sim/native/64` (64-bit); the plain `native_sim` needs 32-bit multilib.
+Try any fault from `python3 -m tfc_peers faults`. Without `--follow-sync` the peers free-run on their own
+clock and will not line up with FC-A's frames. Automated version: `cd sim && python3 -m unittest tests.test_live_fc -v`
+(skipped unless `vcan0` exists and the binary is built).
 
 ## Build for the real board (`nucleo_g474re`)
 ```bash
@@ -56,6 +85,7 @@ west build -p always -b nucleo_g474re firmware/app -d build/nucleo_g474re
 ```
 Flashing needs the board plugged in over USB (ST-LINK): `west flash -d build/nucleo_g474re`.
 Serial console: `picocom -b 115200 /dev/ttyACM0` (first check `dmesg` for the device name).
+The board file already puts FDCAN1 on PA11/PA12; the bring-up checklist still has to confirm that against the wiring.
 
 ## Gotchas
 - **Include order:** in any `.cpp` that uses `core/`, include the `tfc/*.hpp` headers (and so the
@@ -63,4 +93,8 @@ Serial console: `picocom -b 115200 /dev/ttyACM0` (first check `dmesg` for the de
   breaks a glibc header (`struct_mutex.h`) on the native_sim host build.
 - `core/` needs the full libstdc++ (`CONFIG_REQUIRES_FULL_LIBCPP=y`); Zephyr's default minimal C++
   library has no `<array>`/`<cmath>`. Exceptions and RTTI stay off.
+- **Kernel tick:** the default is 100 ticks/s (10 ms), which rounds every sleep up to 10 ms and wrecked the
+  schedule (60 ms frames). `CONFIG_SYS_CLOCK_TICKS_PER_SEC=10000` is required.
+- The host's native CAN driver reports its own transmissions back as TX confirmations, so own samples are fed
+  to the manager directly and received frames with this node's own IDs are dropped.
 - `printk` has no float support; print fixed-point integers, or enable picolibc float I/O deliberately.

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+mainmenu "Triplex flight computer"
+
+config TFC_NODE_ID
+	int "Flight computer node id (0 = A, 1 = B, 2 = C)"
+	default 0
+	range 0 2
+	help
+	  The same image runs on every flight computer; only this id differs (STAGED_BUILD rule 1).
+	  This stage implements node 0, the sync master. Nodes 1 and 2 need SYNC following.
+
+source "Kconfig.zephyr"
