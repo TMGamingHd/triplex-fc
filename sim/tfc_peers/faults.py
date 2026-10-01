@@ -33,6 +33,10 @@ KINDS: dict[str, tuple[str, str, dict[str, Value]]] = {
     "babble": ("F11", "`n` extra frames per cycle on out-of-schedule high-priority ids",
                {"n": 5}),
     "seqgap": ("IF", "sequence counter jumps ahead by `gap` once, at `start`", {"gap": 3}),
+    "reboot": ("F24", "node restarts: silent for `down` frames, then back with its sequence counter restarted at 0",
+               {"down": 50}),
+    "late": ("F25", "every scheduled frame arrives `us` microseconds late (after the 7 ms vote it is stale data)",
+             {"us": 4000}),
 }
 
 
@@ -47,13 +51,21 @@ class Fault:
     start: int = 0
     end: int | None = None
     params: dict[str, Value] = field(default_factory=dict)
+    period: int | None = None  # intermittent: active `duty` frames out of every `period`, from `start`
+    duty: int | None = None
 
     def active(self, k: int) -> bool:
-        return k >= self.start and (self.end is None or k < self.end)
+        if k < self.start or (self.end is not None and k >= self.end):
+            return False
+        if self.period is None:
+            return True
+        return (k - self.start) % self.period < int(self.duty or 1)
 
     def __str__(self) -> str:
         extra = ",".join(f"{k}={v}" for k, v in self.params.items())
         window = f"start={self.start}" + (f",end={self.end}" if self.end is not None else "")
+        if self.period is not None:
+            window += f",period={self.period},duty={self.duty}"
         return f"{NODE_NAMES[self.node]}:{self.kind}:{window}" + (f",{extra}" if extra else "")
 
 
@@ -84,7 +96,7 @@ def parse_fault(spec: str) -> Fault:
     if kind not in KINDS:
         raise FaultSpecError(f"unknown fault kind {kind!r}; known: {', '.join(KINDS)}")
     params = dict(KINDS[kind][2])
-    start, end = 0, None
+    start, end, period, duty = 0, None, None, None
     if len(parts) == 3 and parts[2].strip():
         for item in parts[2].split(","):
             if "=" not in item:
@@ -94,15 +106,29 @@ def parse_fault(spec: str) -> Fault:
                 start = int(val)
             elif key == "end":
                 end = int(val)
+            elif key == "period":
+                period = int(val)
+            elif key == "duty":
+                duty = int(val)
             elif key in params:
                 params[key] = _coerce(val)
             else:
-                allowed = ["start", "end", *params]
+                allowed = ["start", "end", "period", "duty", *params]
                 raise FaultSpecError(f"{kind} has no option {key!r}; allowed: {', '.join(allowed)}")
     if start < 0 or (end is not None and end <= start):
         raise FaultSpecError(f"bad window in {spec!r}: need 0 <= start < end")
+    if (period is None) != (duty is None) and not (period is not None and duty is None):
+        raise FaultSpecError(f"in {spec!r}: duty needs period")
+    if period is not None:
+        duty = 1 if duty is None else duty
+        if period < 2 or not 1 <= duty < period:
+            raise FaultSpecError(f"bad intermittent pattern in {spec!r}: need period >= 2 and 1 <= duty < period")
+    if kind == "reboot" and int(params["down"]) < 1:
+        raise FaultSpecError("reboot needs down >= 1")
+    if kind == "late" and not 0 < int(params["us"]) <= 9000:
+        raise FaultSpecError("late needs 0 < us <= 9000 (frames must still leave inside the 10 ms frame)")
     if params.get("sensor", "gyro") not in ("gyro", "accel"):
         raise FaultSpecError("sensor must be gyro or accel")
     if int(params.get("axis", 0)) not in (0, 1, 2):
         raise FaultSpecError("axis must be 0, 1 or 2")
-    return Fault(node, kind, start, end, params)
+    return Fault(node, kind, start, end, params, period, duty)

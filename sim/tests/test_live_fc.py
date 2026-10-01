@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 from tfc_peers import bus as B
+from tfc_peers.commands import parse_command
 from tfc_peers.faults import parse_fault
 from tfc_peers.peers import Scenario
 
@@ -28,7 +29,7 @@ STATUS = re.compile(r"\[frame (\d+)\] (\w+)\s+A(.) B(.) C(.)\s+\| crc=(\d+) seq=
 @unittest.skipIf(FC_BIN is None, "FC-A native_sim binary not built (west build -b native_sim/native/64 ...)")
 @unittest.skipIf(not HAVE_VCAN, "vcan0 not present (run sim/scripts/setup_vcan.sh)")
 class LiveFcAgainstPeers(unittest.TestCase):
-    def live(self, faults, peer_frames=450, nodes=(1, 2)):
+    def live(self, faults, peer_frames=450, nodes=(1, 2), commands=()):
         """Start FC-A, then the peers `0.3 s` later; return FC-A's console lines."""
         stop_s = 0.3 + peer_frames / 100 + 0.6
         fc = subprocess.Popen([FC_BIN, f"-stop_at={stop_s:.1f}"], stdout=subprocess.PIPE,
@@ -37,7 +38,8 @@ class LiveFcAgainstPeers(unittest.TestCase):
             time.sleep(0.3)
             bus = B.SocketCanBus("vcan0")
             try:
-                B.run_synced(Scenario(list(nodes), [parse_fault(f) for f in faults], 1), bus, peer_frames)
+                B.run_synced(Scenario(list(nodes), [parse_fault(f) for f in faults], 1,
+                                      [parse_command(c) for c in commands]), bus, peer_frames)
             finally:
                 bus.close()
             out, _ = fc.communicate(timeout=30)
@@ -106,6 +108,36 @@ class LiveFcAgainstPeers(unittest.TestCase):
         flooded = [m for m in map(STATUS.match, lines) if m and 320 < int(m.group(1))]
         self.assertTrue(any("oos=" in ln and int(re.search(r"oos=(\d+)", ln).group(1)) > 500 for ln in lines), text)
         self.assertTrue(flooded, text)
+
+    def first(self, lines, pattern):
+        for ln in lines:
+            m = re.match(r"\[frame (\d+)\] " + pattern, ln)
+            if m:
+                return int(m.group(1))
+        return None
+
+    def test_transient_fault_then_operator_reintegration_end_to_end(self):  # TFC-FDIR-006/020
+        # Bias on B for 30 frames (latched ~302), operator asks at 450 (queued: the 200-frame dwell ends ~502),
+        # probation ~502, 100 agreeing frames, readmitted ~602, back in Triplex.
+        lines = self.live(["B:bias:start=300,end=330"], peer_frames=620, commands=["450:reintegrate:B"])
+        text = "\n".join(lines)
+        latched = self.first(lines, r"node B LATCHED OUT")
+        probation = self.first(lines, r"node B ON PROBATION")
+        back = self.first(lines, r"node B REINTEGRATED")
+        self.assertTrue(300 <= (latched or 0) <= 306, text)
+        self.assertIn("GROUND COMMAND reintegrate B: accepted", text)
+        self.assertTrue(probation and latched + 200 <= probation <= latched + 208, text)
+        self.assertTrue(back and probation + 100 <= back <= probation + 108, text)
+        self.assertIn("MODE DUPLEX -> TRIPLEX", text)
+
+    def test_a_node_that_is_still_faulty_fails_probation_live(self):  # TFC-FDIR-020
+        lines = self.live(["B:bias:start=300"], peer_frames=520, commands=["450:reintegrate:B"])
+        text = "\n".join(lines)
+        self.assertIsNotNone(self.first(lines, r"node B ON PROBATION"), text)
+        failed = self.first(lines, r"node B FAILED PROBATION, back to latched: vote disagreement")
+        self.assertIsNotNone(failed, text)
+        self.assertNotIn("REINTEGRATED", text)
+        self.assertNotIn("MODE DUPLEX -> TRIPLEX", text)  # the bad node never got back into the vote
 
     def test_silent_C_is_isolated_within_three_frames(self):
         lines = self.live(["C:dropout:start=300"], peer_frames=450)

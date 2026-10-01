@@ -23,8 +23,8 @@ Contents: [What the virtual peers are](#what-the-virtual-peers-are) ·
 The real system is three flight computers that vote over a CAN bus. Until the boards arrive, and later for
 failures that are dangerous or awkward to cause for real, the PC plays the other flight computers.
 `tfc_peers` generates exactly the frames a real FC-B or FC-C would send every 10 ms (gyro, accel, command;
-real CAN IDs, CRC-8, sequence numbers, sensor noise) and can break any of them on purpose with 11 kinds of
-fault. Everything is standard-library Python 3.10+; nothing to install.
+real CAN IDs, CRC-8, sequence numbers, sensor noise) and can break any of them on purpose with 13 kinds of
+fault, and can send the flight computers operator commands (reintegrate a node, disable it, clear a Safe request). Everything is standard-library Python 3.10+; nothing to install.
 
 There are two ways to use the traffic, and they differ in **who judges it**:
 
@@ -49,6 +49,8 @@ Details of the difference are in [Offline vs live](#offline-vs-live).
 | Watch a CAN bus in decoded form | `python3 -m tfc_peers listen --iface vcan0` |
 | Run fake peers next to the **real FC-A firmware** | `python3 -m tfc_peers run --follow-sync --nodes B,C ...` |
 | Run fake peers with **no** flight computer (to test a monitor or other receiver) | `python3 -m tfc_peers run --nodes B,C ...` (free-running) |
+| Script an operator command in a scenario | `--command 450:reintegrate:B` (on `record` or `run`) |
+| Send one operator command to a running flight computer | `python3 -m tfc_peers command reintegrate B` |
 | Create the virtual CAN interface | `./scripts/setup_vcan.sh` |
 
 ## Quick start
@@ -107,6 +109,7 @@ Virtual time, no sleeping: 400 frames take milliseconds. Output is identical on 
 | `--nodes LIST` | `B,C` | Which flight computers to simulate, comma separated from `A,B,C` (or `0,1,2`; case and spaces ignored). Use **`A,B,C`** for a fully virtual triplex: `tfc_replay` needs all three present, otherwise it correctly treats the missing one as dead. |
 | `--fault SPEC` | none | `NODE:KIND[:key=value,...]`. **Repeatable**; any number of faults, on any nodes, overlapping or not. A fault must target a node listed in `--nodes`. See [Fault reference](#fault-reference). |
 | `--frames N` | `1000` | Number of 10 ms major frames. 100 = 1 s, 400 = 4 s. |
+| `--command SPEC` | none | Scripted operator command `FRAME:OP[:NODE]`, **repeatable**: `OP` is `reintegrate`, `disable`, `clear-disabled` (these three need a node) or `clear-safe` (no node). Sent as a ground-command frame in that frame number, 6.5 ms in, so the flight computer applies it in that very frame. See [Recovery](#recovery-latch-probation-readmission-and-disabling). |
 | `--seed N` | `1` | Seed for sensor noise and for the random faults (`spike`, `corrupt`, `babble`). Same seed = byte-identical log. Change it to see how a result varies. |
 | `--iface NAME` | `vcan0` | Only the interface name written into each log line; has no other effect. |
 
@@ -129,7 +132,7 @@ Real time, 100 Hz. Prints its own send-lateness statistics when finished.
 | `--iface NAME` | `vcan0` | SocketCAN interface to send on. `can0` for the USB-CAN adapter (once it has arrived and is configured). |
 | `--follow-sync` | off | Phase-lock to the flight computer's SYNC frames and use SYNC's frame number as the frame number. **Use this whenever a real FC-A is on the bus.** Without it the peers free-run on their own clock. `--frames` then counts SYNC frames. Exits with an error if no SYNC arrives for 2 s. |
 | `--frames N` | `1000` | As for `record`, but **`0` means keep going until Ctrl+C**. With `--follow-sync` it counts SYNC frames. A fixed N ends the peers' traffic after N frames; see "Why does C latch" above. |
-| `--nodes`, `--fault`, `--seed` | as for `record` | With a real FC-A on the bus use `--nodes B,C`. Fault `start`/`end` frame numbers are then **FC-A's frame numbers** (SYNC's), not "seconds since the peers started". |
+| `--nodes`, `--fault`, `--seed`, `--command` | as for `record` | With a real FC-A on the bus use `--nodes B,C`. Fault `start`/`end` frame numbers are then **FC-A's frame numbers** (SYNC's), not "seconds since the peers started". |
 
 Ctrl+C stops it cleanly and prints the statistics (exit status 0 with `--frames 0`, 130 with a fixed count). When a finite run ends it prints a reminder that a running flight computer will now report the peers missing.
 
@@ -142,6 +145,18 @@ Ctrl+C stops it cleanly and prints the statistics (exit status 0 with `--frames 
 Prints every frame seen, decoded, with the time since `listen` started. It is a pure observer: it does not judge
 anything and what it prints is not a replayable log.
 
+### `python3 -m tfc_peers command OP [NODE]`: send one operator command now (live)
+| Argument | Default | Meaning |
+|---|---|---|
+| `OP` | (required) | `reintegrate`, `disable`, `clear-disabled` or `clear-safe` |
+| `NODE` | none | `A`, `B` or `C`; required except for `clear-safe` |
+| `--iface NAME` | `vcan0` | SocketCAN interface to send on |
+| `--count N` | `1` | Send the frame N times, 20 ms apart. Every operation is idempotent, so repeats are harmless |
+
+Sends a single ground-command frame (`0x510`) to whichever flight computers are on the bus and exits. It does not wait
+for an answer: the flight computer prints the outcome on its console (`GROUND COMMAND reintegrate B: accepted`, or
+`refused: <why>`). It is the interactive twin of `--command`; use `--command` when the command must land in an exact frame.
+
 ### `python3 -m tfc_peers faults`
 Lists every fault kind with its fault-matrix row and options. Same information as the next section.
 
@@ -151,10 +166,13 @@ Feeds each 10 ms frame of the log to `tfc::RedundancyManager`, the same class th
 | Flag | Meaning |
 |---|---|
 | `LOG` | `candump -L` log. Frames are grouped into 10 ms frames by timestamp, so logs from `record` (which start at t=0) work as-is. |
-| `--verbose` | Print one line per latch event (`frame N: node X latched because: <reasons in words>`), plus `SAFE REQUEST raised` and `BUS ALARM raised/cleared` events. |
+| `--verbose` | Print one line per latch event (`frame N: node X latched because: <reasons in words>`), plus `SAFE REQUEST raised`, `BUS ALARM raised/cleared`, ground commands and their outcomes, and probation / reintegration / disabling events. |
 | `--t0 SECONDS` | Subtract this from every timestamp before grouping (for logs that do not start at 0). |
+| `--vote-us MICROSECONDS` | Where in the 10 ms frame the flight computer votes (default 7000, as FC-A). A frame received after it belongs to the *next* frame, so a late frame is judged stale. |
+| `--policy manual\|auto` | Reintegration policy (default `manual`: only an operator command readmits a node). `auto` also readmits, after the dwell, a node whose first latch looked transient. See [Recovery](#recovery-latch-probation-readmission-and-disabling). |
 | `--expect-latch NODE:FRAME` or `NODE:MIN-MAX` | Node (A/B/C) must have latched at exactly that frame, or within the range (inclusive). Repeatable. |
 | `--expect-no-latch NODE` | Node must never have latched. Repeatable. |
+| `--expect-state NODE:STATE` | Final state of a node must be `healthy`, `latched`, `probation` or `disabled`. Repeatable. |
 | `--expect-mode MODE` | Final mode must be `triplex`, `duplex`, `simplex` or `safe`. |
 | `--expect-min STAT:N` | A counter must be at least N. `STAT` is one of `crc_bad`, `seq_bad`, `missing`, `out_of_schedule`, `stuck_flags`, `digest_flags`, `vote_disagreements`. Repeatable. |
 
@@ -178,7 +196,8 @@ same subcommands and flags and works from any directory: `~/SpaceX/triplex-fc/si
 ## Fault reference
 Syntax: `NODE:KIND[:key=value,key=value,...]`, for example `B:bias:start=100,mag=3`. `NODE` is `A`, `B` or `C`.
 Every fault also accepts `start=N` (first frame it is active, default 0) and `end=N` (first frame it is *not*
-active, default never). Frames are 10 ms; `start=100` is 1.0 s in. Faults only change what the node *sends*.
+active, default never), and the intermittent pair `period=N,duty=K`: active only `K` frames out of every `N`, counted
+from `start` (so `B:corrupt:start=100,period=3,duty=1` damages one frame in three). Frames are 10 ms; `start=100` is 1.0 s in. Faults only change what the node *sends*.
 
 | Kind | Matrix row | What it simulates | Options (default) | What it changes on the wire |
 |---|---|---|---|---|
@@ -193,6 +212,8 @@ active, default never). Frames are 10 ms; `start=100` is 1.0 s in. Faults only c
 | `digest` | F10 | Silent internal state divergence | `xor` (1; 16-bit mask) | XORs the estimator-state digest in the command frame; pitch and yaw unchanged |
 | `babble` | F11 | A node flooding the bus | `n` (5; extra frames per 10 ms) | Adds `n` extra frames per cycle on out-of-schedule IDs `0x020`-`0x02F` (higher priority than every sensor ID). `n` of 3 or more raises the bus alarm |
 | `seqgap` | IF | A node that skipped sequence numbers | `gap` (3) | At `start`, the sequence counter jumps ahead by `gap`, once, then counts normally |
+| `reboot` | F24 | A node that resets | `down` (50; frames of silence) | Silent for `down` frames, then back with its **sequence counter restarted at 0** (one sequence break on its first frame back) |
+| `late` | F25 | Stale data from a late node | `us` (4000; 1-9000) | Every scheduled frame leaves `us` microseconds later. The command frame (due at ~5.3 ms) then misses the 7 ms vote and is judged a frame late, with a stale digest |
 
 Notes: multiple faults can be combined, including two of the same kind on one node (their effects add). `babble`
 has no effect on the scheduled frames themselves; the flight computer *detects* it (bus alarm, ADR-009), but its real
@@ -214,6 +235,9 @@ harm, bus load and arbitration starvation, only shows on real CAN hardware.
 | `digest` | 102 | digest cross-check | duplex |
 | `babble` | never | out-of-schedule frames counted; `bus_alarm_frames` (BUS ALARM) raised, no node blamed | triplex |
 | `seqgap` | never | one bad frame (`seq_bad=3`: once per frame type) | triplex |
+| `reboot` (down=50) | 102 | missing frames; readmitted if the operator asks (see Recovery) | duplex, then triplex |
+| `late` (us=4000) | 102 | stale data: vote disagreement + digest mismatch (the command is a frame behind) | duplex |
+| `corrupt` at 1 frame in 3 (`period=3,duty=1`) | **never** | a known gap: 3-of-5 never fills (the alpha-count will close it) | triplex |
 
 **Two faults in a row** (after B is out the system is in *duplex*: two nodes can only compare, not outvote). What happens
 next depends on how clear-cut the second fault is (ADR-008):
@@ -226,6 +250,76 @@ next depends on how clear-cut the second fault is (ADR-008):
 
 A Safe request is *sticky*: it stays until an operator clears it (`clear_safe_request()`), and the output stays frozen.
 
+## Recovery: latch, probation, readmission and disabling
+A node that latches is out of the vote, but it is not necessarily gone for good. The life cycle (ADR-010; state diagram
+in `docs/ARCHITECTURE.md`) is **Healthy → Latched → Probation → Healthy**, or **→ Disabled**:
+
+1. **Latched:** excluded from the vote; a *strike* is counted against it. It must wait out a **dwell** of 200 frames (2 s).
+2. **Probation:** starts when the dwell is over *and* it is asked: by an operator command (default), or automatically
+   with `--policy auto` for a first latch whose cause looks transient (missing/damaged frames or a vote episode; never a
+   stuck sensor or digest mismatch, never a repeat offender). The node is still out of the vote, but every frame its data is
+   compared on all 8 channels with the **voted output of the healthy nodes**, and its digest with theirs: a *shadow vote*.
+   It needs **100 consecutive agreeing frames** (300 after a repeat latch). One bad or disagreeing frame sends it back to
+   Latched (the dwell restarts and a new request is needed), without a new strike. Only one node is on probation at a time.
+3. **Disabled:** the **3rd** latch of a node (the **2nd** if the cause is physical, i.e. a stuck sensor) disables it for
+   the run. A disabled node refuses `reintegrate`; only a maintenance `clear-disabled` brings it back to Latched.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `policy` | Manual | Manual: only an operator command starts probation. AutoTransient: also automatic for a first, transient-looking latch |
+| `min_dwell_frames` | 200 | Minimum time latched before probation can start |
+| `probation_frames` / `probation_frames_repeat` | 100 / 300 | Agreeing frames needed after the first / a repeat latch |
+| `max_strikes` / `max_strikes_physical` | 3 / 2 | Latches before the node is disabled; for a physical cause (`physical_causes`, default stuck) |
+| `strike_window_frames` | 0 (whole run) | Strikes older than this are forgotten; 0 = never |
+| `auto_eligible_causes`, `auto_max_attempts` | frame problems + vote; 3 | Which causes the auto policy may readmit, and failed probations tolerated |
+
+**Operator commands** (`--command FRAME:OP[:NODE]` or `tfc_peers command OP [NODE]`) and their outcomes:
+
+| Command | Effect | Refused when |
+|---|---|---|
+| `reintegrate B` | Queue probation for latched node B (starts after its dwell) | B is healthy (`not latched`) or disabled |
+| `disable B` | Exclude B for the rest of the run | (always applies; `already done` if disabled) |
+| `clear-disabled B` | Maintenance: disabled → latched, strikes cleared | B is not disabled |
+| `clear-safe` | Lift a sticky Safe request | (`already done` if none) |
+
+Outcomes: `accepted`, `already done` (idempotent repeat), or `refused: <reason>`; the flight computer reports each one.
+
+**Try it offline** (real output, `--frames 700`; the fault ends at frame 130, so the node is healthy again but stays out until asked):
+```bash
+python3 -m tfc_peers record --nodes A,B,C --frames 700 --fault B:bias:start=100,end=130 \
+    --command 450:reintegrate:B --out /tmp/t.log
+../build/host/tfc_replay /tmp/t.log --verbose
+```
+```
+frame 102: node B latched because: vote disagreement
+frame 450: ground command reintegrate B: accepted
+frame 450: node B on probation (shadow vote against the healthy nodes)
+frame 550: node B REINTEGRATED (strikes on record: 1)
+mode=triplex        state.B=healthy     strikes.B=1
+```
+**A node that is still faulty is refused** (`B:bias:start=100` with no end, commands at 450 and 800):
+```
+frame 450: node B on probation (shadow vote against the healthy nodes)
+frame 451: node B FAILED probation, back to latched: vote disagreement
+frame 800: node B on probation (shadow vote against the healthy nodes)
+frame 801: node B FAILED probation, back to latched: vote disagreement
+mode=duplex   state.B=latched   strikes.B=1   probation_failures=2
+```
+**A repeat offender is disabled** (three fault windows, `reintegrate` after the first two, a third after the node is back):
+```
+frame 102: node B latched (strike 1)  -> 450 command accepted -> 550 REINTEGRATED
+frame 602: node B latched (strike 2)  -> 700 command queued (dwell ends 802) -> 802 on probation -> 1102 REINTEGRATED (300 frames)
+frame 1202: node B DISABLED for the run (strikes: 3)
+frame 1300: ground command reintegrate B: refused: node is disabled
+mode=duplex   state.B=disabled   strikes.B=3
+```
+**Automatic policy** (`--policy auto`, `B:dropout:start=100,end=120`, no command): latched 102, on probation 302, REINTEGRATED 402,
+`mode=triplex`. The same run without `--policy auto` leaves B latched for ever.
+
+**Live:** the same `--command` works with `run --follow-sync`, and FC-A prints `GROUND COMMAND`, `ON PROBATION`,
+`FAILED PROBATION`, `REINTEGRATED` and `DISABLED` events (see the live section). FC-A's policy is chosen at build time
+(`CONFIG_TFC_AUTO_REINTEGRATE`, default off). Why these rules: ADR-010.
+
 ## What the peers send
 Every 10 ms major frame, each simulated node sends three frames (CAN IDs from `core/include/tfc/protocol.hpp`):
 
@@ -234,6 +328,7 @@ Every 10 ms major frame, each simulated node sends three frames (CAN IDs from `c
 | `0x010` | SYNC (sent by the sync master, FC-A; the peers only *listen* for it) | 0.0 ms | frame number (u32, little endian), 2 reserved bytes |
 | `0x100+n` | GYRO | 1.5 ms + 0.2 ms x n | 3 x int16, 0.125 dps per count |
 | `0x110+n` | ACCEL | 2.3 ms + 0.2 ms x n | 3 x int16, 1/2048 g per count |
+| `0x510` | GROUND (operator command; sent only by `--command` / `tfc_peers command`) | 6.5 ms in the frame it is scripted for | opcode (1 reintegrate, 2 disable, 3 clear-disabled, 4 clear-safe), node, 4 reserved bytes |
 | `0x200+n` | CMD (command + digest) | 5.0 ms + 0.3 ms x n | pitch int16 and yaw int16 (0.001 deg per count), digest u16 |
 
 `n` is the node number: A=0, B=1, C=2. The sequence number counts frames (wraps at 256). FC-A itself sends its
@@ -268,6 +363,8 @@ Example log line: `(0.001500) vcan0 100#010031000100009D` = at 1.5 ms, node A's 
 | Duplex arbitration | culprit must be > 2.0 x tolerance from a fresh last-agreed value, the other within 1 x | Else unresolved: nobody blamed, output held; 3 of 5 unresolved frames request Safe (sticky) |
 | Bus alarm | 3 out-of-schedule frames in one 10 ms frame | Raised while it continues; blames no node (a CAN ID is not a sender) |
 
+**What happens to a latched node** is described in [Recovery](#recovery-latch-probation-readmission-and-disabling): dwell, probation by shadow vote, strikes, disabling.
+
 **Why a node was judged bad** (named in `--verbose` output and in FC-A's console): `frame missing`,
 `CRC failure`, `sequence error` (a damaged frame, or a slot in which nothing arrived, still consumes a sequence number, so one corrupted or lost frame costs one
 bad sample, not two; ADR-007), `vote disagreement`, `digest mismatch`, `stuck sensor`.
@@ -277,7 +374,8 @@ bad sample, not two; ADR-007), `vote disagreement`, `digest mismatch`, `stuck se
 | Key | Meaning |
 |---|---|
 | `frames` | 10 ms frames in the log |
-| `latch.A/B/C` | Frame on which that node latched out, or `-` if never |
+| `latch.A/B/C` | Frame on which that node *first* latched out, or `-` if never |
+| `state.A/B/C`, `strikes.A/B/C` | Final state (`healthy`/`latched`/`probation`/`disabled`) and strikes on record per node |
 | `healthy`, `mode` | Nodes still voting at the end, and `triplex`/`duplex`/`simplex`/`safe` |
 | `crc_bad` | Frames discarded for a failed CRC, over the whole run, all nodes |
 | `seq_bad` | Frames whose sequence number was not the expected next |
@@ -285,6 +383,9 @@ bad sample, not two; ADR-007), `vote disagreement`, `digest mismatch`, `stuck se
 | `out_of_schedule` | Frames on IDs that are not part of the schedule |
 | `vote_disagreements` | Frames in which any channel vote flagged a node |
 | `digest_flags`, `stuck_flags` | Frames flagged by the digest cross-check / stuck detector |
+| `probations_started`, `probation_failures` | Probations begun, and those ended by a bad or disagreeing frame |
+| `reintegrations`, `nodes_disabled` | Nodes readmitted to the vote; disable events (strikes used up, or by command) |
+| `commands_accepted`, `commands_refused`, `commands_bad` | Ground commands applied; refused (with the reason in `--verbose`); frames dropped for a failed CRC |
 | `unresolved_frames` | Frames with a duplex disagreement nobody could be blamed for |
 | `held_frames` | Frames in which some output channel held its last good value (unresolved, no majority, no data, or Safe requested) |
 | `safe_request_frames` | Frames spent with the (sticky) Safe request raised |
@@ -351,6 +452,18 @@ The live tests therefore allow a few `missing` and a latch a few frames either s
 Both Python's `run` lateness line (typically p50 3 us, p99 15-45 us, max under 1 ms on this machine) and FC-A's
 timing are desktop-Linux numbers. Treat them as "good enough for logic", never as a flight-computer measurement.
 
+### Recovery events live
+FC-A prints each step of the life cycle (real output of `--fault B:bias:start=300,end=330 --command 450:reintegrate:B`):
+```
+[frame 302] node B LATCHED OUT: vote disagreement
+[frame 450] GROUND COMMAND reintegrate B: accepted
+[frame 502] node B ON PROBATION: shadow vote against the healthy nodes (strikes: 1)
+[frame 602] node B REINTEGRATED into the vote (strikes on record: 1)
+[frame 602] MODE DUPLEX -> TRIPLEX
+```
+The command at 450 was accepted but queued: the dwell (302 + 200) ends at 502. In the status line `p` means on probation and `D`
+disabled. To send a command at an arbitrary moment instead of a scripted frame: `python3 -m tfc_peers command reintegrate B`.
+
 ### Typical sessions
 ```bash
 # healthy system: expect no alarms; --frames 0 runs until you press Ctrl+C
@@ -381,6 +494,8 @@ computers on the Nucleo use FDCAN1 (see `firmware/README.md`).
 | `note: SYNC frame number went back ...` | FC-A restarted; the peers restarted their scenario too. Not an error. |
 | FC-A latched itself or reports `vote=` / `digest=` counts with no fault | Peers are not following SYNC. Add `--follow-sync`. |
 | Healthy nodes latch out (even before your fault) while the machine is under heavy load | Both the Python peers and the simulated firmware are ordinary Linux processes, not real-time. Starved for tens of ms (seen with 24 busy loops on 12 cores) frames are genuinely late and the voter correctly reacts. Run live sessions on an otherwise idle machine; use offline `record` + `tfc_replay` for anything that must be exact. |
+| FC-A: `GROUND COMMAND ...: refused: node is not latched / is disabled / is not disabled` | The command did not apply: `reintegrate` needs a latched node; `clear-disabled` needs a disabled one; a disabled node refuses `reintegrate` (use `clear-disabled` first). Nothing is wrong. |
+| FC-A: `node B FAILED PROBATION, back to latched: vote disagreement` (or `digest mismatch`, `frame missing`...) | The node's data still disagree with the healthy nodes (or its frames are missing), so it is correctly refused. Fix or remove the fault (check your `--fault` has an `end`), wait out the dwell and ask again. |
 | FC-A: `SAFE REQUESTED: the two voting nodes disagree and nobody can be blamed` | Two nodes are voting (the third is out) and they disagree in a way that cannot be attributed (slow drift, small step, digest mismatch). Output is held and Safe stays requested until cleared. Expected for those faults; see the F16 table. |
 | FC-A: `BUS ALARM RAISED` | Three or more out-of-schedule frames in one 10 ms frame (your `babble` fault, or a real flooding node). Clears when it stops. No node is blamed. |
 | Small `missing=` count on a healthy run, no latch | Timing jitter: a peer frame landed after FC-A's 7 ms vote on a busy machine. Absorbed by the 3-of-5 filter; close other heavy programs if it bothers you. |
@@ -400,6 +515,7 @@ Same traffic generator, same faults, same `core/` decision code. The differences
 | Fault timing | Exactly at frame `start` | Exactly at frame `start` of FC-A's count; reproducible to the frame (the tests assert it) |
 | Timing and jitter | None; time is just a number in the log | Real: SYNC lock, 1.5/5.0/7.0 ms slots, kernel ticks, Python send jitter |
 | Boot order, startup grace, joins | Not modelled | Real: `joined the bus`, grace period, restarts |
+| Operator commands | Scripted into the log at an exact frame (`--command`) | Scripted the same way, or typed at any moment with `tfc_peers command` |
 | Speed | Thousands of times real time | 10 ms per frame |
 | What you keep | A log file you can re-run, decode and diff | FC-A's console (use `tee`); `listen` output is not replayable |
 | Sweeps over seeds and faults | Yes, the right tool | Possible, but slow; the live test suite covers 5 scenarios |
@@ -424,8 +540,8 @@ python3 -m unittest tests.test_live_fc -v                   # only the live FC-A
 |---|---|
 | `tests/test_protocol.py` | CRC, golden frames generated by the C++ code (incl. SYNC), every single-bit flip detected, decode |
 | `tests/test_peers.py` | Healthy traffic and schedule, every fault's effect on the wire, fault-spec parsing, logs, follow-SYNC logic |
-| `tests/test_replay.py` | Peers -> log -> **C++ `tfc_replay`**: every fault kind through the real `core/` code against the requirements |
-| `tests/test_live_fc.py` | The **real FC-A firmware** against the peers on `vcan0`: healthy run with no latch and no CRC/sequence/vote/digest alarms, bias isolated at about fault+2, digest and command faults labelled, babble raises the bus alarm without blaming a node, silence within 3 frames (tolerant of timing jitter on busy machines) |
+| `tests/test_replay.py` | Peers -> log -> **C++ `tfc_replay`**: every fault kind through the real `core/` code against the requirements; the node life cycle (`NodeLifeCycle`): readmission, refusal by shadow vote, strikes and disabling, auto policy, `reboot`, `late`, intermittent |
+| `tests/test_live_fc.py` | The **real FC-A firmware** against the peers on `vcan0`: healthy run with no latch and no CRC/sequence/vote/digest alarms, bias isolated at about fault+2, digest and command faults labelled, babble raises the bus alarm without blaming a node, a transient fault followed by an operator reintegration end to end, a still-faulty node failing probation, silence within 3 frames (tolerant of timing jitter on busy machines) |
 | `tests/test_docs.py` | Fails if this README stops documenting a flag, fault kind or fault option |
 
 `ctest --test-dir ../build/host` runs the same suite (`peers_e2e`). Replay tests skip if `tfc_replay` is not
@@ -454,8 +570,12 @@ going backwards needs `reset()`.
   simulated IMU computes the same function in C++ bit for bit). Checking a real estimator's digest needs M3.
 - **Undefined payloads:** heartbeat (`0x400+n`) and actuator-output (`0x300`) frames are not defined in
   `protocol.hpp` yet, so the peers do not send them.
-- **No reintegration through the CLI:** a latched node stays out in replays; the manager supports it
-  (`request_reintegration`, 100 clean frames) and the unit tests cover it.
+- **Every flight computer decides alone:** there is no agreement between flight computers on a node's state, so two of
+  them could hold different views (membership agreement is later work). FC-A also keeps judging if *it* is the one voted out.
+- **Intermittent faults below 3-of-5** (one bad frame in three, say) are never isolated yet: the vote masks every bad frame
+  but the node stays in (`F26`, the alpha-count is the planned fix).
+- **No recovery from "all nodes out"**: with no healthy node there is no reference to compare against; that needs a restart.
+- **No authentication** on ground commands (any node on the bus could send one): fine for a bench, not for a flight uplink.
 - **Bus effects:** arbitration, bus load, babbling's real harm, bus-off and wiring faults need hardware.
 - **FC-A only:** the firmware implements node A, the sync master. Firmware for B and C and sync-master takeover
   (F15) are not built; until then B and C are always the virtual peers.

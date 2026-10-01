@@ -14,6 +14,10 @@ GOLDEN = [
     ("sync 0x01020304 seq9", P.pack_sync(0x01020304, 9), 0x010, "0403020100000915"),
     ("sync 0 seq0", P.pack_sync(0, 0), 0x010, "000000000000000a"),
     ("sync max seq255", P.pack_sync(0xFFFFFFFF, 255), 0x010, "ffffffff0000ff7b"),
+    ("ground reintegrate B seq5", P.pack_ground(P.GROUND_OPS["reintegrate"], 1, 5), 0x510, "0101000000000578"),
+    ("ground disable C seq0", P.pack_ground(P.GROUND_OPS["disable"], 2, 0), 0x510, "020200000000003c"),
+    ("ground clear-disabled A seq255", P.pack_ground(P.GROUND_OPS["clear-disabled"], 0, 255), 0x510, "030000000000ff29"),
+    ("ground clear-safe seq9", P.pack_ground(P.GROUND_OPS["clear-safe"], 0, 9), 0x510, "0400000000000996"),
 ]
 
 
@@ -48,6 +52,18 @@ class ProtocolTests(unittest.TestCase):
             data[bit // 8] ^= 1 << (bit % 8)
             self.assertIsNone(P.unpack_sync(P.Frame(f.id, bytes(data))), bit)
         self.assertIsNone(P.unpack_sync(P.Frame(0x100, f.data)))
+
+    def test_ground_roundtrip_describe_and_corruption(self):
+        f = P.pack_ground(P.GROUND_OPS["reintegrate"], 1, 77)
+        g = P.unpack_ground(f)
+        self.assertEqual((g.op, g.node, g.seq), (1, 1, 77))
+        self.assertIn("reintegrate B", P.describe(f))
+        for bit in range(64):
+            data = bytearray(f.data)
+            data[bit // 8] ^= 1 << (bit % 8)
+            self.assertIsNone(P.unpack_ground(P.Frame(f.id, bytes(data))), bit)
+        self.assertIsNone(P.unpack_ground(P.Frame(0x100, f.data)))
+        self.assertIn("CRC-BAD", P.describe(P.Frame(f.id, f.data[:7] + bytes([f.data[7] ^ 1]))))
 
     def test_every_single_bit_flip_is_detected(self):
         f = P.pack_cmd(0, 12.345, -6.789, 0x1234, 42)

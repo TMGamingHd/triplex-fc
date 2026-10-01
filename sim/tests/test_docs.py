@@ -48,7 +48,8 @@ class ReadmeCoversEveryInput(unittest.TestCase):
             self.assertIn(flag, README, f"tfc_replay flag {flag} missing from sim/README.md")
 
     def test_launcher_and_run_until_ctrl_c_are_documented(self):
-        for needle in ("sim/tfc-peers", "No module named tfc_peers", "No module named tfc-peers", "--frames 0"):
+        for needle in ("sim/tfc-peers", "No module named tfc_peers", "No module named tfc-peers", "--frames 0", "period=N,duty=K",
+                       "clear-disabled", "reintegrate", "probation"):
             self.assertIn(needle, README)
 
     def test_every_replay_counter_is_documented(self):

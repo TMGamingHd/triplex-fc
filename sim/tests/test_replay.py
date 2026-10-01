@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 from tfc_peers import bus as B
+from tfc_peers.commands import parse_command
 from tfc_peers.faults import parse_fault
 from tfc_peers.peers import Scenario
 
@@ -21,9 +22,9 @@ FRAMES = 400
 
 
 @unittest.skipIf(REPLAY is None, "tfc_replay not built (cmake --build build/host)")
-class ReplayThroughCore(unittest.TestCase):
-    def replay(self, faults, *expect, nodes=(0, 1, 2), frames=FRAMES, seed=1):
-        sc = Scenario(list(nodes), [parse_fault(f) for f in faults], seed)
+class ReplayBase(unittest.TestCase):
+    def replay(self, faults, *expect, nodes=(0, 1, 2), frames=FRAMES, seed=1, commands=()):
+        sc = Scenario(list(nodes), [parse_fault(f) for f in faults], seed, [parse_command(c) for c in commands])
         with tempfile.TemporaryDirectory() as d:
             log = os.path.join(d, "t.log")
             bus = B.LogBus(log)
@@ -34,6 +35,9 @@ class ReplayThroughCore(unittest.TestCase):
         self.assertEqual(r.returncode, 0, f"{faults} {expect}\n{r.stdout}{r.stderr}")
         return out
 
+
+@unittest.skipIf(REPLAY is None, "tfc_replay not built (cmake --build build/host)")
+class ReplayThroughCore(ReplayBase):
     def test_healthy_triplex_has_no_false_positives(self):
         out = self.replay([], "--expect-mode", "triplex", "--expect-no-latch", "A",
                           "--expect-no-latch", "B", "--expect-no-latch", "C")
@@ -160,6 +164,80 @@ class ReplayThroughCore(unittest.TestCase):
                 self.replay(["B:bias:start=100"], "--expect-latch", "B:102", "--expect-no-latch", "A",
                             "--expect-no-latch", "C", seed=seed)
                 self.replay([], "--expect-mode", "triplex", seed=seed)
+
+
+@unittest.skipIf(REPLAY is None, "tfc_replay not built (cmake --build build/host)")
+class NodeLifeCycle(ReplayBase):
+    """Latch -> dwell -> probation (shadow vote) -> readmission, strikes and disabling (ADR-010)."""
+
+    def test_F21_a_transient_fault_is_readmitted_after_the_operator_asks(self):  # TFC-FDIR-006
+        out = self.replay(["B:bias:start=100,end=130"], "--expect-latch", "B:102", "--expect-state", "B:healthy",
+                          "--expect-mode", "triplex", "--expect-min", "reintegrations:1", frames=700,
+                          commands=["450:reintegrate:B"])
+        self.assertEqual(out["strikes.B"], "1")  # the strike stays on record
+
+    def test_manual_policy_leaves_a_clean_node_out_until_asked(self):
+        self.replay(["B:bias:start=100,end=130"], "--expect-state", "B:latched", "--expect-mode", "duplex", frames=700)
+
+    def test_auto_policy_readmits_a_first_transient_latch_without_a_command(self):
+        self.replay(["B:dropout:start=100,end=120"], "--policy", "auto", "--expect-state", "B:healthy",
+                    "--expect-mode", "triplex", frames=700)
+
+    def test_auto_policy_does_not_readmit_a_digest_mismatch(self):
+        self.replay(["B:digest:start=100,end=120"], "--policy", "auto", "--expect-state", "B:latched",
+                    "--expect-mode", "duplex", frames=700)
+
+    def test_F22_a_node_that_is_still_faulty_is_refused_by_the_shadow_vote(self):  # TFC-FDIR-020
+        self.replay(["B:bias:start=100"], "--expect-state", "B:latched", "--expect-mode", "duplex",
+                    "--expect-min", "probation_failures:2", frames=1000, commands=["450:reintegrate:B", "800:reintegrate:B"])
+
+    def test_F23_a_repeat_offender_is_disabled_on_its_third_latch(self):  # TFC-FDIR-021
+        out = self.replay(["B:bias:start=100,end=130", "B:bias:start=600,end=630", "B:bias:start=1200,end=1230"],
+                          "--expect-state", "B:disabled", "--expect-mode", "duplex", "--expect-min", "nodes_disabled:1",
+                          "--expect-min", "commands_refused:1", frames=1500,
+                          commands=["450:reintegrate:B", "700:reintegrate:B", "1300:reintegrate:B"])
+        self.assertEqual(out["strikes.B"], "3")
+
+    def test_a_stuck_sensor_is_disabled_at_its_second_strike_the_cause_is_physical(self):  # TFC-FDIR-021
+        # Vehicle at rest is the case only the stuck detector can see; the cause is failed hardware.
+        from tfc_peers import peers
+        orig = peers.truth
+        peers.truth = lambda t: ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+        try:
+            out = self.replay(["B:stuck:start=100,end=140", "B:stuck:start=500,end=540"], "--expect-state", "B:disabled",
+                              frames=900, commands=["300:reintegrate:B"])
+        finally:
+            peers.truth = orig
+        self.assertEqual(out["strikes.B"], "2")
+
+    def test_F24_a_rebooted_node_comes_back_with_a_restarted_counter(self):
+        self.replay(["B:reboot:start=100,down=50"], "--expect-latch", "B:100-102", "--expect-state", "B:healthy",
+                    "--expect-mode", "triplex", frames=700, commands=["450:reintegrate:B"])
+
+    def test_F25_late_frames_are_stale_data_and_isolate_the_node(self):
+        # The command frame leaves at ~9.3 ms, after FC-A's 7 ms vote: it is judged a frame late (stale).
+        self.replay(["B:late:start=100,us=4000"], "--expect-latch", "B:100-106", "--expect-state", "B:latched",
+                    "--expect-mode", "duplex")
+
+    def test_F26_an_intermittent_fault_below_the_persistence_threshold_is_never_isolated(self):
+        # CHARACTERISATION of the gap PR 4 (alpha-count) closes: one bad frame in three, for ever, never makes
+        # 3-of-5. The vote masks every bad frame, so the output is right, but the node is plainly sick.
+        out = self.replay(["B:corrupt:start=100,p=1.0,period=3,duty=1"], "--expect-no-latch", "B", frames=500,
+                          )
+        self.assertGreater(int(out["crc_bad"]), 300)
+
+    def test_F26_the_same_node_at_one_bad_frame_in_two_is_isolated(self):
+        self.replay(["B:corrupt:start=100,p=1.0,period=2,duty=1"], "--expect-latch", "B:100-106")
+
+    def test_operator_can_disable_and_clear_a_node(self):
+        self.replay([], "--expect-state", "B:healthy", "--expect-mode", "triplex", frames=800,
+                    commands=["200:disable:B", "300:clear-disabled:B", "310:reintegrate:B"])
+        self.replay([], "--expect-state", "B:disabled", "--expect-mode", "duplex", frames=400,
+                    commands=["200:disable:B"])
+
+    def test_refusals_are_counted_not_applied(self):
+        self.replay([], "--expect-state", "B:healthy", "--expect-mode", "triplex", "--expect-min", "commands_refused:2",
+                    frames=400, commands=["200:reintegrate:B", "210:clear-disabled:B"])
 
 
 class ReplayToolContract(unittest.TestCase):

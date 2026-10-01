@@ -13,6 +13,7 @@ import random
 from dataclasses import dataclass
 
 from . import protocol as P
+from .commands import COMMAND_SEND_US, GroundCommand
 from .faults import Fault
 
 FRAME_US = 10_000  # 100 Hz major frame
@@ -102,10 +103,19 @@ class VirtualNode:
         # ---- frame-level faults ----
         if self._active("dropout", k):
             return self._babble(k, t0)  # drops the scheduled frames; babble is an independent fault
+        resume = 0
+        for f in self.faults:  # reboot: silent for `down` frames, then the counter restarts at 0
+            if f.kind != "reboot":
+                continue
+            back = f.start + int(f.params["down"])
+            if f.start <= k < back:
+                return self._babble(k, t0)
+            if k >= back:
+                resume = max(resume, back)
         for f in self._active("seqgap", k):
             if k == f.start:
                 self._seq_offset += int(f.params["gap"])
-        seq = (k + self._seq_offset) & 0xFF
+        seq = ((k - resume) if resume else (k + self._seq_offset)) & 0xFF
 
         n = self.node
         frames = [
@@ -115,6 +125,9 @@ class VirtualNode:
         ]
         for f in self._active("corrupt", k):
             frames = [self._corrupt(tf, float(f.params["p"])) for tf in frames]
+        late = sum(int(f.params["us"]) for f in self._active("late", k))
+        if late:  # stale-data timing fault: every scheduled frame leaves `late` microseconds later
+            frames = [TimedFrame(tf.t_us + late, tf.frame) for tf in frames]
         return sorted(frames + self._babble(k, t0), key=lambda tf: tf.t_us)
 
     def _corrupt(self, tf: TimedFrame, p: float) -> TimedFrame:
@@ -143,10 +156,12 @@ class Scenario:
     fault state stay exactly what a run from frame 0 would give); going backwards needs `reset()`.
     """
 
-    def __init__(self, nodes: list[int], faults: list[Fault] | None = None, seed: int = 1) -> None:
+    def __init__(self, nodes: list[int], faults: list[Fault] | None = None, seed: int = 1,
+                 commands: list[GroundCommand] | None = None) -> None:
         self.nodes = sorted(set(nodes))
         self.faults = list(faults or [])
         self.seed = seed
+        self.commands = list(commands or [])
         self.reset()
 
     def reset(self) -> None:
@@ -159,6 +174,9 @@ class Scenario:
 
     def _generate(self, k: int) -> list[TimedFrame]:
         out = [tf for n in self.nodes for tf in self._virtual[n].step(k)]
+        for c in self.commands:
+            if c.frame == k:
+                out.append(TimedFrame(k * FRAME_US + COMMAND_SEND_US, c.frame_for(k & 0xFF)))
         self._next_k = k + 1
         return sorted(out, key=lambda tf: tf.t_us)
 

@@ -7,6 +7,8 @@ import sys
 import time
 
 from . import bus as B
+from . import protocol as P
+from .commands import GroundCommand, parse_command
 from .faults import KINDS, FaultSpecError, parse_fault, parse_node
 from .peers import Scenario
 from .protocol import describe
@@ -20,7 +22,8 @@ def _scenario(args: argparse.Namespace) -> Scenario:
     for f in faults:
         if f.node not in nodes:
             raise FaultSpecError(f"fault {f} targets a node that is not simulated (--nodes {args.nodes})")
-    return Scenario(nodes, faults, args.seed)
+    commands = [parse_command(c) for c in args.command]
+    return Scenario(nodes, faults, args.seed, commands)
 
 
 def _add_scenario_args(p: argparse.ArgumentParser) -> None:
@@ -29,6 +32,10 @@ def _add_scenario_args(p: argparse.ArgumentParser) -> None:
                         "default B,C. Use A,B,C for a fully virtual triplex; with a real FC-A on the bus use B,C")
     p.add_argument("--fault", action="append", default=[], metavar="SPEC",
                    help="NODE:KIND[:key=value,...], repeatable; see `faults` (e.g. B:bias:start=100,mag=3)")
+    p.add_argument("--command", action="append", default=[], metavar="SPEC",
+                   help="scripted operator command FRAME:OP[:NODE], repeatable; OP is reintegrate, disable, "
+                        "clear-disabled or clear-safe (e.g. 450:reintegrate:B). Sent as a ground-command frame "
+                        "in that frame number")
     p.add_argument("--seed", type=int, default=1,
                    help="seed for sensor noise and random faults; the same seed gives byte-identical traffic (default 1)")
     p.add_argument("--frames", type=int, default=1000,
@@ -106,8 +113,31 @@ def cmd_decode(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_command(args: argparse.Namespace) -> int:
+    op = args.op.lower()
+    if op not in P.GROUND_OPS:
+        raise FaultSpecError(f"unknown command {op!r}; known: {', '.join(P.GROUND_OPS)}")
+    if op != "clear-safe" and args.node is None:
+        raise FaultSpecError(f"command {op!r} needs a node (A, B or C)")
+    node = parse_node(args.node) if args.node is not None else 0
+    cmd = GroundCommand(0, op, node)
+    bus = B.SocketCanBus(args.iface)
+    try:
+        for i in range(args.count):
+            bus.send(0, cmd.frame_for((int(time.time() * 1000) + i) & 0xFF))
+            if i + 1 < args.count:
+                time.sleep(0.02)
+    finally:
+        bus.close()
+    who = "" if op == "clear-safe" else f" {P.NODE_NAMES[node]}"
+    print(f"sent ground command: {op}{who} on {args.iface}; the flight computer prints the outcome "
+          f"(accepted or why it was refused) on its console")
+    return 0
+
+
 def cmd_faults(_args: argparse.Namespace) -> int:
-    print("Fault kinds (NODE:KIND[:start=N,end=N,key=value,...]; start/end are 10 ms frame numbers)\n")
+    print("Fault kinds (NODE:KIND[:start=N,end=N,period=N,duty=N,key=value,...]; frame numbers are 10 ms frames)\n")
+    print("Any fault also accepts period=N,duty=K: intermittent, active K frames out of every N from `start`.\n")
     for kind, (row, desc, params) in KINDS.items():
         opts = ", ".join(f"{k}={v}" for k, v in params.items()) or "-"
         print(f"  {kind:<11} {row:<4} {desc}\n  {'':<11} {'':<4} options: {opts}")
@@ -142,6 +172,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("log", help="candump -L format log, e.g. one written by `record`")
     p.add_argument("--limit", type=int, default=None, help="print only the first N frames")
     p.set_defaults(fn=cmd_decode)
+
+    p = sub.add_parser("command", help="send one operator command to the flight computers now (live)")
+    p.add_argument("op", help="reintegrate, disable, clear-disabled or clear-safe")
+    p.add_argument("node", nargs="?", help="A, B or C (not needed for clear-safe)")
+    p.add_argument("--iface", default="vcan0", help="SocketCAN interface to send on (default vcan0)")
+    p.add_argument("--count", type=int, default=1, help="send the frame this many times, 20 ms apart (default 1)")
+    p.set_defaults(fn=cmd_command)
 
     p = sub.add_parser("faults", help="list fault kinds and their options")
     p.set_defaults(fn=cmd_faults)
