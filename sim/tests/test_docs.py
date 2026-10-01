@@ -47,6 +47,10 @@ class ReadmeCoversEveryInput(unittest.TestCase):
         for flag in sorted(set(re.findall(r'"(--[a-z0-9-]+)"', src))):
             self.assertIn(flag, README, f"tfc_replay flag {flag} missing from sim/README.md")
 
+    def test_launcher_and_run_until_ctrl_c_are_documented(self):
+        for needle in ("sim/tfc-peers", "No module named tfc_peers", "--frames 0"):
+            self.assertIn(needle, README)
+
     def test_every_replay_counter_is_documented(self):
         src = (ROOT / "tools" / "replay" / "replay.cpp").read_text()
         for key in re.findall(r'\{"([a-z_]+)", c\.', src):

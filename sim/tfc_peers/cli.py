@@ -32,31 +32,38 @@ def _add_scenario_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--seed", type=int, default=1,
                    help="seed for sensor noise and random faults; the same seed gives byte-identical traffic (default 1)")
     p.add_argument("--frames", type=int, default=1000,
-                   help="number of 10 ms major frames (default 1000 = 10 s); 100 frames = 1 s")
+                   help="number of 10 ms major frames (default 1000 = 10 s); 100 frames = 1 s. "
+                        "For `run`, 0 means keep going until Ctrl+C")
 
 
 def cmd_run(args: argparse.Namespace) -> int:
     sc = _scenario(args)
     bus = B.SocketCanBus(args.iface)
     names = ",".join("ABC"[n] for n in sc.nodes)
-    mode = ("following SYNC from the flight computer" if args.follow_sync else "free-running at 100 Hz")
-    print(f"virtual {names} on {args.iface}, {mode}, {args.frames} frames ({args.frames / 100:.1f} s); "
+    mode = "following SYNC from the flight computer" if args.follow_sync else "free-running at 100 Hz"
+    length = (f"{args.frames} frames ({args.frames / 100:.1f} s)" if args.frames > 0
+              else "until Ctrl+C")
+    print(f"virtual {names} on {args.iface}, {mode}, {length}; "
           f"faults: {[str(f) for f in sc.faults] or 'none'}", flush=True)
     try:
         if args.follow_sync:
             st = B.run_synced(sc, bus, args.frames, on_note=lambda m: print(f"note: {m}", flush=True))
         else:
             st = B.run_realtime(sc, bus, args.frames)
-    except KeyboardInterrupt:
-        print("\ninterrupted")
-        return 130
     except TimeoutError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     finally:
         bus.close()
-    print(f"sent {st['sent']:.0f} frames; send lateness p50 {st['late_p50_us']:.0f} us, "
+    print(f"{'interrupted; ' if st.get('interrupted') else ''}sent {st['sent']:.0f} frames in "
+          f"{st['frames']:.0f} frames' time; send lateness p50 {st['late_p50_us']:.0f} us, "
           f"p99 {st['late_p99_us']:.0f} us, max {st['late_max_us']:.0f} us (Python, not real-time)")
+    if args.frames > 0 and not st.get("interrupted"):
+        print("The peers have stopped sending. A flight computer that is still running will now report "
+              "them as 'frame missing' within 3 frames; that is expected, not a fault. "
+              "Use --frames 0 to keep the peers running until Ctrl+C.")
+    if st.get("interrupted"):
+        return 0 if args.frames <= 0 else 130
     return 0
 
 

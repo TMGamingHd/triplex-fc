@@ -135,19 +135,26 @@ def _stats(frames: int, late_us: list[float], **extra: float) -> dict[str, float
 def run_realtime(scenario: Scenario, bus: Bus, frames: int) -> dict[str, float]:
     """Send `frames` major frames at 100 Hz wall-clock time (free-running, no SYNC).
 
-    Returns send-lateness statistics in microseconds. Python on a desktop Linux kernel is not a
-    real-time system: use these numbers to see how good the fake peers' timing is, never as a
-    measurement of the flight computers.
+    `frames <= 0` means run until Ctrl+C. Ctrl+C always ends the run cleanly and returns the statistics
+    (with `interrupted` = 1). Returns send-lateness statistics in microseconds. Python on a desktop Linux
+    kernel is not a real-time system: use these numbers to see how good the fake peers' timing is, never
+    as a measurement of the flight computers.
     """
     start_ns = time.monotonic_ns() + 50_000_000
     late_us: list[float] = []
-    for k in range(frames):
-        for tf in scenario.frames(k):
-            deadline = start_ns + tf.t_us * 1000
-            _wait_until(deadline)
-            bus.send(tf.t_us, tf.frame)
-            late_us.append((time.monotonic_ns() - deadline) / 1000.0)
-    return _stats(frames, late_us)
+    k = 0
+    interrupted = 0
+    try:
+        while frames <= 0 or k < frames:
+            for tf in scenario.frames(k):
+                deadline = start_ns + tf.t_us * 1000
+                _wait_until(deadline)
+                bus.send(tf.t_us, tf.frame)
+                late_us.append((time.monotonic_ns() - deadline) / 1000.0)
+            k += 1
+    except KeyboardInterrupt:
+        interrupted = 1
+    return _stats(k, late_us, interrupted=interrupted)
 
 
 class SyncBus(Protocol):
@@ -161,35 +168,40 @@ def run_synced(scenario: Scenario, bus: SyncBus, frames: int, sync_timeout_s: fl
     """Follow a live sync master: for each of `frames` SYNC frames, send that frame's traffic with
     the schedule offsets measured from the instant SYNC arrived, as a time-triggered node would.
 
-    The SYNC frame number is the frame index, so peers that start late (or restart) still agree
-    with the flight computer on which frame it is. Raises TimeoutError if no SYNC arrives.
+    `frames <= 0` means follow until Ctrl+C (which ends the run cleanly and returns the statistics, with
+    `interrupted` = 1). The SYNC frame number is the frame index, so peers that start late (or restart)
+    still agree with the flight computer on which frame it is. Raises TimeoutError if no SYNC arrives for
+    `sync_timeout_s` (before the first SYNC, or after the flight computer stops).
     """
     note = on_note or (lambda msg: None)
     bus.set_filter([(ID_SYNC, 0x7FF)])
     late_us: list[float] = []
-    followed = rewinds = 0
-    while followed < frames:
-        raw = bus.recv(sync_timeout_s)
-        if raw is None:
-            raise TimeoutError(f"no SYNC on the bus for {sync_timeout_s:.1f} s: start the flight computer "
-                               f"(the sync master) first")
-        t_rx = time.monotonic_ns()
-        sync = unpack_sync(raw)
-        if sync is None:
-            continue
-        k = sync.frame_no
-        if k < scenario.next_frame:
-            scenario.reset()
-            rewinds += 1
-            note(f"SYNC frame number went back to {k}: sync master restarted; peers restarted too")
-        base = k * FRAME_US
-        for tf in scenario.frames(k):
-            deadline = t_rx + (tf.t_us - base) * 1000
-            _wait_until(deadline)
-            bus.send(tf.t_us, tf.frame)
-            late_us.append((time.monotonic_ns() - deadline) / 1000.0)
-        followed += 1
-    return _stats(frames, late_us, rewinds=rewinds)
+    followed = rewinds = interrupted = 0
+    try:
+        while frames <= 0 or followed < frames:
+            raw = bus.recv(sync_timeout_s)
+            if raw is None:
+                raise TimeoutError(f"no SYNC on the bus for {sync_timeout_s:.1f} s: start the flight computer "
+                                   f"(the sync master) first, or it has stopped")
+            t_rx = time.monotonic_ns()
+            sync = unpack_sync(raw)
+            if sync is None:
+                continue
+            k = sync.frame_no
+            if k < scenario.next_frame:
+                scenario.reset()
+                rewinds += 1
+                note(f"SYNC frame number went back to {k}: sync master restarted; peers restarted too")
+            base = k * FRAME_US
+            for tf in scenario.frames(k):
+                deadline = t_rx + (tf.t_us - base) * 1000
+                _wait_until(deadline)
+                bus.send(tf.t_us, tf.frame)
+                late_us.append((time.monotonic_ns() - deadline) / 1000.0)
+            followed += 1
+    except KeyboardInterrupt:
+        interrupted = 1
+    return _stats(followed, late_us, rewinds=rewinds, interrupted=interrupted)
 
 
 __all__ = ["Bus", "ListBus", "LogBus", "SocketCanBus", "read_log", "record", "run_realtime", "run_synced", "FRAME_US"]

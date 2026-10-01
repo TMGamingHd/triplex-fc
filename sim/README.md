@@ -83,11 +83,18 @@ crc_bad=0
 ```bash
 # terminal 1, repo root: the flight computer (real time; Ctrl+C or -stop_at=<s> to end)
 build/native_sim/zephyr/zephyr.exe -stop_at=12
-# terminal 2, within a second or two: fake FC-B and FC-C that follow FC-A's SYNC; B gets a bias at frame 400
-cd sim && python3 -m tfc_peers run --follow-sync --nodes B,C --frames 750 --fault B:bias:start=400,mag=3
+# terminal 2, within a second or two: fake FC-B and FC-C that follow FC-A's SYNC; B gets a bias at frame 400.
+# --frames 0 = keep sending until Ctrl+C, so the peers outlive FC-A's 12 s (see "why C latches" below)
+cd sim && python3 -m tfc_peers run --follow-sync --nodes B,C --frames 0 --fault B:bias:start=400,mag=3
 ```
 FC-A's console shows `node B joined the bus`, then `node B LATCHED OUT: vote disagreement` at frame 402.
-Add a third terminal with `python3 -m tfc_peers listen` to watch every frame on the bus.
+Add a third terminal to watch every frame on the bus (from **any** directory, with the launcher; see
+[Running from any directory](#running-from-any-directory)): `~/SpaceX/triplex-fc/sim/tfc-peers listen`.
+
+**Why does C latch out "frame missing" after B?** Only if the peers stopped. With a fixed `--frames N` the peers send
+for N frames and stop, and a flight computer that is still running then (correctly) reports both peers missing; the
+one you faulted is already out, so you only see the other one. `--frames 0`, or any N larger than FC-A's run
+(`-stop_at=12` is 1200 frames, and the peers join around frame 40-60), avoids it.
 
 ## Command reference
 
@@ -121,9 +128,10 @@ Real time, 100 Hz. Prints its own send-lateness statistics when finished.
 |---|---|---|
 | `--iface NAME` | `vcan0` | SocketCAN interface to send on. `can0` for the USB-CAN adapter (once it has arrived and is configured). |
 | `--follow-sync` | off | Phase-lock to the flight computer's SYNC frames and use SYNC's frame number as the frame number. **Use this whenever a real FC-A is on the bus.** Without it the peers free-run on their own clock. `--frames` then counts SYNC frames. Exits with an error if no SYNC arrives for 2 s. |
-| `--nodes`, `--fault`, `--frames`, `--seed` | as for `record` | With a real FC-A on the bus use `--nodes B,C`. Fault `start`/`end` frame numbers are then **FC-A's frame numbers** (SYNC's), not "seconds since the peers started". |
+| `--frames N` | `1000` | As for `record`, but **`0` means keep going until Ctrl+C**. With `--follow-sync` it counts SYNC frames. A fixed N ends the peers' traffic after N frames; see "Why does C latch" above. |
+| `--nodes`, `--fault`, `--seed` | as for `record` | With a real FC-A on the bus use `--nodes B,C`. Fault `start`/`end` frame numbers are then **FC-A's frame numbers** (SYNC's), not "seconds since the peers started". |
 
-Ctrl+C stops it cleanly (exit status 130).
+Ctrl+C stops it cleanly and prints the statistics (exit status 0 with `--frames 0`, 130 with a fixed count). When a finite run ends it prints a reminder that a running flight computer will now report the peers missing.
 
 ### `python3 -m tfc_peers listen`: bus monitor (live)
 | Flag | Default | Meaning |
@@ -158,8 +166,14 @@ Loads the `vcan` kernel module and creates and brings up a virtual CAN interface
 Safe to re-run. It does not survive a reboot. Remove it with `sudo ip link del vcan0`.
 `ip -brief link show vcan0` should show `UNKNOWN <NOARP,UP,LOWER_UP>`; `UNKNOWN` is normal for a virtual interface.
 
+### Running from any directory
+`python3 -m tfc_peers ...` only works from inside `sim/` (that is where the package lives); from anywhere else it says
+`No module named tfc_peers`. The launcher `sim/tfc-peers` takes the same subcommands and flags and works from any
+directory: `~/SpaceX/triplex-fc/sim/tfc-peers listen`, `sim/tfc-peers run ...` from the repo root. (Add `sim/` to your
+`PATH`, or `alias tfc-peers=~/SpaceX/triplex-fc/sim/tfc-peers`, to type just `tfc-peers listen`.)
+
 ### Exit status of `tfc_peers`
-`0` success, `2` error (bad argument or fault spec, unknown node, interface or file not found, no SYNC), `130` Ctrl+C.
+`0` success (including Ctrl+C of a `run --frames 0`), `2` error (bad argument or fault spec, unknown node, interface or file not found, no SYNC), `130` Ctrl+C of a `run` with a fixed `--frames`.
 
 ## Fault reference
 Syntax: `NODE:KIND[:key=value,key=value,...]`, for example `B:bias:start=100,mag=3`. `NODE` is `A`, `B` or `C`.
@@ -324,17 +338,17 @@ timing are desktop-Linux numbers. Treat them as "good enough for logic", never a
 
 ### Typical sessions
 ```bash
-# healthy system: expect zero alarms, then FC-A latches the peers only when they stop
-python3 -m tfc_peers run --follow-sync --nodes B,C --frames 500
+# healthy system: expect no alarms; --frames 0 runs until you press Ctrl+C
+python3 -m tfc_peers run --follow-sync --nodes B,C --frames 0
 # a dead node
-python3 -m tfc_peers run --follow-sync --nodes B,C --frames 750 --fault C:dropout:start=300
+python3 -m tfc_peers run --follow-sync --nodes B,C --frames 0 --fault C:dropout:start=300
 # several faults, different seeds
-python3 -m tfc_peers run --follow-sync --nodes B,C --frames 750 --seed 3 \
+python3 -m tfc_peers run --follow-sync --nodes B,C --frames 0 --seed 3 \
     --fault B:corrupt:start=200,end=260,p=0.3 --fault C:drift:start=400,rate=0.1
 # watch the bus while it happens (third terminal)
 python3 -m tfc_peers listen --duration 10
 ```
-When the peers finish their `--frames`, FC-A latches them out as `frame missing` within 3 frames: that is correct.
+When the peers stop (their `--frames` ran out, or you pressed Ctrl+C), FC-A latches them out as `frame missing` within 3 frames: that is correct.
 
 ### Pointing it at real hardware later
 With the USB-CAN adapter, the same commands work with `--iface can0` after `sudo ip link set can0 type can
@@ -344,6 +358,8 @@ computers on the Nucleo use FDCAN1 (see `firmware/README.md`).
 ### Troubleshooting
 | Message or symptom | Cause and fix |
 |---|---|
+| `No module named tfc_peers` | You are not in `sim/`. `cd sim`, or use the launcher from anywhere: `sim/tfc-peers ...`. |
+| One node latched from your fault, then the other latches `frame missing` | The peers stopped (fixed `--frames` ran out) while FC-A kept running. Use `--frames 0` (until Ctrl+C) or a larger N. Not a fault. |
 | `cannot open CAN interface 'vcan0'` | The interface does not exist. `./scripts/setup_vcan.sh` (it is gone after a reboot). |
 | `no SYNC on the bus for 2.0 s: start the flight computer first` | `--follow-sync` needs FC-A running. Start `zephyr.exe` first, or drop `--follow-sync` if there is no flight computer. |
 | `note: SYNC frame number went back ...` | FC-A restarted; the peers restarted their scenario too. Not an error. |

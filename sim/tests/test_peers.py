@@ -214,6 +214,33 @@ class FollowSync(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertEqual(len(bus.sent), 12)
 
+    def test_frames_zero_follows_until_ctrl_c_and_returns_stats(self):
+        class StopAfter(FakeSyncBus):
+            def recv(self, timeout=None):
+                if not self.queue:
+                    raise KeyboardInterrupt
+                return self.queue.pop(0)
+
+        bus = StopAfter([20, 21, 22, 23])
+        st = B.run_synced(Scenario([1, 2]), bus, 0)
+        self.assertEqual((st["frames"], st["sent"], st["interrupted"]), (4, 24, 1))
+
+    def test_free_running_frames_zero_runs_until_interrupted(self):
+        class Boom(B.ListBus):
+            def send(self, t_us, frame):
+                super().send(t_us, frame)
+                if len(self.sent) == 20:
+                    raise KeyboardInterrupt
+
+        bus = Boom()
+        st = B.run_realtime(Scenario([1]), bus, 0)
+        self.assertEqual(st["interrupted"], 1)
+        self.assertEqual(len(bus.sent), 20)
+
+    def test_a_finite_run_is_not_marked_interrupted(self):
+        st = B.run_synced(Scenario([1]), FakeSyncBus([1, 2]), 2)
+        self.assertEqual(st["interrupted"], 0)
+
     def test_no_sync_raises_a_helpful_error(self):
         with self.assertRaisesRegex(TimeoutError, "sync master"):
             B.run_synced(Scenario([1]), FakeSyncBus([]), 1, sync_timeout_s=0.01)
@@ -249,6 +276,21 @@ class CliInputs(unittest.TestCase):
     def test_fault_on_unsimulated_node_and_unknown_node_are_errors(self):
         self.assertEqual(self.run_cli("record", "--nodes", "B", "--fault", "C:bias", "--out", os.devnull)[0], 2)
         self.assertEqual(self.run_cli("record", "--nodes", "D", "--out", os.devnull)[0], 2)
+
+
+class Launcher(unittest.TestCase):
+    def test_launcher_works_from_any_directory(self):
+        import subprocess
+        import sys
+        import tempfile
+        launcher = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tfc-peers")
+        self.assertTrue(os.access(launcher, os.X_OK), "sim/tfc-peers must be executable")
+        with tempfile.TemporaryDirectory() as d:
+            r = subprocess.run([sys.executable, launcher, "faults"], cwd=d, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("dropout", r.stdout)
+            r = subprocess.run([launcher, "decode", "/nonexistent"], cwd=d, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 2)  # runs directly (shebang) and reports errors normally
 
 
 class Buses(unittest.TestCase):
