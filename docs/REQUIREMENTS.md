@@ -21,10 +21,14 @@ All numeric limits are **proposals**. Each will be confirmed, tightened or dropp
 | TFC-FDIR-005 | A latched channel shall be excluded from the vote starting the same frame it latches. | T |
 | TFC-FDIR-006 | Reintegration shall require an explicit request and at least 100 consecutive clean frames. | T |
 | TFC-FDIR-007 | A channel that latches twice shall become permanently excluded. | T |
-| TFC-FDIR-008 | A duplex miscompare shall not be silently averaged; the system shall hold the last voted command and declare Safe request. | T |
-| TFC-FDIR-009 | A node transmitting outside its schedule (babbling) shall not delay other schedule slots by more than 1 frame slot; ACT shall ignore out-of-schedule IDs. | M |
+| TFC-FDIR-008 | A duplex miscompare that cannot be attributed shall not be silently averaged; the system shall hold the last voted command and declare a Safe request that persists until cleared by an operator (ADR-008). | T |
+| TFC-FDIR-009 | A node transmitting outside its schedule (babbling) shall not delay other schedule slots by more than 1 frame slot; ACT shall ignore out-of-schedule IDs. (Detection: FDIR-019. This requirement is the bus-timing effect, measured on hardware.) | M |
 | TFC-FDIR-010 | CAN bus-off shall be recovered automatically within 100 ms without operator action. | M |
 | TFC-FDIR-011 | An estimator-state digest mismatch shall be flagged within 1 frame. | T |
+| TFC-FDIR-016 | A single corrupted or lost frame shall cost exactly one bad sample; two isolated corrupted or lost frames inside the persistence window shall not isolate a healthy node (ADR-007). | T |
+| TFC-FDIR-017 | In duplex, a disagreement shall be blamed on a node only if that node jumped away from a fresh last-agreed value while the other stayed within tolerance of it; a stale reference shall never blame a node; a transient in duplex shall not isolate both survivors (ADR-008). | T |
+| TFC-FDIR-018 | Whenever the vote cannot produce a trustworthy value (unresolved duplex disagreement, no majority, no data) the output shall hold the last good value and be flagged as held. | T |
+| TFC-FDIR-019 | Out-of-schedule frames at or above the configured rate (default 3 per 10 ms frame) shall raise a bus alarm in the same frame, without blaming a node (ADR-009). | T |
 
 ## Software quality
 | ID | Requirement | Verif. |

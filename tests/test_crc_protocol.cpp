@@ -96,6 +96,19 @@ TFC_TEST(seq_tracker_damaged_frame_does_not_hide_a_real_gap) {
   CHECK(!t.accept(20));  // but 12..19 never arrived: still a gap
 }
 
+TFC_TEST(seq_tracker_missing_slot_advances_the_expectation) {
+  SeqTracker t;
+  CHECK(t.accept(10));
+  t.note_missing();      // slot 11 passed with nothing on the bus
+  CHECK(t.accept(12));   // so 12 is not a gap
+  t.note_missing();
+  t.note_missing();
+  t.note_missing();      // a long silence (13, 14, 15) from a sender whose counter kept running
+  CHECK(t.accept(16));
+  CHECK(!t.accept(3));   // a sender that restarted its counter is reported once...
+  CHECK(t.accept(4));    // ...and resynchronises
+}
+
 TFC_TEST(seq_tracker_damaged_before_first_good_frame_is_ignored) {
   SeqTracker t;
   t.note_damaged();

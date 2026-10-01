@@ -20,17 +20,20 @@ struct NodeFault {
   bool corrupt_gyro = false;   // flip one payload bit of the gyro frame
 };
 
-float truth(int k) { return 5.0F + 0.125F * static_cast<float>(k % 16); }  // moves every frame
+float truth(int k) { return 5.0F + 0.125F * static_cast<float>(k % 16); }  // moves every frame (sawtooth)
+// Smooth motion for tests that need continuity between frames (max slope 0.6 dps/frame, under the 1.0 tolerance).
+float smooth(int k) { return 5.0F + 3.0F * std::sin(0.2F * static_cast<float>(k)); }
 
 // Feeds one major frame from the three nodes and returns the manager's report.
-const FrameReport& frame(RedundancyManager& m, int k, const std::array<NodeFault, 3>& f) {
+const FrameReport& frame(RedundancyManager& m, int k, const std::array<NodeFault, 3>& f,
+                         float (*tr)(int) = truth) {
   m.begin_frame();
   const uint8_t seq = static_cast<uint8_t>(k);
   for (unsigned n = 0; n < 3; ++n) {
     if (!f[n].present) {
       continue;
     }
-    Frame g = pack_gyro(static_cast<uint8_t>(n), Vec3{{truth(k) + f[n].gyro_bias, -2.0F, 1.0F}}, seq);
+    Frame g = pack_gyro(static_cast<uint8_t>(n), Vec3{{tr(k) + f[n].gyro_bias, -2.0F, 1.0F}}, seq);
     if (f[n].corrupt_gyro) {
       g.data[0] = static_cast<uint8_t>(g.data[0] ^ 1U);
     }
@@ -180,10 +183,13 @@ TFC_TEST(manager_absent_everything_ends_in_safe) {
   CHECK(m.last_report().latched_mask == kAllChannels);
 }
 
-TFC_TEST(manager_second_unattributable_fault_leaves_no_healthy_node) {
-  // After B is latched (duplex A,C), a bias on C cannot be attributed: both survivors latch.
+TFC_TEST(manager_duplex_second_step_fault_is_attributed_by_continuity) {
+  // B latches at 12 (duplex A,C). At 30 C steps by 3 dps: C is the node that jumped away from the
+  // last agreed value while A did not, so C is blamed and the system continues in Simplex on A
+  // (before: both survivors were blamed and it fell to Safe).
   RedundancyManager m;
-  for (int k = 0; k < 40; ++k) {
+  int latched_c = -1;
+  for (int k = 0; k < 60; ++k) {
     std::array<NodeFault, 3> f{};
     if (k >= 10) {
       f[1].gyro_bias = 3.0F;
@@ -191,9 +197,80 @@ TFC_TEST(manager_second_unattributable_fault_leaves_no_healthy_node) {
     if (k >= 30) {
       f[2].gyro_bias = 3.0F;
     }
+    const FrameReport& r = frame(m, k, f, smooth);
+    if (((r.newly_latched >> 2) & 1U) != 0U) {
+      latched_c = k;
+    }
+    CHECK(!m.latched(0));  // the healthy node is never blamed
+  }
+  CHECK(latched_c == 32);
+  CHECK(m.last_report().mode == Mode::Simplex);
+}
+
+TFC_TEST(manager_duplex_spike_is_blamed_on_the_node_that_jumped_not_on_both) {
+  RedundancyManager m;
+  for (int k = 0; k < 60; ++k) {
+    std::array<NodeFault, 3> f{};
+    f[2].present = (k < 5);  // C dies: latched at 7, duplex A,B from here on
+    f[1].gyro_bias = (k == 30) ? 20.0F : 0.0F;
+    const FrameReport& r = frame(m, k, f, smooth);
+    if (k == 30) {
+      CHECK((r.reason[1] & reason::kVote) != 0U);
+      CHECK(r.reason[0] == 0U);
+    }
+  }
+  CHECK(!m.latched(0) && !m.latched(1));
+}
+
+TFC_TEST(manager_duplex_three_spikes_in_five_frames_latch_only_the_culprit) {
+  RedundancyManager m;
+  for (int k = 0; k < 60; ++k) {
+    std::array<NodeFault, 3> f{};
+    f[2].present = (k < 5);
+    f[1].gyro_bias = (k == 30 || k == 32 || k == 34) ? 20.0F : 0.0F;
+    frame(m, k, f, smooth);
+  }
+  CHECK(m.latched(1));
+  CHECK(!m.latched(0));
+  CHECK(m.last_report().mode == Mode::Simplex);  // not Safe
+}
+
+TFC_TEST(manager_one_lost_frame_costs_one_sample_not_two) {
+  RedundancyManager m;
+  for (int k = 0; k < 60; ++k) {
+    std::array<NodeFault, 3> f{};
+    f[1].present = (k != 20);
+    const FrameReport& r = frame(m, k, f);
+    CHECK(r.newly_latched == 0U);
+    if (k == 20) {
+      CHECK(r.reason[1] == reason::kMissing);
+    }
+    if (k == 21) {
+      CHECK(r.reason[1] == 0U);  // the next good frame is not a "sequence gap"
+    }
+  }
+  CHECK(m.counters().missing == 1U);
+  CHECK(m.counters().seq_bad == 0U);
+}
+
+TFC_TEST(manager_two_isolated_lost_frames_in_the_window_do_not_latch) {
+  RedundancyManager m;
+  for (int k = 0; k < 60; ++k) {
+    std::array<NodeFault, 3> f{};
+    f[1].present = !(k == 20 || k == 23);
+    CHECK(frame(m, k, f).newly_latched == 0U);
+  }
+}
+
+TFC_TEST(manager_a_node_that_returns_with_a_continuing_counter_is_not_penalised) {
+  // Silent for 30 frames, then back with the counter still running (a hung node that recovers).
+  RedundancyManager m;
+  for (int k = 0; k < 80; ++k) {
+    std::array<NodeFault, 3> f{};
+    f[1].present = !(k >= 20 && k < 50);
     frame(m, k, f);
   }
-  CHECK(m.last_report().mode == Mode::Safe);
+  CHECK(m.counters().seq_bad == 0U);
 }
 
 TFC_TEST(manager_reintegration_needs_explicit_request_and_100_clean_frames) {
@@ -293,4 +370,138 @@ TFC_TEST(manager_a_seen_node_is_judged_even_inside_the_grace_period) {
   NodeFault gone;
   gone.present = false;
   CHECK(run(1, gone, 20, 60, m) == 22);  // seen at frame 0, so no grace once it goes silent
+}
+
+namespace {
+float flat(int) { return 5.0F; }  // vehicle at rest; accel still varies per frame so nothing looks stuck
+}  // namespace
+
+TFC_TEST(manager_output_is_the_voted_value_and_not_held_in_normal_operation) {
+  RedundancyManager m;
+  for (int k = 0; k < 40; ++k) {
+    const std::array<NodeFault, 3> none{};
+    const FrameReport& r = frame(m, k, none, smooth);
+    CHECK(r.held_mask == 0U);
+    CHECK(std::fabs(r.output[0] - smooth(k)) < 0.2F);
+    CHECK(!r.unresolved && !r.safe_request && !r.bus_alarm);
+  }
+}
+
+TFC_TEST(manager_holds_the_last_good_output_when_nothing_can_be_voted) {
+  RedundancyManager m;
+  const std::array<NodeFault, 3> none{};
+  float last = 0.0F;
+  for (int k = 0; k < 30; ++k) {
+    last = frame(m, k, none, smooth).output[0];
+  }
+  for (int k = 30; k < 40; ++k) {  // every node goes silent
+    m.begin_frame();
+    const FrameReport& r = m.end_frame();
+    CHECK(r.output[0] == last);               // held, exactly
+    CHECK((r.held_mask & 1U) != 0U);
+  }
+  // Before any history there is nothing to hold: 0, flagged as held.
+  RedundancyManager fresh;
+  fresh.begin_frame();
+  const FrameReport& r0 = fresh.end_frame();
+  CHECK(r0.output[0] == 0.0F && r0.held_mask == 0xFFU);
+}
+
+TFC_TEST(manager_slow_drift_in_duplex_requests_safe_and_blames_nobody_afterwards) {
+  // C dies (duplex A,B). B then drifts 0.1 dps/frame. Right at the miscompare both nodes are within
+  // reach of the last agreed value, so nobody can be blamed: hold the output and request Safe. The
+  // request is sticky and the output frozen. B keeps drifting far beyond 2x tolerance, but the
+  // held reference is stale by then, so arbitration must NOT use it: nobody is ever blamed (before
+  // this rule a healthy node could be blamed once the vehicle had moved away from the stale value).
+  RedundancyManager m;
+  int first_safe = -1;
+  int blamed = -1;
+  float held_value = 0.0F;
+  for (int k = 0; k < 120; ++k) {
+    std::array<NodeFault, 3> f{};
+    f[2].present = (k < 5);
+    f[1].gyro_bias = k >= 30 ? 0.1F * static_cast<float>(k - 30) : 0.0F;
+    const FrameReport& r = frame(m, k, f, flat);
+    if (r.safe_request && first_safe < 0) {
+      first_safe = k;
+      CHECK(r.mode == Mode::Safe);
+      CHECK(!m.latched(0) && !m.latched(1));  // nobody blamed yet
+      CHECK(r.held_mask == 0xFFU);
+      held_value = r.output[0];
+    }
+    if (first_safe >= 0) {
+      CHECK(r.safe_request);                  // sticky
+      CHECK(r.output[0] == held_value);       // frozen for the whole time
+    }
+    if ((r.newly_latched & 0x3U) != 0U && blamed < 0) {  // A or B (C was killed on purpose)
+      blamed = k;
+    }
+  }
+  CHECK(first_safe >= 38 && first_safe <= 46);
+  CHECK(blamed < 0);                           // nobody is blamed on a stale reference
+  CHECK(!m.latched(0) && !m.latched(1));
+  CHECK(m.last_report().mode == Mode::Safe);   // and Safe is not lifted by luck
+  CHECK(m.safe_requested());
+
+  m.clear_safe_request();                      // operator/ground command, after the fault is gone
+  CHECK(!m.safe_requested());
+  const std::array<NodeFault, 3> none{};
+  const FrameReport& r = frame(m, 120, none, flat);
+  CHECK(!r.safe_request);
+  CHECK(r.mode == Mode::Duplex);               // A and B agree again
+  CHECK(r.held_mask == 0U);
+}
+
+TFC_TEST(manager_duplex_digest_mismatch_is_unresolved_and_blames_nobody) {
+  RedundancyManager m;
+  bool saw_safe = false;
+  for (int k = 0; k < 40; ++k) {
+    std::array<NodeFault, 3> f{};
+    f[2].present = (k < 5);
+    f[1].digest_xor = (k >= 20) ? 1U : 0U;
+    const FrameReport& r = frame(m, k, f, smooth);
+    saw_safe = saw_safe || r.safe_request;
+  }
+  CHECK(saw_safe);
+  CHECK(!m.latched(0) && !m.latched(1));
+  CHECK(m.counters().digest_flags > 0U);
+}
+
+TFC_TEST(manager_duplex_arbitration_can_be_disabled) {
+  RedundancyConfig cfg;
+  cfg.duplex_arbitration_factor = 0.0F;
+  RedundancyManager m(cfg);
+  for (int k = 0; k < 40; ++k) {
+    std::array<NodeFault, 3> f{};
+    f[2].present = (k < 5);
+    f[1].gyro_bias = (k == 30) ? 20.0F : 0.0F;
+    const FrameReport& r = frame(m, k, f, smooth);
+    if (k == 30) {
+      CHECK(r.unresolved);
+      CHECK(r.reason[0] == 0U && r.reason[1] == 0U);
+    }
+  }
+}
+
+TFC_TEST(manager_bus_alarm_follows_the_out_of_schedule_rate) {
+  RedundancyManager m;
+  const std::array<NodeFault, 3> none{};
+  Frame babble;
+  babble.id = 0x023;
+  // 2 stray frames in a major frame: below the default limit of 3.
+  m.begin_frame();
+  m.on_frame(babble);
+  m.on_frame(babble);
+  CHECK(!m.end_frame().bus_alarm);
+  // 5 stray frames: alarm, and the counter says how many.
+  m.begin_frame();
+  for (int i = 0; i < 5; ++i) {
+    m.on_frame(babble);
+  }
+  const FrameReport& r = m.end_frame();
+  CHECK(r.bus_alarm && r.out_of_schedule_in_frame == 5U);
+  // A quiet frame clears it.
+  CHECK(!frame(m, 2, none).bus_alarm);
+  CHECK(m.counters().bus_alarm_frames == 1U);
+  CHECK(m.counters().out_of_schedule == 7U);
 }

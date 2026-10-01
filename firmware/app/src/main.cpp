@@ -34,7 +34,8 @@ constexpr uint32_t kStatusEveryFrames = 100;
 constexpr uint32_t kStartupGraceFrames = 500;
 
 const struct device* const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
-CAN_MSGQ_DEFINE(rx_msgq, 32);
+CAN_MSGQ_DEFINE(rx_msgq, 32);      // the three schedule slots (gyro, accel, command of every node)
+CAN_MSGQ_DEFINE(rx_all_msgq, 64);  // everything: only used to see what is NOT in the schedule (babbling)
 
 void sleep_until_us(int64_t base_ticks, int64_t offset_us) {
   k_sleep(K_TIMEOUT_ABS_TICKS(base_ticks + k_us_to_ticks_ceil64(offset_us)));
@@ -50,6 +51,12 @@ bool send(const tfc::Frame& f) {
 
 // True if `id` is one of this node's own data frames (the driver reports our own transmissions
 // as TX confirmations, but never trust that: own samples are fed to the manager directly).
+// True for the nine schedule-slot IDs (gyro/accel/command of nodes A, B, C).
+bool is_schedule_slot(uint32_t id) {
+  return (id & ~0x3U) == tfc::id::kGyroBase || (id & ~0x3U) == tfc::id::kAccelBase ||
+         (id & ~0x3U) == tfc::id::kCmdBase;
+}
+
 bool is_own(uint32_t id) {
   return id == tfc::id::kGyroBase + kNodeId || id == tfc::id::kAccelBase + kNodeId ||
          id == tfc::id::kCmdBase + kNodeId;
@@ -73,6 +80,16 @@ bool bus_init() {
       printk("cannot add CAN rx filter for id 0x%03x\n", static_cast<unsigned>(base));
       return false;
     }
+  }
+  // Catch-all: lets stray high-priority traffic reach the manager's out-of-schedule counter and bus
+  // alarm (TFC-FDIR-009). Frames that match a schedule slot arrive here too and are skipped on drain.
+  // On the target this is the expensive part (every frame costs an interrupt): the FDIR rate monitor is
+  // worth it, and a hardware acceptance filter plus the controller's lost-message counter is the
+  // cheaper alternative to evaluate at bring-up.
+  const can_filter all{.id = 0U, .mask = 0U, .flags = 0U};
+  if (can_add_rx_filter_msgq(can_dev, &rx_all_msgq, &all) < 0) {
+    printk("cannot add catch-all CAN rx filter\n");
+    return false;
   }
   const int rc = can_start(can_dev);
   if (rc != 0) {
@@ -114,6 +131,8 @@ int main() {
   const int64_t period = k_us_to_ticks_ceil64(kPeriodUs);
   const int64_t start = k_uptime_ticks() + k_ms_to_ticks_ceil64(200);
   tfc::Mode last_mode = tfc::Mode::Triplex;
+  bool last_bus_alarm = false;
+  bool last_safe_request = false;
   uint32_t tx_errors = 0;
 
   printk("FC-A (node %u): sync master, 100 Hz frame loop. Waiting for peers B and C on the bus.\n", kNodeId);
@@ -126,6 +145,7 @@ int main() {
     mgr.begin_frame();
     if (k == 0U) {
       k_msgq_purge(&rx_msgq);  // anything queued before the first SYNC belongs to no frame
+      k_msgq_purge(&rx_all_msgq);
     }
     tx_errors += send(tfc::pack_sync(k, seq)) ? 0U : 1U;
 
@@ -163,6 +183,16 @@ int main() {
         mgr.on_frame(f);
       }
     }
+    while (k_msgq_get(&rx_all_msgq, &cf, K_NO_WAIT) == 0) {
+      if (is_schedule_slot(cf.id)) {
+        continue;  // already handled through rx_msgq
+      }
+      tfc::Frame f;
+      f.id = cf.id;
+      f.len = static_cast<uint8_t>(can_dlc_to_bytes(cf.dlc));
+      std::memcpy(f.data.data(), cf.data, 8);
+      mgr.on_frame(f);  // counts it as out-of-schedule (or ignores SYNC/ACT/heartbeat/sim IDs)
+    }
     const tfc::FrameReport& rep = mgr.end_frame();
 
     for (unsigned n = 0; n < tfc::kNodes; ++n) {
@@ -175,17 +205,28 @@ int main() {
         printk("[frame %u] node %c LATCHED OUT: %s\n", k, 'A' + static_cast<char>(n), why.data());
       }
     }
+    if (rep.bus_alarm != last_bus_alarm) {
+      printk("[frame %u] BUS ALARM %s: %u out-of-schedule frames in this 10 ms frame\n", k,
+             rep.bus_alarm ? "RAISED" : "cleared", static_cast<unsigned>(rep.out_of_schedule_in_frame));
+      last_bus_alarm = rep.bus_alarm;
+    }
+    if (rep.safe_request && !last_safe_request) {
+      printk("[frame %u] SAFE REQUESTED: the two voting nodes disagree and nobody can be blamed; "
+             "output held at the last good value\n", k);
+    }
+    last_safe_request = rep.safe_request;
     if (rep.mode != last_mode) {
       printk("[frame %u] MODE %s -> %s\n", k, mode_text(last_mode), mode_text(rep.mode));
       last_mode = rep.mode;
     }
     if (k % kStatusEveryFrames == 0U) {
       const tfc::Counters& cn = mgr.counters();
-      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u tx_err=%u\n", k,
-             mode_text(rep.mode), node_state(rep, 0), node_state(rep, 1), node_state(rep, 2),
+      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u\n",
+             k, mode_text(rep.mode), node_state(rep, 0), node_state(rep, 1), node_state(rep, 2),
              static_cast<unsigned>(cn.crc_bad), static_cast<unsigned>(cn.seq_bad),
              static_cast<unsigned>(cn.missing), static_cast<unsigned>(cn.vote_disagreements),
-             static_cast<unsigned>(cn.digest_flags), static_cast<unsigned>(cn.stuck_flags), tx_errors);
+             static_cast<unsigned>(cn.digest_flags), static_cast<unsigned>(cn.stuck_flags),
+             static_cast<unsigned>(cn.out_of_schedule), tx_errors);
     }
   }
 }

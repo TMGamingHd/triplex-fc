@@ -98,6 +98,7 @@ class ReplayThroughCore(unittest.TestCase):
 
     def test_F11_babble_is_seen_and_ignored(self):  # TFC-FDIR-009 (logic part; bus timing needs HIL)
         self.replay(["B:babble:start=100,n=5"], "--expect-min", f"out_of_schedule:{(FRAMES - 100) * 5}",
+                    "--expect-min", f"bus_alarm_frames:{FRAMES - 100}",  # the flood is flagged on every frame it occurs
                     "--expect-no-latch", "A", "--expect-no-latch", "B", "--expect-no-latch", "C",
                     "--expect-mode", "triplex")
 
@@ -108,10 +109,46 @@ class ReplayThroughCore(unittest.TestCase):
     def test_dropout_then_recovery_is_still_latched_until_reintegrated(self):
         self.replay(["B:dropout:start=100,end=150"], "--expect-latch", "B:100-102", "--expect-mode", "duplex")
 
-    def test_F16_two_faults_in_sequence_end_in_safe(self):
-        # After B latches (duplex A,C), a second fault cannot be attributed: both survivors miscompare.
+    def test_F16_second_step_fault_in_duplex_is_attributed_by_continuity(self):  # TFC-FDIR-017
+        # B is out (duplex A,C). C then steps by 3 dps: C jumped away from the last agreed value and A did
+        # not, so C is blamed and the system continues in simplex on A. Before the arbitration it fell to safe.
         self.replay(["B:bias:start=100", "C:bias:start=200,axis=1"], "--expect-latch", "B:102",
-                    "--expect-latch", "C:202", "--expect-latch", "A:202", "--expect-mode", "safe")
+                    "--expect-latch", "C:202", "--expect-no-latch", "A", "--expect-mode", "simplex")
+
+    def test_F16_second_fault_too_small_to_attribute_requests_safe_and_stays(self):  # TFC-FDIR-008
+        # A 1.5 dps step is above the 1.0 dps tolerance but not clearly an outlier: unresolved. Hold the
+        # output and request Safe (sticky). Nobody is blamed afterwards either: the held reference is stale
+        # (an earlier version blamed the healthy node A on it).
+        out = self.replay(["B:bias:start=100", "C:bias:start=200,axis=1,mag=1.5"], "--expect-latch", "B:102",
+                          "--expect-no-latch", "A", "--expect-no-latch", "C", "--expect-mode", "safe",
+                          "--expect-min", "safe_request_frames:100", "--expect-min", "held_frames:100")
+        self.assertGreater(int(out["unresolved_frames"]), 0)
+
+    def test_duplex_slow_drift_requests_safe_and_blames_nobody(self):
+        # Both survivors stay within reach of the last agreed value while the gap opens: not attributable.
+        self.replay(["B:bias:start=100", "C:drift:start=200,rate=0.05"], "--expect-latch", "B:102",
+                    "--expect-no-latch", "A", "--expect-no-latch", "C", "--expect-mode", "safe")
+
+    def test_duplex_three_spikes_blame_only_the_culprit_and_do_not_reach_safe(self):  # TFC-FDIR-017
+        spikes = [f"C:spike:start={s},end={s + 1},p=1.0" for s in (100, 102, 104)]
+        self.replay(["B:dropout:start=50", *spikes], "--expect-latch", "B:52", "--expect-latch", "C:104",
+                    "--expect-no-latch", "A", "--expect-mode", "simplex")
+
+    def test_duplex_digest_mismatch_cannot_be_attributed_so_requests_safe(self):
+        self.replay(["B:dropout:start=50", "C:digest:start=100"], "--expect-no-latch", "A",
+                    "--expect-no-latch", "C", "--expect-mode", "safe", "--expect-min", "safe_request_frames:100")
+
+    def test_one_lost_frame_costs_one_sample(self):  # TFC-FDIR-016
+        out = self.replay(["B:dropout:start=100,end=101"], "--expect-no-latch", "B", "--expect-mode", "triplex")
+        self.assertEqual((out["missing"], out["seq_bad"]), ("1", "0"))
+
+    def test_two_isolated_lost_frames_do_not_isolate_a_healthy_node(self):  # TFC-FDIR-016
+        self.replay(["B:dropout:start=100,end=101", "B:dropout:start=103,end=104"], "--expect-no-latch", "B",
+                    "--expect-mode", "triplex")
+
+    def test_a_node_returning_after_a_silence_with_its_counter_running_is_not_penalised(self):
+        out = self.replay(["B:dropout:start=100,end=150"], "--expect-latch", "B:100-102")
+        self.assertEqual(out["seq_bad"], "0")
 
     def test_absent_node_is_just_an_invalid_node(self):  # STAGED_BUILD rule 2: absent means invalid
         self.replay([], "--expect-latch", "A:2", "--expect-mode", "duplex", nodes=(1, 2))

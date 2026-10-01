@@ -207,6 +207,12 @@ class SeqTracker {
     }
   }
 
+  // The slot passed and no frame arrived at all (lost on the bus, or the sender was silent). The
+  // sender's counter still advances with the schedule, so assume the frame carried the next number:
+  // one lost frame then costs one bad sample (it is missing), not two (missing + a false "gap" on the
+  // next good frame). A sender that restarts its counter is reported once, on its first frame back.
+  void note_missing() noexcept { note_damaged(); }
+
  private:
   uint8_t last_ = 0U;
   bool have_ = false;
