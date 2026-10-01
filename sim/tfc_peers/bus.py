@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterator, Protocol
 
 from .peers import FRAME_US, Scenario, TimedFrame
-from .protocol import Frame
+from .protocol import ID_SYNC, Frame, unpack_sync
 
 _CAN_FRAME = struct.Struct("=IB3x8s")  # struct can_frame: id, dlc, pad, data[8]
 CAN_EFF_FLAG = 0x80000000
@@ -82,6 +82,11 @@ class SocketCanBus:
     def send(self, t_us: int, frame: Frame) -> None:  # t_us ignored: real time is the clock
         self._sock.send(_CAN_FRAME.pack(frame.id, len(frame.data), frame.data.ljust(8, b"\0")))
 
+    def set_filter(self, filters: list[tuple[int, int]]) -> None:
+        """Only receive frames matching (can_id, mask) pairs, like a hardware acceptance filter."""
+        raw = b"".join(struct.pack("=II", can_id, mask) for can_id, mask in filters)
+        self._sock.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_FILTER, raw)
+
     def recv(self, timeout: float | None = None) -> Frame | None:
         self._sock.settimeout(timeout)
         try:
@@ -105,8 +110,30 @@ def record(scenario: Scenario, bus: Bus, frames: int) -> int:
     return n
 
 
+def _wait_until(deadline_ns: int) -> None:
+    remain = (deadline_ns - time.monotonic_ns()) / 1e9
+    if remain > 0.0005:
+        time.sleep(remain - 0.0003)
+    while time.monotonic_ns() < deadline_ns:
+        pass
+
+
+def _stats(frames: int, late_us: list[float], **extra: float) -> dict[str, float]:
+    late_us.sort()
+    if not late_us:
+        return {"frames": frames, "sent": 0, "late_p50_us": 0.0, "late_p99_us": 0.0, "late_max_us": 0.0, **extra}
+    return {
+        "frames": frames,
+        "sent": len(late_us),
+        "late_p50_us": late_us[len(late_us) // 2],
+        "late_p99_us": late_us[min(len(late_us) - 1, int(len(late_us) * 0.99))],
+        "late_max_us": late_us[-1],
+        **extra,
+    }
+
+
 def run_realtime(scenario: Scenario, bus: Bus, frames: int) -> dict[str, float]:
-    """Send `frames` major frames at 100 Hz wall-clock time.
+    """Send `frames` major frames at 100 Hz wall-clock time (free-running, no SYNC).
 
     Returns send-lateness statistics in microseconds. Python on a desktop Linux kernel is not a
     real-time system: use these numbers to see how good the fake peers' timing is, never as a
@@ -115,26 +142,54 @@ def run_realtime(scenario: Scenario, bus: Bus, frames: int) -> dict[str, float]:
     start_ns = time.monotonic_ns() + 50_000_000
     late_us: list[float] = []
     for k in range(frames):
-        pending: list[TimedFrame] = scenario.frames(k)
-        for tf in pending:
+        for tf in scenario.frames(k):
             deadline = start_ns + tf.t_us * 1000
-            remain = (deadline - time.monotonic_ns()) / 1e9
-            if remain > 0.0005:
-                time.sleep(remain - 0.0003)
-            while time.monotonic_ns() < deadline:
-                pass
+            _wait_until(deadline)
             bus.send(tf.t_us, tf.frame)
             late_us.append((time.monotonic_ns() - deadline) / 1000.0)
-    late_us.sort()
-    if not late_us:
-        return {"frames": 0, "sent": 0, "late_p50_us": 0.0, "late_p99_us": 0.0, "late_max_us": 0.0}
-    return {
-        "frames": frames,
-        "sent": len(late_us),
-        "late_p50_us": late_us[len(late_us) // 2],
-        "late_p99_us": late_us[min(len(late_us) - 1, int(len(late_us) * 0.99))],
-        "late_max_us": late_us[-1],
-    }
+    return _stats(frames, late_us)
 
 
-__all__ = ["Bus", "ListBus", "LogBus", "SocketCanBus", "read_log", "record", "run_realtime", "FRAME_US"]
+class SyncBus(Protocol):
+    def send(self, t_us: int, frame: Frame) -> None: ...
+    def recv(self, timeout: float | None = None) -> Frame | None: ...
+    def set_filter(self, filters: list[tuple[int, int]]) -> None: ...
+
+
+def run_synced(scenario: Scenario, bus: SyncBus, frames: int, sync_timeout_s: float = 2.0,
+               on_note=None) -> dict[str, float]:
+    """Follow a live sync master: for each of `frames` SYNC frames, send that frame's traffic with
+    the schedule offsets measured from the instant SYNC arrived, as a time-triggered node would.
+
+    The SYNC frame number is the frame index, so peers that start late (or restart) still agree
+    with the flight computer on which frame it is. Raises TimeoutError if no SYNC arrives.
+    """
+    note = on_note or (lambda msg: None)
+    bus.set_filter([(ID_SYNC, 0x7FF)])
+    late_us: list[float] = []
+    followed = rewinds = 0
+    while followed < frames:
+        raw = bus.recv(sync_timeout_s)
+        if raw is None:
+            raise TimeoutError(f"no SYNC on the bus for {sync_timeout_s:.1f} s: start the flight computer "
+                               f"(the sync master) first")
+        t_rx = time.monotonic_ns()
+        sync = unpack_sync(raw)
+        if sync is None:
+            continue
+        k = sync.frame_no
+        if k < scenario.next_frame:
+            scenario.reset()
+            rewinds += 1
+            note(f"SYNC frame number went back to {k}: sync master restarted; peers restarted too")
+        base = k * FRAME_US
+        for tf in scenario.frames(k):
+            deadline = t_rx + (tf.t_us - base) * 1000
+            _wait_until(deadline)
+            bus.send(tf.t_us, tf.frame)
+            late_us.append((time.monotonic_ns() - deadline) / 1000.0)
+        followed += 1
+    return _stats(frames, late_us, rewinds=rewinds)
+
+
+__all__ = ["Bus", "ListBus", "LogBus", "SocketCanBus", "read_log", "record", "run_realtime", "run_synced", "FRAME_US"]

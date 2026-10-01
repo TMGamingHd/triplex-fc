@@ -121,6 +121,11 @@ def pack_cmd(node: int, pitch_deg: float, yaw_deg: float, digest: int, seq: int)
     return Frame(ID_CMD_BASE + node, seal(bytes(buf), seq))
 
 
+def pack_sync(frame_no: int, seq: int) -> Frame:
+    """SYNC: 32-bit frame number (little endian) | 2 reserved bytes | seq | crc8."""
+    return Frame(ID_SYNC, seal(struct.pack("<I", frame_no & 0xFFFFFFFF) + b"\x00\x00", seq))
+
+
 # ---- Unpackers (return None when the CRC or length is bad, like `ok == false`) ----
 @dataclass
 class Vec3Sample:
@@ -143,6 +148,18 @@ def unpack_vec3(frame: Frame, lsb: float) -> Vec3Sample | None:
     return Vec3Sample(vals, frame.data[6])  # type: ignore[arg-type]
 
 
+@dataclass
+class SyncSample:
+    frame_no: int
+    seq: int
+
+
+def unpack_sync(frame: Frame) -> SyncSample | None:
+    if frame.id != ID_SYNC or not check(frame):
+        return None
+    return SyncSample(struct.unpack_from("<I", frame.data, 0)[0], frame.data[6])
+
+
 def unpack_cmd(frame: Frame) -> CmdSample | None:
     if not check(frame):
         return None
@@ -158,7 +175,8 @@ def describe(frame: Frame) -> str:
     """One-line human-readable decode of a bus frame (used by `listen` and `decode`)."""
     i = frame.id
     if i == ID_SYNC:
-        return "SYNC"
+        sy = unpack_sync(frame)
+        return f"SYNC  -  frame={sy.frame_no} seq={sy.seq}" if sy else f"SYNC  -  CRC-BAD  {frame.hex()}"
     for base, name, lsb, unit in (
         (ID_GYRO_BASE, "GYRO", GYRO_LSB_DPS, "dps"),
         (ID_ACCEL_BASE, "ACCEL", ACCEL_LSB_G, "g"),
