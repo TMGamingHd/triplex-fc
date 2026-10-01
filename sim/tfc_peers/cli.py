@@ -33,13 +33,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     sc = _scenario(args)
     bus = B.SocketCanBus(args.iface)
     names = ",".join("ABC"[n] for n in sc.nodes)
-    print(f"sending virtual {names} on {args.iface} at 100 Hz for {args.frames} frames "
-          f"({args.frames / 100:.1f} s); faults: {[str(f) for f in sc.faults] or 'none'}", flush=True)
+    mode = ("following SYNC from the flight computer" if args.follow_sync else "free-running at 100 Hz")
+    print(f"virtual {names} on {args.iface}, {mode}, {args.frames} frames ({args.frames / 100:.1f} s); "
+          f"faults: {[str(f) for f in sc.faults] or 'none'}", flush=True)
     try:
-        st = B.run_realtime(sc, bus, args.frames)
+        if args.follow_sync:
+            st = B.run_synced(sc, bus, args.frames, on_note=lambda m: print(f"note: {m}", flush=True))
+        else:
+            st = B.run_realtime(sc, bus, args.frames)
     except KeyboardInterrupt:
         print("\ninterrupted")
         return 130
+    except TimeoutError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     finally:
         bus.close()
     print(f"sent {st['sent']:.0f} frames; send lateness p50 {st['late_p50_us']:.0f} us, "
@@ -101,6 +108,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("run", help="send virtual peers' traffic on a SocketCAN interface in real time")
     _add_scenario_args(p)
     p.add_argument("--iface", default="vcan0")
+    p.add_argument("--follow-sync", action="store_true",
+                   help="phase-lock to the flight computer's SYNC frames (frame numbers come from SYNC); "
+                        "--frames then counts SYNC frames. Without it the peers free-run on their own 100 Hz clock")
     p.set_defaults(fn=cmd_run)
 
     p = sub.add_parser("record", help="generate traffic offline into a candump-format log (no sleeping)")

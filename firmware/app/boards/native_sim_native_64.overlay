@@ -1,0 +1,11 @@
+/* Put the flight bus on the host's vcan0 (create it with sim/scripts/setup_vcan.sh). */
+/ {
+	chosen {
+		zephyr,canbus = &can0;
+	};
+};
+
+&can0 {
+	status = "okay";
+	host-interface = "vcan0";
+};

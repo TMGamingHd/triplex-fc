@@ -146,6 +146,39 @@ inline DecodedCommand unpack_cmd(const Frame& f) noexcept {
   return d;
 }
 
+// ---- SYNC: sent by the sync master (lowest healthy FC) at the start of every major frame ----
+// Payload: 32-bit frame number (little endian) | 2 reserved bytes (0) | seq | crc8. Receivers
+// phase-lock their frame timer to its arrival; the frame number lets late joiners (and the
+// virtual peers) agree on which frame it is.
+struct DecodedSync {
+  uint32_t frame_no = 0;
+  uint8_t seq = 0;
+  bool ok = false;
+};
+
+inline Frame pack_sync(uint32_t frame_no, uint8_t seq) noexcept {
+  Frame f;
+  f.id = id::kSync;
+  for (unsigned i = 0; i < 4U; ++i) {
+    f.data[i] = static_cast<uint8_t>((frame_no >> (8U * i)) & 0xFFU);
+  }
+  detail::seal(f, seq);
+  return f;
+}
+
+inline DecodedSync unpack_sync(const Frame& f) noexcept {
+  DecodedSync d;
+  if (!detail::check(f)) {
+    return d;
+  }
+  for (unsigned i = 0; i < 4U; ++i) {
+    d.frame_no |= static_cast<uint32_t>(f.data[i]) << (8U * i);
+  }
+  d.seq = f.data[6];
+  d.ok = true;
+  return d;
+}
+
 // Sequence numbers wrap at 256; returns true if `seq` is the expected frame.
 constexpr bool seq_is_next(uint8_t last, uint8_t seq) noexcept {
   return static_cast<uint8_t>(last + 1U) == seq;

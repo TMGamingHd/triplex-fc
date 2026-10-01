@@ -103,6 +103,26 @@ TFC_TEST(seq_tracker_damaged_before_first_good_frame_is_ignored) {
   CHECK(t.accept(78));
 }
 
+TFC_TEST(sync_roundtrip_and_layout) {
+  const Frame f = pack_sync(0x01020304U, 9);
+  CHECK(f.id == id::kSync);
+  CHECK(f.data[0] == 0x04 && f.data[1] == 0x03 && f.data[2] == 0x02 && f.data[3] == 0x01);
+  CHECK(f.data[4] == 0 && f.data[5] == 0);  // reserved
+  const DecodedSync d = unpack_sync(f);
+  CHECK(d.ok);
+  CHECK(d.frame_no == 0x01020304U);
+  CHECK(d.seq == 9);
+}
+
+TFC_TEST(sync_any_single_bit_flip_is_detected) {
+  const Frame f = pack_sync(123456U, 77);
+  for (unsigned bit = 0; bit < 64; ++bit) {
+    Frame g = f;
+    g.data[bit / 8U] = static_cast<uint8_t>(g.data[bit / 8U] ^ (1U << (bit % 8U)));
+    CHECK(!unpack_sync(g).ok);
+  }
+}
+
 TFC_TEST(arbitration_priority_order) {
   CHECK(id::kSync < id::kGyroBase);
   CHECK(id::kGyroBase < id::kCmdBase);

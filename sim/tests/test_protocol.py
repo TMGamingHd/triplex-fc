@@ -11,6 +11,9 @@ GOLDEN = [
     ("gyro A saturating", P.pack_gyro(0, (9999.0, -9999.0, 0.06), 0), 0x100, "ff7f008000000063"),
     ("cmd B", P.pack_cmd(1, 1.234, -5.678, 0xBEEF, 7), 0x201, "d204d2e9efbe07bd"),
     ("cmd C saturating", P.pack_cmd(2, -40.0, 40.0, 1, 128), 0x202, "0080ff7f0100807f"),
+    ("sync 0x01020304 seq9", P.pack_sync(0x01020304, 9), 0x010, "0403020100000915"),
+    ("sync 0 seq0", P.pack_sync(0, 0), 0x010, "000000000000000a"),
+    ("sync max seq255", P.pack_sync(0xFFFFFFFF, 255), 0x010, "ffffffff0000ff7b"),
 ]
 
 
@@ -34,6 +37,17 @@ class ProtocolTests(unittest.TestCase):
         self.assertAlmostEqual(c.pitch_deg, 1.234, places=3)
         self.assertAlmostEqual(c.yaw_deg, -5.678, places=3)
         self.assertEqual((c.digest, c.seq), (0xBEEF, 7))
+
+    def test_sync_roundtrip_and_rejects_corruption_and_other_ids(self):
+        f = P.pack_sync(123456, 77)
+        s = P.unpack_sync(f)
+        self.assertEqual((s.frame_no, s.seq), (123456, 77))
+        self.assertIn("frame=123456", P.describe(f))
+        for bit in range(64):
+            data = bytearray(f.data)
+            data[bit // 8] ^= 1 << (bit % 8)
+            self.assertIsNone(P.unpack_sync(P.Frame(f.id, bytes(data))), bit)
+        self.assertIsNone(P.unpack_sync(P.Frame(0x100, f.data)))
 
     def test_every_single_bit_flip_is_detected(self):
         f = P.pack_cmd(0, 12.345, -6.789, 0x1234, 42)

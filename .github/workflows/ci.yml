@@ -44,12 +44,18 @@ jobs:
           wget -q https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZEPHYR_SDK_VERSION}/zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz
           tar xf zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz -C "$HOME"
           "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}/setup.sh" -t arm-zephyr-eabi -h -c
-      - name: Build and run on native_sim
+      - name: Build FC-A for native_sim
         run: |
           . firmware/env.sh
           west build -p always -b native_sim/native/64 firmware/app -d build/native_sim
-          build/native_sim/zephyr/zephyr.exe -stop_at=1 | tee run.log
-          grep -q "vote_milli=1010 status=0 disagree_mask=0x04" run.log
+      - name: Live FC-A against virtual peers (needs vcan; tests skip if the runner has none)
+        run: |
+          # The runner's Azure kernel ships vcan in linux-modules-extra.
+          sudo apt-get install -y "linux-modules-extra-$(uname -r)" || echo "modules-extra not installable"
+          sudo modprobe vcan && sudo ip link add dev vcan0 type vcan && sudo ip link set up vcan0 \
+            || echo "vcan unavailable on this runner: live tests will be skipped"
+          cd sim
+          TFC_FC_BIN="$GITHUB_WORKSPACE/build/native_sim/zephyr/zephyr.exe" python3 -m unittest tests.test_live_fc -v
       - name: Build for nucleo_g474re
         run: |
           . firmware/env.sh

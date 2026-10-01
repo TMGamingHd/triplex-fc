@@ -58,11 +58,23 @@ class HealthyTraffic(unittest.TestCase):
         self.assertEqual(flat(1), flat(1))
         self.assertNotEqual(flat(1), flat(2))
 
-    def test_frames_must_be_requested_in_order(self):
+    def test_cannot_go_backwards_without_reset(self):
         sc = Scenario([1])
         sc.frames(0)
+        sc.frames(1)
         with self.assertRaises(ValueError):
-            sc.frames(2)
+            sc.frames(1)
+        sc.reset()
+        self.assertEqual(sc.next_frame, 0)
+        sc.frames(0)
+
+    def test_joining_late_gives_exactly_what_a_run_from_zero_gives(self):
+        faults = [parse_fault("B:stuck:start=40"), parse_fault("C:spike:start=0")]
+        full = Scenario([1, 2], faults, 5)
+        expected = [[(tf.t_us, tf.frame.id, tf.frame.data) for tf in full.frames(k)] for k in range(80)]
+        late = Scenario([1, 2], faults, 5)
+        for k in (57, 58, 70):  # first request jumps ahead, later ones may skip too
+            self.assertEqual([(tf.t_us, tf.frame.id, tf.frame.data) for tf in late.frames(k)], expected[k])
 
 
 class FaultEffects(unittest.TestCase):
@@ -161,6 +173,57 @@ class FaultSpecParsing(unittest.TestCase):
                     "B:bias:axis=3", "B:bias:sensor=mag", "B:bias:start=-1"):
             with self.subTest(bad), self.assertRaises(FaultSpecError):
                 parse_fault(bad)
+
+
+class FakeSyncBus:
+    """Delivers scripted SYNC frames immediately and records what the peers send."""
+
+    def __init__(self, frame_numbers):
+        self.queue = [P.pack_sync(n, n & 0xFF) for n in frame_numbers]
+        self.sent = []
+        self.filters = None
+
+    def set_filter(self, filters):
+        self.filters = filters
+
+    def recv(self, timeout=None):
+        return self.queue.pop(0) if self.queue else None
+
+    def send(self, t_us, frame):
+        self.sent.append((t_us, frame))
+
+
+class FollowSync(unittest.TestCase):
+    def test_sends_the_frame_numbered_by_sync_and_listens_only_for_sync(self):
+        bus = FakeSyncBus([100, 101, 102])
+        notes = []
+        st = B.run_synced(Scenario([1, 2], seed=3), bus, 3, on_note=notes.append)
+        self.assertEqual(bus.filters, [(0x010, 0x7FF)])
+        self.assertEqual(st["sent"], 18)  # 3 frames x 2 nodes x 3 streams
+        self.assertEqual(notes, [])
+        ref = Scenario([1, 2], seed=3)
+        expected = [tf for k in range(103) for tf in ref.frames(k) if k >= 100]
+        self.assertEqual([(t, f.id, f.data) for t, f in bus.sent],
+                         [(tf.t_us, tf.frame.id, tf.frame.data) for tf in expected])
+
+    def test_sync_master_restart_restarts_the_peers(self):
+        bus = FakeSyncBus([5, 6, 0, 1])
+        notes = []
+        st = B.run_synced(Scenario([1]), bus, 4, on_note=notes.append)
+        self.assertEqual(st["rewinds"], 1)
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(len(bus.sent), 12)
+
+    def test_no_sync_raises_a_helpful_error(self):
+        with self.assertRaisesRegex(TimeoutError, "sync master"):
+            B.run_synced(Scenario([1]), FakeSyncBus([]), 1, sync_timeout_s=0.01)
+
+    def test_bad_crc_sync_is_ignored(self):
+        bus = FakeSyncBus([7])
+        bad = P.Frame(0x010, bus.queue[0].data[:7] + bytes([bus.queue[0].data[7] ^ 1]))
+        bus.queue.insert(0, bad)
+        B.run_synced(Scenario([1]), bus, 1)
+        self.assertEqual(len(bus.sent), 3)
 
 
 class Buses(unittest.TestCase):

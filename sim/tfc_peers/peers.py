@@ -136,18 +136,35 @@ class VirtualNode:
 
 
 class Scenario:
-    """A set of virtual nodes plus their faults. `frames(k)` returns one major frame of traffic."""
+    """A set of virtual nodes plus their faults. `frames(k)` returns one major frame of traffic.
+
+    Frame numbers are absolute (they are the SYNC frame numbers when following a live flight
+    computer). Requesting frame k after frame j < k fast-forwards through j+1..k-1 (so noise and
+    fault state stay exactly what a run from frame 0 would give); going backwards needs `reset()`.
+    """
 
     def __init__(self, nodes: list[int], faults: list[Fault] | None = None, seed: int = 1) -> None:
         self.nodes = sorted(set(nodes))
         self.faults = list(faults or [])
         self.seed = seed
-        self._virtual = {n: VirtualNode(n, self.faults, seed) for n in self.nodes}
+        self.reset()
+
+    def reset(self) -> None:
+        self._virtual = {n: VirtualNode(n, self.faults, self.seed) for n in self.nodes}
         self._next_k = 0
 
-    def frames(self, k: int) -> list[TimedFrame]:
-        if k != self._next_k:
-            raise ValueError(f"frames must be requested in order; expected {self._next_k}, got {k}")
-        self._next_k += 1
+    @property
+    def next_frame(self) -> int:
+        return self._next_k
+
+    def _generate(self, k: int) -> list[TimedFrame]:
         out = [tf for n in self.nodes for tf in self._virtual[n].step(k)]
+        self._next_k = k + 1
         return sorted(out, key=lambda tf: tf.t_us)
+
+    def frames(self, k: int) -> list[TimedFrame]:
+        if k < self._next_k:
+            raise ValueError(f"frame {k} was already generated (next is {self._next_k}); call reset() to rewind")
+        while self._next_k < k:
+            self._generate(self._next_k)  # fast-forward, discarding
+        return self._generate(k)

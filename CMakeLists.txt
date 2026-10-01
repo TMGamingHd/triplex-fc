@@ -18,6 +18,7 @@ add_executable(tfc_tests
   tests/test_crc_protocol.cpp
   tests/test_voter.cpp
   tests/test_fault_monitor.cpp
+  tests/test_redundancy.cpp
   tests/test_triplex_scenarios.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
 target_include_directories(tfc_tests PRIVATE tests)
