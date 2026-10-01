@@ -109,6 +109,51 @@ TFC_TEST(seq_tracker_missing_slot_advances_the_expectation) {
   CHECK(t.accept(4));    // ...and resynchronises
 }
 
+TFC_TEST(seq_tracker_late_arrival_of_a_slot_assumed_missing_is_not_an_error) {
+  // The slot passed with nothing (note_missing), then the frame turns up a frame late carrying the number
+  // we had already assumed. That is the same frame, not a repeat: accept it, and the fresh one after it.
+  SeqTracker t;
+  CHECK(t.accept(10));
+  t.note_missing();       // slot 11 empty at the vote
+  CHECK(t.accept(11));    // ...but it arrives late
+  CHECK(t.accept(12));    // and the on-time frame after it is fine
+  CHECK(!t.accept(12));   // a genuine repeat is still an error: the allowance is used up
+}
+
+TFC_TEST(seq_tracker_a_stalled_sender_flushing_several_late_frames_is_not_an_error) {
+  SeqTracker t;
+  CHECK(t.accept(10));
+  t.note_missing();       // 11 empty at its vote
+  t.note_missing();       // 12 empty at its vote
+  t.note_missing();       // 13 empty at its vote
+  CHECK(t.accept(11));    // the sender wakes up and flushes 11, 12, 13 in order...
+  CHECK(t.accept(12));
+  CHECK(t.accept(13));
+  CHECK(t.accept(14));    // ...then carries on on time
+  CHECK(!t.accept(13));   // each assumed number is accepted once; a repeat is an error
+  SeqTracker u;           // a burst may also start part-way: only the newer assumed numbers can still arrive
+  CHECK(u.accept(10));
+  u.note_missing();
+  u.note_missing();
+  CHECK(u.accept(12));    // 11 never arrives, 12 does (older assumed numbers are forgotten)
+  CHECK(!u.accept(11));   // and 11 arriving after 12 is out of order
+}
+
+TFC_TEST(seq_tracker_late_allowance_applies_only_to_the_slot_just_missed) {
+  SeqTracker t;
+  CHECK(t.accept(10));
+  t.note_missing();
+  t.note_missing();       // 11 and 12 both empty
+  CHECK(t.accept(13) == true);   // continuing counter after a silence is fine
+  SeqTracker u;
+  CHECK(u.accept(10));
+  CHECK(!u.accept(10));          // no missing slot, so a repeat is an error
+  SeqTracker d;
+  CHECK(d.accept(10));
+  d.note_damaged();              // a damaged frame is not "late": nothing to wait for
+  CHECK(!d.accept(11));          // repeat of the damaged number is an error
+}
+
 TFC_TEST(seq_tracker_damaged_before_first_good_frame_is_ignored) {
   SeqTracker t;
   t.note_damaged();

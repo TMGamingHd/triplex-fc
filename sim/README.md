@@ -345,7 +345,7 @@ FC-A's console (events plus a status line each second; `+` voting, `X` latched o
 **Timing jitter shows up as `missing`.** FC-A votes at 7.0 ms; the Python peers' last frame is due at about 5.6 ms,
 so there is only ~1.4 ms of margin for desktop-Linux scheduling. On an idle machine `missing` stays 0; on a busy one
 (the shared GitHub CI runner) a few peer frames arrive after the vote and are counted as `missing` (4-8 in 400
-frames was seen there). Nobody latched and the mode stayed TRIPLEX: that is exactly what the 3-of-5 filter is for.
+frames was seen there). Nobody latched and the mode stayed TRIPLEX: that is exactly what the 3-of-5 filter is for. A late frame costs only that one `missing`: when it turns up in the next frame its sequence number is recognised as the slot it was assumed missing for, so `seq=` stays 0 (ADR-007).
 The live tests therefore allow a few `missing` and a latch a few frames either side of the ideal fault + 2.
 
 Both Python's `run` lateness line (typically p50 3 us, p99 15-45 us, max under 1 ms on this machine) and FC-A's

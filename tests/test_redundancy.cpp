@@ -505,3 +505,60 @@ TFC_TEST(manager_bus_alarm_follows_the_out_of_schedule_rate) {
   CHECK(m.counters().bus_alarm_frames == 1U);
   CHECK(m.counters().out_of_schedule == 7U);
 }
+
+TFC_TEST(manager_a_frame_that_misses_the_vote_costs_one_sample_not_two) {
+  // Jitter: node 1's gyro for frame 20 leaves after the vote and is drained with frame 21. Frame 20
+  // counts one missing sample; the late frame (sequence 20) and the on-time one (21) are not errors.
+  RedundancyManager m;
+  for (int k = 0; k < 60; ++k) {
+    m.begin_frame();
+    const uint8_t seq = static_cast<uint8_t>(k);
+    for (unsigned n = 0; n < 3; ++n) {
+      const bool is_b = n == 1U;
+      if (is_b && k == 21) {
+        m.on_frame(pack_gyro(1, Vec3{{truth(20), -2.0F, 1.0F}}, 20));  // frame 20's gyro, a frame late
+      }
+      if (!(is_b && k == 20)) {
+        m.on_frame(pack_gyro(static_cast<uint8_t>(n), Vec3{{truth(k), -2.0F, 1.0F}}, seq));
+      }
+      m.on_frame(pack_accel(static_cast<uint8_t>(n), Vec3{{0.0F, 0.0F, 1.0F + 0.001F * static_cast<float>(k % 7)}}, seq));
+      m.on_frame(pack_cmd(static_cast<uint8_t>(n), Command{0.5F, -0.25F, 0x1234U}, seq));
+    }
+    const FrameReport& r = m.end_frame();
+    CHECK(r.newly_latched == 0U);
+    if (k == 20) {
+      CHECK(r.reason[1] == reason::kMissing);
+    }
+    if (k == 21) {
+      CHECK(r.reason[1] == 0U);  // no false sequence error on the late frame or the one after it
+    }
+  }
+  CHECK(m.counters().missing == 1U);
+  CHECK(m.counters().seq_bad == 0U);
+}
+
+TFC_TEST(manager_a_stalled_peer_flushing_two_late_frames_costs_one_sample_each) {
+  // Node 1 stalls for two frames (20, 21) and flushes both, in order, with frame 22's own.
+  RedundancyManager m;
+  for (int k = 0; k < 60; ++k) {
+    m.begin_frame();
+    const uint8_t seq = static_cast<uint8_t>(k);
+    for (unsigned n = 0; n < 3; ++n) {
+      const bool is_b = n == 1U;
+      const bool stalled = is_b && (k == 20 || k == 21);
+      if (is_b && k == 22) {
+        for (int late = 20; late <= 21; ++late) {  // the backlog, oldest first
+          m.on_frame(pack_gyro(1, Vec3{{truth(late), -2.0F, 1.0F}}, static_cast<uint8_t>(late)));
+        }
+      }
+      if (!stalled) {
+        m.on_frame(pack_gyro(static_cast<uint8_t>(n), Vec3{{truth(k), -2.0F, 1.0F}}, seq));
+      }
+      m.on_frame(pack_accel(static_cast<uint8_t>(n), Vec3{{0.0F, 0.0F, 1.0F + 0.001F * static_cast<float>(k % 7)}}, seq));
+      m.on_frame(pack_cmd(static_cast<uint8_t>(n), Command{0.5F, -0.25F, 0x1234U}, seq));
+    }
+    CHECK(m.end_frame().newly_latched == 0U);  // two missing samples are below 3-of-5
+  }
+  CHECK(m.counters().missing == 2U);
+  CHECK(m.counters().seq_bad == 0U);
+}
