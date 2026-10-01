@@ -192,10 +192,20 @@ constexpr bool seq_is_next(uint8_t last, uint8_t seq) noexcept {
 class SeqTracker {
  public:
   // Feed the sequence number of a CRC-good frame. Returns false if it is not the expected next.
+  // One exception: after note_missing(), a frame carrying one of the numbers we merely ASSUMED were
+  // missing is that slot's own frame arriving late (it missed the vote; under load a stalled sender
+  // can flush several at once). It is accepted without moving the expectation, so a late frame costs
+  // one bad sample (it was missing) and not two. Each assumed number is accepted once.
   bool accept(uint8_t seq) noexcept {
+    const uint8_t behind = static_cast<uint8_t>(last_ - seq);  // 0 = exactly the number assumed last
+    if (have_ && pending_ > 0U && behind < pending_) {
+      pending_ = behind;  // older assumed slots can no longer arrive (a sender's frames stay in order)
+      return true;
+    }
     const bool ok = !have_ || seq_is_next(last_, seq);
     last_ = seq;
     have_ = true;
+    pending_ = 0U;
     return ok;
   }
 
@@ -205,17 +215,28 @@ class SeqTracker {
     if (have_) {
       last_ = static_cast<uint8_t>(last_ + 1U);
     }
+    pending_ = 0U;
   }
 
-  // The slot passed and no frame arrived at all (lost on the bus, or the sender was silent). The
-  // sender's counter still advances with the schedule, so assume the frame carried the next number:
-  // one lost frame then costs one bad sample (it is missing), not two (missing + a false "gap" on the
-  // next good frame). A sender that restarts its counter is reported once, on its first frame back.
-  void note_missing() noexcept { note_damaged(); }
+  // The slot passed and no frame arrived at all (lost on the bus, sent late, or the sender was silent).
+  // The sender's counter still advances with the schedule, so assume the frame carried the next
+  // number: one lost frame then costs one bad sample (it is missing), not two (missing + a false
+  // "gap" on the next good frame). If those frames turn up late, accept() recognises them. A sender
+  // that restarts its counter is reported once, on its first frame back.
+  void note_missing() noexcept {
+    if (have_) {
+      last_ = static_cast<uint8_t>(last_ + 1U);
+      if (pending_ < kMaxLate) {
+        ++pending_;
+      }
+    }
+  }
 
  private:
   uint8_t last_ = 0U;
   bool have_ = false;
+  static constexpr uint8_t kMaxLate = 32U;  // a longer silence is a dead node, not a late burst
+  uint8_t pending_ = 0U;  // assumed-missing numbers ending at last_ that may still arrive late
 };
 
 }  // namespace tfc
