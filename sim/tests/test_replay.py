@@ -219,15 +219,31 @@ class NodeLifeCycle(ReplayBase):
         self.replay(["B:late:start=100,us=4000"], "--expect-latch", "B:100-106", "--expect-state", "B:latched",
                     "--expect-mode", "duplex")
 
-    def test_F26_an_intermittent_fault_below_the_persistence_threshold_is_never_isolated(self):
-        # CHARACTERISATION of the gap PR 4 (alpha-count) closes: one bad frame in three, for ever, never makes
-        # 3-of-5. The vote masks every bad frame, so the output is right, but the node is plainly sick.
-        out = self.replay(["B:corrupt:start=100,p=1.0,period=3,duty=1"], "--expect-no-latch", "B", frames=500,
-                          )
-        self.assertGreater(int(out["crc_bad"]), 300)
+    def test_F26_an_intermittent_fault_that_three_of_five_cannot_see_is_isolated(self):  # TFC-FDIR-023
+        # One bad frame in three, for ever: 3-of-5 never fills (the vote masks each bad frame, but the node is
+        # plainly sick). The leaky alpha-count (ADR-013) isolates it about a dozen frames after it starts.
+        out = self.replay(["B:corrupt:start=100,p=1.0,period=3,duty=1"], "--expect-latch", "B:105-130",
+                          "--expect-state", "B:latched", frames=500)
+        self.assertGreater(int(out["crc_bad"]), 50)
 
-    def test_F26_the_same_node_at_one_bad_frame_in_two_is_isolated(self):
-        self.replay(["B:corrupt:start=100,p=1.0,period=2,duty=1"], "--expect-latch", "B:100-106")
+    def test_F26_two_bad_in_five_and_two_in_ten_are_isolated_too(self):  # TFC-FDIR-023
+        self.replay(["B:corrupt:start=100,p=1.0,period=5,duty=2"], "--expect-latch", "B:105-125")
+        self.replay(["B:corrupt:start=100,p=1.0,period=10,duty=2"], "--expect-latch", "B:105-145", frames=600)
+
+    def test_F26_sparse_trouble_is_left_alone(self):  # TFC-FDIR-004 / 023: no false isolations
+        for period in (10, 20):  # one bad frame in 10 (10%) and in 20 (5%)
+            with self.subTest(period=period):
+                self.replay([f"B:corrupt:start=100,p=1.0,period={period},duty=1"], "--expect-no-latch", "B",
+                            "--expect-mode", "triplex", frames=900)
+        self.replay(["B:spike:start=0,mag=20,p=0.05"], "--expect-no-latch", "B", "--expect-mode", "triplex", frames=900)
+
+    def test_F26_a_recurring_intermittent_node_is_disabled_at_its_second_strike(self):  # TFC-FDIR-007
+        # The cause is "intermittent" = physical class: readmitted once, latching again disables it.
+        out = self.replay(["B:corrupt:start=100,end=200,p=1.0,period=3,duty=1",
+                           "B:corrupt:start=600,p=1.0,period=3,duty=1"],
+                          "--expect-state", "B:disabled", "--expect-min", "nodes_disabled:1", frames=1000,
+                          commands=["450:reintegrate:B"])
+        self.assertEqual(out["strikes.B"], "2")
 
     def test_operator_can_disable_and_clear_a_node(self):
         self.replay([], "--expect-state", "B:healthy", "--expect-mode", "triplex", frames=800,

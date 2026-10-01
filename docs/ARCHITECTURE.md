@@ -82,10 +82,10 @@ Missing / late / CRC-bad / out-of-sequence data is treated exactly like a miscom
 ## 5. FDIR (fault detection, isolation, recovery)
 
 - **Detect:** per-channel miscompare, timeout, CRC or sequence error, non-finite value, stuck-at (bit-identical output), digest mismatch, out-of-schedule flood.
-- **Persist:** `ChannelMonitor` M-of-N filter (start with 3-of-5) so one glitch does not isolate a healthy channel.
+- **Persist:** `ChannelMonitor` M-of-N filter (start with 3-of-5) so one glitch does not isolate a healthy channel, OR'd with a leaky `AlphaCount` (+1 per bad frame, x0.9 per good, latch at 3) that catches a node that is bad one frame in three or two in five, which the window never sees (ADR-013).
 - **Isolate:** a latched node is excluded from votes starting the same frame and a strike is counted against it.
 - **Recover:** latched -> dwell -> probation (a *shadow vote*: the excluded node is compared every frame with the voted output of the healthy nodes) -> readmission, only when an operator asks (default) and only if it keeps agreeing; see the life cycle below and ADR-010.
-- **Disable:** the 3rd latch of a node (2nd when the cause is physical, such as a stuck sensor) disables it for the run; only a maintenance command brings it back.
+- **Disable:** the 3rd latch of a node (2nd when the cause is physical, such as a stuck sensor) disables it for the run (a stuck sensor or an intermittent fault counts as physical: the second strike); only a maintenance command brings it back.
 - **Degrade:** healthy count 3 -> Triplex, 2 -> Duplex (compare only), 1 -> Simplex, 0 -> Safe. A duplex disagreement is attributed by continuity when that is clear-cut; otherwise the system holds the last voted command and requests Safe (sticky; see section 4).
 - **Watchdogs:** independent watchdog per node plus a frame-deadline monitor; a hung node becomes fail-silent, which the others detect as timeouts.
 
@@ -94,8 +94,8 @@ Missing / late / CRC-bad / out-of-sequence data is treated exactly like a miscom
 ```mermaid
 stateDiagram-v2
   [*] --> Healthy
-  Healthy --> Latched: 3-of-5 bad frames (strike +1)
-  Healthy --> Disabled: strike limit reached (3; 2 for a physical cause)
+  Healthy --> Latched: 3-of-5 bad frames, or the leaky count (strike +1)
+  Healthy --> Disabled: strike limit reached (3; 2 for a physical cause: stuck sensor or intermittent)
   Latched --> Probation: dwell >= 200 frames AND operator request\n(or Auto policy: first, transient-looking latch)
   Probation --> Healthy: 100 agreeing frames (300 after a repeat latch)
   Probation --> Latched: one bad or disagreeing frame\n(dwell restarts, no new strike)

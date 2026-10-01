@@ -49,6 +49,7 @@ constexpr uint8_t kSeq = 4U;      // sequence number out of order
 constexpr uint8_t kVote = 8U;     // value disagreed with the vote on some channel
 constexpr uint8_t kDigest = 16U;  // estimator-state digest disagreed
 constexpr uint8_t kStuck = 32U;   // sensor bytes bit-identical for too many frames
+constexpr uint8_t kIntermittent = 64U;  // latched by the leaky count: bad often enough, never 3-of-5 in a row
 }  // namespace reason
 
 // Writes the set reason bits as words, e.g. "vote disagreement + digest mismatch", into `out`
@@ -58,12 +59,13 @@ inline void format_reasons(uint8_t bits, char* out, std::size_t cap) noexcept {
     uint8_t bit;
     const char* text;
   };
-  constexpr std::array<Name, 6> names = {{{reason::kMissing, "frame missing"},
+  constexpr std::array<Name, 7> names = {{{reason::kMissing, "frame missing"},
                                           {reason::kCrc, "CRC failure"},
                                           {reason::kSeq, "sequence error"},
                                           {reason::kVote, "vote disagreement"},
                                           {reason::kDigest, "digest mismatch"},
-                                          {reason::kStuck, "stuck sensor"}}};
+                                          {reason::kStuck, "stuck sensor"},
+                                          {reason::kIntermittent, "intermittent fault"}}};
   if (cap == 0U) {
     return;
   }
@@ -155,6 +157,11 @@ struct RedundancyConfig {
   uint8_t persist_m = 3;            // latch when M of the last N frames are bad
   uint8_t persist_n = 5;
   uint16_t stuck_limit = 20;         // identical sensor frames before "stuck"
+  // Leaky count for intermittent faults, OR'd with the M-of-N window (ADR-013): +1 per bad frame,
+  // x alpha_k per good frame, latch at alpha_threshold. Catches a node that is bad one frame in three
+  // (or two in five) that the window never sees. alpha_threshold = 0 disables it.
+  float alpha_k = 0.9F;
+  float alpha_threshold = 3.0F;
   // A node that has never delivered a good sample is not judged for this many frames: peers boot
   // in any order, and "not here yet" is not "failed". 0 = judge from the first frame (absent means
   // invalid). Once a node has been seen, it is always judged.
@@ -175,7 +182,9 @@ struct RedundancyConfig {
   uint16_t probation_frames_repeat = 300;   // ... after a repeat latch (strike 2 or more)
   uint8_t max_strikes = 3;                  // latches before the node is disabled for the run
   uint8_t max_strikes_physical = 2;         // ... when the cause is physical (below)
-  uint8_t physical_causes = reason::kStuck;  // reason bits that point at failed hardware
+  // Reason bits that point at failed hardware (a recurring fault counts: it is how loose connectors and
+  // wearing-out parts behave), so a repeat disables the node at the second strike.
+  uint8_t physical_causes = reason::kStuck | reason::kIntermittent;
   // Strikes older than this many frames are forgotten. 0 = the whole run (a flight is minutes long).
   uint32_t strike_window_frames = 0;
   // AutoTransient only: causes that look transient, and how many failed probations are tolerated.
@@ -243,7 +252,9 @@ class RedundancyManager {
              ChannelMonitor(cfg.persist_m, cfg.persist_n, 0xFFFFU, 0xFFU),
              ChannelMonitor(cfg.persist_m, cfg.persist_n, 0xFFFFU, 0xFFU)},
         stuck_{StuckDetector(cfg.stuck_limit), StuckDetector(cfg.stuck_limit),
-               StuckDetector(cfg.stuck_limit)} {}
+               StuckDetector(cfg.stuck_limit)},
+        alpha_{AlphaCount(cfg.alpha_k, cfg.alpha_threshold), AlphaCount(cfg.alpha_k, cfg.alpha_threshold),
+               AlphaCount(cfg.alpha_k, cfg.alpha_threshold)} {}
 
   void begin_frame() noexcept {
     rx_ = {};
@@ -448,8 +459,16 @@ class RedundancyManager {
       if (((digest_bad >> n) & 1U) != 0U) {
         rep.reason[n] = static_cast<uint8_t>(rep.reason[n] | reason::kDigest);
       }
-      if (state_[n] == NodeState::Healthy && mon_[n].update(rep.reason[n] != 0U)) {
-        on_latch(n, rep);
+      if (state_[n] == NodeState::Healthy) {
+        const bool bad = rep.reason[n] != 0U;
+        const bool by_window = mon_[n].update(bad);
+        const bool by_alpha = alpha_[n].update(bad);
+        if (by_window || by_alpha) {
+          if (!by_window) {
+            rep.reason[n] = static_cast<uint8_t>(rep.reason[n] | reason::kIntermittent);
+          }
+          on_latch(n, rep);
+        }
       }
     }
 
@@ -699,6 +718,7 @@ class RedundancyManager {
       if (++probation_clean_[n] >= needed) {
         state_[n] = NodeState::Healthy;
         mon_[n].force_unlatch();
+        alpha_[n].reset();
         stuck_[n] = StuckDetector(cfg_.stuck_limit);
         rep.newly_reintegrated = static_cast<uint8_t>(rep.newly_reintegrated | (1U << n));
         ++counters_.reintegrations;
@@ -786,6 +806,7 @@ class RedundancyManager {
   RedundancyConfig cfg_;
   std::array<ChannelMonitor, kNodes> mon_;
   std::array<StuckDetector, kNodes> stuck_;
+  std::array<AlphaCount, kNodes> alpha_;
   std::array<bool, kNodes> seen_{};
   std::array<NodeState, kNodes> state_{};
   std::array<uint8_t, kNodes> strikes_{};

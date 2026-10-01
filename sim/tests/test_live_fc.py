@@ -139,6 +139,16 @@ class LiveFcAgainstPeers(unittest.TestCase):
         self.assertNotIn("REINTEGRATED", text)
         self.assertNotIn("MODE DUPLEX -> TRIPLEX", text)  # the bad node never got back into the vote
 
+    def test_intermittent_node_is_isolated_by_the_leaky_count_live(self):  # TFC-FDIR-023
+        # One bad frame in three, from frame 300: 3-of-5 can never fire; the alpha-count does, ~20 frames in.
+        lines = self.live(["B:corrupt:start=300,p=1.0,period=3,duty=1"], peer_frames=450)
+        text = "\n".join(lines)
+        m = next((re.match(r"\[frame (\d+)\] node B LATCHED OUT: (.*)", ln) for ln in lines
+                  if re.match(r"\[frame (\d+)\] node B LATCHED OUT", ln)), None)
+        self.assertIsNotNone(m, text)
+        self.assertTrue(303 <= int(m.group(1)) <= 340, text)
+        self.assertIn("intermittent fault", m.group(2), text)
+
     def test_silent_C_is_isolated_within_three_frames(self):
         lines = self.live(["C:dropout:start=300"], peer_frames=450)
         self.assert_latch(lines, "C", 300, "frame missing", slack=1)
