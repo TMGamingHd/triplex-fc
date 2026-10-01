@@ -109,10 +109,17 @@ const char* mode_text(tfc::Mode m) {
   return "?";
 }
 
-// Per-node state letter for the status line: ok, or the reason it is out.
+// Per-node state letter for the status line: '+' voting, 'X' latched out, 'p' on probation,
+// 'D' disabled for the run, '?' no good data this frame.
 char node_state(const tfc::FrameReport& r, unsigned n) {
+  if (((r.disabled_mask >> n) & 1U) != 0U) {
+    return 'D';
+  }
+  if (((r.probation_mask >> n) & 1U) != 0U) {
+    return 'p';
+  }
   if (((r.latched_mask >> n) & 1U) != 0U) {
-    return 'X';  // latched out
+    return 'X';
   }
   return ((r.valid_mask >> n) & 1U) != 0U ? '+' : '?';
 }
@@ -125,6 +132,8 @@ int main() {
   }
   tfc::RedundancyConfig cfg;
   cfg.startup_grace_frames = kStartupGraceFrames;
+  cfg.policy = IS_ENABLED(CONFIG_TFC_AUTO_REINTEGRATE) ? tfc::ReintegrationPolicy::AutoTransient
+                                                       : tfc::ReintegrationPolicy::Manual;
   tfc::RedundancyManager mgr(cfg);
   fc::sim::Noise noise(0x1234U + kNodeId);
   constexpr int64_t kPeriodUs = fc::sim::kFrameUs;
@@ -136,7 +145,7 @@ int main() {
   uint32_t tx_errors = 0;
 
   printk("FC-A (node %u): sync master, 100 Hz frame loop. Waiting for peers B and C on the bus.\n", kNodeId);
-  printk("status: '+' voting, 'X' latched out, '?' no good data this frame\n");
+  printk("status: '+' voting, 'X' latched out, 'p' on probation, 'D' disabled, '?' no good data this frame\n");
 
   for (uint32_t k = 0;; ++k) {
     const int64_t base = start + static_cast<int64_t>(k) * period;
@@ -195,6 +204,31 @@ int main() {
     }
     const tfc::FrameReport& rep = mgr.end_frame();
 
+    for (unsigned i = 0; i < rep.command_count; ++i) {
+      printk("[frame %u] GROUND COMMAND %s %c: %s\n", k, tfc::op_text(rep.commands[i].op),
+             'A' + static_cast<char>(rep.commands[i].node), tfc::result_text(rep.commands[i].result));
+    }
+    for (unsigned n = 0; n < tfc::kNodes; ++n) {
+      const unsigned bit = 1U << n;
+      if ((rep.probation_started & bit) != 0U) {
+        printk("[frame %u] node %c ON PROBATION: shadow vote against the healthy nodes (strikes: %u)\n", k,
+               'A' + static_cast<char>(n), static_cast<unsigned>(rep.strikes[n]));
+      }
+      if ((rep.probation_failed & bit) != 0U) {
+        std::array<char, 96> why{};
+        tfc::format_reasons(rep.reason[n], why.data(), why.size());
+        printk("[frame %u] node %c FAILED PROBATION, back to latched: %s\n", k, 'A' + static_cast<char>(n),
+               why.data());
+      }
+      if ((rep.newly_reintegrated & bit) != 0U) {
+        printk("[frame %u] node %c REINTEGRATED into the vote (strikes on record: %u)\n", k,
+               'A' + static_cast<char>(n), static_cast<unsigned>(rep.strikes[n]));
+      }
+      if ((rep.newly_disabled & bit) != 0U) {
+        printk("[frame %u] node %c DISABLED for the run (strikes: %u)\n", k, 'A' + static_cast<char>(n),
+               static_cast<unsigned>(rep.strikes[n]));
+      }
+    }
     for (unsigned n = 0; n < tfc::kNodes; ++n) {
       if (((rep.newly_seen >> n) & 1U) != 0U && n != kNodeId) {
         printk("[frame %u] node %c joined the bus\n", k, 'A' + static_cast<char>(n));

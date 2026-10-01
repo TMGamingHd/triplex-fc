@@ -5,6 +5,7 @@ import unittest
 
 from tfc_peers import bus as B
 from tfc_peers import protocol as P
+from tfc_peers.commands import parse_command
 from tfc_peers.faults import FaultSpecError, parse_fault
 from tfc_peers.peers import BABBLE_ID_BASE, FRAME_US, Scenario
 
@@ -159,6 +160,65 @@ class FaultEffects(unittest.TestCase):
         t = traffic([1], ["B:bias:start=5,end=8,mag=50"], 12)
         big = [k for k in range(12) if abs(self.gyro(t[k], 1)[0]) > 30]
         self.assertEqual(big, [5, 6, 7])
+
+
+class RecoveryFaults(unittest.TestCase):
+    def seqs(self, t, node=1):
+        return [by_id(fk, 0x100 + node)[0].data[6] if by_id(fk, 0x100 + node) else None for fk in t]
+
+    def test_reboot_is_silent_then_the_counter_restarts_at_zero(self):
+        t = traffic([1], ["B:reboot:start=20,down=10"], 50)
+        self.assertEqual(self.seqs(t)[19], 19)
+        self.assertEqual(set(self.seqs(t)[20:30]), {None})          # silent
+        self.assertEqual(self.seqs(t)[30:33], [0, 1, 2])              # back, counting from 0
+        self.assertEqual(self.seqs(t)[49], 19)
+
+    def test_late_shifts_every_scheduled_frame_inside_the_window_only(self):
+        base = traffic([1], [], 20)
+        late = traffic([1], ["B:late:start=5,end=8,us=4000"], 20)
+        for k in range(20):
+            for a, b in zip(base[k], late[k]):
+                self.assertEqual(b.t_us - a.t_us, 4000 if 5 <= k < 8 else 0, k)
+                self.assertEqual(a.frame.data, b.frame.data)  # same data, just later
+
+    def test_late_must_leave_inside_the_frame(self):
+        with self.assertRaises(FaultSpecError):
+            parse_fault("B:late:us=9500")
+
+    def test_intermittent_option_gates_any_fault(self):
+        t = traffic([1], ["B:dropout:start=10,period=5,duty=2"], 40)
+        silent = [k for k in range(40) if not by_id(t[k], 0x101)]
+        self.assertEqual(silent, [10, 11, 15, 16, 20, 21, 25, 26, 30, 31, 35, 36])
+        self.assertEqual(str(parse_fault("B:dropout:start=10,period=5,duty=2")), "B:dropout:start=10,period=5,duty=2")
+
+    def test_bad_intermittent_patterns_are_rejected(self):
+        for bad in ("B:bias:period=1", "B:bias:period=5,duty=5", "B:bias:period=5,duty=0", "B:bias:duty=2"):
+            with self.subTest(bad), self.assertRaises(FaultSpecError):
+                parse_fault(bad)
+
+    def test_scripted_commands_become_ground_frames_in_the_right_frame(self):
+        sc = Scenario([1], commands=[parse_command("5:reintegrate:B"), parse_command("7:clear-safe")])
+        got = {}
+        for k in range(10):
+            for tf in sc.frames(k):
+                if tf.frame.id == 0x510:
+                    got[k] = (tf.t_us - k * 10_000, P.unpack_ground(tf.frame))
+        self.assertEqual(sorted(got), [5, 7])
+        self.assertEqual(got[5][0], 6500)  # before the 7 ms vote, so it applies in that very frame
+        self.assertEqual((got[5][1].op, got[5][1].node), (1, 1))
+        self.assertEqual(got[7][1].op, 4)
+
+    def test_command_specs(self):
+        self.assertEqual(str(parse_command("450:Reintegrate:b")), "450:reintegrate:B")
+        self.assertEqual(str(parse_command("600:clear-safe")), "600:clear-safe")
+        for bad in ("450", "x:reintegrate:B", "450:explode:B", "450:reintegrate", "-1:disable:A", "450:disable:D"):
+            with self.subTest(bad), self.assertRaises(FaultSpecError):
+                parse_command(bad)
+
+    def test_commands_survive_late_join_fast_forward(self):
+        sc = Scenario([1], commands=[parse_command("30:disable:C")])
+        ids = [tf.frame.id for tf in sc.frames(30)]
+        self.assertIn(0x510, ids)  # frame 30 requested directly (late joiner) still carries its command
 
 
 class FaultSpecParsing(unittest.TestCase):

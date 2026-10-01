@@ -18,6 +18,7 @@ struct NodeFault {
   float gyro_bias = 0.0F;      // dps added to gyro axis 0
   uint16_t digest_xor = 0;     // XORed into the command digest
   bool corrupt_gyro = false;   // flip one payload bit of the gyro frame
+  int freeze_k = -1;           // >= 0: gyro and accel repeat frame freeze_k's values (a stuck sensor)
 };
 
 float truth(int k) { return 5.0F + 0.125F * static_cast<float>(k % 16); }  // moves every frame (sawtooth)
@@ -33,12 +34,13 @@ const FrameReport& frame(RedundancyManager& m, int k, const std::array<NodeFault
     if (!f[n].present) {
       continue;
     }
-    Frame g = pack_gyro(static_cast<uint8_t>(n), Vec3{{tr(k) + f[n].gyro_bias, -2.0F, 1.0F}}, seq);
+    const int kk = f[n].freeze_k >= 0 ? f[n].freeze_k : k;
+    Frame g = pack_gyro(static_cast<uint8_t>(n), Vec3{{tr(kk) + f[n].gyro_bias, -2.0F, 1.0F}}, seq);
     if (f[n].corrupt_gyro) {
       g.data[0] = static_cast<uint8_t>(g.data[0] ^ 1U);
     }
     m.on_frame(g);
-    m.on_frame(pack_accel(static_cast<uint8_t>(n), Vec3{{0.0F, 0.0F, 1.0F + 0.001F * static_cast<float>(k % 7)}}, seq));
+    m.on_frame(pack_accel(static_cast<uint8_t>(n), Vec3{{0.0F, 0.0F, 1.0F + 0.001F * static_cast<float>(kk % 7)}}, seq));
     m.on_frame(pack_cmd(static_cast<uint8_t>(n), Command{0.5F, -0.25F, static_cast<uint16_t>(0x1234U ^ f[n].digest_xor)}, seq));
   }
   return m.end_frame();
@@ -271,26 +273,6 @@ TFC_TEST(manager_a_node_that_returns_with_a_continuing_counter_is_not_penalised)
     frame(m, k, f);
   }
   CHECK(m.counters().seq_bad == 0U);
-}
-
-TFC_TEST(manager_reintegration_needs_explicit_request_and_100_clean_frames) {
-  RedundancyManager m;
-  for (int k = 0; k < 130; ++k) {
-    std::array<NodeFault, 3> f{};
-    if (k >= 10 && k < 15) {
-      f[1].gyro_bias = 3.0F;  // transient fault, gone by frame 15
-    }
-    frame(m, k, f);
-    if (k == 20) {
-      CHECK(m.latched(1));  // clean again, but stays out without a request
-      m.request_reintegration(1);
-    }
-    if (k == 110) {
-      CHECK(m.latched(1));  // 90 clean frames since the request: not yet
-    }
-  }
-  CHECK(!m.latched(1));
-  CHECK(m.last_report().mode == Mode::Triplex);
 }
 
 TFC_TEST(manager_ignores_non_data_ids_and_counts_unknown_ones) {
@@ -561,4 +543,370 @@ TFC_TEST(manager_a_stalled_peer_flushing_two_late_frames_costs_one_sample_each) 
   }
   CHECK(m.counters().missing == 2U);
   CHECK(m.counters().seq_bad == 0U);
+}
+
+// ======================= node life cycle: reintegration, probation, strikes (ADR-010) =======================
+namespace {
+
+float flat_truth(int) { return 5.0F; }
+
+// Drives frames [from, to). `make(k, faults)` fills in this frame's per-node faults; `on(k, report)` sees each report.
+template <class Make, class On>
+void drive(RedundancyManager& m, int from, int to, float (*tr)(int), Make make, On on) {
+  for (int k = from; k < to; ++k) {
+    std::array<NodeFault, 3> f{};
+    make(k, f);
+    on(k, frame(m, k, f, tr));
+  }
+}
+auto no_report = [](int, const FrameReport&) {};
+
+// Records the frames on which `bit` of a mask selected by `pick` is set.
+struct Events {
+  int latched = -1;
+  int probation_started = -1;
+  int probation_failed = -1;
+  int reintegrated = -1;
+  int disabled = -1;
+  uint8_t failure_reason = 0;
+  int max_on_probation = 0;
+  void see(int k, const FrameReport& r, unsigned node) {
+    const uint8_t bit = static_cast<uint8_t>(1U << node);
+    if ((r.newly_latched & bit) != 0U && latched < 0) latched = k;
+    if ((r.probation_started & bit) != 0U && probation_started < 0) probation_started = k;
+    if ((r.probation_failed & bit) != 0U && probation_failed < 0) {
+      probation_failed = k;
+      failure_reason = r.reason[node];
+    }
+    if ((r.newly_reintegrated & bit) != 0U && reintegrated < 0) reintegrated = k;
+    if ((r.newly_disabled & bit) != 0U && disabled < 0) disabled = k;
+    int n = 0;
+    for (unsigned i = 0; i < 3; ++i) n += ((r.probation_mask >> i) & 1U) != 0U ? 1 : 0;
+    if (n > max_on_probation) max_on_probation = n;
+  }
+};
+
+}  // namespace
+
+TFC_TEST(life_cycle_transient_fault_is_reintegrated_after_dwell_and_probation) {
+  RedundancyManager m;
+  Events ev;
+  drive(m, 0, 400, smooth,
+        [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = (k >= 10 && k < 15) ? 3.0F : 0.0F; },
+        [&](int k, const FrameReport& r) {
+          ev.see(k, r, 1);
+          if (k == 20) {
+            CHECK(m.request_reintegration(1) == CommandResult::Accepted);
+            CHECK(m.request_reintegration(1) == CommandResult::AlreadyDone);  // idempotent
+          }
+          if (k == 100) {
+            CHECK(m.state(1) == NodeState::Latched && r.mode == Mode::Duplex);  // still serving its dwell
+          }
+          if (k == 250) {
+            CHECK(m.state(1) == NodeState::Probation && r.mode == Mode::Duplex);  // excluded while on probation
+            CHECK(r.probation_mask == 0x2U && r.valid_mask == 0x5U);
+          }
+        });
+  CHECK(ev.latched == 12);
+  CHECK(ev.probation_started == 212);  // latched at 12 + 200-frame dwell; the request at 20 was queued
+  CHECK(ev.reintegrated == 312);       // 100 agreeing frames
+  CHECK(ev.probation_failed < 0);
+  CHECK(m.state(1) == NodeState::Healthy);
+  CHECK(m.strikes(1) == 1U);           // the strike stays on record
+  CHECK(m.last_report().mode == Mode::Triplex);
+  CHECK(m.counters().reintegrations == 1U && m.counters().probations_started == 1U);
+}
+
+TFC_TEST(life_cycle_manual_policy_never_readmits_without_a_request) {
+  RedundancyManager m;
+  drive(m, 0, 700, smooth, [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = (k >= 10 && k < 15) ? 3.0F : 0.0F; },
+        no_report);
+  CHECK(m.state(1) == NodeState::Latched);  // perfectly clean for 600 frames, still out
+  CHECK(m.counters().probations_started == 0U);
+}
+
+TFC_TEST(life_cycle_a_still_broken_node_is_refused_by_the_shadow_vote) {
+  // The hole the audit found: a node that is STILL biased used to pass "100 clean frames" because a
+  // latched node was never compared with the vote, and then bounced back in (and in Duplex would have
+  // pulled the system to Safe). Now probation compares it with the healthy nodes' voted output.
+  RedundancyManager m;
+  Events ev;
+  drive(m, 0, 700, smooth, [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = k >= 10 ? 3.0F : 0.0F; },
+        [&](int k, const FrameReport& r) {
+          ev.see(k, r, 1);
+          if (k == 20 || k == 300 || k == 600) {
+            m.request_reintegration(1);  // the operator keeps trying
+          }
+        });
+  CHECK(ev.latched == 12);
+  CHECK(ev.probation_started == 212);
+  CHECK(ev.probation_failed == 213);   // refused on the very first frame it is compared
+  CHECK(ev.failure_reason == reason::kVote);  // and the report says why (an operator needs that)
+  CHECK(ev.reintegrated < 0);
+  CHECK(m.state(1) != NodeState::Healthy);
+  CHECK(m.counters().probation_failures >= 2U);
+  CHECK(m.strikes(1) == 1U);           // failing probation is not a new strike: it was never readmitted
+  CHECK(m.last_report().mode == Mode::Duplex);
+}
+
+TFC_TEST(life_cycle_one_disagreeing_frame_during_probation_sends_the_node_back) {
+  RedundancyManager m;
+  Events ev;
+  drive(m, 0, 500, smooth,
+        [](int k, std::array<NodeFault, 3>& f) {
+          f[1].gyro_bias = ((k >= 10 && k < 15) || k == 260) ? 3.0F : 0.0F;  // one relapse at 260
+        },
+        [&](int k, const FrameReport& r) {
+          ev.see(k, r, 1);
+          if (k == 20) m.request_reintegration(1);
+        });
+  CHECK(ev.probation_started == 212);
+  CHECK(ev.probation_failed == 260);
+  CHECK(m.state(1) == NodeState::Latched);  // back to the dwell, and a new request is needed
+  CHECK(ev.reintegrated < 0);
+}
+
+TFC_TEST(life_cycle_probation_pauses_when_there_is_no_reference_and_resumes) {
+  // Two frames in which nobody healthy delivers: no reference, so the frame neither counts nor fails.
+  RedundancyManager m;
+  Events ev;
+  drive(m, 0, 400, smooth,
+        [](int k, std::array<NodeFault, 3>& f) {
+          f[1].gyro_bias = (k >= 10 && k < 15) ? 3.0F : 0.0F;
+          if (k == 250 || k == 251) {
+            f[0].present = false;
+            f[2].present = false;
+          }
+        },
+        [&](int k, const FrameReport& r) {
+          ev.see(k, r, 1);
+          if (k == 20) m.request_reintegration(1);
+        });
+  CHECK(ev.probation_failed < 0);
+  CHECK(ev.reintegrated == 314);  // 312 plus the two frames that did not count
+  CHECK(m.last_report().mode == Mode::Triplex);
+}
+
+TFC_TEST(life_cycle_auto_policy_readmits_a_first_transient_latch_by_itself) {
+  RedundancyConfig cfg;
+  cfg.policy = ReintegrationPolicy::AutoTransient;
+  RedundancyManager m(cfg);
+  Events ev;
+  drive(m, 0, 400, smooth, [](int k, std::array<NodeFault, 3>& f) { f[1].present = !(k >= 10 && k < 20); },
+        [&](int k, const FrameReport& r) { ev.see(k, r, 1); });  // never any command
+  CHECK(ev.latched == 12);
+  CHECK(ev.probation_started == 212);
+  CHECK(ev.reintegrated == 312);
+}
+
+TFC_TEST(life_cycle_auto_policy_never_readmits_a_digest_mismatch_or_a_repeat_offender) {
+  RedundancyConfig cfg;
+  cfg.policy = ReintegrationPolicy::AutoTransient;
+  {  // digest mismatch = state divergence: not "transient-looking", needs a human
+    RedundancyManager m(cfg);
+    drive(m, 0, 700, smooth, [](int k, std::array<NodeFault, 3>& f) { f[1].digest_xor = (k >= 10 && k < 20) ? 1U : 0U; },
+          no_report);
+    CHECK(m.state(1) == NodeState::Latched && m.counters().probations_started == 0U);
+  }
+  {  // second strike: manual only, and a longer probation (300 frames)
+    RedundancyManager m(cfg);
+    Events ev;
+    drive(m, 0, 1100, smooth,
+          [](int k, std::array<NodeFault, 3>& f) {
+            f[1].present = !((k >= 10 && k < 20) || (k >= 400 && k < 410));
+          },
+          [&](int k, const FrameReport& r) {
+            ev.see(k, r, 1);
+            if (k == 700) CHECK(m.state(1) == NodeState::Latched && m.strikes(1) == 2U);  // not auto
+            if (k == 710) m.request_reintegration(1);
+          });
+    CHECK(ev.latched == 12);
+    CHECK(m.counters().reintegrations == 2U);  // first automatic, second after the command
+    // second latch ~402 (strike 2); request at 710 (dwell long served) -> probation at 710, 300 clean frames
+    CHECK(m.last_report().mode == Mode::Triplex);
+  }
+}
+
+TFC_TEST(life_cycle_third_strike_disables_the_node_until_a_maintenance_command) {
+  RedundancyManager m;
+  Events ev;
+  CommandResult refused = CommandResult::Accepted;
+  drive(m, 0, 1300, smooth,
+        [](int k, std::array<NodeFault, 3>& f) {
+          const bool bad = (k >= 10 && k < 15) || (k >= 400 && k < 405) || (k >= 1000 && k < 1005);
+          f[1].gyro_bias = bad ? 3.0F : 0.0F;
+        },
+        [&](int k, const FrameReport& r) {
+          ev.see(k, r, 1);
+          if (k == 20 || k == 410) m.request_reintegration(1);
+          if (k == 1100) {
+            CHECK(m.state(1) == NodeState::Disabled && r.disabled_mask == 0x2U);
+            refused = m.request_reintegration(1);
+          }
+        });
+  CHECK(ev.disabled == 1002);                  // third latch = third strike
+  CHECK(m.strikes(1) == 3U);
+  CHECK(m.permanent(1) && m.latched(1));
+  CHECK(refused == CommandResult::RefusedDisabled);
+  CHECK(m.counters().nodes_disabled == 1U && m.counters().commands_refused == 1U);
+  CHECK(m.last_report().mode == Mode::Duplex);
+
+  CHECK(m.command(GroundOp::ClearDisabled, 1) == CommandResult::Accepted);  // maintenance
+  CHECK(m.state(1) == NodeState::Latched && m.strikes(1) == 0U);
+  CHECK(m.command(GroundOp::ClearDisabled, 1) == CommandResult::RefusedNotDisabled);
+}
+
+TFC_TEST(life_cycle_the_strike_limit_is_configurable_and_two_disables_on_the_second_latch) {
+  RedundancyConfig cfg;
+  cfg.max_strikes = 2;
+  RedundancyManager m(cfg);
+  Events ev;
+  drive(m, 0, 700, smooth,
+        [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = ((k >= 10 && k < 15) || (k >= 400 && k < 405)) ? 3.0F : 0.0F; },
+        [&](int k, const FrameReport& r) {
+          ev.see(k, r, 1);
+          if (k == 20) m.request_reintegration(1);
+        });
+  CHECK(ev.disabled == 402);
+  CHECK(m.state(1) == NodeState::Disabled);
+}
+
+TFC_TEST(life_cycle_a_physical_cause_disables_at_the_second_strike) {
+  // A stuck sensor is failed hardware. With the vehicle at rest only the stuck detector can see it.
+  RedundancyManager m;
+  Events ev;
+  drive(m, 0, 700, flat_truth,
+        [](int k, std::array<NodeFault, 3>& f) {
+          if ((k >= 10 && k < 45) || (k >= 400 && k < 445)) f[1].freeze_k = 9;
+        },
+        [&](int k, const FrameReport& r) {
+          ev.see(k, r, 1);
+          if (k == 60) m.request_reintegration(1);
+        });
+  CHECK(ev.latched > 20 && ev.latched <= 36);   // 20 identical frames, then 3-of-5
+  CHECK(ev.reintegrated > 0 && ev.reintegrated < 400);  // it recovered once (strike 1)
+  CHECK(ev.disabled > 400 && ev.disabled < 440);        // frozen again: second strike, physical cause
+  CHECK(m.strikes(1) == 2U && m.state(1) == NodeState::Disabled);
+}
+
+TFC_TEST(life_cycle_old_strikes_are_forgotten_when_a_window_is_configured) {
+  RedundancyConfig cfg;
+  cfg.strike_window_frames = 300;
+  RedundancyManager m(cfg);
+  drive(m, 0, 520, smooth,
+        [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = ((k >= 10 && k < 15) || (k >= 400 && k < 405)) ? 3.0F : 0.0F; },
+        no_report);
+  CHECK(m.strikes(1) == 1U);  // the first latch (frame 12) is older than 300 frames at the second (402)
+}
+
+TFC_TEST(life_cycle_only_one_node_is_on_probation_at_a_time) {
+  RedundancyManager m;
+  Events e1;
+  Events e2;
+  drive(m, 0, 700, smooth,
+        [](int k, std::array<NodeFault, 3>& f) {
+          f[1].present = !(k >= 10 && k < 30);
+          f[2].present = !(k >= 10 && k < 30);
+        },
+        [&](int k, const FrameReport& r) {
+          e1.see(k, r, 1);
+          e2.see(k, r, 2);
+          if (k == 40) {
+            m.request_reintegration(1);
+            m.request_reintegration(2);
+          }
+          if (k == 100) CHECK(r.mode == Mode::Simplex);  // only node 0 is voting
+        });
+  CHECK(e1.max_on_probation == 1 && e2.max_on_probation == 1);
+  CHECK(e1.probation_started == 212 && e1.reintegrated == 312);
+  CHECK(e2.probation_started == 312 && e2.reintegrated == 412);  // starts when the first is readmitted
+  CHECK(m.last_report().mode == Mode::Triplex);
+}
+
+TFC_TEST(life_cycle_ground_command_frames_drive_the_same_state_machine) {
+  RedundancyManager m;
+  uint8_t seq = 0;
+  drive(m, 0, 400, smooth,
+        [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = (k >= 10 && k < 15) ? 3.0F : 0.0F; },
+        [&](int k, const FrameReport& r) {
+          if (k == 18) {  // a command that arrives as a frame is applied when that frame closes (k == 19)
+            m.on_frame(pack_ground(GroundOp::Reintegrate, 1, seq++));
+          }
+          if (k == 19) {
+            CHECK(r.command_count == 1U);
+            CHECK(r.commands[0].op == static_cast<uint8_t>(GroundOp::Reintegrate) && r.commands[0].node == 1U);
+            CHECK(r.commands[0].result == CommandResult::Accepted);
+          }
+        });
+  CHECK(m.state(1) == NodeState::Healthy);  // same outcome as the direct call
+  CHECK(m.counters().commands_accepted == 1U);
+}
+
+TFC_TEST(life_cycle_ground_frames_are_validated_and_refusals_are_reported) {
+  RedundancyManager m;
+  m.begin_frame();
+  Frame bad = pack_ground(GroundOp::Disable, 1, 0);
+  bad.data[7] = static_cast<uint8_t>(bad.data[7] ^ 1U);  // corrupted
+  m.on_frame(bad);
+  m.on_frame(pack_ground(GroundOp::Reintegrate, 1, 1));    // node 1 is healthy: nothing to reintegrate
+  m.on_frame(pack_ground(GroundOp::Reintegrate, 9, 2));    // no such node
+  Frame unknown = pack_ground(GroundOp::Disable, 1, 3);
+  unknown.data[0] = 99;                                    // no such operation (CRC re-sealed)
+  unknown.data[7] = crc8(unknown.data.data(), 7);
+  m.on_frame(unknown);
+  const FrameReport& r = m.end_frame();
+  CHECK(r.command_count == 3U);
+  CHECK(r.commands[0].result == CommandResult::RefusedNotLatched);
+  CHECK(r.commands[1].result == CommandResult::RefusedBadNode);
+  CHECK(r.commands[2].result == CommandResult::RefusedBadOp);
+  CHECK(m.counters().commands_bad == 1U && m.counters().commands_refused == 3U);
+  CHECK(m.state(1) == NodeState::Healthy);
+}
+
+TFC_TEST(life_cycle_operator_can_disable_a_node_and_bring_it_back_through_the_normal_path) {
+  RedundancyManager m;
+  Events ev;
+  drive(m, 0, 700, smooth, [](int, std::array<NodeFault, 3>&) {},
+        [&](int k, const FrameReport& r) {
+          ev.see(k, r, 2);
+          if (k == 20) m.on_frame(pack_ground(GroundOp::Disable, 2, 0));
+          if (k == 21) {
+            CHECK((r.newly_disabled & 0x4U) != 0U && r.disabled_mask == 0x4U);
+            CHECK(r.mode == Mode::Duplex && r.valid_mask == 0x3U);  // healthy and talking, but not voting
+          }
+          if (k == 50) m.on_frame(pack_ground(GroundOp::ClearDisabled, 2, 1));
+          if (k == 52) m.request_reintegration(2);
+        });
+  CHECK(ev.probation_started == 250);  // dwell restarts at the clear (frame 51), 200 frames
+  CHECK(ev.reintegrated == 350);
+  CHECK(m.state(2) == NodeState::Healthy && m.strikes(2) == 0U);
+}
+
+TFC_TEST(life_cycle_clear_safe_works_as_a_ground_command) {
+  RedundancyManager m;
+  for (int k = 0; k < 40; ++k) {  // C dead; B's digest diverges: unattributable, Safe requested
+    std::array<NodeFault, 3> f{};
+    f[2].present = (k < 5);
+    f[1].digest_xor = (k >= 20) ? 1U : 0U;
+    frame(m, k, f, smooth);
+  }
+  CHECK(m.safe_requested());
+  m.on_frame(pack_ground(GroundOp::ClearSafe, 0, 0));
+  const std::array<NodeFault, 3> none{};
+  m.begin_frame();
+  const FrameReport& r = m.end_frame();  // the command is applied at the end of this (empty) frame
+  CHECK(r.commands[0].result == CommandResult::Accepted);
+  (void)none;
+}
+
+TFC_TEST(life_cycle_probation_failure_names_a_digest_mismatch) {
+  RedundancyManager m;
+  Events ev;
+  drive(m, 0, 300, smooth, [](int k, std::array<NodeFault, 3>& f) { f[1].digest_xor = (k >= 10) ? 1U : 0U; },
+        [&](int k, const FrameReport& r) {
+          ev.see(k, r, 1);
+          if (k == 20) m.request_reintegration(1);
+        });
+  CHECK(ev.probation_failed > 0);
+  CHECK(ev.failure_reason == reason::kDigest);  // values agree, the estimator fingerprint does not
 }

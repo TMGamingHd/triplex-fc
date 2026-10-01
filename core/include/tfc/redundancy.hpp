@@ -9,8 +9,19 @@
 // Per node it checks that gyro, accel and command arrived, CRC-good and in sequence; votes the
 // 8 channels (gyro x3, accel x3, command pitch/yaw) with vote3; cross-checks the estimator
 // digest; runs a StuckDetector on the raw sensor bytes; and feeds one ChannelMonitor per node
-// (M-of-N persistence, latch, reintegration). Absent means invalid: a node that sends nothing
-// is just a node whose frames are missing. No heap, no exceptions, deterministic.
+// (M-of-N persistence). Absent means invalid: a node that sends nothing is just a node whose
+// frames are missing.
+//
+// Node life cycle (ADR-010):  Healthy -> Latched -> Probation -> Healthy, or -> Disabled.
+//  * A node that latches is excluded from the vote and counts a strike.
+//  * After a minimum dwell, and when asked (operator command, or the opt-in automatic policy for a
+//    first, transient-looking latch), it goes on probation: it is still excluded, but every frame
+//    its data is compared with the voted output of the healthy nodes (a "shadow vote") and with
+//    their digest. Only a run of frames that all agree readmits it, so a node that is still broken
+//    can never come back. One node is on probation at a time.
+//  * Too many strikes (3; 2 for a physical cause such as a stuck sensor) disable the node for the
+//    run; only a maintenance command brings it back to Latched.
+// No heap, no exceptions, deterministic.
 #pragma once
 #include <array>
 #include <cmath>
@@ -28,6 +39,7 @@ constexpr unsigned kVoteChannels = 8;       // gyro x3, accel x3, command pitch,
 constexpr unsigned kStreams = 3;            // per node: gyro, accel, command
 constexpr unsigned kChPitch = 6;            // indices into FrameReport::output / votes
 constexpr unsigned kChYaw = 7;
+constexpr unsigned kMaxCommandsPerFrame = 4;
 
 // Why a node's data was judged bad in a frame (bit mask in FrameReport::reason).
 namespace reason {
@@ -75,13 +87,73 @@ inline void format_reasons(uint8_t bits, char* out, std::size_t cap) noexcept {
   out[n] = '\0';
 }
 
+enum class NodeState : uint8_t {
+  Healthy,    // votes
+  Latched,    // excluded; serving its minimum dwell, waiting for a reintegration request
+  Probation,  // excluded, being compared with the voted output (shadow vote)
+  Disabled    // excluded for the rest of the run (strikes used up, or disabled by an operator)
+};
+
+// Who may start a probation. Manual: only an operator command (the Space Shuttle / airliner
+// practice, ADR-010). AutoTransient: also automatically after the minimum dwell, but only for a
+// first latch whose cause looks transient (frame problems or one vote episode); never for a stuck
+// sensor or a digest mismatch, never for a repeat offender.
+enum class ReintegrationPolicy : uint8_t { Manual, AutoTransient };
+
+enum class CommandResult : uint8_t {
+  Accepted,
+  AlreadyDone,         // e.g. reintegration already requested / on probation, node already disabled
+  RefusedDisabled,     // the node is disabled: only ClearDisabled can help
+  RefusedNotLatched,   // reintegration of a node that is healthy
+  RefusedNotDisabled,  // ClearDisabled for a node that is not disabled
+  RefusedBadNode,
+  RefusedBadOp
+};
+
+inline const char* state_text(NodeState st) noexcept {
+  switch (st) {
+    case NodeState::Healthy: return "healthy";
+    case NodeState::Latched: return "latched";
+    case NodeState::Probation: return "probation";
+    case NodeState::Disabled: return "disabled";
+  }
+  return "?";
+}
+
+inline const char* op_text(uint8_t op) noexcept {
+  switch (static_cast<GroundOp>(op)) {
+    case GroundOp::Reintegrate: return "reintegrate";
+    case GroundOp::Disable: return "disable";
+    case GroundOp::ClearDisabled: return "clear-disabled";
+    case GroundOp::ClearSafe: return "clear-safe";
+  }
+  return "unknown-op";
+}
+
+inline const char* result_text(CommandResult r) noexcept {
+  switch (r) {
+    case CommandResult::Accepted: return "accepted";
+    case CommandResult::AlreadyDone: return "already done";
+    case CommandResult::RefusedDisabled: return "refused: node is disabled";
+    case CommandResult::RefusedNotLatched: return "refused: node is not latched";
+    case CommandResult::RefusedNotDisabled: return "refused: node is not disabled";
+    case CommandResult::RefusedBadNode: return "refused: no such node";
+    case CommandResult::RefusedBadOp: return "refused: no such operation";
+  }
+  return "?";
+}
+
+struct CommandEvent {
+  uint8_t op = 0U;
+  uint8_t node = 0U;
+  CommandResult result = CommandResult::Accepted;
+};
+
 struct RedundancyConfig {
   // Vote tolerances per channel: gyro (dps) x3, accel (g) x3, command (deg) x2.
   std::array<float, kVoteChannels> tol{{1.0F, 1.0F, 1.0F, 0.02F, 0.02F, 0.02F, 0.01F, 0.01F}};
   uint8_t persist_m = 3;            // latch when M of the last N frames are bad
   uint8_t persist_n = 5;
-  uint16_t reintegrate_clean = 100;  // clean frames needed after an explicit reintegration request
-  uint8_t max_latches = 3;           // latches before a node is permanently excluded
   uint16_t stuck_limit = 20;         // identical sensor frames before "stuck"
   // A node that has never delivered a good sample is not judged for this many frames: peers boot
   // in any order, and "not here yet" is not "failed". 0 = judge from the first frame (absent means
@@ -95,6 +167,20 @@ struct RedundancyConfig {
   float duplex_arbitration_factor = 2.0F;
   // This many out-of-schedule frames inside one 10 ms frame raises the bus alarm (babbling node).
   uint32_t bus_alarm_per_frame = 3;
+
+  // ---- reintegration and disabling (ADR-010) ----
+  ReintegrationPolicy policy = ReintegrationPolicy::Manual;
+  uint16_t min_dwell_frames = 200;          // a latched node waits at least this long (2 s) before probation
+  uint16_t probation_frames = 100;          // agreeing frames needed after the first latch (1 s)
+  uint16_t probation_frames_repeat = 300;   // ... after a repeat latch (strike 2 or more)
+  uint8_t max_strikes = 3;                  // latches before the node is disabled for the run
+  uint8_t max_strikes_physical = 2;         // ... when the cause is physical (below)
+  uint8_t physical_causes = reason::kStuck;  // reason bits that point at failed hardware
+  // Strikes older than this many frames are forgotten. 0 = the whole run (a flight is minutes long).
+  uint32_t strike_window_frames = 0;
+  // AutoTransient only: causes that look transient, and how many failed probations are tolerated.
+  uint8_t auto_eligible_causes = reason::kMissing | reason::kCrc | reason::kSeq | reason::kVote;
+  uint8_t auto_max_attempts = 3;
 };
 
 struct Counters {
@@ -110,16 +196,32 @@ struct Counters {
   uint32_t held_frames = 0;         // frames in which some output channel held its last good value
   uint32_t safe_request_frames = 0; // frames spent requesting Safe
   uint32_t bus_alarm_frames = 0;    // frames with the out-of-schedule flood alarm raised
+  uint32_t probations_started = 0;
+  uint32_t probation_failures = 0;  // probations ended by a disagreeing or broken frame
+  uint32_t reintegrations = 0;      // nodes readmitted to the vote
+  uint32_t nodes_disabled = 0;      // disable events (strikes used up, or by command)
+  uint32_t commands_accepted = 0;   // ground commands applied
+  uint32_t commands_refused = 0;    // ground commands refused (see CommandResult)
+  uint32_t commands_bad = 0;        // ground frames dropped: failed CRC or queue full
 };
 
 struct FrameReport {
   uint8_t valid_mask = 0U;      // nodes whose data took part in the vote this frame
-  uint8_t newly_latched = 0U;   // nodes that latched on this frame
+  uint8_t newly_latched = 0U;   // nodes that latched on this frame (a strike was counted)
   uint8_t newly_seen = 0U;      // nodes whose first good sample arrived on this frame
-  uint8_t latched_mask = 0U;    // nodes currently latched out
-  std::array<uint8_t, kNodes> reason{};  // reason:: bits, per node, this frame
+  uint8_t latched_mask = 0U;    // nodes currently out of the vote (latched, on probation or disabled)
+  uint8_t probation_mask = 0U;  // nodes on probation
+  uint8_t disabled_mask = 0U;   // nodes disabled for the run
+  uint8_t probation_started = 0U;   // nodes that went on probation this frame
+  uint8_t probation_failed = 0U;    // nodes thrown back to Latched this frame (they disagreed or broke)
+  uint8_t newly_reintegrated = 0U;  // nodes readmitted to the vote this frame
+  uint8_t newly_disabled = 0U;      // nodes disabled this frame
+  std::array<uint8_t, kNodes> reason{};   // reason:: bits, per node, this frame
+  std::array<uint8_t, kNodes> strikes{};  // latches counted against each node
+  std::array<CommandEvent, kMaxCommandsPerFrame> commands{};  // ground commands applied this frame
+  unsigned command_count = 0U;
   Mode mode = Mode::Safe;
-  unsigned healthy = 0U;        // nodes that have been seen and are not latched out
+  unsigned healthy = 0U;        // nodes that have been seen and are Healthy (voting)
   std::array<VoteResult, kVoteChannels> votes{};  // raw vote result per channel (value undefined on a miscompare)
   // What a downstream consumer should use: the voted value, or, when the vote could not produce a
   // trustworthy one (duplex disagreement nobody can be blamed for, no majority, no data), the last
@@ -137,9 +239,9 @@ class RedundancyManager {
  public:
   explicit RedundancyManager(const RedundancyConfig& cfg = RedundancyConfig{}) noexcept
       : cfg_(cfg),
-        mon_{ChannelMonitor(cfg.persist_m, cfg.persist_n, cfg.reintegrate_clean, cfg.max_latches),
-             ChannelMonitor(cfg.persist_m, cfg.persist_n, cfg.reintegrate_clean, cfg.max_latches),
-             ChannelMonitor(cfg.persist_m, cfg.persist_n, cfg.reintegrate_clean, cfg.max_latches)},
+        mon_{ChannelMonitor(cfg.persist_m, cfg.persist_n, 0xFFFFU, 0xFFU),
+             ChannelMonitor(cfg.persist_m, cfg.persist_n, 0xFFFFU, 0xFFU),
+             ChannelMonitor(cfg.persist_m, cfg.persist_n, 0xFFFFU, 0xFFU)},
         stuck_{StuckDetector(cfg.stuck_limit), StuckDetector(cfg.stuck_limit),
                StuckDetector(cfg.stuck_limit)} {}
 
@@ -149,8 +251,18 @@ class RedundancyManager {
   }
 
   // Offer one received frame. Returns false if its ID is not part of the flight-bus schedule
-  // (it is then only counted). SYNC, actuator, heartbeat and sim frames are accepted and ignored.
+  // (it is then only counted). SYNC, actuator, heartbeat and sim frames are accepted and ignored;
+  // ground commands are queued and applied at the end of the frame.
   bool on_frame(const Frame& f) noexcept {
+    if (f.id == id::kGround) {
+      const DecodedGround d = unpack_ground(f);
+      if (!d.ok || npending_ >= kMaxCommandsPerFrame) {
+        ++counters_.commands_bad;
+      } else {
+        pending_[npending_++] = d;
+      }
+      return true;
+    }
     unsigned stream = 0U;
     unsigned node = 0U;
     if (f.id >= id::kGyroBase && f.id < id::kGyroBase + kNodes) {
@@ -211,12 +323,13 @@ class RedundancyManager {
     return true;
   }
 
-  // Close the frame: judge nodes, vote, cross-check, update FDIR. The returned reference is
-  // valid until the next end_frame().
+  // Close the frame: apply ground commands, judge nodes, vote, cross-check, update FDIR and the
+  // node life cycle. The returned reference is valid until the next end_frame().
   const FrameReport& end_frame() noexcept {
     FrameReport& rep = report_;
     rep = FrameReport{};
     ++counters_.frames;
+    apply_pending(rep);
 
     std::array<bool, kNodes> good{};
     uint8_t valid = 0U;
@@ -244,7 +357,7 @@ class RedundancyManager {
         seen_[n] = true;
         rep.newly_seen = static_cast<uint8_t>(rep.newly_seen | (1U << n));
       }
-      if (good[n] && !mon_[n].latched()) {
+      if (good[n] && state_[n] == NodeState::Healthy) {
         valid = static_cast<uint8_t>(valid | (1U << n));
       }
     }
@@ -319,12 +432,13 @@ class RedundancyManager {
     counters_.held_frames += rep.held_mask != 0U ? 1U : 0U;
     counters_.bus_alarm_frames += rep.bus_alarm ? 1U : 0U;
 
+    // ---- per node: stuck detector, FDIR verdict, latch / strikes ----
+    std::array<bool, kNodes> stuck_now{};
     for (unsigned n = 0; n < kNodes; ++n) {
-      bool stuck_now = false;
       if (good[n]) {
-        stuck_now = stuck_[n].update(static_cast<int32_t>(fnv1a(rx_[n].raw.data(), rx_[n].raw.size())));
+        stuck_now[n] = stuck_[n].update(static_cast<int32_t>(fnv1a(rx_[n].raw.data(), rx_[n].raw.size())));
       }
-      if (stuck_now) {
+      if (stuck_now[n]) {
         ++counters_.stuck_flags;
         rep.reason[n] = static_cast<uint8_t>(rep.reason[n] | reason::kStuck);
       }
@@ -334,15 +448,50 @@ class RedundancyManager {
       if (((digest_bad >> n) & 1U) != 0U) {
         rep.reason[n] = static_cast<uint8_t>(rep.reason[n] | reason::kDigest);
       }
-      if (mon_[n].update(rep.reason[n] != 0U)) {
-        rep.newly_latched = static_cast<uint8_t>(rep.newly_latched | (1U << n));
+      if (state_[n] == NodeState::Healthy && mon_[n].update(rep.reason[n] != 0U)) {
+        on_latch(n, rep);
+      }
+    }
+
+    // ---- node life cycle: probation verdicts first, then dwell and new probations ----
+    for (unsigned n = 0; n < kNodes; ++n) {
+      if (state_[n] == NodeState::Probation) {
+        judge_probation(n, good[n], stuck_now[n], valid, rep);
+      }
+    }
+    bool one_on_probation = false;
+    for (unsigned n = 0; n < kNodes; ++n) {
+      one_on_probation = one_on_probation || state_[n] == NodeState::Probation;
+    }
+    for (unsigned n = 0; n < kNodes; ++n) {
+      if (state_[n] != NodeState::Latched) {
+        continue;
+      }
+      if (((rep.newly_latched >> n) & 1U) == 0U && dwell_[n] < 0xFFFFU) {
+        ++dwell_[n];
+      }
+      if (!one_on_probation && dwell_[n] >= cfg_.min_dwell_frames && wants_probation(n)) {
+        state_[n] = NodeState::Probation;
+        req_[n] = false;
+        probation_clean_[n] = 0U;
+        one_on_probation = true;
+        rep.probation_started = static_cast<uint8_t>(rep.probation_started | (1U << n));
+        ++counters_.probations_started;
       }
     }
 
     for (unsigned n = 0; n < kNodes; ++n) {
-      if (mon_[n].latched()) {
+      rep.strikes[n] = strikes_[n];
+      if (state_[n] != NodeState::Healthy) {
         rep.latched_mask = static_cast<uint8_t>(rep.latched_mask | (1U << n));
-      } else if (seen_[n]) {
+      }
+      if (state_[n] == NodeState::Probation) {
+        rep.probation_mask = static_cast<uint8_t>(rep.probation_mask | (1U << n));
+      }
+      if (state_[n] == NodeState::Disabled) {
+        rep.disabled_mask = static_cast<uint8_t>(rep.disabled_mask | (1U << n));
+      }
+      if (state_[n] == NodeState::Healthy && seen_[n]) {
         ++rep.healthy;
       }
     }
@@ -350,14 +499,71 @@ class RedundancyManager {
     return rep;
   }
 
-  // Operator/ground command: start counting clean frames toward reintegrating `node`.
-  void request_reintegration(unsigned node) noexcept {
-    if (node < kNodes) {
-      mon_[node].request_reintegration();
+  // ---- operator / ground commands (also reachable as CAN ground frames) ----
+  // Start probation for a latched node (after its minimum dwell, one node at a time).
+  CommandResult request_reintegration(unsigned node) noexcept { return command(GroundOp::Reintegrate, node); }
+
+  // Apply one command now; results are also reported in FrameReport::commands when they arrive as frames.
+  CommandResult command(GroundOp op, unsigned node) noexcept {
+    CommandResult r = CommandResult::Accepted;
+    switch (op) {
+      case GroundOp::Reintegrate:
+        if (node >= kNodes) {
+          r = CommandResult::RefusedBadNode;
+        } else if (state_[node] == NodeState::Disabled) {
+          r = CommandResult::RefusedDisabled;
+        } else if (state_[node] == NodeState::Healthy) {
+          r = CommandResult::RefusedNotLatched;
+        } else if (state_[node] == NodeState::Probation || req_[node]) {
+          r = CommandResult::AlreadyDone;
+        } else {
+          req_[node] = true;
+        }
+        break;
+      case GroundOp::Disable:
+        if (node >= kNodes) {
+          r = CommandResult::RefusedBadNode;
+        } else if (state_[node] == NodeState::Disabled) {
+          r = CommandResult::AlreadyDone;
+        } else {
+          state_[node] = NodeState::Disabled;
+          req_[node] = false;
+          ++counters_.nodes_disabled;
+          disabled_by_command_ = static_cast<uint8_t>(disabled_by_command_ | (1U << node));
+        }
+        break;
+      case GroundOp::ClearDisabled:
+        if (node >= kNodes) {
+          r = CommandResult::RefusedBadNode;
+        } else if (state_[node] != NodeState::Disabled) {
+          r = CommandResult::RefusedNotDisabled;
+        } else {
+          state_[node] = NodeState::Latched;  // back to square one: dwell, then a fresh request
+          strikes_[node] = 0U;
+          dwell_[node] = 0U;
+          attempts_[node] = 0U;
+          req_[node] = false;
+        }
+        break;
+      case GroundOp::ClearSafe:
+        if (!safe_latched_) {
+          r = CommandResult::AlreadyDone;
+        }
+        clear_safe_request();
+        break;
+      default:
+        r = CommandResult::RefusedBadOp;
+        break;
     }
+    if (r == CommandResult::Accepted) {
+      ++counters_.commands_accepted;
+    } else if (r != CommandResult::AlreadyDone) {
+      ++counters_.commands_refused;
+    }
+    return r;
   }
 
-  // Operator/ground command: lift a Safe request (the disagreement history is forgotten too).
+  // Lift a Safe request (the disagreement history is forgotten too).
   void clear_safe_request() noexcept {
     safe_latched_ = false;
     unres_hist_ = 0U;
@@ -365,8 +571,11 @@ class RedundancyManager {
 
   bool safe_requested() const noexcept { return safe_latched_; }
   bool seen(unsigned node) const noexcept { return node < kNodes && seen_[node]; }
-  bool latched(unsigned node) const noexcept { return node < kNodes && mon_[node].latched(); }
-  bool permanent(unsigned node) const noexcept { return node < kNodes && mon_[node].permanent(); }
+  NodeState state(unsigned node) const noexcept { return node < kNodes ? state_[node] : NodeState::Disabled; }
+  unsigned strikes(unsigned node) const noexcept { return node < kNodes ? strikes_[node] : 0U; }
+  // Out of the vote for any reason (latched, on probation, or disabled).
+  bool latched(unsigned node) const noexcept { return node < kNodes && state_[node] != NodeState::Healthy; }
+  bool permanent(unsigned node) const noexcept { return node < kNodes && state_[node] == NodeState::Disabled; }
   const Counters& counters() const noexcept { return counters_; }
   const FrameReport& last_report() const noexcept { return report_; }
 
@@ -389,6 +598,112 @@ class RedundancyManager {
       h = (h ^ d[i]) * 16777619U;
     }
     return h;
+  }
+
+  void apply_pending(FrameReport& rep) noexcept {
+    for (unsigned i = 0; i < npending_; ++i) {
+      CommandEvent ev;
+      ev.op = pending_[i].op;
+      ev.node = pending_[i].node;
+      ev.result = command(static_cast<GroundOp>(pending_[i].op), pending_[i].node);
+      rep.commands[rep.command_count++] = ev;
+    }
+    npending_ = 0U;
+    // Disables made by command (frame or direct call) since the last frame are reported now.
+    rep.newly_disabled = static_cast<uint8_t>(rep.newly_disabled | disabled_by_command_);
+    disabled_by_command_ = 0U;
+  }
+
+  // The node's monitor just latched: count the strike and decide Latched or Disabled.
+  void on_latch(unsigned n, FrameReport& rep) noexcept {
+    rep.newly_latched = static_cast<uint8_t>(rep.newly_latched | (1U << n));
+    if (cfg_.strike_window_frames != 0U && strikes_[n] != 0U &&
+        counters_.frames - last_latch_frame_[n] > cfg_.strike_window_frames) {
+      strikes_[n] = 0U;  // old strikes are forgotten
+    }
+    if (strikes_[n] < 0xFFU) {
+      ++strikes_[n];
+    }
+    last_latch_frame_[n] = counters_.frames;
+    latch_cause_[n] = rep.reason[n];
+    const unsigned limit = (rep.reason[n] & cfg_.physical_causes) != 0U ? cfg_.max_strikes_physical : cfg_.max_strikes;
+    dwell_[n] = 0U;
+    req_[n] = false;
+    attempts_[n] = 0U;
+    if (limit != 0U && strikes_[n] >= limit) {
+      state_[n] = NodeState::Disabled;
+      rep.newly_disabled = static_cast<uint8_t>(rep.newly_disabled | (1U << n));
+      ++counters_.nodes_disabled;
+    } else {
+      state_[n] = NodeState::Latched;
+    }
+  }
+
+  bool wants_probation(unsigned n) const noexcept {
+    if (req_[n]) {
+      return true;
+    }
+    return cfg_.policy == ReintegrationPolicy::AutoTransient && strikes_[n] == 1U &&
+           (latch_cause_[n] & ~cfg_.auto_eligible_causes) == 0U && attempts_[n] < cfg_.auto_max_attempts;
+  }
+
+  // One frame of a node on probation: shadow-compare it with the voted output of the healthy nodes.
+  void judge_probation(unsigned n, bool good, bool stuck, uint8_t valid, FrameReport& rep) noexcept {
+    enum class Verdict : uint8_t { Clean, Dirty, Neutral };
+    Verdict v = Verdict::Clean;
+    if (!good || stuck) {
+      v = Verdict::Dirty;  // a missing, damaged, out-of-sequence or frozen frame
+    } else if (valid == 0U || rep.held_mask != 0U) {
+      v = Verdict::Neutral;  // no trustworthy reference this frame (nobody healthy, Safe, unresolved)
+    } else {
+      for (unsigned ch = 0; ch < kVoteChannels && v == Verdict::Clean; ++ch) {
+        if (std::fabs(rx_[n].x[ch] - rep.output[ch]) > cfg_.tol[ch]) {
+          v = Verdict::Dirty;
+          rep.reason[n] = static_cast<uint8_t>(rep.reason[n] | reason::kVote);  // disagrees with the shadow vote
+        }
+      }
+      if (v == Verdict::Clean) {
+        bool have_ref = false;
+        bool ref_agrees = true;
+        uint16_t ref = 0U;
+        for (unsigned i = 0; i < kNodes; ++i) {
+          if (((valid >> i) & 1U) == 0U) {
+            continue;
+          }
+          if (!have_ref) {
+            ref = rx_[i].digest;
+            have_ref = true;
+          } else if (rx_[i].digest != ref) {
+            ref_agrees = false;
+          }
+        }
+        if (!ref_agrees) {
+          v = Verdict::Neutral;
+        } else if (have_ref && rx_[n].digest != ref) {
+          v = Verdict::Dirty;
+          rep.reason[n] = static_cast<uint8_t>(rep.reason[n] | reason::kDigest);
+        }
+      }
+    }
+    if (v == Verdict::Dirty) {
+      state_[n] = NodeState::Latched;  // thrown back: dwell starts again, a new request is needed
+      dwell_[n] = 0U;
+      req_[n] = false;
+      if (attempts_[n] < 0xFFU) {
+        ++attempts_[n];
+      }
+      rep.probation_failed = static_cast<uint8_t>(rep.probation_failed | (1U << n));
+      ++counters_.probation_failures;
+    } else if (v == Verdict::Clean) {
+      const unsigned needed = strikes_[n] >= 2U ? cfg_.probation_frames_repeat : cfg_.probation_frames;
+      if (++probation_clean_[n] >= needed) {
+        state_[n] = NodeState::Healthy;
+        mon_[n].force_unlatch();
+        stuck_[n] = StuckDetector(cfg_.stuck_limit);
+        rep.newly_reintegrated = static_cast<uint8_t>(rep.newly_reintegrated | (1U << n));
+        ++counters_.reintegrations;
+      }
+    }
   }
 
   struct DigestVerdict {
@@ -472,6 +787,17 @@ class RedundancyManager {
   std::array<ChannelMonitor, kNodes> mon_;
   std::array<StuckDetector, kNodes> stuck_;
   std::array<bool, kNodes> seen_{};
+  std::array<NodeState, kNodes> state_{};
+  std::array<uint8_t, kNodes> strikes_{};
+  std::array<uint8_t, kNodes> latch_cause_{};
+  std::array<uint8_t, kNodes> attempts_{};          // probations that failed since the last latch
+  std::array<uint32_t, kNodes> last_latch_frame_{};
+  std::array<uint16_t, kNodes> dwell_{};
+  std::array<uint16_t, kNodes> probation_clean_{};
+  std::array<bool, kNodes> req_{};                  // an operator asked for this node's reintegration
+  std::array<DecodedGround, kMaxCommandsPerFrame> pending_{};
+  unsigned npending_ = 0U;
+  uint8_t disabled_by_command_ = 0U;
   std::array<std::array<SeqTracker, kStreams>, kNodes> seq_{};
   std::array<NodeRx, kNodes> rx_{};
   std::array<float, kVoteChannels> last_good_{};   // last trustworthy voted value per channel

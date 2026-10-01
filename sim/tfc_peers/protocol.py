@@ -20,6 +20,7 @@ ID_CMD_BASE = 0x200
 ID_ACT_OUT = 0x300
 ID_HEARTBEAT = 0x400
 ID_SIM = 0x500
+ID_GROUND = 0x510
 
 NODE_NAMES = "ABC"
 
@@ -121,6 +122,15 @@ def pack_cmd(node: int, pitch_deg: float, yaw_deg: float, digest: int, seq: int)
     return Frame(ID_CMD_BASE + node, seal(bytes(buf), seq))
 
 
+GROUND_OPS = {"reintegrate": 1, "disable": 2, "clear-disabled": 3, "clear-safe": 4}
+GROUND_OP_NAMES = {v: k for k, v in GROUND_OPS.items()}
+
+
+def pack_ground(op: int, node: int, seq: int) -> Frame:
+    """Operator command: opcode | node | 4 reserved bytes | seq | crc8 (see core protocol.hpp)."""
+    return Frame(ID_GROUND, seal(bytes([op & 0xFF, node & 0xFF, 0, 0, 0, 0]), seq))
+
+
 def pack_sync(frame_no: int, seq: int) -> Frame:
     """SYNC: 32-bit frame number (little endian) | 2 reserved bytes | seq | crc8."""
     return Frame(ID_SYNC, seal(struct.pack("<I", frame_no & 0xFFFFFFFF) + b"\x00\x00", seq))
@@ -160,6 +170,19 @@ def unpack_sync(frame: Frame) -> SyncSample | None:
     return SyncSample(struct.unpack_from("<I", frame.data, 0)[0], frame.data[6])
 
 
+@dataclass
+class GroundSample:
+    op: int
+    node: int
+    seq: int
+
+
+def unpack_ground(frame: Frame) -> GroundSample | None:
+    if frame.id != ID_GROUND or not check(frame):
+        return None
+    return GroundSample(frame.data[0], frame.data[1], frame.data[6])
+
+
 def unpack_cmd(frame: Frame) -> CmdSample | None:
     if not check(frame):
         return None
@@ -195,6 +218,13 @@ def describe(frame: Frame) -> str:
             return f"CMD   {node}  CRC-BAD  {frame.hex()}"
         return (f"CMD   {node}  seq={c.seq:<3} pitch={c.pitch_deg:+8.3f} yaw={c.yaw_deg:+8.3f} deg "
                 f"digest={c.digest:#06x}")
+    if i == ID_GROUND:
+        g = unpack_ground(frame)
+        if g is None:
+            return f"GROUND -  CRC-BAD  {frame.hex()}"
+        name = GROUND_OP_NAMES.get(g.op, f"op{g.op}")
+        who = NODE_NAMES[g.node] if g.node < 3 else f"node{g.node}"
+        return f"GROUND -  {name} {who} seq={g.seq}"
     if i == ID_ACT_OUT:
         return f"ACT   -  {frame.hex()}"
     if ID_HEARTBEAT <= i <= ID_HEARTBEAT + 2:

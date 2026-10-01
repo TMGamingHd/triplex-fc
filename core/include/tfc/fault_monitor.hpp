@@ -70,6 +70,16 @@ class ChannelMonitor {
     }
   }
 
+  // Supervisor action (RedundancyManager): the node proved itself on probation, so forget the latch
+  // and the bad history. The latch count is kept (it is the strike record).
+  void force_unlatch() noexcept {
+    latched_ = false;
+    probation_ = false;
+    permanent_ = false;
+    history_ = 0U;
+    clean_run_ = 0U;
+  }
+
   constexpr bool latched() const noexcept { return latched_; }
   constexpr bool permanent() const noexcept { return permanent_; }
   constexpr uint8_t latch_count() const noexcept { return latch_count_; }
