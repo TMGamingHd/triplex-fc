@@ -2,8 +2,9 @@
 // tfc_replay: feed recorded flight-bus traffic (candump -L format) through the real core/
 // code the way a flight computer would, and report what its FDIR decided.
 //
-//   tfc_replay LOG [--t0 SECONDS] [--verbose]
+//   tfc_replay LOG [--t0 SECONDS] [--vote-us MICROSECONDS] [--policy manual|auto] [--verbose]
 //              [--expect-latch NODE:FRAME | NODE:MIN-MAX] [--expect-no-latch NODE]
+//              [--expect-state NODE:healthy|latched|probation|disabled]
 //              [--expect-mode triplex|duplex|simplex|safe] [--expect-min STAT:N]
 //
 // Each 10 ms frame of the log is fed to tfc::RedundancyManager, the same class the firmware
@@ -27,6 +28,7 @@
 namespace {
 
 constexpr uint64_t kFrameUs = 10000U;
+constexpr uint64_t kDefaultVoteUs = 7000U;  // FC-A votes 7.0 ms into the frame (docs/ARCHITECTURE.md section 3)
 
 struct Logged {
   uint64_t t_us = 0;
@@ -106,6 +108,7 @@ struct Expect {
   };
   std::vector<Latch> latches;
   std::vector<unsigned> no_latch;
+  std::vector<std::pair<unsigned, std::string>> states;
   std::string mode;
   std::vector<std::pair<std::string, unsigned long>> min_stats;
 };
@@ -120,8 +123,10 @@ bool parse_node(const std::string& s, unsigned& node) {
 
 int usage() {
   (void)std::fprintf(stderr,
-               "usage: tfc_replay LOG [--t0 SECONDS] [--verbose] [--expect-latch NODE:FRAME|NODE:MIN-MAX]\n"
-               "                      [--expect-no-latch NODE] [--expect-mode MODE] [--expect-min STAT:N]\n");
+               "usage: tfc_replay LOG [--t0 SECONDS] [--vote-us US] [--policy manual|auto] [--verbose]\n"
+               "                      [--expect-latch NODE:FRAME|NODE:MIN-MAX]\n"
+               "                      [--expect-no-latch NODE] [--expect-state NODE:STATE] [--expect-mode MODE]\n"
+               "                      [--expect-min STAT:N]\n");
   return 2;
 }
 
@@ -134,6 +139,8 @@ int main(int argc, char** argv) {
   const std::string path = argv[1];
   bool verbose = false;
   uint64_t t0_us = 0;
+  uint64_t vote_us = kDefaultVoteUs;
+  tfc::RedundancyConfig cfg;
   Expect ex;
   for (int i = 2; i < argc; ++i) {
     const std::string a = argv[i];
@@ -142,6 +149,28 @@ int main(int argc, char** argv) {
       verbose = true;
     } else if (a == "--t0" && has_val) {
       t0_us = static_cast<uint64_t>(std::strtod(argv[++i], nullptr) * 1e6);
+    } else if (a == "--vote-us" && has_val) {
+      vote_us = static_cast<uint64_t>(std::strtoull(argv[++i], nullptr, 10));
+      if (vote_us == 0U || vote_us > kFrameUs) {
+        return usage();
+      }
+    } else if (a == "--policy" && has_val) {
+      const std::string v = argv[++i];
+      if (v == "auto") {
+        cfg.policy = tfc::ReintegrationPolicy::AutoTransient;
+      } else if (v == "manual") {
+        cfg.policy = tfc::ReintegrationPolicy::Manual;
+      } else {
+        return usage();
+      }
+    } else if (a == "--expect-state" && has_val) {
+      const std::string v = argv[++i];
+      unsigned node = 0;
+      const std::size_t colon = v.find(':');
+      if (colon == std::string::npos || !parse_node(v.substr(0, colon), node)) {
+        return usage();
+      }
+      ex.states.emplace_back(node, v.substr(colon + 1U));
     } else if (a == "--expect-latch" && has_val) {
       const std::string v = argv[++i];
       unsigned node = 0;
@@ -194,7 +223,8 @@ int main(int argc, char** argv) {
                    line.c_str());
       return 2;
     }
-    const std::size_t k = static_cast<std::size_t>((lg.t_us - t0_us) / kFrameUs);
+    // Frame k = everything received between the previous vote and this one, as FC-A drains it.
+    const std::size_t k = static_cast<std::size_t>((lg.t_us - t0_us + (kFrameUs - vote_us)) / kFrameUs);
     if (k >= frames.size()) {
       frames.resize(k + 1U);
     }
@@ -206,7 +236,7 @@ int main(int argc, char** argv) {
   }
 
   // ---- feed the log to the redundancy manager, one 10 ms frame at a time ----
-  tfc::RedundancyManager mgr;
+  tfc::RedundancyManager mgr(cfg);
   std::array<long, tfc::kNodes> latch_frame{-1, -1, -1};
   tfc::Mode mode = tfc::Mode::Triplex;
   unsigned healthy = tfc::kNodes;
@@ -232,6 +262,31 @@ int main(int argc, char** argv) {
     }
     prev_safe_request = rep.safe_request;
     prev_bus_alarm = rep.bus_alarm;
+    if (verbose) {
+      for (unsigned i = 0; i < rep.command_count; ++i) {
+        std::printf("frame %zu: ground command %s %c: %s\n", k, tfc::op_text(rep.commands[i].op),
+                    static_cast<char>('A' + rep.commands[i].node), tfc::result_text(rep.commands[i].result));
+      }
+      for (unsigned n = 0; n < tfc::kNodes; ++n) {
+        const unsigned bit = 1U << n;
+        const char c = static_cast<char>('A' + n);
+        if ((rep.probation_started & bit) != 0U) {
+          std::printf("frame %zu: node %c on probation (shadow vote against the healthy nodes)\n", k, c);
+        }
+        if ((rep.probation_failed & bit) != 0U) {
+          std::printf("frame %zu: node %c FAILED probation, back to latched: %s\n", k, c,
+                      reason_text(rep.reason[n]).c_str());
+        }
+        if ((rep.newly_reintegrated & bit) != 0U) {
+          std::printf("frame %zu: node %c REINTEGRATED (strikes on record: %u)\n", k, c,
+                      static_cast<unsigned>(rep.strikes[n]));
+        }
+        if ((rep.newly_disabled & bit) != 0U) {
+          std::printf("frame %zu: node %c DISABLED for the run (strikes: %u)\n", k, c,
+                      static_cast<unsigned>(rep.strikes[n]));
+        }
+      }
+    }
     for (unsigned n = 0; n < tfc::kNodes; ++n) {
       if (((rep.newly_latched >> n) & 1U) == 0U) {
         continue;
@@ -254,6 +309,10 @@ int main(int argc, char** argv) {
     }
   }
   std::printf("healthy=%u\nmode=%s\n", healthy, mode_name(mode));
+  for (unsigned n = 0; n < tfc::kNodes; ++n) {
+    std::printf("state.%c=%s\nstrikes.%c=%u\n", static_cast<char>('A' + n), tfc::state_text(mgr.state(n)),
+                static_cast<char>('A' + n), mgr.strikes(n));
+  }
   const std::map<std::string, unsigned long> stats{{"crc_bad", c.crc_bad},
                                                    {"seq_bad", c.seq_bad},
                                                    {"missing", c.missing},
@@ -264,7 +323,14 @@ int main(int argc, char** argv) {
                                                    {"unresolved_frames", c.unresolved_frames},
                                                    {"held_frames", c.held_frames},
                                                    {"safe_request_frames", c.safe_request_frames},
-                                                   {"bus_alarm_frames", c.bus_alarm_frames}};
+                                                   {"bus_alarm_frames", c.bus_alarm_frames},
+                                                   {"probations_started", c.probations_started},
+                                                   {"probation_failures", c.probation_failures},
+                                                   {"reintegrations", c.reintegrations},
+                                                   {"nodes_disabled", c.nodes_disabled},
+                                                   {"commands_accepted", c.commands_accepted},
+                                                   {"commands_refused", c.commands_refused},
+                                                   {"commands_bad", c.commands_bad}};
   for (const auto& kv : stats) {
     std::printf("%s=%lu\n", kv.first.c_str(), kv.second);
   }
@@ -283,6 +349,14 @@ int main(int argc, char** argv) {
     if (latch_frame[n] >= 0) {
       std::printf("EXPECT FAILED: node %c latched at frame %ld but should not have\n", static_cast<char>('A' + n),
                   latch_frame[n]);
+      ++failed;
+    }
+  }
+  for (const auto& st : ex.states) {
+    const char* got = tfc::state_text(mgr.state(st.first));
+    if (st.second != got) {
+      std::printf("EXPECT FAILED: node %c is %s, expected %s\n", static_cast<char>('A' + st.first), got,
+                  st.second.c_str());
       ++failed;
     }
   }

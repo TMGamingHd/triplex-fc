@@ -19,6 +19,7 @@ constexpr uint32_t kCmdBase = 0x200;    // + node: per-node control command
 constexpr uint32_t kActOut = 0x300;     // voted output + vote status from ACT
 constexpr uint32_t kHeartbeat = 0x400;  // + node: health / mode flags
 constexpr uint32_t kSim = 0x500;        // simulator <-> flight bus gateway
+constexpr uint32_t kGround = 0x510;     // operator / ground command (lowest priority of the control traffic)
 }  // namespace id
 
 struct Frame {
@@ -174,6 +175,45 @@ inline DecodedSync unpack_sync(const Frame& f) noexcept {
   for (unsigned i = 0; i < 4U; ++i) {
     d.frame_no |= static_cast<uint32_t>(f.data[i]) << (8U * i);
   }
+  d.seq = f.data[6];
+  d.ok = true;
+  return d;
+}
+
+// ---- Ground command: an operator action sent to the flight computers over the bus ----
+// Payload: opcode | node (0..2, ignored for ClearSafe) | 4 reserved bytes (0) | seq | crc8.
+// Every operation is idempotent, so a repeated frame is harmless. There is no authentication:
+// this is an educational bench, not a flight uplink.
+enum class GroundOp : uint8_t {
+  Reintegrate = 1,    // start probation for a latched node (it must then prove itself by shadow vote)
+  Disable = 2,        // exclude a node for the rest of the run
+  ClearDisabled = 3,  // maintenance: bring a disabled node back to "latched" with its strikes cleared
+  ClearSafe = 4       // lift a sticky Safe request
+};
+
+struct DecodedGround {
+  uint8_t op = 0;
+  uint8_t node = 0;
+  uint8_t seq = 0;
+  bool ok = false;
+};
+
+inline Frame pack_ground(GroundOp op, uint8_t node, uint8_t seq) noexcept {
+  Frame f;
+  f.id = id::kGround;
+  f.data[0] = static_cast<uint8_t>(op);
+  f.data[1] = node;
+  detail::seal(f, seq);
+  return f;
+}
+
+inline DecodedGround unpack_ground(const Frame& f) noexcept {
+  DecodedGround d;
+  if (f.id != id::kGround || !detail::check(f)) {
+    return d;
+  }
+  d.op = f.data[0];
+  d.node = f.data[1];
   d.seq = f.data[6];
   d.ok = true;
   return d;

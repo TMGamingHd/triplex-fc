@@ -53,7 +53,7 @@ Time-triggered rather than event-driven so behavior is predictable and jitter is
 | 3.0 - 5.0 | Consensus, estimator, controller, digest | - |
 | 5.0 - 6.5 | Each FC sends its command + estimator digest | `0x200+n` |
 | 6.5 - 7.0 | ACT votes, publishes voted output and vote status | `0x300` |
-| 7.0 - 10.0 | Heartbeats, sim traffic, slack (**target: at least 25% slack**) | `0x400+n`, `0x500+` |
+| 7.0 - 10.0 | Heartbeats, sim traffic, slack (**target: at least 25% slack**) | `0x400+n`, `0x500+` (ground commands `0x510`) |
 
 Bus load **target**: about 14 frames per 10 ms, roughly 20% of a 1 Mbit/s classic CAN bus in the worst bit-stuffing case, leaving room for sim traffic.
 
@@ -83,10 +83,31 @@ Missing / late / CRC-bad / out-of-sequence data is treated exactly like a miscom
 
 - **Detect:** per-channel miscompare, timeout, CRC or sequence error, non-finite value, stuck-at (bit-identical output), digest mismatch, out-of-schedule flood.
 - **Persist:** `ChannelMonitor` M-of-N filter (start with 3-of-5) so one glitch does not isolate a healthy channel.
-- **Isolate:** a latched channel is excluded from votes starting the same frame.
-- **Recover:** only by explicit reintegration request followed by a run of clean frames; repeat offenders become permanent (`max_latches`).
+- **Isolate:** a latched node is excluded from votes starting the same frame and a strike is counted against it.
+- **Recover:** latched -> dwell -> probation (a *shadow vote*: the excluded node is compared every frame with the voted output of the healthy nodes) -> readmission, only when an operator asks (default) and only if it keeps agreeing; see the life cycle below and ADR-010.
+- **Disable:** the 3rd latch of a node (2nd when the cause is physical, such as a stuck sensor) disables it for the run; only a maintenance command brings it back.
 - **Degrade:** healthy count 3 -> Triplex, 2 -> Duplex (compare only), 1 -> Simplex, 0 -> Safe. A duplex disagreement is attributed by continuity when that is clear-cut; otherwise the system holds the last voted command and requests Safe (sticky; see section 4).
 - **Watchdogs:** independent watchdog per node plus a frame-deadline monitor; a hung node becomes fail-silent, which the others detect as timeouts.
+
+### Node life cycle (ADR-010)
+
+```mermaid
+stateDiagram-v2
+  [*] --> Healthy
+  Healthy --> Latched: 3-of-5 bad frames (strike +1)
+  Healthy --> Disabled: strike limit reached (3; 2 for a physical cause)
+  Latched --> Probation: dwell >= 200 frames AND operator request\n(or Auto policy: first, transient-looking latch)
+  Probation --> Healthy: 100 agreeing frames (300 after a repeat latch)
+  Probation --> Latched: one bad or disagreeing frame\n(dwell restarts, no new strike)
+  Latched --> Disabled: operator "disable"
+  Healthy --> Disabled: operator "disable"
+  Disabled --> Latched: maintenance "clear-disabled" (strikes cleared)
+```
+
+- **Shadow vote.** On probation a node's frames are not part of the vote, but each frame is compared on all 8 channels with the voted output and with the healthy nodes' digest. Frames with no trustworthy reference (nobody healthy, Safe requested, the healthy nodes disagree) neither advance nor fail the probation.
+- **One at a time.** Only one node is on probation at once (TTP reintegrates one node per round for the same reason: the voters must not be perturbed by two unproven nodes).
+- **Operator commands** are CAN ground-command frames (`0x510`, ADR-011): `reintegrate`, `disable`, `clear-disabled`, `clear-safe`. Each is answered with an accepted/refused outcome in the frame report.
+- **Not solved:** each flight computer decides alone, so two of them can hold different views of a node; membership agreement (the digest and a heartbeat state exchange) is later work.
 
 ## 6. Software layers
 

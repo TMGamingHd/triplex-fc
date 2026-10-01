@@ -19,8 +19,8 @@ All numeric limits are **proposals**. Each will be confirmed, tightened or dropp
 | TFC-FDIR-003 | A stuck-at IMU fault shall be isolated within 40 frames (400 ms) (bound to be tightened with the stuck detector). | T, M |
 | TFC-FDIR-004 | A single-frame disagreement shall not isolate a healthy channel. | T |
 | TFC-FDIR-005 | A latched channel shall be excluded from the vote starting the same frame it latches. | T |
-| TFC-FDIR-006 | Reintegration shall require an explicit request and at least 100 consecutive clean frames. | T |
-| TFC-FDIR-007 | A channel that latches twice shall become permanently excluded. | T |
+| TFC-FDIR-006 | A latched node shall be readmitted to the vote only after (a) its minimum dwell, (b) an operator request or, under the opt-in automatic policy, a first transient-looking latch, and (c) a probation of N consecutive frames (100; 300 after a repeat latch) in which its data agree with the voted output of the healthy nodes and with their digest (ADR-010). | T |
+| TFC-FDIR-007 | A node that latches `max_strikes` times in a run (3; 2 when the cause is physical, e.g. a stuck sensor) shall be Disabled for the run and shall refuse reintegration until a maintenance command clears it (ADR-010). | T |
 | TFC-FDIR-008 | A duplex miscompare that cannot be attributed shall not be silently averaged; the system shall hold the last voted command and declare a Safe request that persists until cleared by an operator (ADR-008). | T |
 | TFC-FDIR-009 | A node transmitting outside its schedule (babbling) shall not delay other schedule slots by more than 1 frame slot; ACT shall ignore out-of-schedule IDs. (Detection: FDIR-019. This requirement is the bus-timing effect, measured on hardware.) | M |
 | TFC-FDIR-010 | CAN bus-off shall be recovered automatically within 100 ms without operator action. | M |
@@ -29,6 +29,9 @@ All numeric limits are **proposals**. Each will be confirmed, tightened or dropp
 | TFC-FDIR-017 | In duplex, a disagreement shall be blamed on a node only if that node jumped away from a fresh last-agreed value while the other stayed within tolerance of it; a stale reference shall never blame a node; a transient in duplex shall not isolate both survivors (ADR-008). | T |
 | TFC-FDIR-018 | Whenever the vote cannot produce a trustworthy value (unresolved duplex disagreement, no majority, no data) the output shall hold the last good value and be flagged as held. | T |
 | TFC-FDIR-019 | Out-of-schedule frames at or above the configured rate (default 3 per 10 ms frame) shall raise a bus alarm in the same frame, without blaming a node (ADR-009). | T |
+| TFC-FDIR-020 | A node whose data still disagree with the healthy nodes' voted output shall never be readmitted; failing probation shall not count a new strike and shall name the reason. | T |
+| TFC-FDIR-021 | At most one node shall be on probation at a time; a frame with no trustworthy reference shall neither advance nor fail a probation. | T |
+| TFC-FDIR-022 | Operator actions (reintegrate, disable, clear-disabled, clear-safe) shall be accepted as CRC-checked ground-command frames and every command shall be answered with an accepted or refused outcome in the flight computer's report (ADR-011). | T |
 
 ## Software quality
 | ID | Requirement | Verif. |

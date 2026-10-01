@@ -9,4 +9,14 @@ config TFC_NODE_ID
 	  The same image runs on every flight computer; only this id differs (STAGED_BUILD rule 1).
 	  This stage implements node 0, the sync master. Nodes 1 and 2 need SYNC following.
 
+config TFC_AUTO_REINTEGRATE
+	bool "Automatically readmit a node after a first, transient-looking latch"
+	default n
+	help
+	  Off (default): a latched node is only readmitted when an operator sends a "reintegrate" ground
+	  command, and only after it has passed probation (the Space Shuttle / airliner practice).
+	  On: after the minimum dwell, a node whose FIRST latch had a transient-looking cause (missing or
+	  damaged frames, one vote episode) goes on probation by itself. A stuck sensor, a digest
+	  mismatch and a repeat offender are never readmitted automatically. See docs/DECISIONS.md ADR-010.
+
 source "Kconfig.zephyr"
