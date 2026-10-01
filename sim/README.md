@@ -167,9 +167,9 @@ Safe to re-run. It does not survive a reboot. Remove it with `sudo ip link del v
 `ip -brief link show vcan0` should show `UNKNOWN <NOARP,UP,LOWER_UP>`; `UNKNOWN` is normal for a virtual interface.
 
 ### Running from any directory
-`python3 -m tfc_peers ...` only works from inside `sim/` (that is where the package lives); from anywhere else it says
-`No module named tfc_peers`. The launcher `sim/tfc-peers` takes the same subcommands and flags and works from any
-directory: `~/SpaceX/triplex-fc/sim/tfc-peers listen`, `sim/tfc-peers run ...` from the repo root. (Add `sim/` to your
+`python3 -m tfc_peers ...` (underscore) only works from inside `sim/` (that is where the package lives); from anywhere
+else it says `No module named tfc_peers`. The launcher `sim/tfc-peers` (hyphen, a script: **no** `python3 -m`) takes the
+same subcommands and flags and works from any directory: `~/SpaceX/triplex-fc/sim/tfc-peers listen`, `sim/tfc-peers run ...` from the repo root. (Add `sim/` to your
 `PATH`, or `alias tfc-peers=~/SpaceX/triplex-fc/sim/tfc-peers`, to type just `tfc-peers listen`.)
 
 ### Exit status of `tfc_peers`
@@ -358,6 +358,7 @@ computers on the Nucleo use FDCAN1 (see `firmware/README.md`).
 ### Troubleshooting
 | Message or symptom | Cause and fix |
 |---|---|
+| `No module named tfc-peers` (with a **hyphen**) | Two different names: **`tfc_peers`** (underscore) is the Python package, run as `python3 -m tfc_peers ...` from inside `sim/`; **`tfc-peers`** (hyphen) is the launcher *script*, run directly as `./tfc-peers ...` (no `python3 -m`). |
 | `No module named tfc_peers` | You are not in `sim/`. `cd sim`, or use the launcher from anywhere: `sim/tfc-peers ...`. |
 | One node latched from your fault, then the other latches `frame missing` | The peers stopped (fixed `--frames` ran out) while FC-A kept running. Use `--frames 0` (until Ctrl+C) or a larger N. Not a fault. |
 | `cannot open CAN interface 'vcan0'` | The interface does not exist. `./scripts/setup_vcan.sh` (it is gone after a reboot). |
