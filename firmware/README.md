@@ -60,8 +60,10 @@ west build -p always -b native_sim/native/64 firmware/app -d build/native_sim
 # terminal 1: the flight computer (runs in real time; -stop_at=<s> ends it, Ctrl+C also works)
 build/native_sim/zephyr/zephyr.exe -stop_at=12
 
-# terminal 2, within a second or two: fake FC-B and FC-C that follow FC-A's SYNC; B gets a bias at frame 400
-cd sim && python3 -m tfc_peers run --follow-sync --nodes B,C --frames 750 --fault B:bias:start=400,mag=3
+# terminal 2, within a second or two: fake FC-B and FC-C that follow FC-A's SYNC; B gets a bias at frame 400.
+# --frames 0 = keep sending until Ctrl+C (a fixed count would stop the peers early and FC-A would then report them missing)
+cd sim && python3 -m tfc_peers run --follow-sync --nodes B,C --frames 0 --fault B:bias:start=400,mag=3
+# optional terminal 3, from any directory: watch the bus   ~/SpaceX/triplex-fc/sim/tfc-peers listen
 ```
 Expected FC-A console (frame numbers are absolute; the peers use SYNC's frame number):
 ```
@@ -73,7 +75,7 @@ Expected FC-A console (frame numbers are absolute; the peers use SYNC's frame nu
 [frame 402] node B LATCHED OUT: vote disagreement
 [frame 402] MODE TRIPLEX -> DUPLEX
 ...
-[frame 796] node C LATCHED OUT: frame missing      <- the peers finished their 750 frames
+[frame 796] node C LATCHED OUT: frame missing      <- only after you press Ctrl+C on the peers
 ```
 Try any fault from `python3 -m tfc_peers faults`. Without `--follow-sync` the peers free-run on their own
 clock and will not line up with FC-A's frames. Automated version: `cd sim && python3 -m unittest tests.test_live_fc -v`
