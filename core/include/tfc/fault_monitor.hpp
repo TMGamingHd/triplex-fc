@@ -99,6 +99,51 @@ class ChannelMonitor {
   bool permanent_ = false;
 };
 
+// Leaky "alpha-count" for intermittent faults (Bondavalli et al.): the score goes up by 1 on every
+// bad observation and is multiplied by K (0 < K < 1) on every good one, and a node whose score
+// reaches the threshold is diagnosed as intermittently (or permanently) faulty. Unlike an M-of-N
+// window it remembers bad frames that are spread out: with K = 0.9 and a threshold of 3 a node that
+// is bad one frame in three crosses it within about a dozen frames, while a single glitch, a
+// two-frame burst, or one bad frame in ten never does. A three-frame burst crosses it on the third
+// frame, exactly when 3-of-5 does.
+//
+// Fixed-point (Q16) so every replica computes bit-identical scores on any platform, with no float
+// rounding in a verdict that all flight computers must agree on.
+class AlphaCount {
+ public:
+  constexpr AlphaCount(float k, float threshold) noexcept : k_(to_q16(k)), threshold_(to_q16(threshold)) {}
+
+  // Feed one observation. Returns true while the score is at or above the threshold (never when the
+  // threshold is 0, which disables the detector).
+  bool update(bool bad) noexcept {
+    if (bad) {
+      if (score_ <= 0xFFFFFFFFU - kOne) {
+        score_ += kOne;
+      }
+    } else {
+      score_ = static_cast<uint32_t>((static_cast<uint64_t>(score_) * k_) >> 16U);
+    }
+    return threshold_ != 0U && score_ >= threshold_;
+  }
+
+  void reset() noexcept { score_ = 0U; }
+  constexpr float score() const noexcept { return static_cast<float>(score_) / 65536.0F; }
+
+ private:
+  static constexpr uint32_t kOne = 65536U;
+  static constexpr uint32_t to_q16(float v) noexcept {
+    if (v <= 0.0F) {
+      return 0U;
+    }
+    const float x = v * 65536.0F;
+    const uint32_t whole = static_cast<uint32_t>(x);
+    return (x - static_cast<float>(whole) >= 0.5F) ? whole + 1U : whole;  // round to nearest
+  }
+  uint32_t k_;
+  uint32_t threshold_;
+  uint32_t score_ = 0U;
+};
+
 // Flags a sensor whose output is bit-identical for `limit` consecutive frames.
 // A live MEMS gyro/accelerometer always shows LSB-level noise, so a frozen value
 // is a strong stuck-at signature (a real bias-free vehicle at rest still dithers).

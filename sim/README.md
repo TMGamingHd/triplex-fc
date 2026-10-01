@@ -237,7 +237,9 @@ harm, bus load and arbitration starvation, only shows on real CAN hardware.
 | `seqgap` | never | one bad frame (`seq_bad=3`: once per frame type) | triplex |
 | `reboot` (down=50) | 102 | missing frames; readmitted if the operator asks (see Recovery) | duplex, then triplex |
 | `late` (us=4000) | 102 | stale data: vote disagreement + digest mismatch (the command is a frame behind) | duplex |
-| `corrupt` at 1 frame in 3 (`period=3,duty=1`) | **never** | a known gap: 3-of-5 never fills (the alpha-count will close it) | triplex |
+| `corrupt` at 1 frame in 3 (`period=3,duty=1`) | 112 | the leaky count ("intermittent fault"); 3-of-5 alone never fills | duplex |
+| `corrupt` at 2 frames in 5 / 2 in 10 | 106 / 121 | the leaky count | duplex |
+| `corrupt` at 1 frame in 5, 10 or 20 | never | sparse trouble is left alone (no false isolation) | triplex |
 
 **Two faults in a row** (after B is out the system is in *duplex*: two nodes can only compare, not outvote). What happens
 next depends on how clear-cut the second fault is (ADR-008):
@@ -261,7 +263,7 @@ in `docs/ARCHITECTURE.md`) is **Healthy → Latched → Probation → Healthy**,
    compared on all 8 channels with the **voted output of the healthy nodes**, and its digest with theirs: a *shadow vote*.
    It needs **100 consecutive agreeing frames** (300 after a repeat latch). One bad or disagreeing frame sends it back to
    Latched (the dwell restarts and a new request is needed), without a new strike. Only one node is on probation at a time.
-3. **Disabled:** the **3rd** latch of a node (the **2nd** if the cause is physical, i.e. a stuck sensor) disables it for
+3. **Disabled:** the **3rd** latch of a node (the **2nd** if the cause is physical: a stuck sensor or an intermittent fault) disables it for
    the run. A disabled node refuses `reintegrate`; only a maintenance `clear-disabled` brings it back to Latched.
 
 | Setting | Default | Meaning |
@@ -269,7 +271,7 @@ in `docs/ARCHITECTURE.md`) is **Healthy → Latched → Probation → Healthy**,
 | `policy` | Manual | Manual: only an operator command starts probation. AutoTransient: also automatic for a first, transient-looking latch |
 | `min_dwell_frames` | 200 | Minimum time latched before probation can start |
 | `probation_frames` / `probation_frames_repeat` | 100 / 300 | Agreeing frames needed after the first / a repeat latch |
-| `max_strikes` / `max_strikes_physical` | 3 / 2 | Latches before the node is disabled; for a physical cause (`physical_causes`, default stuck) |
+| `max_strikes` / `max_strikes_physical` | 3 / 2 | Latches before the node is disabled; for a physical cause (`physical_causes`, default stuck sensor or intermittent fault) |
 | `strike_window_frames` | 0 (whole run) | Strikes older than this are forgotten; 0 = never |
 | `auto_eligible_causes`, `auto_max_attempts` | frame problems + vote; 3 | Which causes the auto policy may readmit, and failed probations tolerated |
 
@@ -349,13 +351,14 @@ Example log line: `(0.001500) vcan0 100#010031000100009D` = at 1.5 ms, node A's 
 1. Decode each node's gyro, accel and command frames; check CRC and sequence number.
 2. Vote each of the 8 channels (gyro x3, accel x3, command pitch, yaw) with `vote3` (median of three). With only two voting nodes that disagree, try to blame the one that jumped away from the last agreed value; otherwise hold the last good output and, if it persists, request Safe (sticky).
 3. Cross-check the estimator-state digests; run a stuck detector on the raw sensor bytes.
-4. Feed each node's verdict to its own `ChannelMonitor`. A node is **latched out** when 3 of its last 5 frames
-   were bad; from then on its data is excluded from the vote until explicitly reintegrated.
+4. Feed each node's verdict to its own `ChannelMonitor` and a leaky `AlphaCount`. A node is **latched out** when 3 of its last 5 frames
+   were bad, or when the leaky score (+1 per bad frame, x0.9 per good frame) reaches 3; from then on its data is excluded from the vote until explicitly reintegrated.
 
 | Setting | Value | Meaning |
 |---|---|---|
 | Vote tolerance | gyro 1.0 dps, accel 0.02 g, command 0.01 deg | A value further than this from the median counts as disagreeing |
 | Persistence | 3 of the last 5 frames | One glitch never latches |
+| Leaky count (intermittent faults) | K=0.9, threshold 3 | +1 per bad frame, x0.9 per good one. Catches 1 bad frame in 3 (isolated 12 frames after it starts) and 2 in 5 (6 frames) that 3-of-5 never sees; 1 in 5 or sparser is left alone (ADR-013) |
 | Stuck limit | 20 identical sensor frames | Backup for a stuck sensor when the vehicle is at rest |
 | Reintegration | explicit request + 100 clean frames | The replay never requests it (no operator command in a log) |
 | Permanent failure | 3 latches | Then never reintegrated |
@@ -365,7 +368,7 @@ Example log line: `(0.001500) vcan0 100#010031000100009D` = at 1.5 ms, node A's 
 
 **What happens to a latched node** is described in [Recovery](#recovery-latch-probation-readmission-and-disabling): dwell, probation by shadow vote, strikes, disabling.
 
-**Why a node was judged bad** (named in `--verbose` output and in FC-A's console): `frame missing`,
+**Why a node was judged bad** (named in `--verbose` output and in FC-A's console): `intermittent fault` (the leaky count latched it; 3-of-5 never fired), `frame missing`,
 `CRC failure`, `sequence error` (a damaged frame, or a slot in which nothing arrived, still consumes a sequence number, so one corrupted or lost frame costs one
 bad sample, not two; ADR-007), `vote disagreement`, `digest mismatch`, `stuck sensor`.
 
@@ -540,8 +543,8 @@ python3 -m unittest tests.test_live_fc -v                   # only the live FC-A
 |---|---|
 | `tests/test_protocol.py` | CRC, golden frames generated by the C++ code (incl. SYNC), every single-bit flip detected, decode |
 | `tests/test_peers.py` | Healthy traffic and schedule, every fault's effect on the wire, fault-spec parsing, logs, follow-SYNC logic |
-| `tests/test_replay.py` | Peers -> log -> **C++ `tfc_replay`**: every fault kind through the real `core/` code against the requirements; the node life cycle (`NodeLifeCycle`): readmission, refusal by shadow vote, strikes and disabling, auto policy, `reboot`, `late`, intermittent |
-| `tests/test_live_fc.py` | The **real FC-A firmware** against the peers on `vcan0`: healthy run with no latch and no CRC/sequence/vote/digest alarms, bias isolated at about fault+2, digest and command faults labelled, babble raises the bus alarm without blaming a node, a transient fault followed by an operator reintegration end to end, a still-faulty node failing probation, silence within 3 frames (tolerant of timing jitter on busy machines) |
+| `tests/test_replay.py` | Peers -> log -> **C++ `tfc_replay`**: every fault kind through the real `core/` code against the requirements; the node life cycle (`NodeLifeCycle`): readmission, refusal by shadow vote, strikes and disabling, auto policy, `reboot`, `late`, intermittent (leaky count) |
+| `tests/test_live_fc.py` | The **real FC-A firmware** against the peers on `vcan0`: healthy run with no latch and no CRC/sequence/vote/digest alarms, bias isolated at about fault+2, digest and command faults labelled, babble raises the bus alarm without blaming a node, a transient fault followed by an operator reintegration end to end, a still-faulty node failing probation, an intermittent node isolated by the leaky count, silence within 3 frames (tolerant of timing jitter on busy machines) |
 | `tests/test_docs.py` | Fails if this README stops documenting a flag, fault kind or fault option |
 
 `ctest --test-dir ../build/host` runs the same suite (`peers_e2e`). Replay tests skip if `tfc_replay` is not
@@ -572,8 +575,8 @@ going backwards needs `reset()`.
   `protocol.hpp` yet, so the peers do not send them.
 - **Every flight computer decides alone:** there is no agreement between flight computers on a node's state, so two of
   them could hold different views (membership agreement is later work). FC-A also keeps judging if *it* is the one voted out.
-- **Intermittent faults below 3-of-5** (one bad frame in three, say) are never isolated yet: the vote masks every bad frame
-  but the node stays in (`F26`, the alpha-count is the planned fix).
+- **The leaky-count constants are tuned on a simulation** of frame-level faults (ADR-013); real error rates will differ and
+  must be re-tuned from measurements on the rig. Sparse trouble (one bad frame in 5 or fewer) is deliberately left alone.
 - **No recovery from "all nodes out"**: with no healthy node there is no reference to compare against; that needs a restart.
 - **No authentication** on ground commands (any node on the bus could send one): fine for a bench, not for a flight uplink.
 - **Bus effects:** arbitration, bus load, babbling's real harm, bus-off and wiring faults need hardware.

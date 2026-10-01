@@ -910,3 +910,92 @@ TFC_TEST(life_cycle_probation_failure_names_a_digest_mismatch) {
   CHECK(ev.probation_failed > 0);
   CHECK(ev.failure_reason == reason::kDigest);  // values agree, the estimator fingerprint does not
 }
+
+// ======================= intermittent faults: the leaky count (ADR-013) =======================
+TFC_TEST(intermittent_one_bad_frame_in_three_latches_with_its_own_reason) {
+  RedundancyManager m;
+  Events ev;
+  uint8_t why = 0;
+  drive(m, 0, 200, smooth,
+        [](int k, std::array<NodeFault, 3>& f) { f[1].corrupt_gyro = (k >= 10 && (k - 10) % 3 == 0); },
+        [&](int k, const FrameReport& r) {
+          ev.see(k, r, 1);
+          if (((r.newly_latched >> 1) & 1U) != 0U) why = r.reason[1];
+        });
+  CHECK(ev.latched == 22);                         // 3-of-5 never fires on this; the leaky count does
+  CHECK((why & reason::kIntermittent) != 0U);
+  CHECK(m.state(1) == NodeState::Latched);
+}
+
+TFC_TEST(intermittent_a_hard_burst_is_still_latched_by_the_window_on_the_same_frame_as_before) {
+  RedundancyManager m;
+  Events ev;
+  uint8_t why = 0;
+  drive(m, 0, 60, smooth, [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = (k >= 10) ? 3.0F : 0.0F; },
+        [&](int k, const FrameReport& r) {
+          ev.see(k, r, 1);
+          if (((r.newly_latched >> 1) & 1U) != 0U) why = r.reason[1];
+        });
+  CHECK(ev.latched == 12);
+  CHECK(why == reason::kVote);  // the window got there first: not labelled intermittent
+}
+
+TFC_TEST(intermittent_sparse_glitches_never_latch_a_healthy_node_even_over_a_long_run) {
+  RedundancyManager m;
+  for (int k = 0; k < 5000; ++k) {
+    std::array<NodeFault, 3> f{};
+    f[1].corrupt_gyro = (k % 23 == 0);   // a glitch every 23 frames for 50 s
+    CHECK(frame(m, k, f, smooth).newly_latched == 0U);
+  }
+  CHECK(m.state(1) == NodeState::Healthy);
+}
+
+TFC_TEST(intermittent_cause_is_physical_so_a_repeat_disables_and_auto_never_readmits) {
+  {
+    RedundancyConfig cfg;
+    cfg.policy = ReintegrationPolicy::AutoTransient;
+    RedundancyManager m(cfg);
+    drive(m, 0, 700, smooth,
+          [](int k, std::array<NodeFault, 3>& f) { f[1].corrupt_gyro = (k >= 10 && k < 60 && (k - 10) % 3 == 0); }, no_report);
+    CHECK(m.state(1) == NodeState::Latched);  // clean for 600 frames, but an intermittent latch is not auto-readmitted
+    CHECK(m.counters().probations_started == 0U);
+  }
+  {
+    RedundancyManager m;
+    Events ev;
+    drive(m, 0, 1000, smooth,
+          [](int k, std::array<NodeFault, 3>& f) {
+            f[1].corrupt_gyro = ((k >= 10 && k < 60) || k >= 600) && (k % 3 == 0);
+          },
+          [&](int k, const FrameReport& r) {
+            ev.see(k, r, 1);
+            if (k == 70) m.request_reintegration(1);
+          });
+    CHECK(ev.reintegrated > 0 && ev.reintegrated < 600);
+    CHECK(ev.disabled > 600);                       // latched again as intermittent: second strike, physical class
+    CHECK(m.strikes(1) == 2U && m.state(1) == NodeState::Disabled);
+  }
+}
+
+TFC_TEST(intermittent_detector_can_be_switched_off) {
+  RedundancyConfig cfg;
+  cfg.alpha_threshold = 0.0F;
+  RedundancyManager m(cfg);
+  drive(m, 0, 300, smooth, [](int k, std::array<NodeFault, 3>& f) { f[1].corrupt_gyro = (k >= 10 && (k - 10) % 3 == 0); },
+        no_report);
+  CHECK(m.state(1) == NodeState::Healthy);  // the old behaviour: 3-of-5 alone is blind to it
+}
+
+TFC_TEST(intermittent_score_is_cleared_when_a_node_is_readmitted) {
+  RedundancyManager m;
+  drive(m, 0, 500, smooth,
+        [](int k, std::array<NodeFault, 3>& f) { f[1].corrupt_gyro = (k >= 10 && k < 50 && (k - 10) % 3 == 0); },
+        [&](int k, const FrameReport&) { if (k == 60) m.request_reintegration(1); });
+  CHECK(m.state(1) == NodeState::Healthy);
+  // Straight after readmission one glitch must not re-latch it on leftover score.
+  for (int k = 500; k < 540; ++k) {
+    std::array<NodeFault, 3> f{};
+    f[1].corrupt_gyro = (k == 505);
+    CHECK(frame(m, k, f, smooth).newly_latched == 0U);
+  }
+}

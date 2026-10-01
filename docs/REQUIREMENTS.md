@@ -32,6 +32,7 @@ All numeric limits are **proposals**. Each will be confirmed, tightened or dropp
 | TFC-FDIR-020 | A node whose data still disagree with the healthy nodes' voted output shall never be readmitted; failing probation shall not count a new strike and shall name the reason. | T |
 | TFC-FDIR-021 | At most one node shall be on probation at a time; a frame with no trustworthy reference shall neither advance nor fail a probation. | T |
 | TFC-FDIR-022 | Operator actions (reintegrate, disable, clear-disabled, clear-safe) shall be accepted as CRC-checked ground-command frames and every command shall be answered with an accepted or refused outcome in the flight computer's report (ADR-011). | T |
+| TFC-FDIR-023 | A node whose frames are bad at a sustained rate of about one in three (or two in five) shall be isolated within 40 frames of the fault starting, with the reason "intermittent fault"; a single glitch, a two-frame burst, or one bad frame in ten or fewer shall not isolate a healthy node (ADR-013). | T |
 
 ## Software quality
 | ID | Requirement | Verif. |
