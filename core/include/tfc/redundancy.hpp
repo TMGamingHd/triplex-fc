@@ -36,6 +36,42 @@ constexpr uint8_t kDigest = 16U;  // estimator-state digest disagreed
 constexpr uint8_t kStuck = 32U;   // sensor bytes bit-identical for too many frames
 }  // namespace reason
 
+// Writes the set reason bits as words, e.g. "vote disagreement + digest mismatch", into `out`
+// (NUL-terminated, truncated to `cap`). No heap; for logs on the host and on the target.
+inline void format_reasons(uint8_t bits, char* out, std::size_t cap) noexcept {
+  struct Name {
+    uint8_t bit;
+    const char* text;
+  };
+  constexpr std::array<Name, 6> names = {{{reason::kMissing, "frame missing"},
+                                          {reason::kCrc, "CRC failure"},
+                                          {reason::kSeq, "sequence error"},
+                                          {reason::kVote, "vote disagreement"},
+                                          {reason::kDigest, "digest mismatch"},
+                                          {reason::kStuck, "stuck sensor"}}};
+  if (cap == 0U) {
+    return;
+  }
+  std::size_t n = 0;
+  auto put = [&](const char* text) {
+    for (const char* c = text; *c != '\0' && n + 1U < cap; ++c) {
+      out[n++] = *c;
+    }
+  };
+  for (const Name& nm : names) {
+    if ((bits & nm.bit) != 0U) {
+      if (n != 0U) {
+        put(" + ");
+      }
+      put(nm.text);
+    }
+  }
+  if (n == 0U) {
+    put("(none)");
+  }
+  out[n] = '\0';
+}
+
 struct RedundancyConfig {
   // Vote tolerances per channel: gyro (dps) x3, accel (g) x3, command (deg) x2.
   std::array<float, kVoteChannels> tol{{1.0F, 1.0F, 1.0F, 0.02F, 0.02F, 0.02F, 0.01F, 0.01F}};
@@ -44,6 +80,10 @@ struct RedundancyConfig {
   uint16_t reintegrate_clean = 100;  // clean frames needed after an explicit reintegration request
   uint8_t max_latches = 3;           // latches before a node is permanently excluded
   uint16_t stuck_limit = 20;         // identical sensor frames before "stuck"
+  // A node that has never delivered a good sample is not judged for this many frames: peers boot
+  // in any order, and "not here yet" is not "failed". 0 = judge from the first frame (absent means
+  // invalid). Once a node has been seen, it is always judged.
+  uint32_t startup_grace_frames = 0;
 };
 
 struct Counters {
@@ -60,10 +100,11 @@ struct Counters {
 struct FrameReport {
   uint8_t valid_mask = 0U;      // nodes whose data took part in the vote this frame
   uint8_t newly_latched = 0U;   // nodes that latched on this frame
+  uint8_t newly_seen = 0U;      // nodes whose first good sample arrived on this frame
   uint8_t latched_mask = 0U;    // nodes currently latched out
   std::array<uint8_t, kNodes> reason{};  // reason:: bits, per node, this frame
   Mode mode = Mode::Safe;
-  unsigned healthy = 0U;
+  unsigned healthy = 0U;        // nodes that have been seen and are not latched out
   std::array<VoteResult, kVoteChannels> votes{};  // voted value + status per channel
 };
 
@@ -152,7 +193,8 @@ class RedundancyManager {
     for (unsigned n = 0; n < kNodes; ++n) {
       const NodeRx& r = rx_[n];
       const bool present = r.gyro && r.accel && r.cmd;
-      if (!present && !r.crc_bad) {
+      const bool in_grace = !seen_[n] && counters_.frames <= cfg_.startup_grace_frames;
+      if (!present && !r.crc_bad && !in_grace) {
         ++counters_.missing;
         rep.reason[n] = static_cast<uint8_t>(rep.reason[n] | reason::kMissing);
       }
@@ -163,6 +205,10 @@ class RedundancyManager {
         rep.reason[n] = static_cast<uint8_t>(rep.reason[n] | reason::kSeq);
       }
       good[n] = present && !r.crc_bad && !r.seq_bad;
+      if (good[n] && !seen_[n]) {
+        seen_[n] = true;
+        rep.newly_seen = static_cast<uint8_t>(rep.newly_seen | (1U << n));
+      }
       if (good[n] && !mon_[n].latched()) {
         valid = static_cast<uint8_t>(valid | (1U << n));
       }
@@ -206,7 +252,7 @@ class RedundancyManager {
     for (unsigned n = 0; n < kNodes; ++n) {
       if (mon_[n].latched()) {
         rep.latched_mask = static_cast<uint8_t>(rep.latched_mask | (1U << n));
-      } else {
+      } else if (seen_[n]) {
         ++rep.healthy;
       }
     }
@@ -221,6 +267,7 @@ class RedundancyManager {
     }
   }
 
+  bool seen(unsigned node) const noexcept { return node < kNodes && seen_[node]; }
   bool latched(unsigned node) const noexcept { return node < kNodes && mon_[node].latched(); }
   bool permanent(unsigned node) const noexcept { return node < kNodes && mon_[node].permanent(); }
   const Counters& counters() const noexcept { return counters_; }
@@ -285,6 +332,7 @@ class RedundancyManager {
   RedundancyConfig cfg_;
   std::array<ChannelMonitor, kNodes> mon_;
   std::array<StuckDetector, kNodes> stuck_;
+  std::array<bool, kNodes> seen_{};
   std::array<std::array<SeqTracker, kStreams>, kNodes> seq_{};
   std::array<NodeRx, kNodes> rx_{};
   Counters counters_{};

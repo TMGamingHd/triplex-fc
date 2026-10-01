@@ -4,6 +4,7 @@
 // docs/REQUIREMENTS.md; the virtual-peers end-to-end tests check the same through the wire log.
 #include <array>
 #include <cmath>
+#include <cstring>
 
 #include "tfc/redundancy.hpp"
 #include "tfc_test.hpp"
@@ -232,4 +233,64 @@ TFC_TEST(manager_ignores_non_data_ids_and_counts_unknown_ones) {
   beyond.id = id::kGyroBase + 3U;  // no node D
   CHECK(!m.on_frame(beyond));
   CHECK(m.counters().out_of_schedule == 2U);
+}
+
+TFC_TEST(format_reasons_names_every_bit_and_truncates_safely) {
+  std::array<char, 96> buf{};
+  format_reasons(reason::kVote | reason::kDigest, buf.data(), buf.size());
+  CHECK(std::strcmp(buf.data(), "vote disagreement + digest mismatch") == 0);
+  format_reasons(0U, buf.data(), buf.size());
+  CHECK(std::strcmp(buf.data(), "(none)") == 0);
+  format_reasons(reason::kMissing, buf.data(), buf.size());
+  CHECK(std::strcmp(buf.data(), "frame missing") == 0);
+  std::array<char, 6> tiny{};
+  format_reasons(reason::kCrc | reason::kSeq, tiny.data(), tiny.size());
+  CHECK(std::strcmp(tiny.data(), "CRC f") == 0);  // truncated, still NUL-terminated
+  format_reasons(reason::kCrc, tiny.data(), 0);   // zero capacity must not write
+}
+
+TFC_TEST(manager_startup_grace_lets_late_peers_join_without_latching) {
+  RedundancyConfig cfg;
+  cfg.startup_grace_frames = 200;
+  RedundancyManager m(cfg);
+  for (int k = 0; k < 300; ++k) {
+    std::array<NodeFault, 3> f{};
+    f[1].present = (k >= 100);  // B boots at frame 100
+    f[2].present = (k >= 150);  // C boots at frame 150
+    const FrameReport& r = frame(m, k, f);
+    CHECK(r.newly_latched == 0U);
+    if (k == 99) {
+      CHECK(r.mode == Mode::Simplex && r.healthy == 1U);  // only A has been seen
+    }
+    if (k == 100) {
+      CHECK(r.newly_seen == 0x2U);
+    }
+    if (k == 120) {
+      CHECK(r.mode == Mode::Duplex);
+    }
+    if (k == 150) {
+      CHECK(r.newly_seen == 0x4U);
+    }
+  }
+  CHECK(m.last_report().mode == Mode::Triplex);
+  CHECK(m.counters().missing == 0U);
+}
+
+TFC_TEST(manager_startup_grace_expires_and_a_node_never_seen_then_latches) {
+  RedundancyConfig cfg;
+  cfg.startup_grace_frames = 50;
+  RedundancyManager m(cfg);
+  NodeFault gone;
+  gone.present = false;
+  CHECK(run(2, gone, 0, 100, m) == 52);  // first judged frame is 50; third bad frame latches it
+  CHECK(!m.seen(2));
+}
+
+TFC_TEST(manager_a_seen_node_is_judged_even_inside_the_grace_period) {
+  RedundancyConfig cfg;
+  cfg.startup_grace_frames = 1000;
+  RedundancyManager m(cfg);
+  NodeFault gone;
+  gone.present = false;
+  CHECK(run(1, gone, 20, 60, m) == 22);  // seen at frame 0, so no grace once it goes silent
 }

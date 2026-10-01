@@ -83,24 +83,9 @@ bool parse_line(const std::string& s, Logged& out) {
 }
 
 std::string reason_text(uint8_t bits) {
-  struct Name {
-    uint8_t bit;
-    const char* text;
-  };
-  static const std::array<Name, 6> names = {{{tfc::reason::kMissing, "frame missing"},
-                                             {tfc::reason::kCrc, "CRC failure"},
-                                             {tfc::reason::kSeq, "sequence error"},
-                                             {tfc::reason::kVote, "vote disagreement"},
-                                             {tfc::reason::kDigest, "digest mismatch"},
-                                             {tfc::reason::kStuck, "stuck sensor"}}};
-  std::string out;
-  for (const Name& n : names) {
-    if ((bits & n.bit) != 0U) {
-      out += out.empty() ? "" : " + ";
-      out += n.text;
-    }
-  }
-  return out.empty() ? "(none)" : out;
+  std::array<char, 96> buf{};
+  tfc::format_reasons(bits, buf.data(), buf.size());
+  return std::string(buf.data());
 }
 
 const char* mode_name(tfc::Mode m) {
