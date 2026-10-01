@@ -50,6 +50,8 @@ jobs:
           west build -p always -b native_sim/native/64 firmware/app -d build/native_sim
       - name: Live FC-A against virtual peers (needs vcan; tests skip if the runner has none)
         run: |
+          # The runner's Azure kernel ships vcan in linux-modules-extra.
+          sudo apt-get install -y "linux-modules-extra-$(uname -r)" || echo "modules-extra not installable"
           sudo modprobe vcan && sudo ip link add dev vcan0 type vcan && sudo ip link set up vcan0 \
             || echo "vcan unavailable on this runner: live tests will be skipped"
           cd sim
