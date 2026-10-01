@@ -73,15 +73,19 @@ Missing / late / CRC-bad / out-of-sequence data is treated exactly like a miscom
 
 **Boot order.** Nodes do not boot simultaneously. A peer that has never delivered a good sample is not judged for `startup_grace_frames` (configurable; 500 = 5 s on FC-A, 0 in the host tests). It does not vote and is not counted healthy, so the mode is Simplex until it joins; after the grace period, or at any time once it has been seen, a silent node latches out like any other.
 
-**Sequence tracking.** Each receiver tracks the expected sequence number per sender and per stream (`tfc::SeqTracker`). A frame that arrives with a bad CRC was still sent, so it consumes a sequence number: one corrupted frame costs exactly one bad sample (the CRC failure), not two (plus a false gap on the next good frame). A real gap, where frames never arrived, is still reported once.
+**Sequence tracking.** Each receiver tracks the expected sequence number per sender and per stream (`tfc::SeqTracker`). A frame that arrives with a bad CRC was still sent, so it consumes a sequence number, and so does a slot in which nothing arrived at all (the sender's counter advances with the schedule): one corrupted or lost frame costs exactly one bad sample, not two (plus a false gap on the next good frame). A real gap, where several frames never arrived, is still reported once; a sender that restarts its counter is reported once on its first frame back. Rationale: ADR-007.
+
+**Duplex disagreement.** With two voting nodes a disagreement cannot be settled by the vote itself. `RedundancyManager` first tries continuity: it blames a node only if that node jumped more than 2x the channel tolerance away from the last agreed value (set by the previous frame) while the other stayed within one tolerance of it; the output then follows the consistent node. If that does not single one out (a slow drift, a step only just above tolerance, a digest mismatch, no fresh reference) nobody is blamed, the output **holds the last good value**, and if this persists (M of the last N frames, 3-of-5) a **Safe request** is raised that stays raised until an operator clears it (`clear_safe_request()`). A held reference is never used to blame anyone afterwards. Rationale and the bug that shaped this rule: ADR-008.
+
+**Out-of-schedule traffic.** The flight-bus schedule fixes which IDs exist. Frames on any other ID are counted, and three or more in one 10 ms frame raise a bus alarm for as long as that continues. CAN carries no sender identity beyond the ID, so a flood cannot be blamed on a node from IDs alone: the response is an alarm (and, in the real system, the actuator node ignoring those IDs), not a latch. ADR-009.
 
 ## 5. FDIR (fault detection, isolation, recovery)
 
-- **Detect:** per-channel miscompare, timeout, CRC or sequence error, non-finite value, stuck-at (bit-identical output), digest mismatch.
+- **Detect:** per-channel miscompare, timeout, CRC or sequence error, non-finite value, stuck-at (bit-identical output), digest mismatch, out-of-schedule flood.
 - **Persist:** `ChannelMonitor` M-of-N filter (start with 3-of-5) so one glitch does not isolate a healthy channel.
 - **Isolate:** a latched channel is excluded from votes starting the same frame.
 - **Recover:** only by explicit reintegration request followed by a run of clean frames; repeat offenders become permanent (`max_latches`).
-- **Degrade:** healthy count 3 -> Triplex, 2 -> Duplex (compare only), 1 -> Simplex, 0 -> Safe. A duplex miscompare cannot be resolved, so the system holds the last voted command, raises an alarm and requests Safe.
+- **Degrade:** healthy count 3 -> Triplex, 2 -> Duplex (compare only), 1 -> Simplex, 0 -> Safe. A duplex disagreement is attributed by continuity when that is clear-cut; otherwise the system holds the last voted command and requests Safe (sticky; see section 4).
 - **Watchdogs:** independent watchdog per node plus a frame-deadline monitor; a hung node becomes fail-silent, which the others detect as timeouts.
 
 ## 6. Software layers

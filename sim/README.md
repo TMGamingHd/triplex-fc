@@ -151,7 +151,7 @@ Feeds each 10 ms frame of the log to `tfc::RedundancyManager`, the same class th
 | Flag | Meaning |
 |---|---|
 | `LOG` | `candump -L` log. Frames are grouped into 10 ms frames by timestamp, so logs from `record` (which start at t=0) work as-is. |
-| `--verbose` | Print one line per latch event: `frame N: node X latched because: <reasons in words>`. |
+| `--verbose` | Print one line per latch event (`frame N: node X latched because: <reasons in words>`), plus `SAFE REQUEST raised` and `BUS ALARM raised/cleared` events. |
 | `--t0 SECONDS` | Subtract this from every timestamp before grouping (for logs that do not start at 0). |
 | `--expect-latch NODE:FRAME` or `NODE:MIN-MAX` | Node (A/B/C) must have latched at exactly that frame, or within the range (inclusive). Repeatable. |
 | `--expect-no-latch NODE` | Node must never have latched. Repeatable. |
@@ -191,11 +191,12 @@ active, default never). Frames are 10 ms; `start=100` is 1.0 s in. Faults only c
 | `corrupt` | F08 | A flaky link | `p` (0.2; probability per frame, per frame type) | Flips one random bit of a gyro/accel/command frame; its CRC then fails |
 | `cmd_offset` | F09 | A wrong-but-valid command (software bug) | `mag` (1.0; degrees) | Adds `mag` to the pitch command; everything else, including the CRC, stays valid |
 | `digest` | F10 | Silent internal state divergence | `xor` (1; 16-bit mask) | XORs the estimator-state digest in the command frame; pitch and yaw unchanged |
-| `babble` | F11 | A node flooding the bus | `n` (5; extra frames per 10 ms) | Adds `n` extra frames per cycle on out-of-schedule IDs `0x020`-`0x02F` (higher priority than every sensor ID) |
+| `babble` | F11 | A node flooding the bus | `n` (5; extra frames per 10 ms) | Adds `n` extra frames per cycle on out-of-schedule IDs `0x020`-`0x02F` (higher priority than every sensor ID). `n` of 3 or more raises the bus alarm |
 | `seqgap` | IF | A node that skipped sequence numbers | `gap` (3) | At `start`, the sequence counter jumps ahead by `gap`, once, then counts normally |
 
 Notes: multiple faults can be combined, including two of the same kind on one node (their effects add). `babble`
-has no effect on the scheduled frames themselves; its harm is bus load, which only real CAN hardware shows.
+has no effect on the scheduled frames themselves; the flight computer *detects* it (bus alarm, ADR-009), but its real
+harm, bus load and arbitration starvation, only shows on real CAN hardware.
 `dropout` suppresses a node's scheduled frames, so a node that is both `dropout` and `babble` still floods.
 
 **What to expect** (400 frames, fault at frame 100, `--nodes A,B,C`, seed 1, replayed with `tfc_replay`):
@@ -211,11 +212,19 @@ has no effect on the scheduled frames themselves; its harm is bus load, which on
 | `corrupt` (p=0.2) | 111 | CRC failures piling up (seed-dependent: seeds 1-12 give 102-126) | duplex |
 | `cmd_offset` (1.0 deg) | 102 | vote on the command | duplex |
 | `digest` | 102 | digest cross-check | duplex |
-| `babble` | never | out-of-schedule frames ignored and counted | triplex |
+| `babble` | never | out-of-schedule frames counted; `bus_alarm_frames` (BUS ALARM) raised, no node blamed | triplex |
 | `seqgap` | never | one bad frame (`seq_bad=3`: once per frame type) | triplex |
 
-Two faults in a row (`--fault B:bias:start=100 --fault C:bias:start=200,axis=1`) end in `safe`: after B is
-out, a second fault leaves two survivors that disagree and cannot be attributed, so both are dropped.
+**Two faults in a row** (after B is out the system is in *duplex*: two nodes can only compare, not outvote). What happens
+next depends on how clear-cut the second fault is (ADR-008):
+
+| Second fault (on C, after B is out) | Outcome | Why |
+|---|---|---|
+| `--fault B:bias:start=100 --fault C:bias:start=200,axis=1` (a 3 dps step) | C latches at 202, **simplex** on A | C jumped away from the last agreed value, A did not: attributable |
+| three single `spike`s on C inside 5 frames | C latches at 104, **simplex** | each spike is attributable; before ADR-008 both survivors were latched and the system fell to Safe |
+| `C:bias:start=200,axis=1,mag=1.5` (just above tolerance), a slow `drift`, or `C:digest` | **Safe requested**, output held, nobody blamed | not attributable; a stale reference is never used later to blame anyone |
+
+A Safe request is *sticky*: it stays until an operator clears it (`clear_safe_request()`), and the output stays frozen.
 
 ## What the peers send
 Every 10 ms major frame, each simulated node sends three frames (CAN IDs from `core/include/tfc/protocol.hpp`):
@@ -243,7 +252,7 @@ Example log line: `(0.001500) vcan0 100#010031000100009D` = at 1.5 ms, node A's 
 ## How the decisions are made, and the replay output
 `tfc::RedundancyManager` (`core/include/tfc/redundancy.hpp`) runs once per 10 ms frame:
 1. Decode each node's gyro, accel and command frames; check CRC and sequence number.
-2. Vote each of the 8 channels (gyro x3, accel x3, command pitch, yaw) with `vote3` (median of three).
+2. Vote each of the 8 channels (gyro x3, accel x3, command pitch, yaw) with `vote3` (median of three). With only two voting nodes that disagree, try to blame the one that jumped away from the last agreed value; otherwise hold the last good output and, if it persists, request Safe (sticky).
 3. Cross-check the estimator-state digests; run a stuck detector on the raw sensor bytes.
 4. Feed each node's verdict to its own `ChannelMonitor`. A node is **latched out** when 3 of its last 5 frames
    were bad; from then on its data is excluded from the vote until explicitly reintegrated.
@@ -256,10 +265,12 @@ Example log line: `(0.001500) vcan0 100#010031000100009D` = at 1.5 ms, node A's 
 | Reintegration | explicit request + 100 clean frames | The replay never requests it (no operator command in a log) |
 | Permanent failure | 3 latches | Then never reintegrated |
 | Startup grace | 0 frames in `tfc_replay` | A missing node is bad from the first frame. FC-A uses 500 (5 s) so peers may boot late |
+| Duplex arbitration | culprit must be > 2.0 x tolerance from a fresh last-agreed value, the other within 1 x | Else unresolved: nobody blamed, output held; 3 of 5 unresolved frames request Safe (sticky) |
+| Bus alarm | 3 out-of-schedule frames in one 10 ms frame | Raised while it continues; blames no node (a CAN ID is not a sender) |
 
 **Why a node was judged bad** (named in `--verbose` output and in FC-A's console): `frame missing`,
-`CRC failure`, `sequence error` (a damaged frame still consumes a sequence number, so one corrupted frame costs one
-bad sample, not two), `vote disagreement`, `digest mismatch`, `stuck sensor`.
+`CRC failure`, `sequence error` (a damaged frame, or a slot in which nothing arrived, still consumes a sequence number, so one corrupted or lost frame costs one
+bad sample, not two; ADR-007), `vote disagreement`, `digest mismatch`, `stuck sensor`.
 
 **`tfc_replay` output** (`key=value`, one per line):
 
@@ -274,6 +285,10 @@ bad sample, not two), `vote disagreement`, `digest mismatch`, `stuck sensor`.
 | `out_of_schedule` | Frames on IDs that are not part of the schedule |
 | `vote_disagreements` | Frames in which any channel vote flagged a node |
 | `digest_flags`, `stuck_flags` | Frames flagged by the digest cross-check / stuck detector |
+| `unresolved_frames` | Frames with a duplex disagreement nobody could be blamed for |
+| `held_frames` | Frames in which some output channel held its last good value (unresolved, no majority, no data, or Safe requested) |
+| `safe_request_frames` | Frames spent with the (sticky) Safe request raised |
+| `bus_alarm_frames` | Frames with the out-of-schedule flood alarm raised |
 
 ## Live CAN in depth
 
@@ -366,6 +381,8 @@ computers on the Nucleo use FDCAN1 (see `firmware/README.md`).
 | `note: SYNC frame number went back ...` | FC-A restarted; the peers restarted their scenario too. Not an error. |
 | FC-A latched itself or reports `vote=` / `digest=` counts with no fault | Peers are not following SYNC. Add `--follow-sync`. |
 | Healthy nodes latch out (even before your fault) while the machine is under heavy load | Both the Python peers and the simulated firmware are ordinary Linux processes, not real-time. Starved for tens of ms (seen with 24 busy loops on 12 cores) frames are genuinely late and the voter correctly reacts. Run live sessions on an otherwise idle machine; use offline `record` + `tfc_replay` for anything that must be exact. |
+| FC-A: `SAFE REQUESTED: the two voting nodes disagree and nobody can be blamed` | Two nodes are voting (the third is out) and they disagree in a way that cannot be attributed (slow drift, small step, digest mismatch). Output is held and Safe stays requested until cleared. Expected for those faults; see the F16 table. |
+| FC-A: `BUS ALARM RAISED` | Three or more out-of-schedule frames in one 10 ms frame (your `babble` fault, or a real flooding node). Clears when it stops. No node is blamed. |
 | Small `missing=` count on a healthy run, no latch | Timing jitter: a peer frame landed after FC-A's 7 ms vote on a busy machine. Absorbed by the 3-of-5 filter; close other heavy programs if it bothers you. |
 | FC-A: `[frame 2] node B LATCHED OUT: frame missing` | Peers not running within the 5 s startup grace, or `--nodes` omits them. |
 | `listen` prints nothing | Nothing is sending on that interface, or the wrong `--iface`. |
@@ -408,7 +425,7 @@ python3 -m unittest tests.test_live_fc -v                   # only the live FC-A
 | `tests/test_protocol.py` | CRC, golden frames generated by the C++ code (incl. SYNC), every single-bit flip detected, decode |
 | `tests/test_peers.py` | Healthy traffic and schedule, every fault's effect on the wire, fault-spec parsing, logs, follow-SYNC logic |
 | `tests/test_replay.py` | Peers -> log -> **C++ `tfc_replay`**: every fault kind through the real `core/` code against the requirements |
-| `tests/test_live_fc.py` | The **real FC-A firmware** against the peers on `vcan0`: healthy run with no latch and no CRC/sequence/vote/digest alarms, bias isolated at about fault+2, digest and command faults labelled, silence within 3 frames (tolerant of timing jitter on busy machines) |
+| `tests/test_live_fc.py` | The **real FC-A firmware** against the peers on `vcan0`: healthy run with no latch and no CRC/sequence/vote/digest alarms, bias isolated at about fault+2, digest and command faults labelled, babble raises the bus alarm without blaming a node, silence within 3 frames (tolerant of timing jitter on busy machines) |
 | `tests/test_docs.py` | Fails if this README stops documenting a flag, fault kind or fault option |
 
 `ctest --test-dir ../build/host` runs the same suite (`peers_e2e`). Replay tests skip if `tfc_replay` is not

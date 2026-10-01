@@ -94,6 +94,19 @@ class LiveFcAgainstPeers(unittest.TestCase):
         lines = self.live(["B:cmd_offset:start=300"], peer_frames=450)
         self.assert_latch(lines, "B", 300, "vote disagreement")
 
+    def test_babble_on_B_raises_the_bus_alarm_without_blaming_a_node(self):  # TFC-FDIR-009
+        lines = self.live(["B:babble:start=300,n=8"], peer_frames=450)
+        text = "\n".join(lines)
+        alarm = [int(m.group(1)) for m in (re.match(r"\[frame (\d+)\] BUS ALARM RAISED", ln) for ln in lines) if m]
+        self.assertTrue(alarm, text)
+        self.assertGreaterEqual(alarm[0], 300, text)
+        self.assertLessEqual(alarm[0], 306, text)  # the first flooded frame, give or take jitter
+        # The stray IDs belong to no node: nobody is blamed for them (only the peers' end of run latches).
+        self.assertNotIn("TRIPLEX -> DUPLEX", text)
+        flooded = [m for m in map(STATUS.match, lines) if m and 320 < int(m.group(1))]
+        self.assertTrue(any("oos=" in ln and int(re.search(r"oos=(\d+)", ln).group(1)) > 500 for ln in lines), text)
+        self.assertTrue(flooded, text)
+
     def test_silent_C_is_isolated_within_three_frames(self):
         lines = self.live(["C:dropout:start=300"], peer_frames=450)
         self.assert_latch(lines, "C", 300, "frame missing", slack=1)

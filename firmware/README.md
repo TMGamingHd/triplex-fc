@@ -25,8 +25,8 @@ firmware/
 | 5.0 ms | broadcasts its command + estimator digest |
 | 7.0 ms | hands every frame received to `tfc::RedundancyManager` (decode, CRC/sequence, 8-channel vote, digest check, stuck detector, 3-of-5 latch) and prints what it decided |
 
-Console: a status line each second (`A+ B+ C+` = all voting; `X` = latched out; `?` = no good data), and an
-event line whenever a node joins, latches out (with the reason in words), or the mode changes.
+Console: a status line each second (`A+ B+ C+` = all voting; `X` = latched out; `?` = no good data; `oos=` counts frames on IDs outside the schedule), and an
+event line whenever a node joins, latches out (with the reason in words), the mode changes, the bus alarm is raised or cleared (`BUS ALARM`, 3+ stray frames per 10 ms frame), or Safe is requested (`SAFE REQUESTED`, sticky: two voting nodes disagree and nobody can be blamed; output held).
 A peer that has never been seen is not judged for the first 5 s (`startup_grace_frames`); once seen, it always is.
 
 ## One-time setup (Ubuntu)
@@ -97,6 +97,7 @@ The board file already puts FDCAN1 on PA11/PA12; the bring-up checklist still ha
   library has no `<array>`/`<cmath>`. Exceptions and RTTI stay off.
 - **Kernel tick:** the default is 100 ticks/s (10 ms), which rounds every sleep up to 10 ms and wrecked the
   schedule (60 ms frames). `CONFIG_SYS_CLOCK_TICKS_PER_SEC=10000` is required.
+- **Catch-all filter:** besides the three schedule-slot filters there is a catch-all filter into a second queue, only so stray traffic (a babbling node) reaches the manager's out-of-schedule counter and bus alarm (ADR-009). On the target that makes every frame an interrupt; evaluate hardware filters plus the controller's lost-message counters at bring-up.
 - The host's native CAN driver reports its own transmissions back as TX confirmations, so own samples are fed
   to the manager directly and received frames with this node's own IDs are dropped.
 - `printk` has no float support; print fixed-point integers, or enable picolibc float I/O deliberately.

@@ -210,6 +210,8 @@ int main(int argc, char** argv) {
   std::array<long, tfc::kNodes> latch_frame{-1, -1, -1};
   tfc::Mode mode = tfc::Mode::Triplex;
   unsigned healthy = tfc::kNodes;
+  bool prev_safe_request = false;
+  bool prev_bus_alarm = false;
   for (std::size_t k = 0; k < frames.size(); ++k) {
     mgr.begin_frame();
     for (const tfc::Frame& f : frames[k]) {
@@ -218,6 +220,18 @@ int main(int argc, char** argv) {
     const tfc::FrameReport& rep = mgr.end_frame();
     mode = rep.mode;
     healthy = rep.healthy;
+    if (verbose) {
+      if (rep.safe_request != prev_safe_request) {
+        std::printf("frame %zu: SAFE REQUEST %s (disagreement nobody can be blamed for)\n", k,
+                    rep.safe_request ? "raised" : "cleared");
+      }
+      if (rep.bus_alarm != prev_bus_alarm) {
+        std::printf("frame %zu: BUS ALARM %s (%u out-of-schedule frames in this 10 ms frame)\n", k,
+                    rep.bus_alarm ? "raised" : "cleared", static_cast<unsigned>(rep.out_of_schedule_in_frame));
+      }
+    }
+    prev_safe_request = rep.safe_request;
+    prev_bus_alarm = rep.bus_alarm;
     for (unsigned n = 0; n < tfc::kNodes; ++n) {
       if (((rep.newly_latched >> n) & 1U) == 0U) {
         continue;
@@ -246,7 +260,11 @@ int main(int argc, char** argv) {
                                                    {"out_of_schedule", c.out_of_schedule},
                                                    {"stuck_flags", c.stuck_flags},
                                                    {"digest_flags", c.digest_flags},
-                                                   {"vote_disagreements", c.vote_disagreements}};
+                                                   {"vote_disagreements", c.vote_disagreements},
+                                                   {"unresolved_frames", c.unresolved_frames},
+                                                   {"held_frames", c.held_frames},
+                                                   {"safe_request_frames", c.safe_request_frames},
+                                                   {"bus_alarm_frames", c.bus_alarm_frames}};
   for (const auto& kv : stats) {
     std::printf("%s=%lu\n", kv.first.c_str(), kv.second);
   }
