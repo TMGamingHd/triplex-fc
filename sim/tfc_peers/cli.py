@@ -14,6 +14,8 @@ from .protocol import describe
 
 def _scenario(args: argparse.Namespace) -> Scenario:
     nodes = [parse_node(n) for n in args.nodes.split(",") if n.strip()]
+    if not nodes:
+        raise FaultSpecError("--nodes is empty: give at least one of A, B, C (e.g. --nodes B,C)")
     faults = [parse_fault(f) for f in args.fault]
     for f in faults:
         if f.node not in nodes:
@@ -22,11 +24,15 @@ def _scenario(args: argparse.Namespace) -> Scenario:
 
 
 def _add_scenario_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--nodes", default="B,C", help="virtual flight computers to simulate (default B,C)")
+    p.add_argument("--nodes", default="B,C",
+                   help="virtual flight computers to simulate, comma separated, from A,B,C (or 0,1,2); "
+                        "default B,C. Use A,B,C for a fully virtual triplex; with a real FC-A on the bus use B,C")
     p.add_argument("--fault", action="append", default=[], metavar="SPEC",
                    help="NODE:KIND[:key=value,...], repeatable; see `faults` (e.g. B:bias:start=100,mag=3)")
-    p.add_argument("--seed", type=int, default=1, help="noise/fault seed (same seed = same traffic)")
-    p.add_argument("--frames", type=int, default=1000, help="10 ms major frames to generate (default 1000 = 10 s)")
+    p.add_argument("--seed", type=int, default=1,
+                   help="seed for sensor noise and random faults; the same seed gives byte-identical traffic (default 1)")
+    p.add_argument("--frames", type=int, default=1000,
+                   help="number of 10 ms major frames (default 1000 = 10 s); 100 frames = 1 s")
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -101,13 +107,14 @@ def cmd_faults(_args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="tfc_peers", description=__doc__)
     sub = ap.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("run", help="send virtual peers' traffic on a SocketCAN interface in real time")
     _add_scenario_args(p)
-    p.add_argument("--iface", default="vcan0")
+    p.add_argument("--iface", default="vcan0",
+                   help="SocketCAN interface to send on (default vcan0; can0 for the USB-CAN adapter)")
     p.add_argument("--follow-sync", action="store_true",
                    help="phase-lock to the flight computer's SYNC frames (frame numbers come from SYNC); "
                         "--frames then counts SYNC frames. Without it the peers free-run on their own 100 Hz clock")
@@ -115,24 +122,27 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("record", help="generate traffic offline into a candump-format log (no sleeping)")
     _add_scenario_args(p)
-    p.add_argument("--out", required=True)
-    p.add_argument("--iface", default="vcan0", help="interface name written into the log")
+    p.add_argument("--out", required=True, help="log file to write (candump -L format); overwritten if it exists")
+    p.add_argument("--iface", default="vcan0", help="interface name written into each log line (default vcan0)")
     p.set_defaults(fn=cmd_record)
 
     p = sub.add_parser("listen", help="print decoded frames seen on a SocketCAN interface")
-    p.add_argument("--iface", default="vcan0")
-    p.add_argument("--duration", type=float, default=None, help="seconds (default: until Ctrl+C)")
+    p.add_argument("--iface", default="vcan0", help="SocketCAN interface to monitor (default vcan0)")
+    p.add_argument("--duration", type=float, default=None, help="stop after this many seconds (default: run until Ctrl+C)")
     p.set_defaults(fn=cmd_listen)
 
     p = sub.add_parser("decode", help="print a candump-format log in decoded form")
-    p.add_argument("log")
-    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("log", help="candump -L format log, e.g. one written by `record`")
+    p.add_argument("--limit", type=int, default=None, help="print only the first N frames")
     p.set_defaults(fn=cmd_decode)
 
     p = sub.add_parser("faults", help="list fault kinds and their options")
     p.set_defaults(fn=cmd_faults)
+    return ap
 
-    args = ap.parse_args(argv)
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     try:
         return args.fn(args)
     except (FaultSpecError, OSError, ValueError) as e:

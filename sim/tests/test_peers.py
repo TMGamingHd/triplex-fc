@@ -226,6 +226,31 @@ class FollowSync(unittest.TestCase):
         self.assertEqual(len(bus.sent), 3)
 
 
+class CliInputs(unittest.TestCase):
+    def run_cli(self, *argv):
+        import contextlib
+        import io
+        from tfc_peers.cli import main
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            return main(list(argv)), err.getvalue()
+
+    def test_empty_node_list_is_an_error_not_an_empty_log(self):
+        code, err = self.run_cli("record", "--nodes", "", "--frames", "2", "--out", os.devnull)
+        self.assertEqual(code, 2)
+        self.assertIn("--nodes is empty", err)
+
+    def test_node_list_forms(self):
+        for nodes, per_frame in (("b,c", 6), ("0,1,2", 9), (" A , B ", 6)):
+            with self.subTest(nodes=nodes):
+                code, _ = self.run_cli("record", "--nodes", nodes, "--frames", "1", "--out", os.devnull)
+                self.assertEqual(code, 0)
+
+    def test_fault_on_unsimulated_node_and_unknown_node_are_errors(self):
+        self.assertEqual(self.run_cli("record", "--nodes", "B", "--fault", "C:bias", "--out", os.devnull)[0], 2)
+        self.assertEqual(self.run_cli("record", "--nodes", "D", "--out", os.devnull)[0], 2)
+
+
 class Buses(unittest.TestCase):
     def test_log_roundtrip_in_candump_format(self):
         sc = Scenario([0, 1, 2], [parse_fault("C:corrupt:p=0.5")], 3)
