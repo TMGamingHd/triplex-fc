@@ -62,103 +62,122 @@ TFC_TEST(sequence_wraps_at_256) {
   CHECK(!seq_is_next(0, 2));
 }
 
-TFC_TEST(seq_tracker_accepts_first_frame_and_consecutive_frames) {
-  SeqTracker t;
-  CHECK(t.accept(200));  // first frame: nothing to compare against
-  CHECK(t.accept(201));
-  CHECK(t.accept(202));
+TFC_TEST(phase_a_frame_with_the_current_number_is_on_time_once) {
+  PhaseTracker t;
+  t.next_frame();
+  CHECK(t.classify(10, 10) == FrameTiming::OnTime);
+  CHECK(t.classify(10, 10) == FrameTiming::Bad);  // a second frame with the same number: a duplicate or a replay
+  t.next_frame();
+  CHECK(t.classify(11, 11) == FrameTiming::OnTime);
 }
 
-TFC_TEST(seq_tracker_wraps_and_reports_real_gaps_once) {
-  SeqTracker t;
-  CHECK(t.accept(254));
-  CHECK(t.accept(255));
-  CHECK(t.accept(0));
-  CHECK(!t.accept(5));  // jumped ahead: reported...
-  CHECK(t.accept(6));   // ...once; it resynchronises on the frame it saw
-  CHECK(!t.accept(6));  // a repeated number is not "next"
+TFC_TEST(phase_a_frame_of_an_earlier_cycle_that_never_arrived_is_a_late_frame_not_an_error) {
+  PhaseTracker t;
+  for (uint8_t k = 0; k < 10; ++k) {
+    t.next_frame();
+    CHECK(t.classify(k, k) == FrameTiming::OnTime);
+  }
+  t.next_frame();                                          // cycle 10: nothing arrives on time
+  t.next_frame();                                          // cycle 11: frame 10 arrives now, and so does 11
+  CHECK(t.classify(10, 11) == FrameTiming::Late);          // it missed the vote of its own cycle: one lost sample, nothing more
+  CHECK(t.classify(11, 11) == FrameTiming::OnTime);
+  CHECK(t.classify(10, 11) == FrameTiming::Bad);           // but only once
 }
 
-TFC_TEST(seq_tracker_damaged_frame_costs_one_sample_not_two) {
-  SeqTracker t;
-  CHECK(t.accept(10));
-  t.note_damaged();     // frame 11 arrived with a bad CRC
-  CHECK(t.accept(12));  // the next good frame is NOT a gap
-  t.note_damaged();
-  t.note_damaged();     // two damaged frames in a row (13, 14)
-  CHECK(t.accept(15));
+TFC_TEST(phase_a_stalled_sender_flushing_several_late_frames_is_not_an_error) {
+  PhaseTracker t;
+  t.next_frame();
+  CHECK(t.classify(0, 0) == FrameTiming::OnTime);
+  for (int i = 0; i < 3; ++i) t.next_frame();              // cycles 1, 2, 3 empty
+  CHECK(t.classify(1, 3) == FrameTiming::Late);            // the sender wakes up and flushes them in order
+  CHECK(t.classify(2, 3) == FrameTiming::Late);
+  CHECK(t.classify(3, 3) == FrameTiming::OnTime);
+  CHECK(t.classify(2, 3) == FrameTiming::Bad);             // each number once
 }
 
-TFC_TEST(seq_tracker_damaged_frame_does_not_hide_a_real_gap) {
-  SeqTracker t;
-  CHECK(t.accept(10));
-  t.note_damaged();      // 11 damaged
-  CHECK(!t.accept(20));  // but 12..19 never arrived: still a gap
+TFC_TEST(phase_a_stream_that_is_permanently_one_number_behind_is_bad_after_its_first_frame) {
+  // Every cycle delivers one frame, labelled for the cycle before. The first is accepted as a late frame (its slot was empty);
+  // after that no slot is empty, so a frame carrying an earlier number is not a late frame, it is a wrong number.
+  PhaseTracker t;
+  t.next_frame();                                         // cycle 0: nothing arrives
+  t.next_frame();                                         // cycle 1: the frame numbered 0
+  CHECK(t.classify(0, 1) == FrameTiming::Late);
+  for (uint8_t k = 2; k < 20; ++k) {
+    t.next_frame();
+    CHECK(t.classify(static_cast<uint8_t>(k - 1U), k) == FrameTiming::Bad);
+  }
 }
 
-TFC_TEST(seq_tracker_missing_slot_advances_the_expectation) {
-  SeqTracker t;
-  CHECK(t.accept(10));
-  t.note_missing();      // slot 11 passed with nothing on the bus
-  CHECK(t.accept(12));   // so 12 is not a gap
-  t.note_missing();
-  t.note_missing();
-  t.note_missing();      // a long silence (13, 14, 15) from a sender whose counter kept running
-  CHECK(t.accept(16));
-  CHECK(!t.accept(3));   // a sender that restarted its counter is reported once...
-  CHECK(t.accept(4));    // ...and resynchronises
+TFC_TEST(phase_a_damaged_frame_fills_its_slot_so_a_stale_copy_later_is_not_a_late_frame) {
+  PhaseTracker t;
+  t.next_frame();
+  t.note_damaged();                                       // cycle 0: a frame arrived, damaged
+  t.next_frame();
+  CHECK(t.classify(0, 1) == FrameTiming::Bad);            // its number turning up a cycle later is a repeat, not a late frame
 }
 
-TFC_TEST(seq_tracker_late_arrival_of_a_slot_assumed_missing_is_not_an_error) {
-  // The slot passed with nothing (note_missing), then the frame turns up a frame late carrying the number
-  // we had already assumed. That is the same frame, not a repeat: accept it, and the fresh one after it.
-  SeqTracker t;
-  CHECK(t.accept(10));
-  t.note_missing();       // slot 11 empty at the vote
-  CHECK(t.accept(11));    // ...but it arrives late
-  CHECK(t.accept(12));    // and the on-time frame after it is fine
-  CHECK(!t.accept(12));   // a genuine repeat is still an error: the allowance is used up
+TFC_TEST(phase_a_stream_that_is_a_whole_frame_early_is_bad_every_time) {
+  // The frames of cycle k + 1 arrive during cycle k: the numbers are contiguous, only the phase is wrong. A counter that
+  // merely counted frames could never see this (campaign E11).
+  PhaseTracker t;
+  for (uint8_t k = 0; k < 40; ++k) {
+    t.next_frame();
+    CHECK(t.classify(static_cast<uint8_t>(k + 1U), k) == FrameTiming::Bad);
+  }
 }
 
-TFC_TEST(seq_tracker_a_stalled_sender_flushing_several_late_frames_is_not_an_error) {
-  SeqTracker t;
-  CHECK(t.accept(10));
-  t.note_missing();       // 11 empty at its vote
-  t.note_missing();       // 12 empty at its vote
-  t.note_missing();       // 13 empty at its vote
-  CHECK(t.accept(11));    // the sender wakes up and flushes 11, 12, 13 in order...
-  CHECK(t.accept(12));
-  CHECK(t.accept(13));
-  CHECK(t.accept(14));    // ...then carries on on time
-  CHECK(!t.accept(13));   // each assumed number is accepted once; a repeat is an error
-  SeqTracker u;           // a burst may also start part-way: only the newer assumed numbers can still arrive
-  CHECK(u.accept(10));
-  u.note_missing();
-  u.note_missing();
-  CHECK(u.accept(12));    // 11 never arrives, 12 does (older assumed numbers are forgotten)
-  CHECK(!u.accept(11));   // and 11 arriving after 12 is out of order
+TFC_TEST(phase_numbers_wrap_at_256_and_far_numbers_are_bad) {
+  PhaseTracker t;
+  uint32_t k = 250U;
+  for (int i = 0; i < 20; ++i, ++k) {
+    t.next_frame();
+    CHECK(t.classify(static_cast<uint8_t>(k & 0xFFU), k) == FrameTiming::OnTime);  // across the wrap 255 -> 0
+  }
+  t.next_frame();
+  CHECK(t.classify(static_cast<uint8_t>((k - 32U) & 0xFFU), k) == FrameTiming::Bad);  // too old to be a late frame
+  CHECK(t.classify(static_cast<uint8_t>((k + 100U) & 0xFFU), k) == FrameTiming::Bad);  // nonsense
+  CHECK(t.classify(static_cast<uint8_t>((k - 31U) & 0xFFU), k) == FrameTiming::Late);  // the oldest a late frame can be
 }
 
-TFC_TEST(seq_tracker_late_allowance_applies_only_to_the_slot_just_missed) {
-  SeqTracker t;
-  CHECK(t.accept(10));
-  t.note_missing();
-  t.note_missing();       // 11 and 12 both empty
-  CHECK(t.accept(13) == true);   // continuing counter after a silence is fine
-  SeqTracker u;
-  CHECK(u.accept(10));
-  CHECK(!u.accept(10));          // no missing slot, so a repeat is an error
-  SeqTracker d;
-  CHECK(d.accept(10));
-  d.note_damaged();              // a damaged frame is not "late": nothing to wait for
-  CHECK(!d.accept(11));          // repeat of the damaged number is an error
+TFC_TEST(phase_a_node_that_restarts_or_joins_late_is_in_phase_at_once) {
+  PhaseTracker t;
+  for (uint8_t i = 0; i < 5; ++i) t.next_frame();
+  t.next_frame();
+  CHECK(t.classify(137, 137) == FrameTiming::OnTime);  // it took the number from SYNC: no "sequence break" on a restart
 }
 
-TFC_TEST(seq_tracker_damaged_before_first_good_frame_is_ignored) {
-  SeqTracker t;
-  t.note_damaged();
-  CHECK(t.accept(77));
-  CHECK(t.accept(78));
+TFC_TEST(siphash24_matches_the_published_reference_vectors) {
+  AuthKey key{};
+  for (unsigned i = 0; i < 16U; ++i) key[i] = static_cast<uint8_t>(i);
+  CHECK(key == kBenchKey);
+  std::array<uint8_t, 16> in{};
+  for (unsigned i = 0; i < 16U; ++i) in[i] = static_cast<uint8_t>(i);
+  CHECK(siphash24(key, in.data(), 0) == 0x726fdb47dd0e0e31ULL);   // vectors[0] of the reference implementation
+  CHECK(siphash24(key, in.data(), 1) == 0x74f839c593dc67fdULL);
+  CHECK(siphash24(key, in.data(), 2) == 0x0d6c8009d9a94f5aULL);
+  CHECK(siphash24(key, in.data(), 15) == 0xa129ca6149be45e5ULL);  // crosses a word boundary with a tail
+  CHECK(siphash24(key, in.data(), 8) != siphash24(key, in.data(), 9));
+}
+
+TFC_TEST(ground_tag_binds_the_key_the_operation_the_node_the_counter_and_the_arm_flag) {
+  const AuthKey other = {{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}};
+  const Frame f = pack_ground_auth(GroundOp::Disable, 1, 7, kBenchKey);
+  CHECK(ground_authentic(f, kBenchKey) && !ground_authentic(f, other));
+  const DecodedGround d = unpack_ground(f);
+  CHECK(d.ok && d.op == 2U && !d.arm && d.node == 1U && d.counter == 7U && d.tag != 0U);
+  for (unsigned byte = 0; byte < 7U; ++byte) {  // any change to a covered byte invalidates the tag (and the CRC is re-sealed to hide it)
+    Frame g = f;
+    g.data[byte] = static_cast<uint8_t>(g.data[byte] ^ 1U);
+    g.data[7] = crc8(g.data.data(), 7);
+    CHECK(!ground_authentic(g, kBenchKey));
+  }
+  const Frame arm = pack_ground_auth(GroundOp::Disable, 1, 7, kBenchKey, true);
+  CHECK(unpack_ground(arm).arm && unpack_ground(arm).op == 2U && (arm.data[0] & kArmFlag) != 0U);
+  CHECK(arm.data[2] != f.data[2] || arm.data[3] != f.data[3]);  // the arm flag changes the tag
+  CHECK(!ground_authentic(pack_ground(GroundOp::Disable, 1, 7), kBenchKey));  // a frame with no tag is not authentic
+  Frame wrong_id = f;
+  wrong_id.id = id::kSim;
+  CHECK(!unpack_ground(wrong_id).ok);
 }
 
 TFC_TEST(sync_roundtrip_and_layout) {

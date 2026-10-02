@@ -18,6 +18,7 @@
 #include "tfc/protocol.hpp"
 #include "tfc/redundancy.hpp"
 #include "tfc/voter.hpp"
+#include "ground.hpp"
 #include "tfc_test.hpp"
 
 using namespace tfc;
@@ -127,12 +128,20 @@ struct Checker {
     FUZZ_CHECK(r.command_count <= kMaxCommandsPerFrame);
     for (unsigned i = 0; i < r.command_count; ++i) {
       const CommandEvent& e = r.commands[i];
-      if (e.result == CommandResult::Accepted && e.node < 3U) {
+      if (e.result == CommandResult::Accepted && e.node < 3U && (e.flags & cmdflag::kArm) == 0U) {  // an executed command, not an ARM
         if (e.op == static_cast<uint8_t>(GroundOp::Disable)) {
           FUZZ_CHECK(m.state(e.node) == NodeState::Disabled);
         }
         if (e.op == static_cast<uint8_t>(GroundOp::ClearDisabled)) {
           FUZZ_CHECK(m.state(e.node) != NodeState::Disabled && m.strikes(e.node) == 0U);
+        }
+        if ((e.flags & cmdflag::kArm) == 0U) {  // an executed command: the dangerous ones only ever run under an ARM (ADR-019)
+          if (e.op == static_cast<uint8_t>(GroundOp::ClearDisabled) || e.op == static_cast<uint8_t>(GroundOp::ClearSafe)) {
+            FUZZ_CHECK((e.flags & cmdflag::kArmed) != 0U);
+          }
+          if ((e.flags & cmdflag::kCritical) != 0U) {
+            FUZZ_CHECK((e.flags & cmdflag::kArmed) != 0U && e.op == static_cast<uint8_t>(GroundOp::Disable));
+          }
         }
       }
     }
@@ -150,6 +159,46 @@ struct Checker {
   }
 };
 
+// An operator (and the hostile bus around them): authentic commands with a fresh counter, usually ARMed first when the operation
+// is dangerous, plus forged tags, stale counters, corrupted frames and nonsense opcodes. Sets the flags the checker needs
+// (a clear-disabled / clear-safe EXECUTE was sent in this frame).
+struct Operator {
+  uint8_t counter = 0;
+  uint8_t last_op = 0;
+  uint8_t last_node = 0;
+  bool last_arm = false;
+};
+
+void operator_acts(RedundancyManager& m, Rng& rng, Operator& st, bool hostile, bool& clear_disabled_cmd, bool& clear_safe_cmd) {
+  const uint8_t op = static_cast<uint8_t>(hostile ? rng.below(7) : 1 + rng.below(4));
+  const uint8_t node = static_cast<uint8_t>(hostile ? rng.below(6) : rng.below(3));
+  const unsigned flavour = rng.below(100);
+  const bool dangerous = op == static_cast<uint8_t>(GroundOp::ClearDisabled) || op == static_cast<uint8_t>(GroundOp::ClearSafe) ||
+                         op == static_cast<uint8_t>(GroundOp::Disable);
+  if (dangerous && rng.chance(600)) {  // the careful operator arms first
+    m.on_frame(tfct::gcmd_raw(static_cast<uint8_t>(op | kArmFlag), node, ++st.counter));
+  }
+  Frame f = tfct::gcmd_raw(op, node, ++st.counter);
+  if (flavour < 4) {
+    f.data[2] = static_cast<uint8_t>(f.data[2] ^ 0x10U);  // a forged tag
+    f.data[7] = crc8(f.data.data(), 7);
+  } else if (flavour < 8) {
+    f.data[6] = static_cast<uint8_t>(st.counter - 40U);  // a stale counter (tag now wrong too: replay of an old frame is modelled below)
+    f.data[7] = crc8(f.data.data(), 7);
+  } else if (flavour < 12) {
+    f = tfct::gcmd_raw(st.last_op, st.last_node, st.counter);  // re-send the previous command with the NEW counter
+    f.data[6] = static_cast<uint8_t>(st.counter - 1U);         // ... but an old one: a replay (tag mismatch or stale)
+    f.data[7] = crc8(f.data.data(), 7);
+  } else if (flavour < 15) {
+    f.data[7] = static_cast<uint8_t>(f.data[7] ^ 1U);  // corrupted
+  }
+  st.last_op = op;
+  st.last_node = node;
+  clear_disabled_cmd = clear_disabled_cmd || op == static_cast<uint8_t>(GroundOp::ClearDisabled);
+  clear_safe_cmd = clear_safe_cmd || op == static_cast<uint8_t>(GroundOp::ClearSafe);
+  m.on_frame(f);
+}
+
 // Chaos fuzzer: `frames` frames at level `chaos` (0 = calm .. 3 = storm), every behaviour drawn at random each frame.
 bool run_fuzz(uint64_t seed, int frames, unsigned chaos, ReintegrationPolicy policy) {
   Rng rng(seed);
@@ -158,6 +207,7 @@ bool run_fuzz(uint64_t seed, int frames, unsigned chaos, ReintegrationPolicy pol
   cfg.startup_grace_frames = rng.below(4) == 0 ? rng.below(50) : 0U;
   RedundancyManager m(cfg);
   Checker chk{seed};
+  Operator op_state{};
   std::array<Frame, 8> late_pool{};
   unsigned late_n = 0;
   float tr = 5.0F;
@@ -218,13 +268,7 @@ bool run_fuzz(uint64_t seed, int frames, unsigned chaos, ReintegrationPolicy pol
       m.on_frame(f);
     }
     if (rng.chance(chaos == 0 ? 10 : 60)) {  // operator commands, valid and not
-      const uint8_t op = static_cast<uint8_t>(rng.below(7));
-      const uint8_t node = static_cast<uint8_t>(rng.below(6));
-      Frame f = pack_ground(static_cast<GroundOp>(op), node, seq);
-      if (rng.chance(100)) f.data[7] = static_cast<uint8_t>(f.data[7] ^ 1U);
-      clear_disabled_cmd = (op == static_cast<uint8_t>(GroundOp::ClearDisabled));
-      clear_safe_cmd = (op == static_cast<uint8_t>(GroundOp::ClearSafe));
-      m.on_frame(f);
+      operator_acts(m, rng, op_state, true, clear_disabled_cmd, clear_safe_cmd);
     }
     if (!chk.after_frame(m, m.end_frame(), k, clear_disabled_cmd, clear_safe_cmd)) {
       return false;
@@ -251,6 +295,7 @@ bool run_structured(uint64_t seed, int frames, ReintegrationPolicy policy, Check
   cfg.policy = policy;
   RedundancyManager m(cfg);
   Checker chk{seed};
+  Operator op_state{};
   std::array<Fault, 5> faults{};
   const unsigned nf = 1 + rng.below(5);
   for (unsigned i = 0; i < nf; ++i) {
@@ -314,10 +359,7 @@ bool run_structured(uint64_t seed, int frames, ReintegrationPolicy policy, Check
       m.on_frame(c);
     }
     if (rng.chance(25)) {  // an operator acts at a random moment on a random node
-      const uint8_t op = static_cast<uint8_t>(1 + rng.below(4));
-      clear_disabled_cmd = op == static_cast<uint8_t>(GroundOp::ClearDisabled);
-      clear_safe_cmd = op == static_cast<uint8_t>(GroundOp::ClearSafe);
-      m.on_frame(pack_ground(static_cast<GroundOp>(op), static_cast<uint8_t>(rng.below(3)), seq));
+      operator_acts(m, rng, op_state, false, clear_disabled_cmd, clear_safe_cmd);
     }
     if (!chk.after_frame(m, m.end_frame(), k, clear_disabled_cmd, clear_safe_cmd)) {
       return false;

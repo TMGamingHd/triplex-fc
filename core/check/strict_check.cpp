@@ -23,7 +23,7 @@ int exercise(unsigned frames) {
       (void)mgr.on_frame(tfc::pack_accel(n, tfc::Vec3{{0.0F, 0.0F, 1.0F}}, seq));
       (void)mgr.on_frame(tfc::pack_cmd(n, tfc::Command{0.5F, -0.5F, 0x1234U}, seq));
     }
-    (void)mgr.on_frame(tfc::pack_ground(tfc::GroundOp::Reintegrate, 1U, seq));
+    (void)mgr.on_frame(tfc::pack_ground_auth(tfc::GroundOp::Reintegrate, 1U, seq, tfc::kBenchKey));
     acc += static_cast<unsigned>(mgr.end_frame().mode);
     acc += static_cast<unsigned>(mgr.command(tfc::GroundOp::ClearSafe, 0U));
   }
