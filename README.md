@@ -22,7 +22,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 ## CI
-The workflow is `.github/workflows/ci.yml` (runs on pull requests and on `main`): strict build, ASan/UBSan tests, clang-tidy, cppcheck, the coding-standard and coverage gates, and the fault campaign. `.github/workflows/mutation.yml` runs the mutation checks weekly. The campaign and coverage steps are new and have not run on GitHub yet.
+The workflow is `.github/workflows/ci.yml` (runs on pull requests and on `main`): strict build, ASan/UBSan tests, clang-tidy, cppcheck, the coding-standard and coverage gates, and the fault campaign. `.github/workflows/mutation.yml` runs the mutation checks weekly. The whole workflow ran green on GitHub for PR #12 (the `sil` job takes about 16 minutes, most of it the fault campaign on four cores).
 
 ## Contributing
 This repo uses GitHub Flow: `main` is always green, all work happens on short-lived branches and lands by squash-merged PR. See [CONTRIBUTING.md](CONTRIBUTING.md).
