@@ -27,7 +27,7 @@ firmware/
 
 Console: a status line each second (`A+ B+ C+` = all voting; `X` = latched out; `p` = on probation; `D` = disabled for the run; `?` = no good data; `oos=` counts frames on IDs outside the schedule), and an
 event line whenever a node joins, latches out (with the reason in words), goes on probation, fails probation, is reintegrated or disabled, a ground command is applied (and whether it was accepted or refused), the mode changes, the bus alarm is raised or cleared (`BUS ALARM`, 3+ stray frames per 10 ms frame), or Safe is requested (`SAFE REQUESTED`, sticky: two voting nodes disagree and nobody can be blamed; output held).
-A peer that has never been seen is not judged for the first 5 s (`startup_grace_frames`); once seen, it always is.
+A peer that has never been seen is not judged for the first 5 s (`startup_grace_frames`); once seen, it always is. The console also reports an invalid configuration at start (`CONFIG ERROR`, the field is replaced by its default) and any repaired memory upset (`INTEGRITY FAULT`, ADR-015). The firmware is linked without the C library's heap (`CONFIG_COMMON_LIBC_MALLOC=n`) and `tools/check_elf.sh` verifies the binary has no heap, exception or RTTI symbols.
 
 ## Reintegration and operator commands
 A latched node is out of the vote until an operator readmits it: after a 200-frame dwell it goes on probation, where its

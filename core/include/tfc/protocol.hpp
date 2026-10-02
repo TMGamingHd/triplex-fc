@@ -35,7 +35,7 @@ constexpr float kCmdLsbDeg = 0.001F;       // int16 -> +-32.767 deg
 
 constexpr int16_t quantize(float v, float lsb) noexcept {
   const float q = v / lsb;
-  if (!(q == q)) {  // NaN -> 0 (callers must not send NaN; validity is handled upstream)
+  if (std::isnan(q)) {  // NaN -> 0 (callers must not send NaN; validity is handled upstream)
     return 0;
   }
   if (q >= 32767.0F) {

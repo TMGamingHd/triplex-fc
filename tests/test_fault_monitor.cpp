@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+#include <cmath>
+
 #include "tfc/fault_monitor.hpp"
 #include "tfc_test.hpp"
 
@@ -160,4 +162,70 @@ TFC_TEST(alpha_count_threshold_zero_disables_it_and_a_long_run_cannot_overflow) 
     a.update(false);
   }
   CHECK(!a.update(false));
+}
+
+// ---- hardening found by static analysis and the coding-standard check (docs/FAULT_CAMPAIGN.md, E18) ----
+TFC_TEST(popcount_matches_the_reference_for_every_bit_pattern_class) {
+  CHECK(popcount32(0U) == 0U && popcount32(1U) == 1U && popcount32(0x80000000U) == 1U && popcount32(0xFFFFFFFFU) == 32U);
+  CHECK(popcount32(0x55555555U) == 16U && popcount32(0xAAAAAAAAU) == 16U && popcount32(0x0000FFFFU) == 16U);
+  uint32_t x = 12345U;
+  for (int i = 0; i < 20000; ++i) {  // an LCG sweep against the compiler's own population count
+    x = x * 1664525U + 1013904223U;
+    CHECK(popcount32(x) == static_cast<unsigned>(__builtin_popcount(x)));
+  }
+  for (unsigned b = 0; b < 32U; ++b) CHECK(popcount32(1U << b) == 1U);
+}
+
+TFC_TEST(alpha_count_survives_nonsense_constants_without_overflow_or_undefined_behaviour) {
+  const float nan = std::nanf("");
+  const float inf = HUGE_VALF;
+  {  // a NaN or negative threshold is "off", like 0
+    AlphaCount a(0.9F, nan);
+    AlphaCount b(0.9F, -5.0F);
+    for (int i = 0; i < 100; ++i) CHECK(!a.update(true) && !b.update(true));
+  }
+  {  // an infinite or enormous threshold saturates and can never be reached
+    AlphaCount a(0.9F, inf);
+    AlphaCount b(0.9F, 1e30F);
+    for (int i = 0; i < 200000; ++i) CHECK(!a.update(true) && !b.update(true));
+    CHECK(a.score() > 1000.0F);  // it kept counting, it did not wrap
+  }
+  {  // a decay factor of 1 or more would make the score grow on good frames; it is held just below 1
+    AlphaCount a(5.0F, 3.0F);
+    AlphaCount b(inf, 3.0F);
+    for (int i = 0; i < 10; ++i) {
+      (void)a.update(true);
+      (void)b.update(true);
+    }
+    for (int i = 0; i < 100000; ++i) {
+      (void)a.update(false);
+      (void)b.update(false);
+    }
+    CHECK(a.score() <= 11.0F && b.score() <= 11.0F);  // never above the ten bad frames it was given
+  }
+  {  // NaN or negative decay: the score is wiped by the first good frame
+    AlphaCount a(nan, 3.0F);
+    CHECK(!a.update(true) && !a.update(true) && !a.update(false));
+    CHECK(a.score() == 0.0F);
+  }
+}
+
+TFC_TEST(a_permanent_channel_ignores_reintegration_requests_and_its_probation_never_runs) {
+  ChannelMonitor m(3, 5, 2, 1);  // the first latch is permanent
+  for (int i = 0; i < 3; ++i) (void)m.update(true);
+  CHECK(m.latched() && m.permanent());
+  m.request_reintegration();
+  for (int i = 0; i < 50; ++i) CHECK(!m.update(false));
+  CHECK(m.latched() && m.permanent());
+  ChannelMonitor h(3, 5, 2, 5);  // a healthy channel ignores a request too
+  h.request_reintegration();
+  CHECK(!h.latched());
+}
+
+TFC_TEST(the_stuck_detector_run_length_saturates_instead_of_wrapping) {
+  StuckDetector d(20);
+  bool flagged = false;
+  for (int i = 0; i < 70000; ++i) flagged = d.update(42);
+  CHECK(flagged);  // still flagged after 70,000 identical frames: the 16-bit run counter stopped at its maximum
+  CHECK(!d.update(43));
 }

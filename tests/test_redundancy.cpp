@@ -877,8 +877,8 @@ TFC_TEST(life_cycle_operator_can_disable_a_node_and_bring_it_back_through_the_no
           if (k == 50) m.on_frame(pack_ground(GroundOp::ClearDisabled, 2, 1));
           if (k == 52) m.request_reintegration(2);
         });
-  CHECK(ev.probation_started == 250);  // dwell restarts at the clear (frame 51), 200 frames
-  CHECK(ev.reintegrated == 350);
+  CHECK(ev.probation_started == 251);  // the clear is applied in frame 51; the dwell counts the 200 frames after it
+  CHECK(ev.reintegrated == 351);       // (it was 250/350: the frame of the clear itself used to count, E1)
   CHECK(m.state(2) == NodeState::Healthy && m.strikes(2) == 0U);
 }
 
