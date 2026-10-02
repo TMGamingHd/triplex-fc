@@ -70,7 +70,6 @@ class VirtualNode:
         self._cmd_prev: tuple[float, float] | None = None
         self._cmd_frozen: tuple[float, float] | None = None  # cmdstuck
         self._seq_frozen: int | None = None                 # seqstuck
-        self._seq_offset = 0
         self._history: dict[int, list[TimedFrame]] = {}     # replay
 
     def _active(self, kind: str, k: int) -> list[Fault]:
@@ -188,18 +187,16 @@ class VirtualNode:
         if self._active("dropout", k):
             return self._babble(k, t0)  # drops the scheduled frames; babble is an independent fault
         resume = 0
-        for f in self.faults:  # reboot: silent for `down` frames, then the counter restarts at 0
+        for f in self.faults:  # reboot: silent for `down` frames, then back (in phase, unless it does not resync)
             if f.kind != "reboot":
                 continue
             back = f.start + int(f.params["down"])
             if f.start <= k < back:
                 return self._babble(k, t0)
-            if k >= back:
-                resume = max(resume, back)
-        for f in self._active("seqgap", k):
-            if k == f.start:
-                self._seq_offset += int(f.params["gap"])
-        seq = ((k - resume) if resume else (k + self._seq_offset)) & 0xFF
+            if k >= back and int(f.params.get("resync", 1)) == 0:
+                resume = max(resume, back)  # the frame number restarts at 0 instead of following SYNC
+        offset = sum(int(f.params["gap"]) for f in self._active("seqgap", k))  # frames are numbered from SYNC: a wrong number is a wrong frame
+        seq = ((k - resume) if resume else (k + offset)) & 0xFF
         if self._active("seqstuck", k):
             if self._seq_frozen is None:
                 self._seq_frozen = seq
@@ -271,7 +268,23 @@ class Scenario:
         self.faults = list(faults or [])
         self.seed = seed
         self.commands = list(commands or [])
+        self._ground = self._build_ground_frames()
         self.reset()
+
+    def _build_ground_frames(self) -> dict[int, list[P.Frame]]:
+        """Counters 1, 2, 3... in time order (the ground station's strictly increasing command counter)."""
+        out: dict[int, list[P.Frame]] = {}
+        counter = 0
+        last: P.Frame | None = None
+        for _i, c in sorted(enumerate(self.commands), key=lambda t: (t[1].frame, t[0])):
+            if c.replay:
+                frame = last if last is not None else c.frame_for(0)  # the previous frame again, unchanged: a stale counter
+            else:
+                counter += 1
+                frame = c.frame_for(counter)
+                last = frame
+            out.setdefault(c.frame, []).append(frame)
+        return out
 
     def reset(self) -> None:
         self._virtual = {n: VirtualNode(n, self.faults, self.seed) for n in self.nodes}
@@ -283,9 +296,8 @@ class Scenario:
 
     def _generate(self, k: int) -> list[TimedFrame]:
         out = [tf for n in self.nodes for tf in self._virtual[n].step(k)]
-        for c in self.commands:
-            if c.frame == k:
-                out.append(TimedFrame(k * FRAME_US + COMMAND_SEND_US, c.frame_for(k & 0xFF)))
+        for i, g in enumerate(self._ground.get(k, [])):
+            out.append(TimedFrame(k * FRAME_US + COMMAND_SEND_US + 50 * i, g))
         self._next_k = k + 1
         return sorted(out, key=lambda tf: tf.t_us)
 

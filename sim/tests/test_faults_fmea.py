@@ -314,7 +314,7 @@ class Validation(unittest.TestCase):
         """Adding kinds must not change what the old kinds send (their own random streams, same code order)."""
         specs = ["B:dropout:start=10", "B:stuck:start=10", "B:bias:start=10,mag=2", "B:drift:start=10", "B:spike:start=0,p=0.3",
                  "B:saturate:start=5", "B:corrupt:start=5,p=0.3", "B:cmd_offset:start=5", "B:digest:start=5", "B:babble:start=5",
-                 "B:seqgap:start=5", "B:reboot:start=20,down=7", "B:late:start=5,us=3000", "C:corrupt:start=3,p=1.0,period=3,duty=1"]
+                 "B:seqgap:start=5", "B:reboot:start=20,down=7,resync=0", "B:late:start=5,us=3000", "C:corrupt:start=3,p=1.0,period=3,duty=1"]
         h = hashlib.sha256()
         for s in specs:
             sc = Scenario([0, 1, 2], [parse_fault(s)], 7)
