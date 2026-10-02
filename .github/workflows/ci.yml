@@ -18,10 +18,25 @@ jobs:
         run: cmake --build build
       - name: Test (host unit tests + virtual-peers end-to-end)
         run: ctest --test-dir build --output-on-failure
-      - name: clang-tidy (flight code)
+      - name: clang-tidy (flight code; bug patterns, CERT, size and complexity limits)
         run: clang-tidy -p build tests/*.cpp tools/replay/*.cpp
       - name: cppcheck
         run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr --language=c++ --std=c++17 -I core/include core/include/tfc/*.hpp
+      - name: Coding standard (mechanical rules of docs/CODING_STANDARD.md)
+        run: python3 tools/check_standard.py
+      - name: Structural coverage of core/ (gate may only be raised)
+        run: python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98
+      - name: Fault campaign (every fault kind, safety properties on every frame; fails on any anomaly)
+        run: |
+          cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/rel --target tfc_replay
+          cd sim
+          TFC_REPLAY_BIN="$GITHUB_WORKSPACE/build/rel/tfc_replay" python3 -m campaign.run --workers 4 --quiet --strict --out "$RUNNER_TEMP/campaign.jsonl"
+      - name: Campaign tables (for the job summary)
+        if: always()
+        run: |
+          cd sim
+          python3 -m campaign.report "$RUNNER_TEMP/campaign.jsonl" >> "$GITHUB_STEP_SUMMARY" || true
 
   firmware:
     # Builds the Zephyr app for the host (native_sim, runs it) and for the real board.
@@ -60,3 +75,5 @@ jobs:
         run: |
           . firmware/env.sh
           west build -p always -b nucleo_g474re firmware/app -d build/nucleo_g474re
+      - name: No heap, exceptions, RTTI or vtables in the flight binary
+        run: tools/check_elf.sh build/nucleo_g474re/zephyr/zephyr.elf

@@ -12,7 +12,7 @@ main ──●────────●─────────────
 1. **Branch from an up-to-date `main`.** `git switch main && git pull && git switch -c <type>/<short-name>`
 2. **Commit small and often** on the branch. Push it early so the work is visible.
 3. **Open a pull request** (draft is fine) as soon as there is something to discuss. Fill in the PR template.
-4. **CI must be green** (build with warnings as errors, tests under ASan/UBSan, clang-tidy, cppcheck).
+4. **CI must be green** (strict build with warnings as errors, tests under ASan/UBSan, clang-tidy, cppcheck, the coding-standard and coverage gates, the fault campaign).
 5. **Review** - even solo, read your own diff on GitHub before merging, and tick the checklist.
 6. **Squash-merge** into `main`, then **delete the branch**. One PR = one commit on `main`.
 7. `main` is never committed to directly.
@@ -36,11 +36,22 @@ Imperative, specific, under ~70 characters, optionally prefixed with the area: `
 
 ## Project-specific rules
 These come from `docs/REQUIREMENTS.md` and are what reviewers check:
-- **`core/` stays portable:** no heap, no exceptions, no RTTI, warnings as errors, no `-ffast-math` (TFC-SW-001/002).
-- **New behaviour needs a test;** a fault-matrix row only moves to *Passing* when its test exists and passes (`docs/FAULT_MATRIX.md`).
+- **`core/` stays portable and follows `docs/CODING_STANDARD.md`:** no heap, no exceptions, no RTTI, no `while`/`goto`/recursion/macros/globals, functions of at most 60 lines, warnings as errors, no `-ffast-math` (TFC-SW-001/002/007/008).
+- **New behaviour needs a test, written first;** a fault-matrix row only moves to *Passing* when its test exists and passes (`docs/FAULT_MATRIX.md`). A change to `core/` must leave the campaign's per-frame decision hashes unchanged unless it is meant to change behaviour (then an ADR says so).
 - **Measured numbers only.** Anything marked *target* stays a target until a measurement is logged. Never paste a number into the README or write-up that has no log behind it.
 - **Design changes get an ADR** in `docs/DECISIONS.md`; requirement changes update `docs/REQUIREMENTS.md` in the same PR.
 - **Hardware findings** (measured voltages, mounting holes, relay and servo checks) go in `docs/BENCH_CHECKS.md` with the date and the part's lot/source.
+
+## Before you push a change to `core/`
+```bash
+cmake -S . -B build -G Ninja -DTFC_SANITIZE=ON && cmake --build build && ctest --test-dir build --output-on-failure
+python3 tools/check_standard.py                                   # mechanical coding-standard rules
+python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98
+cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/rel --target tfc_replay
+(cd sim && TFC_REPLAY_BIN=$PWD/../build/rel/tfc_replay python3 -m campaign.run --strict)   # about 2-4 minutes
+python3 tools/mutation/run_unit.py                                # deliberate bugs must still be caught (weekly in CI)
+```
+A new check or fallback in `core/` comes with a mutant in `tools/mutation/mutations.py` that removes it.
 
 ## Milestones, stages and tags
 - Each staged-build stage (S1-S4) and each milestone (M0-M5) ends with a **tag on `main`** and a short log or video: `git tag -a s1-single-fc -m "..." && git push origin s1-single-fc`.
