@@ -135,6 +135,9 @@ int main() {
   cfg.policy = IS_ENABLED(CONFIG_TFC_AUTO_REINTEGRATE) ? tfc::ReintegrationPolicy::AutoTransient
                                                        : tfc::ReintegrationPolicy::Manual;
   tfc::RedundancyManager mgr(cfg);
+  if (mgr.config_errors() != 0U) {  // a bad configuration is replaced by defaults, never run silently
+    printk("CONFIG ERROR: invalid fields (mask 0x%x) replaced by defaults\n", static_cast<unsigned>(mgr.config_errors()));
+  }
   fc::sim::Noise noise(0x1234U + kNodeId);
   constexpr int64_t kPeriodUs = fc::sim::kFrameUs;
   const int64_t period = k_us_to_ticks_ceil64(kPeriodUs);
@@ -238,6 +241,10 @@ int main() {
         tfc::format_reasons(rep.reason[n], why.data(), why.size());
         printk("[frame %u] node %c LATCHED OUT: %s\n", k, 'A' + static_cast<char>(n), why.data());
       }
+    }
+    if (rep.integrity_mask != 0U) {
+      printk("[frame %u] INTEGRITY FAULT repaired (mask 0x%x: 1 node state, 2 Safe flag, 4 configuration, 8 invariant)\n", k,
+             static_cast<unsigned>(rep.integrity_mask));
     }
     if (rep.bus_alarm != last_bus_alarm) {
       printk("[frame %u] BUS ALARM %s: %u out-of-schedule frames in this 10 ms frame\n", k,

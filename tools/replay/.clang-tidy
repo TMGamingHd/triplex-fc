@@ -1,0 +1,3 @@
+# Host-only analysis tool, not flight code: the function-size rules of the flight config do not apply.
+InheritParentConfig: true
+Checks: '-readability-function-size,-readability-function-cognitive-complexity'

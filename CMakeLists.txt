@@ -19,6 +19,8 @@ add_executable(tfc_tests
   tests/test_voter.cpp
   tests/test_fault_monitor.cpp
   tests/test_redundancy.cpp
+  tests/test_fuzz.cpp
+  tests/test_recovery.cpp
   tests/test_triplex_scenarios.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
 target_include_directories(tfc_tests PRIVATE tests)
@@ -40,6 +42,31 @@ if(TFC_SANITIZE)
   target_compile_options(tfc_replay PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
   target_link_options(tfc_replay PRIVATE -fsanitize=address,undefined)
 endif()
+
+# Flight-code gate (docs/CODING_STANDARD.md): the strictest warning set, as errors, over the whole core, and every header
+# compiled on its own so none depends on include order. Part of the default build, so CI fails on a regression.
+set(TFC_STRICT_FLAGS -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wdouble-promotion -Wold-style-cast
+    -Wcast-align -Wcast-qual -Wnull-dereference -Wformat=2 -Wundef -Wzero-as-null-pointer-constant -Wswitch-enum
+    -Wswitch-default -Wfloat-equal -Wmissing-declarations -Werror -fno-exceptions -fno-rtti)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  list(APPEND TFC_STRICT_FLAGS -Wuseless-cast -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Wstack-usage=2048)
+endif()
+file(GLOB TFC_CORE_HEADERS ${CMAKE_SOURCE_DIR}/core/include/tfc/*.hpp)
+set(TFC_STRICT_SOURCES core/check/strict_check.cpp)
+foreach(hdr ${TFC_CORE_HEADERS})
+  get_filename_component(hdr_name ${hdr} NAME_WE)
+  file(WRITE ${CMAKE_BINARY_DIR}/strict/self_contained_${hdr_name}.cpp
+       "#include \"tfc/${hdr_name}.hpp\"\nnamespace { [[maybe_unused]] constexpr int kAnchor = 0; }\n")
+  list(APPEND TFC_STRICT_SOURCES ${CMAKE_BINARY_DIR}/strict/self_contained_${hdr_name}.cpp)
+endforeach()
+add_library(tfc_strict_check OBJECT ${TFC_STRICT_SOURCES})
+target_link_libraries(tfc_strict_check PRIVATE tfc_core)
+target_compile_options(tfc_strict_check PRIVATE ${TFC_STRICT_FLAGS} -O2)
+
+# Cost of one frame of the manager (host numbers; the flight WCET is measured on the target).
+add_executable(tfc_bench tools/bench/bench_end_frame.cpp)
+target_link_libraries(tfc_bench PRIVATE tfc_core)
+target_compile_options(tfc_bench PRIVATE -O2 -fno-exceptions -fno-rtti -Wall -Wextra -Wconversion -Werror -fstack-usage)
 
 enable_testing()
 add_test(NAME tfc_tests COMMAND tfc_tests)

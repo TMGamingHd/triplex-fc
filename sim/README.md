@@ -23,7 +23,7 @@ Contents: [What the virtual peers are](#what-the-virtual-peers-are) ·
 The real system is three flight computers that vote over a CAN bus. Until the boards arrive, and later for
 failures that are dangerous or awkward to cause for real, the PC plays the other flight computers.
 `tfc_peers` generates exactly the frames a real FC-B or FC-C would send every 10 ms (gyro, accel, command;
-real CAN IDs, CRC-8, sequence numbers, sensor noise) and can break any of them on purpose with 13 kinds of
+real CAN IDs, CRC-8, sequence numbers, sensor noise) and can break any of them on purpose with 32 kinds of
 fault, and can send the flight computers operator commands (reintegrate a node, disable it, clear a Safe request). Everything is standard-library Python 3.10+; nothing to install.
 
 There are two ways to use the traffic, and they differ in **who judges it**:
@@ -168,6 +168,7 @@ Feeds each 10 ms frame of the log to `tfc::RedundancyManager`, the same class th
 | `LOG` | `candump -L` log. Frames are grouped into 10 ms frames by timestamp, so logs from `record` (which start at t=0) work as-is. |
 | `--verbose` | Print one line per latch event (`frame N: node X latched because: <reasons in words>`), plus `SAFE REQUEST raised`, `BUS ALARM raised/cleared`, ground commands and their outcomes, and probation / reintegration / disabling events. |
 | `--t0 SECONDS` | Subtract this from every timestamp before grouping (for logs that do not start at 0). |
+| `--dump FILE` | Write one CSV row per 10 ms frame: mode, healthy count, masks (valid/latched/probation/disabled/held), Safe and bus-alarm flags, the nodes newly latched and newly on probation, the integrity mask, per-node reason bits, and all 8 voted outputs. Used by the fault campaign (`docs/FAULT_CAMPAIGN.md`) to check safety properties, e.g. that the output never follows a faulty node. |
 | `--vote-us MICROSECONDS` | Where in the 10 ms frame the flight computer votes (default 7000, as FC-A). A frame received after it belongs to the *next* frame, so a late frame is judged stale. |
 | `--policy manual\|auto` | Reintegration policy (default `manual`: only an operator command readmits a node). `auto` also readmits, after the dwell, a node whose first latch looked transient. See [Recovery](#recovery-latch-probation-readmission-and-disabling). |
 | `--expect-latch NODE:FRAME` or `NODE:MIN-MAX` | Node (A/B/C) must have latched at exactly that frame, or within the range (inclusive). Repeatable. |
@@ -210,10 +211,33 @@ from `start` (so `B:corrupt:start=100,period=3,duty=1` damages one frame in thre
 | `corrupt` | F08 | A flaky link | `p` (0.2; probability per frame, per frame type) | Flips one random bit of a gyro/accel/command frame; its CRC then fails |
 | `cmd_offset` | F09 | A wrong-but-valid command (software bug) | `mag` (1.0; degrees) | Adds `mag` to the pitch command; everything else, including the CRC, stays valid |
 | `digest` | F10 | Silent internal state divergence | `xor` (1; 16-bit mask) | XORs the estimator-state digest in the command frame; pitch and yaw unchanged |
-| `babble` | F11 | A node flooding the bus | `n` (5; extra frames per 10 ms) | Adds `n` extra frames per cycle on out-of-schedule IDs `0x020`-`0x02F` (higher priority than every sensor ID). `n` of 3 or more raises the bus alarm |
+| `babble` | F11 | A node flooding the bus | `n` (5; extra frames per 10 ms), `id` (32 = 0x020) | Adds `n` extra frames per cycle on the 16 out-of-schedule IDs from `id` up (default `0x020`-`0x02F`, higher priority than every sensor ID). `id` may be written `0x520`; ids that overlap the flight-bus schedule are rejected. `n` of 3 or more raises the bus alarm, whatever the id |
 | `seqgap` | IF | A node that skipped sequence numbers | `gap` (3) | At `start`, the sequence counter jumps ahead by `gap`, once, then counts normally |
 | `reboot` | F24 | A node that resets | `down` (50; frames of silence) | Silent for `down` frames, then back with its **sequence counter restarted at 0** (one sequence break on its first frame back) |
 | `late` | F25 | Stale data from a late node | `us` (4000; 1-9000) | Every scheduled frame leaves `us` microseconds later. The command frame (due at ~5.3 ms) then misses the 7 ms vote and is judged a frame late, with a stale digest |
+| `scale` | F27 | A scale-factor error | `sensor` (gyro), `axis` (0), `factor` (1.2) | Multiplies that axis by `factor` (1.0 is healthy, -1 inverts, 0 kills the axis) |
+| `noise` | F28 | A noisy sensor | `sensor` (gyro), `mult` (20.0) | The noise standard deviation grows to `mult` x the healthy value (0.1 dps, 0.002 g) on all three axes of that sensor |
+| `invert` | F29 | Wrong polarity or mounting | `sensor` (gyro), `axis` (0) | Negates that axis |
+| `swap` | F30 | Two axes exchanged (a misalignment) | `sensor` (gyro), `axis` (0), `other` (1) | Swaps `axis` and `other` |
+| `zero` | F31 | A dead sensor | none | Gyro and accel read exactly 0 on every axis (gravity disappears) |
+| `clip` | F32 | The wrong full-scale range selected | `sensor` (gyro), `limit` (4.0) | The sensor's output is clipped to +-`limit` (dps or g) on all axes |
+| `oscillate` | F33 | Vibration, or aliasing of it | `sensor` (gyro), `axis` (0), `amp` (3.0), `hz` (33.0) | Adds `amp` x sin(2 pi `hz` t) to that axis, sampled at 100 Hz: above 50 Hz it aliases, and 100 Hz looks like a constant offset |
+| `repeat` | F34 | An output data rate that does not match the frame rate | `n` (3) | The sensors are refreshed only every `n` frames and held in between (valid frames, old data) |
+| `bitflip` | F35 | A single-event upset in the sample register | `sensor` (gyro), `bit` (12), `p` (0.1) | With probability `p` per frame, flips bit `bit` (0-15) of one random axis' 16-bit sample **before** the CRC is computed, so the frame stays valid |
+| `stuckbit` | F36 | A stuck data line | `sensor` (gyro), `bit` (12), `value` (1) | Forces bit `bit` of every axis' sample to `value` (0 or 1); CRC valid |
+| `cmdstuck` | F37 | A frozen command output | none | Pitch and yaw freeze at their last value while digest and sequence keep counting |
+| `cmdinvert` | F38 | A wrong-sign command | none | Negates pitch and yaw (the digest still matches the true command) |
+| `partial` | F39 | Only some frame types are sent | `mask` (4) | Bit mask of the frame types **not** sent: 1 gyro, 2 accel, 4 command (1-7) |
+| `duplicate` | F40 | Every frame sent twice | `gap_us` (300) | Each scheduled frame is repeated `gap_us` microseconds later (0-9000) |
+| `replay` | F41 | Stale frames re-sent | `age` (10) | Sends the frames of `age` frames ago in place of the current ones: valid CRC, old sequence number (1-300) |
+| `seqstuck` | F42 | A frozen sequence counter | none | The sequence number stays at the value it had when the fault began |
+| `early` | F43 | Frames sent early | `us` (2000) | Every scheduled frame leaves `us` microseconds earlier (never before time 0; 1-9000) |
+| `jitter` | F44 | Random timing jitter | `us` (1500) | Every frame leaves up to +-`us` microseconds from its slot, random but fixed by `--seed` (1-9000) |
+| `clockdrift` | F45 | A drifting clock | `us_per_frame` (20) | Frames leave `us_per_frame` later each frame, cumulatively (negative = earlier; 1-1000) |
+
+The first twelve kinds are the original set; `scale` onward come from the FMEA gap analysis (`docs/FMEA.md`). Bad values are rejected
+with a message (a NaN, a bit number above 15, `age=0`, an axis of 3, ...) rather than becoming a silent no-op. Bit faults act on the
+16-bit sample before the CRC is computed, which is how a real upset in a sensor register looks: the frame is valid, the data are wrong.
 
 Notes: multiple faults can be combined, including two of the same kind on one node (their effects add). `babble`
 has no effect on the scheduled frames themselves; the flight computer *detects* it (bus alarm, ADR-009), but its real
@@ -237,6 +261,21 @@ harm, bus load and arbitration starvation, only shows on real CAN hardware.
 | `seqgap` | never | one bad frame (`seq_bad=3`: once per frame type) | triplex |
 | `reboot` (down=50) | 102 | missing frames; readmitted if the operator asks (see Recovery) | duplex, then triplex |
 | `late` (us=4000) | 102 | stale data: vote disagreement + digest mismatch (the command is a frame behind) | duplex |
+| `scale` (factor 1.5) | 102 | vote (a 50% error on a 10 dps axis is 5 dps) | duplex |
+| `noise` (mult 30) | 102 | vote (sigma 3 dps against a 1 dps tolerance) | duplex |
+| `invert`, `swap`, `zero`, `clip` (limit 4) | 102 | vote | duplex |
+| `oscillate` (3 dps at 33 Hz) | 104 | vote | duplex |
+| `repeat` (n=10) | 107 | vote (the held sample falls behind the motion) | duplex |
+| `bitflip` (bit 9, p=0.5) | 116 | vote, then the leaky count ("intermittent": the upset hits only some frames) | duplex |
+| `stuckbit` (bit 9 = 1) | 102 | vote | duplex |
+| `cmdstuck`, `cmdinvert` | 102 | vote on the command | duplex |
+| `partial` (gyro + accel not sent) | 102 | missing frames | duplex |
+| `duplicate` | 102 | sequence errors (the second copy repeats a number) | duplex |
+| `replay` (age 3) | 102 | stale data: vote + digest | duplex |
+| `seqstuck` | 103 | sequence errors | duplex |
+| `early` (6000 us) | never | the gyro and accel frames land in the *previous* frame's window as a consistently one-frame-ahead stream: contiguous counter, data error below tolerance. Not detectable by this design (campaign E11) | triplex |
+| `jitter` (3000 us) | 106 | missing frames (some frames miss the 7 ms vote) | duplex |
+| `clockdrift` (+40 us/frame) | 144 | the command frame crosses the 7 ms vote deadline once the drift reaches about 1.7 ms: vote + digest | duplex |
 | `corrupt` at 1 frame in 3 (`period=3,duty=1`) | 112 | the leaky count ("intermittent fault"); 3-of-5 alone never fills | duplex |
 | `corrupt` at 2 frames in 5 / 2 in 10 | 106 / 121 | the leaky count | duplex |
 | `corrupt` at 1 frame in 5, 10 or 20 | never | sparse trouble is left alone (no false isolation) | triplex |
@@ -393,6 +432,7 @@ bad sample, not two; ADR-007), `vote disagreement`, `digest mismatch`, `stuck se
 | `held_frames` | Frames in which some output channel held its last good value (unresolved, no majority, no data, or Safe requested) |
 | `safe_request_frames` | Frames spent with the (sticky) Safe request raised |
 | `bus_alarm_frames` | Frames with the out-of-schedule flood alarm raised |
+| `integrity_faults`, `invariant_violations` | Upsets found and repaired in the manager's own state (node states, Safe flag, configuration, command queue), and internal invariants that did not hold. Both are 0 in any normal run; `--verbose` prints `INTEGRITY FAULT` when one happens (ADR-015) |
 
 ## Live CAN in depth
 
@@ -533,6 +573,36 @@ Same traffic generator, same faults, same `core/` decision code. The differences
 - Live runs write nothing by themselves. Save FC-A's console with `zephyr.exe ... | tee /tmp/fca.log`.
   Replaying a live capture is not supported yet: the replay's 10 ms frame grouping would need to be aligned to SYNC.
 
+## Fault campaign: every fault, many inputs, safety properties checked on every frame
+`campaign/` (this directory) runs thousands of scenarios through the real `core/` code and checks properties that must
+always hold. The methodology, the properties, the measured response of every fault kind and the edge cases found are in
+[`docs/FAULT_CAMPAIGN.md`](../docs/FAULT_CAMPAIGN.md). In short: a *scenario* is a set of faults (kind, node, start frame,
+magnitude, duration, intermittency), operator commands, a redundancy context (Triplex, or Duplex/Simplex made by dropping
+nodes) and a seed; an *oracle* is a property checked on the per-frame CSV from `tfc_replay --dump`.
+
+```bash
+cmake -S .. -B ../build/rel -DCMAKE_BUILD_TYPE=Release && cmake --build ../build/rel --target tfc_replay
+export TFC_REPLAY_BIN=$PWD/../build/rel/tfc_replay
+python3 -m campaign.run --list                                   # the groups and their sizes
+python3 -m campaign.run --out /tmp/campaign.jsonl                # everything (about 10,700 scenarios, 2 minutes on 12 cores)
+python3 -m campaign.run --group bias_gyro --group phase_sweep    # only some groups (repeatable); --limit N for a quick look
+python3 -m campaign.report /tmp/campaign.jsonl bias_gyro drift   # the Markdown tables of docs/FAULT_CAMPAIGN.md, plus response curves
+python3 -m campaign.mutate                                       # does the campaign notice deliberate bugs in core/? (about 90 minutes)
+```
+| Flag | Meaning |
+|---|---|
+| `--group NAME` | Run only this group (repeatable). `--list` shows them all. |
+| `--workers N` | Parallel scenarios (default 8). |
+| `--out FILE` | Where the per-scenario results go (JSON lines: latch frames, reasons, counters, metrics, anomalies, a hash of every per-frame decision). |
+| `--limit N` | At most N scenarios per group. |
+| `--quiet` | No progress lines. |
+| `--strict` | Exit status 1 if any anomaly was raised (CI uses this). Without it the status is 0 and the anomalies are only printed and stored. |
+
+With `--strict` the exit status is 1 if any scenario raised an anomaly. Two further tools prove the *tests* can fail:
+`python3 tools/mutation/run_unit.py` (49 deliberate bugs in `core/`, each must be caught by the C++ tests) and
+`python3 -m campaign.mutate` (the same bugs against this campaign). The decision hash in the results makes a refactor
+provable: run the campaign before and after, and the hashes of every scenario must be identical.
+
 ## Tests
 ```bash
 cmake -S .. -B ../build/host -G Ninja -DTFC_SANITIZE=ON && cmake --build ../build/host
@@ -544,6 +614,8 @@ python3 -m unittest tests.test_live_fc -v                   # only the live FC-A
 | `tests/test_protocol.py` | CRC, golden frames generated by the C++ code (incl. SYNC), every single-bit flip detected, decode |
 | `tests/test_peers.py` | Healthy traffic and schedule, every fault's effect on the wire, fault-spec parsing, logs, follow-SYNC logic |
 | `tests/test_replay.py` | Peers -> log -> **C++ `tfc_replay`**: every fault kind through the real `core/` code against the requirements; the node life cycle (`NodeLifeCycle`): readmission, refusal by shadow vote, strikes and disabling, auto policy, `reboot`, `late`, intermittent (leaky count) |
+| `tests/test_faults_fmea.py` | The 19 fault kinds added by the FMEA gap analysis: what each puts on the wire, every bad parameter rejected, `record` ordering and truncation, and a hash proving the first thirteen kinds' traffic did not change |
+| `tests/test_replay_fmea.py` | The same 19 kinds through the real `core/` code (latch frames, reasons, modes), total-loss recovery, the Duplex frozen-command case and the three-way digest split |
 | `tests/test_live_fc.py` | The **real FC-A firmware** against the peers on `vcan0`: healthy run with no latch and no CRC/sequence/vote/digest alarms, bias isolated at about fault+2, digest and command faults labelled, babble raises the bus alarm without blaming a node, a transient fault followed by an operator reintegration end to end, a still-faulty node failing probation, an intermittent node isolated by the leaky count, silence within 3 frames (tolerant of timing jitter on busy machines) |
 | `tests/test_docs.py` | Fails if this README stops documenting a flag, fault kind or fault option |
 
@@ -577,7 +649,8 @@ going backwards needs `reset()`.
   them could hold different views (membership agreement is later work). FC-A also keeps judging if *it* is the one voted out.
 - **The leaky-count constants are tuned on a simulation** of frame-level faults (ADR-013); real error rates will differ and
   must be re-tuned from measurements on the rig. Sparse trouble (one bad frame in 5 or fewer) is deliberately left alone.
-- **No recovery from "all nodes out"**: with no healthy node there is no reference to compare against; that needs a restart.
+- **Total loss is recoverable, with at least two candidates** (ADR-014): when no node is healthy the probationers judge each other,
+  which needs two of them to agree. A single surviving candidate has no reference and waits; that case needs a restart.
 - **No authentication** on ground commands (any node on the bus could send one): fine for a bench, not for a flight uplink.
 - **Bus effects:** arbitration, bus load, babbling's real harm, bus-off and wiring faults need hardware.
 - **FC-A only:** the firmware implements node A, the sync master. Firmware for B and C and sync-master takeover

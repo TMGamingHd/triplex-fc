@@ -30,9 +30,15 @@ All numeric limits are **proposals**. Each will be confirmed, tightened or dropp
 | TFC-FDIR-018 | Whenever the vote cannot produce a trustworthy value (unresolved duplex disagreement, no majority, no data) the output shall hold the last good value and be flagged as held. | T |
 | TFC-FDIR-019 | Out-of-schedule frames at or above the configured rate (default 3 per 10 ms frame) shall raise a bus alarm in the same frame, without blaming a node (ADR-009). | T |
 | TFC-FDIR-020 | A node whose data still disagree with the healthy nodes' voted output shall never be readmitted; failing probation shall not count a new strike and shall name the reason. | T |
-| TFC-FDIR-021 | At most one node shall be on probation at a time; a frame with no trustworthy reference shall neither advance nor fail a probation. | T |
+| TFC-FDIR-021 | At most one node shall be on probation at a time, except when no node is healthy (FDIR-024); a frame with no trustworthy reference shall neither advance nor fail a probation. | T |
 | TFC-FDIR-022 | Operator actions (reintegrate, disable, clear-disabled, clear-safe) shall be accepted as CRC-checked ground-command frames and every command shall be answered with an accepted or refused outcome in the flight computer's report (ADR-011). | T |
 | TFC-FDIR-023 | A node whose frames are bad at a sustained rate of about one in three (or two in five) shall be isolated within 40 frames of the fault starting, with the reason "intermittent fault"; a single glitch, a two-frame burst, or one bad frame in ten or fewer shall not isolate a healthy node (ADR-013). | T |
+| TFC-FDIR-024 | When no node is healthy, two or more nodes on probation shall be judged against the vote among themselves: the odd one out fails, nodes that cannot be told apart neither advance nor fail, and agreeing nodes are readmitted after the normal probation (ADR-014). A single candidate shall wait. | T |
+| TFC-FDIR-025 | The manager shall detect a single-bit upset in its node states, its Safe flag or its configuration within one frame, repair it on the safe side (node excluded, Safe requested, configuration restored), and count and report it (ADR-015). | T |
+| TFC-FDIR-026 | An invalid configuration value (a non-finite or non-positive tolerance, M-of-N outside 1 <= M <= N <= 32, a stuck limit below 2, out-of-range leaky-count constants, an arbitration factor between 0 and 1, contradictory probation or strike limits) shall be replaced by its default and reported, never used (ADR-015). | T |
+| TFC-FDIR-027 | Every CAN id that is not part of the flight-bus schedule (including ids above the simulator id) shall be counted as out-of-schedule traffic. | T |
+| TFC-FDIR-028 | In Duplex, a node whose output stopped following a moving signal (a frozen or stale command) shall never cause the healthy node to be isolated, and shall not put a wrong value on the output: it is isolated, or the output is held and Safe requested (ADR-017). | T |
+| TFC-FDIR-029 | When no majority of estimator-state digests exists (three different values), no node shall be isolated; the disagreement shall be treated as unresolved (hold, Safe request). | T |
 
 ## Software quality
 | ID | Requirement | Verif. |
@@ -40,9 +46,15 @@ All numeric limits are **proposals**. Each will be confirmed, tightened or dropp
 | TFC-SW-001 | `core/` shall contain no dynamic allocation, exceptions, or RTTI. | I, T |
 | TFC-SW-002 | `core/` shall build with warnings as errors and be clean under clang-tidy and cppcheck. | T |
 | TFC-SW-003 | `core/` shall pass the full test suite under ASan and UBSan. | T |
-| TFC-SW-004 | Branch coverage of the voter and FDIR code shall be 100%. | T |
+| TFC-SW-004 | Branch coverage of the voter and FDIR code shall be as high as the structure allows (see SW-010 for the gate and `docs/CODING_STANDARD.md` for the deviation from 100%). | T |
 | TFC-SW-005 | Every requirement shall trace to at least one test ID in the fault matrix or a measurement procedure. | I |
 | TFC-SW-006 | Every merge to main shall run the SIL regression in CI. | T |
+| TFC-SW-007 | `core/` shall compile with the strictest warning set as errors (GCC `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wold-style-cast -Wcast-qual -Wnull-dereference -Wfloat-equal -Wswitch-enum -Wswitch-default -Wmissing-declarations -Wuseless-cast -Wlogical-op -Wstack-usage=2048` among others), and each header shall compile on its own. | T |
+| TFC-SW-008 | Every function in `core/` shall be at most 60 lines, 80 statements, 20 branches, nesting 4, 6 parameters and cognitive complexity 25 (clang-tidy), contain no recursion, no `goto`, no `while`/`do`, no macro, no namespace-scope variable (`tools/check_standard.py`). | T |
+| TFC-SW-009 | The flight binary shall contain no heap, exception, RTTI or vtable symbol (`tools/check_elf.sh`), and the firmware shall be linked without the C library's `malloc`. | T |
+| TFC-SW-010 | Line coverage of `core/` by the host tests shall be 100% and branch coverage at least 98% (`tools/coverage/core_coverage.py`); the gate may only be raised. | T |
+| TFC-SW-011 | Every deliberate bug in `tools/mutation/mutations.py` shall be caught by the C++ tests (`run_unit.py`) and, unless it is a configuration or self-protection mutant, by the fault campaign (`campaign.mutate`). | T |
+| TFC-SW-012 | The fault campaign (`campaign.run --strict`) shall raise no anomaly: every always-true property (M1-M8) and every single-fault property (S1-S4) shall hold on every frame of every scenario. | T |
 
 ## Interfaces
 | ID | Requirement | Verif. |

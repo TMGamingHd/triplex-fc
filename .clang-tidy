@@ -1,6 +1,16 @@
 # Strict config for flight code in core/include. tests/.clang-tidy relaxes style checks for tests.
+# Beyond the bug-finding families, the readability checks enforce the JPL "Power of Ten" size rules
+# (docs/CODING_STANDARD.md): functions of at most 60 lines, shallow nesting, bounded complexity, few parameters.
 Checks: >
   -*,bugprone-*,cert-*,clang-analyzer-*,performance-*,readability-braces-around-statements,
+  readability-function-size,readability-function-cognitive-complexity,misc-no-recursion,cppcoreguidelines-avoid-goto,
   -bugprone-easily-swappable-parameters,-cert-err58-cpp
+CheckOptions:
+  - {key: readability-function-size.LineThreshold, value: 60}
+  - {key: readability-function-size.StatementThreshold, value: 80}
+  - {key: readability-function-size.BranchThreshold, value: 20}
+  - {key: readability-function-size.ParameterThreshold, value: 6}
+  - {key: readability-function-size.NestingThreshold, value: 4}
+  - {key: readability-function-cognitive-complexity.Threshold, value: 25}
 WarningsAsErrors: '*'
 HeaderFilterRegex: 'core/include/.*'

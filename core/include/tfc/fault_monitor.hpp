@@ -6,11 +6,11 @@
 
 namespace tfc {
 
-constexpr unsigned popcount32(uint32_t v) noexcept {
+// Number of set bits. A fixed 32-iteration loop: the bound is evident to the reader and to the analysers.
+[[nodiscard]] constexpr unsigned popcount32(uint32_t v) noexcept {
   unsigned n = 0;
-  while (v != 0U) {
-    v &= (v - 1U);
-    ++n;
+  for (unsigned i = 0; i < 32U; ++i) {
+    n += (v >> i) & 1U;
   }
   return n;
 }
@@ -111,7 +111,8 @@ class ChannelMonitor {
 // rounding in a verdict that all flight computers must agree on.
 class AlphaCount {
  public:
-  constexpr AlphaCount(float k, float threshold) noexcept : k_(to_q16(k)), threshold_(to_q16(threshold)) {}
+  // k is held below 1 (a factor of 1 or more would make the score grow on good frames); a NaN or negative constant is 0.
+  constexpr AlphaCount(float k, float threshold) noexcept : k_(to_q16(k) > kMaxK ? kMaxK : to_q16(k)), threshold_(to_q16(threshold)) {}
 
   // Feed one observation. Returns true while the score is at or above the threshold (never when the
   // threshold is 0, which disables the detector).
@@ -131,9 +132,14 @@ class AlphaCount {
 
  private:
   static constexpr uint32_t kOne = 65536U;
+  static constexpr uint32_t kMaxK = kOne - 1U;  // the largest decay factor: just under 1.0
+  // Q16 conversion that cannot overflow: NaN and anything not above 0 give 0, anything that does not fit saturates.
   static constexpr uint32_t to_q16(float v) noexcept {
-    if (v <= 0.0F) {
+    if (!(v > 0.0F)) {
       return 0U;
+    }
+    if (v >= 65535.0F) {
+      return 0xFFFFFFFFU;
     }
     const float x = v * 65536.0F;
     const uint32_t whole = static_cast<uint32_t>(x);

@@ -1,0 +1,25 @@
+name: mutation
+# Mutation testing is the check on the checks: deliberate bugs are injected into a copy of core/ and every one must be caught.
+# It takes a while (the unit suite rebuilds for each mutant, the campaign reruns for each), so it runs weekly and on demand,
+# not on every pull request. See docs/CODING_STANDARD.md section 3.
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+jobs:
+  unit-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Every mutant must be killed by the C++ tests
+        run: python3 tools/mutation/run_unit.py --jobs 4
+  campaign:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Every (non self-protection) mutant must be caught by the fault campaign
+        run: |
+          cd sim
+          python3 -m campaign.mutate
