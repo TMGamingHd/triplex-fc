@@ -36,9 +36,11 @@ KINDS: dict[str, tuple[str, str, dict[str, Value]]] = {
     "digest": ("F10", "estimator-state digest diverges (XOR with `xor`)", {"xor": 1}),
     "babble": ("F11", "`n` extra frames per cycle on out-of-schedule ids `id` .. `id`+15 (default 0x020, above every sensor id in priority)",
                {"n": 5, "id": 32}),
-    "seqgap": ("IF", "sequence counter jumps ahead by `gap` once, at `start`", {"gap": 3}),
-    "reboot": ("F24", "node restarts: silent for `down` frames, then back with its sequence counter restarted at 0",
-               {"down": 50}),
+    "seqgap": ("IF", "the node's frame number is off by `gap` for as long as the fault is active (it lost SYNC, or its counter is wrong); "
+                     "give `end` for a one-frame glitch", {"gap": 3}),
+    "reboot": ("F24", "node restarts: silent for `down` frames, then back in phase (it takes the frame number from SYNC); "
+                      "`resync`=0 is a node that does not resync and restarts its frame number at 0",
+               {"down": 50, "resync": 1}),
     "late": ("F25", "every scheduled frame arrives `us` microseconds late (after the 7 ms vote it is stale data)",
              {"us": 4000}),
     # ---- kinds added by the FMEA gap analysis (docs/FMEA.md) ----
@@ -152,7 +154,7 @@ def _validate(kind: str, params: dict[str, Value], spec: str) -> None:
     if int(params.get("axis", 0)) not in (0, 1, 2) or int(params.get("other", 1)) not in (0, 1, 2):
         raise FaultSpecError("axis must be 0, 1 or 2")
     rules: dict[str, tuple[bool, str]] = {
-        "reboot": (int(params.get("down", 1)) >= 1, "reboot needs down >= 1"),
+        "reboot": (int(params.get("down", 1)) >= 1 and int(params.get("resync", 1)) in (0, 1), "reboot needs down >= 1 and resync 0 or 1"),
         "late": (0 < int(params.get("us", 1)) <= 9000,
                  "late needs 0 < us <= 9000 (frames must still leave inside the 10 ms frame)"),
         "early": (0 < int(params.get("us", 1)) <= 9000, "early needs 0 < us <= 9000"),

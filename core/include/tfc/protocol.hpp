@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 
+#include "tfc/auth.hpp"
 #include "tfc/crc8.hpp"
 
 namespace tfc {
@@ -180,30 +181,54 @@ inline DecodedSync unpack_sync(const Frame& f) noexcept {
   return d;
 }
 
-// ---- Ground command: an operator action sent to the flight computers over the bus ----
-// Payload: opcode | node (0..2, ignored for ClearSafe) | 4 reserved bytes (0) | seq | crc8.
-// Every operation is idempotent, so a repeated frame is harmless. There is no authentication:
-// this is an educational bench, not a flight uplink.
+// ---- Ground command: an operator action sent to the flight computers over the bus (ADR-019) ----
+// Payload: opcode byte | node (0..2, ignored for ClearSafe) | 32-bit tag (little endian) | counter | crc8.
+//  * opcode byte: the operation in the low 7 bits, kArmFlag (0x80) set on an ARM frame (see below).
+//  * tag: the low 32 bits of SipHash-2-4 over (id, opcode byte, node, counter) with the shared key (auth.hpp).
+//  * counter: the ground station's command counter, strictly increasing (modulo 256); a receiver accepts a command
+//    only if the counter is newer than the last one it accepted, within a window, so a replay is refused.
+// A dangerous operation is a two-step: an ARM frame (same operation and node, arm flag set) followed within the arm window by
+// the EXECUTE frame. Frames that fail the tag or the counter check are counted and dropped without a trace on the bus.
 enum class GroundOp : uint8_t {
   Reintegrate = 1,    // start probation for a latched node (it must then prove itself by shadow vote)
-  Disable = 2,        // exclude a node for the rest of the run
-  ClearDisabled = 3,  // maintenance: bring a disabled node back to "latched" with its strikes cleared
-  ClearSafe = 4       // lift a sticky Safe request
+  Disable = 2,        // exclude a node for the rest of the run (needs an arm if it would leave fewer than 2 healthy nodes)
+  ClearDisabled = 3,  // maintenance: bring a disabled node back to "latched" with its strikes cleared (always needs an arm)
+  ClearSafe = 4       // lift a sticky Safe request (always needs an arm)
 };
+constexpr uint8_t kArmFlag = 0x80U;
 
 struct DecodedGround {
-  uint8_t op = 0;
+  uint8_t op = 0;       // GroundOp value (arm flag removed)
+  bool arm = false;     // an ARM frame, not an EXECUTE
   uint8_t node = 0;
-  uint8_t seq = 0;
-  bool ok = false;
+  uint8_t counter = 0;
+  uint32_t tag = 0;
+  bool ok = false;      // CRC good and frame id/length right (authenticity is judged by the manager)
 };
 
-inline Frame pack_ground(GroundOp op, uint8_t node, uint8_t seq) noexcept {
+// An authenticated ground command frame.
+inline Frame pack_ground_auth(GroundOp op, uint8_t node, uint8_t counter, const AuthKey& key, bool arm = false) noexcept {
+  Frame f;
+  f.id = id::kGround;
+  const uint8_t op_byte = static_cast<uint8_t>(static_cast<uint8_t>(op) | (arm ? kArmFlag : 0U));
+  f.data[0] = op_byte;
+  f.data[1] = node;
+  const uint32_t tag = ground_mac(key, id::kGround, op_byte, node, counter);
+  for (unsigned i = 0; i < 4U; ++i) {
+    f.data[2U + i] = static_cast<uint8_t>((tag >> (8U * i)) & 0xFFU);
+  }
+  detail::seal(f, counter);
+  return f;
+}
+
+// An UNauthenticated frame (tag bytes zero): what a node that does not know the key, or a corrupted frame that still
+// passes its CRC, looks like. Used by the tests; a manager with authentication on refuses it.
+inline Frame pack_ground(GroundOp op, uint8_t node, uint8_t counter) noexcept {
   Frame f;
   f.id = id::kGround;
   f.data[0] = static_cast<uint8_t>(op);
   f.data[1] = node;
-  detail::seal(f, seq);
+  detail::seal(f, counter);
   return f;
 }
 
@@ -212,11 +237,22 @@ inline DecodedGround unpack_ground(const Frame& f) noexcept {
   if (f.id != id::kGround || !detail::check(f)) {
     return d;
   }
-  d.op = f.data[0];
+  d.op = static_cast<uint8_t>(f.data[0] & ~kArmFlag);
+  d.arm = (f.data[0] & kArmFlag) != 0U;
   d.node = f.data[1];
-  d.seq = f.data[6];
+  for (unsigned i = 0; i < 4U; ++i) {
+    d.tag |= static_cast<uint32_t>(f.data[2U + i]) << (8U * i);
+  }
+  d.counter = f.data[6];
   d.ok = true;
   return d;
+}
+
+// Does the tag of this frame verify under `key`? (The opcode byte as received, arm flag included, is what is tagged.)
+[[nodiscard]] inline bool ground_authentic(const Frame& f, const AuthKey& key) noexcept {
+  const DecodedGround d = unpack_ground(f);
+  const uint8_t op_byte = static_cast<uint8_t>(d.op | (d.arm ? kArmFlag : 0U));
+  return d.ok && d.tag == ground_mac(key, id::kGround, op_byte, d.node, d.counter);
 }
 
 // Sequence numbers wrap at 256; returns true if `seq` is the expected frame.
@@ -224,59 +260,57 @@ constexpr bool seq_is_next(uint8_t last, uint8_t seq) noexcept {
   return static_cast<uint8_t>(last + 1U) == seq;
 }
 
-// Per-stream sequence check for one sender. A frame that arrives damaged (CRC failure) was
-// still sent, so it used up a sequence number: note_damaged() advances the expectation, and
-// one corrupted frame then costs one bad sample (the CRC failure) instead of two (the failure
-// plus a false "gap" on the next good frame). Real gaps are still reported. The first good
-// frame after construction is always accepted.
-class SeqTracker {
+// How a frame's number compares with the frame the receiver is collecting.
+enum class FrameTiming : uint8_t {
+  OnTime,  // the number of the current frame
+  Late,    // the number of an earlier frame (up to 31 ago) whose slot had nothing: that frame, arriving late (stale data)
+  Bad      // anything else: a number from the future (an early stream), too old, a repeat of one already seen, or nonsense
+};
+
+// Per-stream check of the frame number in `seq` against the receiver's own frame count (ADR-018). Every node stamps its
+// frames with the number of the SYNC frame that opened the cycle (modulo 256), so the number says WHICH frame the data belongs
+// to, independent of when the frame happened to arrive. The receiver keeps a 32-cycle history of which numbers it has seen:
+//  * the current number is on time; an earlier number not seen before is a late frame (it missed the vote: one lost sample,
+//    not a sequence error); a repeat of a number already seen is a duplicate or replay;
+//  * a number from the future is a stream that is a whole frame (or more) early: previously invisible, because a counter that
+//    simply counted frames stays contiguous however early the frames were sent.
+// A node that reboots, or joins late, is in phase at once because it takes the number from SYNC, so a restart is no longer a
+// sequence break. Call next_frame() once at the start of each frame, then classify() for every CRC-good frame.
+class PhaseTracker {
  public:
-  // Feed the sequence number of a CRC-good frame. Returns false if it is not the expected next.
-  // One exception: after note_missing(), a frame carrying one of the numbers we merely ASSUMED were
-  // missing is that slot's own frame arriving late (it missed the vote; under load a stalled sender
-  // can flush several at once). It is accepted without moving the expectation, so a late frame costs
-  // one bad sample (it was missing) and not two. Each assumed number is accepted once.
-  bool accept(uint8_t seq) noexcept {
-    const uint8_t behind = static_cast<uint8_t>(last_ - seq);  // 0 = exactly the number assumed last
-    if (have_ && pending_ > 0U && behind < pending_) {
-      pending_ = behind;  // older assumed slots can no longer arrive (a sender's frames stay in order)
-      return true;
-    }
-    const bool ok = !have_ || seq_is_next(last_, seq);
-    last_ = seq;
-    have_ = true;
-    pending_ = 0U;
-    return ok;
+  void next_frame() noexcept {
+    seen_ <<= 1U;
+    arrived_ <<= 1U;
   }
 
-  // A frame on this stream arrived but failed its CRC: its sequence number cannot be trusted,
-  // so assume it was the next one.
-  void note_damaged() noexcept {
-    if (have_) {
-      last_ = static_cast<uint8_t>(last_ + 1U);
-    }
-    pending_ = 0U;
-  }
+  // A frame on this stream arrived but failed its CRC: its number cannot be trusted, but its slot was not empty.
+  void note_damaged() noexcept { arrived_ |= 1U; }
 
-  // The slot passed and no frame arrived at all (lost on the bus, sent late, or the sender was silent).
-  // The sender's counter still advances with the schedule, so assume the frame carried the next
-  // number: one lost frame then costs one bad sample (it is missing), not two (missing + a false
-  // "gap" on the next good frame). If those frames turn up late, accept() recognises them. A sender
-  // that restarts its counter is reported once, on its first frame back.
-  void note_missing() noexcept {
-    if (have_) {
-      last_ = static_cast<uint8_t>(last_ + 1U);
-      if (pending_ < kMaxLate) {
-        ++pending_;
-      }
+  FrameTiming classify(uint8_t seq, uint32_t frame_no) noexcept {
+    const uint8_t behind = static_cast<uint8_t>(static_cast<uint8_t>(frame_no & 0xFFU) - seq);  // 0 = this frame
+    const uint32_t earlier_arrivals = arrived_;
+    arrived_ |= 1U;
+    if (behind >= kHistory) {
+      return FrameTiming::Bad;
     }
+    const uint32_t bit = 1U << behind;
+    if ((seen_ & bit) != 0U) {
+      return FrameTiming::Bad;
+    }
+    // A late frame is the frame of a slot that came up EMPTY. If that frame's own cycle already delivered something (a stream
+    // that is permanently one number behind delivers one frame every cycle, just labelled for the cycle before), this is not a late
+    // frame: it is a frame with the wrong number.
+    if (behind > 0U && (earlier_arrivals & bit) != 0U) {
+      return FrameTiming::Bad;
+    }
+    seen_ |= bit;
+    return behind == 0U ? FrameTiming::OnTime : FrameTiming::Late;
   }
 
  private:
-  uint8_t last_ = 0U;
-  bool have_ = false;
-  static constexpr uint8_t kMaxLate = 32U;  // a longer silence is a dead node, not a late burst
-  uint8_t pending_ = 0U;  // assumed-missing numbers ending at last_ that may still arrive late
+  static constexpr uint8_t kHistory = 32U;
+  uint32_t seen_ = 0U;      // bit i set: a frame numbered (current - i) has arrived
+  uint32_t arrived_ = 0U;   // bit i set: SOMETHING arrived on this stream in the frame (current - i)
 };
 
 }  // namespace tfc

@@ -68,14 +68,21 @@ class NewFaultKindsThroughTheCore(ReplayBase):
         out = self.isolated("B:seqstuck:start=100", 103)
         self.assertGreater(int(out["seq_bad"]), 100)
 
-    def test_F43_a_consistently_early_gyro_stream_is_not_detected_by_this_design(self):
-        # campaign edge case E11: 6 ms early puts the gyro and accel frames into the previous frame's window; the counter
-        # stays contiguous and the data are one frame ahead (under 0.5 dps on this motion): nothing to see.
-        self.replay(["B:early:start=100,us=6000"], "--expect-no-latch", "B", "--expect-mode", "triplex")
-        self.replay(["B:early:start=100,us=1000"], "--expect-no-latch", "B", "--expect-mode", "triplex")  # inside the window: fine
+    def test_F43_a_stream_that_is_a_whole_frame_early_is_isolated_because_frames_carry_SYNCs_number(self):
+        # campaign edge case E11, fixed by ADR-018: 6 ms early puts the gyro and accel frames into the previous frame's window.
+        # The counter used to stay contiguous and the data were one frame ahead (under 0.5 dps): invisible. Now each frame says
+        # which SYNC frame it belongs to, so a frame numbered for the NEXT cycle is plainly out of phase.
+        out = self.replay(["B:early:start=100,us=6000"], "--expect-latch", "B:100-103", "--expect-mode", "duplex")
+        self.assertGreater(int(out["seq_bad"]), 100)
+
+    def test_F43_early_inside_the_acceptance_window_is_still_invisible_until_arrival_times_are_checked(self):
+        # Up to about 4.5 ms early the frame still arrives in the right window, with the right number: only a check of the arrival
+        # time against the slot (docs/DEFERRED.md, E11 option B) can see it.
+        self.replay(["B:early:start=100,us=4500"], "--expect-no-latch", "B", "--expect-mode", "triplex")
+        self.replay(["B:early:start=100,us=1000"], "--expect-no-latch", "B", "--expect-mode", "triplex")
 
     def test_F44_timing_jitter_beyond_the_vote_deadline_loses_frames(self):
-        self.isolated("B:jitter:start=100,us=3000", 106, 112)
+        self.isolated("B:jitter:start=100,us=3000", 105, 112)
         self.replay(["B:jitter:start=100,us=500"], "--expect-no-latch", "B", "--expect-mode", "triplex")
 
     def test_F45_a_drifting_clock_is_isolated_when_the_command_crosses_the_deadline(self):
@@ -145,6 +152,43 @@ class CampaignFindingsThroughTheCore(ReplayBase):
                           "--expect-no-latch", "C", "--expect-mode", "safe", "--expect-min", "digest_flags:1")
         self.assertEqual(out["nodes_disabled"], "0")
         self.assertGreater(int(out["unresolved_frames"]), 0)
+
+
+@unittest.skipIf(REPLAY is None, "tfc_replay not built (cmake --build build/host)")
+class GroundCommandsThroughTheCore(ReplayBase):
+    """E10 (ADR-019): authenticated, replay-protected, two-step operator commands and the interlock tiers."""
+
+    def test_F52_a_command_with_a_wrong_tag_has_no_effect_and_is_counted(self):
+        out = self.replay([], "--expect-state", "B:healthy", "--expect-mode", "triplex", frames=200, commands=["100:forged-disable:B"])
+        self.assertEqual((out["commands_unauthentic"], out["commands_accepted"]), ("1", "0"))
+
+    def test_F52_a_replayed_command_is_refused(self):
+        out = self.replay([], "--expect-state", "B:disabled", "--expect-mode", "duplex", frames=200, commands=["100:disable:B", "110:replay"])
+        self.assertEqual((out["commands_replayed"], out["commands_accepted"]), ("1", "1"))  # applied once, the repeat dropped
+
+    def test_F52_clear_safe_and_clear_disabled_need_an_arm(self):
+        cause = ["C:dropout:start=5", "B:digest:start=100,end=200"]  # C dies; B's digest diverges for a while: unattributable, Safe
+        self.replay(cause, "--expect-mode", "safe", nodes=(0, 1, 2), frames=400, commands=["250:clear-safe"])  # refused: still Safe
+        self.replay(cause, "--expect-mode", "duplex", nodes=(0, 1, 2), frames=400, commands=["250:armed-clear-safe"])
+        out = self.replay([], "--expect-state", "B:disabled", frames=300, commands=["100:disable:B", "200:clear-disabled:B"])
+        self.assertGreaterEqual(int(out["commands_refused"]), 1)
+        self.replay([], "--expect-state", "B:latched", frames=300, commands=["100:disable:B", "200:armed-clear-disabled:B"])
+
+    def test_F52_an_arm_that_is_never_followed_expires(self):
+        out = self.replay([], "--expect-state", "B:disabled", frames=700, commands=["100:disable:B", "200:arm-clear-disabled:B", "500:clear-disabled:B"])
+        self.assertEqual(out["arms_expired"], "1")  # 250 frames after 200
+
+    def test_F53_the_interlock_tiers(self):
+        # Triplex -> Duplex: plain. Duplex -> Simplex: refused unless armed. The last voter: armed, and reported loudly.
+        self.replay([], "--expect-state", "B:disabled", "--expect-mode", "duplex", frames=200, commands=["100:disable:B"])
+        out = self.replay([], "--expect-state", "B:healthy", "--expect-mode", "duplex", nodes=(0, 1), frames=200, commands=["100:disable:B"])
+        self.assertGreaterEqual(int(out["commands_refused"]), 1)  # C is absent: Duplex; a plain disable of B would leave one voter
+        self.replay([], "--expect-state", "B:disabled", "--expect-mode", "simplex", nodes=(0, 1), frames=200, commands=["100:armed-disable:B"])
+        out = self.replay([], "--expect-state", "A:disabled", "--expect-mode", "safe", nodes=(0,), frames=300, commands=["200:armed-disable:A"])
+        self.assertEqual(out["critical_commands"], "1")
+
+    def test_F53_a_node_that_is_already_out_of_the_vote_can_be_disabled_plainly(self):
+        self.replay(["B:dropout:start=50"], "--expect-state", "B:disabled", "--expect-mode", "duplex", frames=300, commands=["200:disable:B"])
 
 
 if __name__ == "__main__":

@@ -22,8 +22,8 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "tolerances_doubled": ("redundancy.hpp", "{{1.0F, 1.0F, 1.0F, 0.02F, 0.02F, 0.02F, 0.01F, 0.01F}}", "{{2.0F, 2.0F, 2.0F, 0.04F, 0.04F, 0.04F, 0.02F, 0.02F}}"),
     "arbitrate_stale_reference": ("redundancy.hpp", "if (!have_last_[ch] || !ref_fresh_[ch] ||", "if (!have_last_[ch] ||"),
     "arbitration_too_lenient": ("redundancy.hpp", "float duplex_arbitration_factor = 2.0F;", "float duplex_arbitration_factor = 0.3F;"),
-    "arbitration_standstill_reference": ("redundancy.hpp", "const float ref = have_prev_[ch] ? last_good_[ch] + (last_good_[ch] - prev_good_[ch]) : last_good_[ch];", "const float ref = last_good_[ch];"),
-    "arbitration_extrapolates_backwards": ("redundancy.hpp", "const float ref = have_prev_[ch] ? last_good_[ch] + (last_good_[ch] - prev_good_[ch]) : last_good_[ch];", "const float ref = have_prev_[ch] ? last_good_[ch] - (last_good_[ch] - prev_good_[ch]) : last_good_[ch];"),
+    "arbitration_standstill_reference": ("redundancy.hpp", "return last_good_[ch] + weight * step;", "return last_good_[ch];"),
+    "arbitration_extrapolates_backwards": ("redundancy.hpp", "return last_good_[ch] + weight * step;", "return last_good_[ch] - weight * step;"),
     "untrusted_updates_last_good": ("redundancy.hpp", "if (trusted && !safe_now) {", "if (!safe_now) {"),
     "hold_returns_zero": ("redundancy.hpp", "rep.output[ch] = have_last_[ch] ? last_good_[ch] : 0.0F;  // hold the last good value", "rep.output[ch] = 0.0F;"),
     "digest_duplex_blames_both": ("redundancy.hpp", "} else if (rx_[i].digest != first) {\n          d.unresolved = true;", "} else if (rx_[i].digest != first) {\n          d.unresolved = true; d.blame = valid;"),
@@ -39,8 +39,6 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "bus_alarm_off_by_one": ("redundancy.hpp", "rep.bus_alarm = oos_in_frame_ >= cfg_.bus_alarm_per_frame", "rep.bus_alarm = oos_in_frame_ > cfg_.bus_alarm_per_frame"),
     "unknown_ids_count_as_known": ("redundancy.hpp", "f.id == id::kActOut || f.id == id::kSim ||", "f.id == id::kActOut || f.id >= id::kSim ||"),
     # ---- sequence tracking ----
-    "lost_frame_costs_two": ("redundancy.hpp", "seq_[n][st].note_missing();", ""),
-    "seq_late_accepts_one_too_many": ("protocol.hpp", "behind < pending_", "behind <= pending_"),
     "decoder_ignores_len": ("protocol.hpp", "return f.len == 8U && f.data[7] == crc8(f.data.data(), 7);", "return f.data[7] == crc8(f.data.data(), 7);"),
     "counter_decrements": ("redundancy.hpp", "++counters_.crc_bad;", "counters_.crc_bad = counters_.crc_bad > 5 ? counters_.crc_bad - 1 : counters_.crc_bad + 1;"),
     # ---- life cycle ----
@@ -48,7 +46,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "strikes_never_disable": ("redundancy.hpp", "uint8_t max_strikes = 3;", "uint8_t max_strikes = 250;"),
     "one_probation_at_a_time_off": ("redundancy.hpp", "if ((!one_on_probation || no_healthy) && dwell_[n]", "if (dwell_[n]"),
     "probation_neutral_counts_clean": ("redundancy.hpp", "} else if (v == Verdict::Clean) {", "} else if (v != Verdict::Dirty) {"),
-    "no_dwell": ("redundancy.hpp", "dwell_[n] >= cfg_.min_dwell_frames && wants_probation(n)", "wants_probation(n)"),
+    "no_dwell": ("redundancy.hpp", "dwell_[n] >= dwell_needed(n) && wants_probation(n)", "wants_probation(n)"),
     "probation_too_short": ("redundancy.hpp", "uint16_t probation_frames = 100;", "uint16_t probation_frames = 10;"),
     "dwell_counts_command_frame": ("redundancy.hpp", "    dwell_hold_ = static_cast<uint8_t>(dwell_hold_ | (1U << node));  // the frame of the command is not part of the dwell\n", ""),
     "dwell_counts_failure_frame": ("redundancy.hpp", "      dwell_[n] = 0U;\n      dwell_hold_ = static_cast<uint8_t>(dwell_hold_ | (1U << n));\n      req_[n] = false;\n      if (attempts_", "      dwell_[n] = 0U;\n      req_[n] = false;\n      if (attempts_"),
@@ -62,6 +60,34 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "cohort_keeps_the_odd_one": ("redundancy.hpp", "if (((v.disagree_mask >> n) & 1U) != 0U) {\n          add_reason(rep, n, reason::kVote);", "if (false) {\n          add_reason(rep, n, reason::kVote);"),
     "cohort_neutral_counts_clean": ("redundancy.hpp", "return neutral ? Verdict::Neutral : Verdict::Clean;", "return Verdict::Clean;"),
     "cohort_one_at_a_time": ("redundancy.hpp", "if ((!one_on_probation || no_healthy) && dwell_[n]", "if (!one_on_probation && dwell_[n]"),
+    # ---- frame numbers (ADR-018) ----
+    "phase_late_slot_not_checked_empty": ("protocol.hpp", "if (behind > 0U && (earlier_arrivals & bit) != 0U) {", "if (false) {"),
+    "phase_duplicates_accepted": ("protocol.hpp", "    if ((seen_ & bit) != 0U) {\n      return FrameTiming::Bad;", "    if (false) {\n      return FrameTiming::Bad;"),
+    "phase_future_numbers_look_late": ("protocol.hpp", "static_cast<uint8_t>(static_cast<uint8_t>(frame_no & 0xFFU) - seq);", "static_cast<uint8_t>(seq - static_cast<uint8_t>(frame_no & 0xFFU));"),
+    "phase_damaged_frame_leaves_its_slot_empty": ("redundancy.hpp", "      phase_[node][stream].note_damaged();\n", ""),
+    "phase_frame_counter_not_advanced": ("redundancy.hpp", "    ++frame_no_;\n    return rep;", "    return rep;"),
+    "phase_begin_frame_ignores_the_number": ("redundancy.hpp", "    frame_no_ = frame_no;\n    begin_frame();", "    begin_frame();"),
+    # ---- ground commands (ADR-019) ----
+    "ground_tag_not_checked": ("redundancy.hpp", "if (!ground_authentic(f, cfg_.ground_key)) {", "if (false) {"),
+    "ground_replay_window_ignored": ("redundancy.hpp", "if (ahead == 0U || ahead > cfg_.command_window) {", "if (false) {"),
+    "ground_replay_window_off_by_one": ("redundancy.hpp", "if (ahead == 0U || ahead > cfg_.command_window) {", "if (ahead == 0U || ahead >= cfg_.command_window) {"),
+    "ground_counter_not_remembered": ("redundancy.hpp", "      cmd_ctr_.set(d.counter);\n      cmd_have_.set(1U);", "      cmd_have_.set(1U);"),
+    "ground_auth_off_by_default": ("redundancy.hpp", "bool ground_auth = true; ", "bool ground_auth = false;"),
+    "arm_clear_safe_needs_none": ("redundancy.hpp", "if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe) {", "if (op == GroundOp::ClearDisabled) {"),
+    "arm_clear_disabled_needs_none": ("redundancy.hpp", "if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe) {", "if (op == GroundOp::ClearSafe) {"),
+    "interlock_off": ("redundancy.hpp", "n.arm = healthy <= 2U; ", "n.arm = false; "),
+    "interlock_one_tier_late": ("redundancy.hpp", "n.arm = healthy <= 2U; ", "n.arm = healthy <= 1U; "),
+    "interlock_last_voter_not_flagged": ("redundancy.hpp", "n.critical = healthy <= 1U;", "n.critical = false;"),
+    "arm_not_consumed": ("redundancy.hpp", "      clear_arm();  // an ARM covers exactly one EXECUTE\n", ""),
+    "arm_node_not_matched": ("redundancy.hpp", "(static_cast<unsigned>(op) << 2U) | (node & 3U)", "(static_cast<unsigned>(op) << 2U)"),
+    "arm_never_ages": ("redundancy.hpp", "    arm_left_.set(static_cast<uint8_t>(arm_left_.get() - 1U));\n", ""),
+    "arm_window_one_too_long": ("redundancy.hpp", "arm_left_.set(cfg_.arm_window_frames);", "arm_left_.set(static_cast<uint8_t>(cfg_.arm_window_frames + 1U));"),
+    "scrub_ignores_command_state": ("redundancy.hpp", "    if (!cmd_ctr_.intact() || !cmd_have_.intact() || !arm_code_.intact() || !arm_left_.intact()) {", "    if (false) {"),
+    # ---- fast reintegration and the arbitration reference (ADR-010, ADR-017 amended) ----
+    "transient_dwell_ignored": ("redundancy.hpp", "return transient ? cfg_.min_dwell_frames_transient : cfg_.min_dwell_frames;", "return cfg_.min_dwell_frames;"),
+    "transient_dwell_for_every_cause": ("redundancy.hpp", "return transient ? cfg_.min_dwell_frames_transient : cfg_.min_dwell_frames;", "return cfg_.min_dwell_frames_transient;"),
+    "reference_always_predicts": ("redundancy.hpp", "const float weight = moving <= 1.0F ? 0.0F : (moving >= 2.0F ? 1.0F : moving - 1.0F);", "const float weight = 1.0F;"),
+    "reference_never_predicts": ("redundancy.hpp", "const float weight = moving <= 1.0F ? 0.0F : (moving >= 2.0F ? 1.0F : moving - 1.0F);", "const float weight = 0.0F;"),
     # ---- configuration and self protection (ADR-015) ----
     "config_not_sanitised": ("redundancy.hpp", "  errors = validate_config(in);", "  errors = 0U;"),
     "tolerance_not_validated": ("redundancy.hpp", "    if (!detail::finite_positive(c.tol[i])) {\n      e |= cfgerr::kTolerance;", "    if (false) {\n      e |= cfgerr::kTolerance;"),
@@ -82,7 +108,9 @@ CAMPAIGN_SKIP = {
     "voter_nan_leaks",          # an int16 sample cannot be NaN or infinite
     "decoder_ignores_len",      # the peers never send a frame of the wrong length
     "counter_decrements",       # a statistics counter is not an input to any decision
-    "seq_late_accepts_one_too_many",  # needs a lost frame followed by a duplicate of the last frame (unit test boundary_a_duplicate_*)
+    "ground_replay_window_off_by_one",  # the campaign's command counters advance by one; the window edge needs a gap of exactly 32
+    "scrub_ignores_command_state",      # the peers never flip a bit of the manager's memory
+    "phase_begin_frame_ignores_the_number",  # the replay tool counts frames itself and never passes a number
 }
 
 

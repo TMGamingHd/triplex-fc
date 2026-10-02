@@ -24,7 +24,7 @@ What a flight-computer FMEA must cover, by interface:
 | **Compute node** | crash, hang, reboot (power glitch), **late/early/jittering output (timing faults)**, **clock drift**, wrong command (software bug), **frozen command output**, **inverted command sign**, state divergence (SEU in the estimator), **partial failure (only some frames sent)** |
 | **Bus (CAN)** | bit errors, lost frames, **duplicated frames**, **stale replayed frames**, **frozen sequence counter**, babbling idiot, bus-off, open/short, ID collisions (two nodes with one ID), SYNC loss |
 | **Redundancy manager itself** | wrong tolerance configuration, **memory upsets in its own state (flags, counters)**, a latent bug that only shows with two faults |
-| **Operator / ground** | wrong command, command at the wrong moment, command that would remove redundancy |
+| **Operator / ground** | wrong command, command at the wrong moment, command that would remove redundancy, **forged command (no key, or a corrupted frame that passes the CRC)**, **replayed or stale command**, **a dangerous command without a deliberate second step** |
 | **Multi-fault** | two simultaneous independent faults, **common-cause faults (both peers wrong the same way)**, a fault during recovery |
 
 Items in **bold** were missing from the first version of the virtual peers; the campaign work added them (section 3).
@@ -52,7 +52,7 @@ three *response* gaps that no new fault kind could have shown, and a coverage ga
 | Frozen / inverted command | `cmdstuck`, `cmdinvert` | F37, F38 | isolated in 3 frames; in Duplex see below |
 | Partial failure | `partial` | F39 | isolated in 3 frames (missing) |
 | Duplicated frames, replayed frames, frozen sequence counter | `duplicate`, `replay`, `seqstuck` | F40-F42 | isolated in 3 frames (sequence / stale data) |
-| Early / jittering output, clock drift | `early`, `jitter`, `clockdrift` | F43-F45 | jitter and drift isolated once frames cross the 7 ms deadline; a consistently early gyro stream is **not** detectable (E11) |
+| Early / jittering output, clock drift | `early`, `jitter`, `clockdrift` | F43-F45 | jitter and drift isolated once frames cross the 7 ms deadline; a stream a whole frame early is isolated since ADR-018 (it was invisible: E11); a frame up to about 4.5 ms early inside its own window is still not seen (arrival-time check deferred) |
 | Common-cause faults | `correlated` group | - | two nodes with the same error: the healthy node is outvoted and blamed (voting cannot help; needs design diversity) |
 | Multi-fault and fault during recovery | `pairs`, `new_pairs`, `cascades` groups | - | 1,788 combinations, no property violated |
 
@@ -65,6 +65,9 @@ Response gaps found by the campaign and fixed (details: `docs/FAULT_CAMPAIGN.md`
 | **Three different digests latched every node**: a self-inflicted total loss on a no-consensus situation | F51 | unresolved, hold, Safe request (ADR-008 amended) |
 | **No protection of the manager's own state**; a zero or NaN tolerance silently disabled detection | F47, F48 | guarded state, scrub, validated configuration (ADR-015) |
 | Dwell after `clear-disabled` / failed probation counted the frame of the event | E1 | one-frame off-by-one |
+| **A stream a whole frame early (or late, repeated, off by any number of frames) was invisible**: the counter only counted frames | F43, E11 | frames carry SYNC's number; the receiver checks the phase (ADR-018) |
+| **Ground commands could be forged, replayed, or issued without a deliberate second step; nothing stopped disabling every node** | F52-F55, E10 | SipHash tag, counter window, ARM/EXECUTE, interlock tiers (ADR-019) |
+| The Duplex decision band moved after the E16 fix (isolate-or-Safe threshold 2.0x to 2.3x on the gyro channels) | E19 | the motion reference is used only where the signal moves more than a tolerance per frame (ADR-017 amended) |
 | Any CAN id above 0x500 counted as "known" (a babbler there was invisible) | F49 | only the ids in the schedule are known |
 
 ## 4. Known classes that cannot be modelled in software alone (need the rig)

@@ -27,6 +27,11 @@
 //    The one-at-a-time rule is lifted in that state only. Without this a bus-wide outage plus one more failure
 //    would end the flight with no way back short of a reset.
 //
+// Frames carry the number of the SYNC frame that opened their cycle (ADR-018), checked against the receiver's own frame count
+// per stream, so a stream that is a whole frame early, late, replayed or off by any number of frames is seen. Ground commands
+// are authenticated (SipHash tag), refused if stale (counter window), and the dangerous ones need an ARM frame before the
+// EXECUTE frame; a plain Disable that would leave fewer than two healthy nodes is one of them (ADR-019).
+//
 // The manager protects itself (ADR-015): its configuration is validated and sanitised at construction, its
 // critical state (node states, the Safe flag, the configuration) is stored redundantly and scrubbed every frame,
 // and an upset is reported and answered on the safe side. No heap, no exceptions, deterministic.
@@ -119,7 +124,8 @@ enum class CommandResult : uint8_t {
   RefusedNotLatched,   // reintegration of a node that is healthy
   RefusedNotDisabled,  // ClearDisabled for a node that is not disabled
   RefusedBadNode,
-  RefusedBadOp
+  RefusedBadOp,
+  RefusedNotArmed      // a dangerous operation without a matching ARM frame in the arm window (ADR-019)
 };
 
 inline const char* state_text(NodeState st) noexcept {
@@ -153,15 +159,23 @@ inline const char* result_text(CommandResult r) noexcept {
     case CommandResult::RefusedNotDisabled: return "refused: node is not disabled";
     case CommandResult::RefusedBadNode: return "refused: no such node";
     case CommandResult::RefusedBadOp: return "refused: no such operation";
+    case CommandResult::RefusedNotArmed: return "refused: needs an ARM frame first";
     default: break;
   }
   return "?";
 }
 
+namespace cmdflag {
+constexpr uint8_t kArm = 1U;       // this event is an ARM frame
+constexpr uint8_t kArmed = 2U;     // executed under a matching ARM
+constexpr uint8_t kCritical = 4U;  // removed the last voting node: reported loudly
+}  // namespace cmdflag
+
 struct CommandEvent {
   uint8_t op = 0U;
   uint8_t node = 0U;
   CommandResult result = CommandResult::Accepted;
+  uint8_t flags = 0U;  // cmdflag bits
 };
 
 struct RedundancyConfig {
@@ -191,6 +205,10 @@ struct RedundancyConfig {
   // ---- reintegration and disabling (ADR-010) ----
   ReintegrationPolicy policy = ReintegrationPolicy::Manual;
   uint16_t min_dwell_frames = 200;          // a latched node waits at least this long (2 s) before probation
+  // ... except after a first, transient-looking latch (frame problems or one vote episode): then the dwell is this long
+  // (0.5 s). Every frame a node is out is a frame the system runs with less redundancy, and the node still has to pass the
+  // whole probation; a repeat offender or a physical cause keeps the full dwell (ADR-010 amended).
+  uint16_t min_dwell_frames_transient = 50;
   uint16_t probation_frames = 100;          // agreeing frames needed after the first latch (1 s)
   uint16_t probation_frames_repeat = 300;   // ... after a repeat latch (strike 2 or more)
   uint8_t max_strikes = 3;                  // latches before the node is disabled for the run
@@ -203,6 +221,12 @@ struct RedundancyConfig {
   // AutoTransient only: causes that look transient, and how many failed probations are tolerated.
   uint8_t auto_eligible_causes = reason::kMissing | reason::kCrc | reason::kSeq | reason::kVote;
   uint8_t auto_max_attempts = 3;
+
+  // ---- ground commands (ADR-019) ----
+  bool ground_auth = true;               // require a valid SipHash tag and a fresh counter on every ground frame
+  AuthKey ground_key = kBenchKey;        // the shared key. The default is the PUBLIC bench key: provision your own
+  uint8_t command_window = 32;           // a command is fresh if its counter is 1..window ahead of the last accepted one
+  uint8_t arm_window_frames = 250;       // an ARM frame stays valid this long (2.5 s)
 };
 
 // What validate_config() found wrong (bit mask). Each bad field is replaced by its default.
@@ -213,6 +237,7 @@ constexpr uint32_t kStuckLimit = 1U << 2;    // fewer than 2 identical frames ca
 constexpr uint32_t kAlpha = 1U << 3;         // leaky-count constants out of range
 constexpr uint32_t kArbitration = 1U << 4;   // duplex arbitration factor neither 0 (off) nor >= 1
 constexpr uint32_t kLifeCycle = 1U << 5;     // probation / strike limits that contradict each other
+constexpr uint32_t kGroundAuth = 1U << 6;    // authentication on with an all-zero key, or a zero counter / arm window
 }  // namespace cfgerr
 
 namespace detail {
@@ -243,8 +268,15 @@ namespace detail {
     e |= cfgerr::kArbitration;
   }
   if (c.probation_frames < 1U || c.probation_frames_repeat < c.probation_frames ||
-      (c.max_strikes != 0U && c.max_strikes_physical > c.max_strikes)) {
+      (c.max_strikes != 0U && c.max_strikes_physical > c.max_strikes) || c.min_dwell_frames_transient > c.min_dwell_frames) {
     e |= cfgerr::kLifeCycle;
+  }
+  bool key_zero = true;
+  for (const uint8_t b : c.ground_key) {
+    key_zero = key_zero && b == 0U;
+  }
+  if ((c.ground_auth && key_zero) || c.command_window < 1U || c.command_window > 127U || c.arm_window_frames < 1U) {
+    e |= cfgerr::kGroundAuth;
   }
   return e;
 }
@@ -285,6 +317,24 @@ namespace detail {
     if (c.max_strikes != 0U && c.max_strikes_physical > c.max_strikes) {
       c.max_strikes_physical = c.max_strikes;
     }
+    if (c.min_dwell_frames_transient > c.min_dwell_frames) {
+      c.min_dwell_frames_transient = c.min_dwell_frames;
+    }
+  }
+  if ((errors & cfgerr::kGroundAuth) != 0U) {  // the public bench key is better than a key of zeros, and the error is reported
+    bool key_zero = true;
+    for (const uint8_t b : c.ground_key) {
+      key_zero = key_zero && b == 0U;
+    }
+    if (key_zero) {
+      c.ground_key = def.ground_key;
+    }
+    if (c.command_window < 1U || c.command_window > 127U) {
+      c.command_window = def.command_window;
+    }
+    if (c.arm_window_frames < 1U) {
+      c.arm_window_frames = def.arm_window_frames;
+    }
   }
   return c;
 }
@@ -324,6 +374,13 @@ namespace detail {
   mix(c.strike_window_frames);
   mix(c.auto_eligible_causes);
   mix(c.auto_max_attempts);
+  mix(c.min_dwell_frames_transient);
+  mix(c.ground_auth ? 1U : 0U);
+  mix(c.command_window);
+  mix(c.arm_window_frames);
+  for (const uint8_t b : c.ground_key) {
+    mix(b);
+  }
   return h;
 }
 
@@ -349,6 +406,10 @@ struct Counters {
   uint32_t commands_bad = 0;        // ground frames dropped: failed CRC or queue full
   uint32_t integrity_faults = 0;    // upsets found in the manager's own state (ADR-015)
   uint32_t invariant_violations = 0;  // internal invariants that did not hold (counted, recovered from)
+  uint32_t commands_unauthentic = 0;  // ground frames whose tag did not verify (dropped silently)
+  uint32_t commands_replayed = 0;     // ground frames with a stale or repeated counter (dropped silently)
+  uint32_t arms_expired = 0;          // ARM frames that were never followed by their EXECUTE in time
+  uint32_t critical_commands = 0;     // commands that removed the last voting node
 };
 
 struct FrameReport {
@@ -362,7 +423,7 @@ struct FrameReport {
   uint8_t probation_failed = 0U;    // nodes thrown back to Latched this frame (they disagreed or broke)
   uint8_t newly_reintegrated = 0U;  // nodes readmitted to the vote this frame
   uint8_t newly_disabled = 0U;      // nodes disabled this frame
-  uint8_t integrity_mask = 0U;      // upsets found and repaired this frame: 1 node state, 2 Safe flag, 4 configuration, 8 invariant
+  uint8_t integrity_mask = 0U;      // upsets found and repaired this frame: 1 node state, 2 Safe flag, 4 configuration, 8 invariant, 16 command state
   std::array<uint8_t, kNodes> reason{};   // reason:: bits, per node, this frame
   std::array<uint8_t, kNodes> strikes{};  // latches counted against each node
   std::array<CommandEvent, kMaxCommandsPerFrame> commands{};  // ground commands applied this frame
@@ -401,10 +462,22 @@ class RedundancyManager {
     safe_.set(0U);
   }
 
+  // Start collecting a frame. The frame number is the manager's own count, which is SYNC's number when the manager runs
+  // every frame from the start (FC-A, the sync master); a node that learns the number from SYNC passes it.
   void begin_frame() noexcept {
     rx_ = {};
     oos_in_frame_ = 0U;
+    for (auto& per_node : phase_) {
+      for (PhaseTracker& p : per_node) {
+        p.next_frame();
+      }
+    }
   }
+  void begin_frame(uint32_t frame_no) noexcept {
+    frame_no_ = frame_no;
+    begin_frame();
+  }
+  [[nodiscard]] uint32_t frame_number() const noexcept { return frame_no_; }
 
   // Offer one received frame. Returns false if its ID is not part of the flight-bus schedule
   // (it is then only counted). SYNC, actuator, heartbeat and sim frames are accepted and ignored;
@@ -436,6 +509,7 @@ class RedundancyManager {
     rep = FrameReport{};
     ++counters_.frames;
     scrub(rep);
+    tick_arm();
     apply_pending(rep);
 
     std::array<bool, kNodes> good{};
@@ -450,6 +524,7 @@ class RedundancyManager {
     judge_nodes(rep, good, vs.disagree, dv.blame, stuck_now);
     advance_life_cycle(rep, good, stuck_now, valid);
     summarize(rep);
+    ++frame_no_;
     return rep;
   }
 
@@ -571,9 +646,32 @@ class RedundancyManager {
   }
 
   // ---- receive path ----
+  // A ground frame is dropped unless it is intact, authentic (tag) and fresh (counter); only then is it queued. A frame that fails
+  // is counted and leaves no trace on the bus, so a flood of garbage on this id cannot be used to learn anything or fill the queue.
   void queue_ground(const Frame& f) noexcept {
     const DecodedGround d = unpack_ground(f);
-    if (!d.ok || npending_ >= kMaxCommandsPerFrame) {
+    if (!d.ok) {
+      ++counters_.commands_bad;
+      return;
+    }
+    if (cfg_.ground_auth) {
+      if (!ground_authentic(f, cfg_.ground_key)) {
+        ++counters_.commands_unauthentic;
+        return;
+      }
+      if (!cmd_have_.intact() || !cmd_ctr_.intact()) {
+        cmd_damage_seen_ = true;  // a damaged record counts as "no history"; the next scrub() reports it (this frame overwrites the bytes)
+      } else if (cmd_have_.get() == 1U) {
+        const uint8_t ahead = static_cast<uint8_t>(d.counter - cmd_ctr_.get());
+        if (ahead == 0U || ahead > cfg_.command_window) {
+          ++counters_.commands_replayed;  // a repeat, or older than the last command: a replay
+          return;
+        }
+      }
+      cmd_ctr_.set(d.counter);
+      cmd_have_.set(1U);
+    }
+    if (npending_ >= kMaxCommandsPerFrame) {
       ++counters_.commands_bad;
     } else {
       pending_[npending_++] = d;
@@ -625,12 +723,12 @@ class RedundancyManager {
       }
     }
     if (!ok) {
-      r.crc_bad = true;
+      r.crc_bad = true;  // a damaged frame has no trustworthy number: it did not arrive as a good frame, but its slot was not empty
       ++counters_.crc_bad;
-      seq_[node][stream].note_damaged();  // it was sent, so it used up a sequence number
+      phase_[node][stream].note_damaged();
       return;
     }
-    if (!seq_[node][stream].accept(seq)) {
+    if (phase_[node][stream].classify(seq, frame_no_) == FrameTiming::Bad) {
       r.seq_bad = true;
       ++counters_.seq_bad;
     }
@@ -659,6 +757,16 @@ class RedundancyManager {
     if (!repair_config()) {
       safe_.set(1U);
       mask = static_cast<uint8_t>(mask | 4U);
+    }
+    if (cmd_damage_seen_) {  // found (and already overwritten with the new command's counter) on the receive path: only report it
+      cmd_damage_seen_ = false;
+      mask = static_cast<uint8_t>(mask | 16U);
+    }
+    if (!cmd_ctr_.intact() || !cmd_have_.intact() || !arm_code_.intact() || !arm_left_.intact()) {
+      cmd_have_.set(0U);  // the counter history is gone: the next authentic command is accepted and re-establishes it
+      cmd_ctr_.set(0U);
+      clear_arm();        // and nothing stays armed on a damaged record
+      mask = static_cast<uint8_t>(mask | 16U);
     }
     if (!ensure(npending_ <= kMaxCommandsPerFrame, counters_.invariant_violations)) {
       npending_ = 0U;  // a corrupted queue length must not be used as a loop bound
@@ -698,13 +806,90 @@ class RedundancyManager {
       CommandEvent ev;
       ev.op = pending_[i].op;
       ev.node = pending_[i].node;
-      ev.result = command(static_cast<GroundOp>(pending_[i].op), pending_[i].node);
+      ev.result = apply_ground(pending_[i], ev.flags);
       rep.commands[rep.command_count++] = ev;
     }
     npending_ = 0U;
     // Disables made by command (frame or direct call) since the last frame are reported now.
     rep.newly_disabled = static_cast<uint8_t>(rep.newly_disabled | disabled_by_command_);
     disabled_by_command_ = 0U;
+  }
+
+  // ---- ground commands through the frame path: ARM, interlock, EXECUTE (ADR-019) ----
+  void clear_arm() noexcept {
+    arm_code_.set(0U);
+    arm_left_.set(0U);
+  }
+
+  static uint8_t arm_code_for(GroundOp op, unsigned node) noexcept {
+    return static_cast<uint8_t>((static_cast<unsigned>(op) << 2U) | (node & 3U));
+  }
+
+  [[nodiscard]] bool armed_for(GroundOp op, unsigned node) const noexcept {
+    return arm_left_.get() > 0U && arm_code_.get() == arm_code_for(op, node);
+  }
+
+  void tick_arm() noexcept {
+    if (arm_left_.get() == 0U) {
+      return;
+    }
+    arm_left_.set(static_cast<uint8_t>(arm_left_.get() - 1U));
+    if (arm_left_.get() == 0U) {
+      clear_arm();
+      ++counters_.arms_expired;
+    }
+  }
+
+  // Does executing `op` on `node` need an ARM first, and would it remove the last voting node?
+  struct Needs {
+    bool arm = false;
+    bool critical = false;
+  };
+  Needs needs_arm(GroundOp op, unsigned node) const noexcept {
+    Needs n;
+    if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe) {
+      n.arm = true;  // both undo a protective action
+    } else if (op == GroundOp::Disable && state_of(node) == NodeState::Healthy) {
+      const unsigned healthy = count_in_state(NodeState::Healthy);
+      n.arm = healthy <= 2U;       // Triplex -> Duplex is plain; Duplex -> Simplex and Simplex -> nothing are not
+      n.critical = healthy <= 1U;  // the last voter
+    }
+    return n;
+  }
+
+  CommandResult apply_ground(const DecodedGround& d, uint8_t& flags) noexcept {
+    if (d.op < static_cast<uint8_t>(GroundOp::Reintegrate) || d.op > static_cast<uint8_t>(GroundOp::ClearSafe)) {
+      ++counters_.commands_refused;
+      return CommandResult::RefusedBadOp;
+    }
+    const GroundOp op = static_cast<GroundOp>(d.op);
+    const unsigned node = op == GroundOp::ClearSafe ? 0U : d.node;
+    if (node >= kNodes) {
+      ++counters_.commands_refused;
+      return CommandResult::RefusedBadNode;
+    }
+    if (d.arm) {
+      arm_code_.set(arm_code_for(op, node));
+      arm_left_.set(cfg_.arm_window_frames);
+      flags = static_cast<uint8_t>(flags | cmdflag::kArm);
+      ++counters_.commands_accepted;
+      return CommandResult::Accepted;
+    }
+    const Needs need = needs_arm(op, node);
+    if (need.arm) {
+      if (!armed_for(op, node)) {
+        ++counters_.commands_refused;
+        return CommandResult::RefusedNotArmed;
+      }
+      clear_arm();  // an ARM covers exactly one EXECUTE
+      flags = static_cast<uint8_t>(flags | cmdflag::kArmed);
+    }
+    const CommandResult r = command(op, node);
+    if (need.critical && r == CommandResult::Accepted) {
+      flags = static_cast<uint8_t>(flags | cmdflag::kCritical);
+      ++counters_.critical_commands;
+    }
+    return r;
   }
 
   // ---- commands ----
@@ -762,11 +947,6 @@ class RedundancyManager {
     uint8_t valid = 0U;
     for (unsigned n = 0; n < kNodes; ++n) {
       const NodeRx& r = rx_[n];
-      for (unsigned st = 0; st < kStreams; ++st) {
-        if (!r.arrived[st]) {
-          seq_[n][st].note_missing();  // slot passed with nothing: the sender's counter still advanced
-        }
-      }
       const bool present = r.gyro && r.accel && r.cmd;
       const bool in_grace = !seen_[n] && counters_.frames <= cfg_.startup_grace_frames;
       if (!present && !r.crc_bad && !in_grace) {
@@ -939,7 +1119,7 @@ class RedundancyManager {
       if (((dwell_hold_ >> n) & 1U) == 0U && dwell_[n] < 0xFFFFU) {
         ++dwell_[n];  // the frame in which a node latched, failed probation or was cleared is not part of its dwell
       }
-      if ((!one_on_probation || no_healthy) && dwell_[n] >= cfg_.min_dwell_frames && wants_probation(n)) {
+      if ((!one_on_probation || no_healthy) && dwell_[n] >= dwell_needed(n) && wants_probation(n)) {
         set_state(n, NodeState::Probation);
         req_[n] = false;
         probation_clean_[n] = 0U;
@@ -994,6 +1174,12 @@ class RedundancyManager {
     } else {
       set_state(n, NodeState::Latched);
     }
+  }
+
+  // How long a latched node waits before it may go on probation: the short dwell after a first, transient-looking latch.
+  [[nodiscard]] uint16_t dwell_needed(unsigned n) const noexcept {
+    const bool transient = strikes_[n] == 1U && (latch_cause_[n] & ~cfg_.auto_eligible_causes) == 0U;
+    return transient ? cfg_.min_dwell_frames_transient : cfg_.min_dwell_frames;
   }
 
   bool wants_probation(unsigned n) const noexcept {
@@ -1155,6 +1341,19 @@ class RedundancyManager {
     return d;
   }
 
+  // Where the signal should be now. The step is added only as far as the signal really moves: below one tolerance per frame it is
+  // indistinguishable from the noise of the two samples it is made of (adding it only widens and shifts the decision band: E19),
+  // from two tolerances up it is used in full (the command channels, where the standstill reference blamed the wrong node: E16).
+  [[nodiscard]] float reference(unsigned ch, float tol) const noexcept {
+    if (!have_prev_[ch]) {
+      return last_good_[ch];
+    }
+    const float step = last_good_[ch] - prev_good_[ch];
+    const float moving = std::fabs(step) / tol;
+    const float weight = moving <= 1.0F ? 0.0F : (moving >= 2.0F ? 1.0F : moving - 1.0F);
+    return last_good_[ch] + weight * step;
+  }
+
   // Two valid nodes disagree on channel `ch`. Judge them against where the signal should be now: the last agreed
   // value carried forward by the last agreed step (the motion), or the last agreed value itself if there is no step
   // to infer. Blame the node that is farther than factor x tolerance from it, if the other stayed within one
@@ -1179,8 +1378,8 @@ class RedundancyManager {
         idx[cnt++] = i;
       }
     }
-    const float ref = have_prev_[ch] ? last_good_[ch] + (last_good_[ch] - prev_good_[ch]) : last_good_[ch];
     const float tol = cfg_.tol[ch];
+    const float ref = reference(ch, tol);
     const float far = cfg_.duplex_arbitration_factor * tol;
     const float dev0 = std::fabs(x[idx[0]] - ref);
     const float dev1 = std::fabs(x[idx[1]] - ref);
@@ -1219,7 +1418,13 @@ class RedundancyManager {
   std::array<DecodedGround, kMaxCommandsPerFrame> pending_{};
   unsigned npending_ = 0U;
   uint8_t disabled_by_command_ = 0U;
-  std::array<std::array<SeqTracker, kStreams>, kNodes> seq_{};
+  std::array<std::array<PhaseTracker, kStreams>, kNodes> phase_{};
+  uint32_t frame_no_ = 0U;                          // the frame being collected (SYNC's number for the sync master)
+  GuardedByte cmd_ctr_{};                           // counter of the last accepted ground command
+  GuardedByte cmd_have_{};                          // 1 once a command has been accepted
+  GuardedByte arm_code_{};                          // 0 = nothing armed, else (op << 2 | node)
+  GuardedByte arm_left_{};                          // frames the ARM stays valid
+  bool cmd_damage_seen_ = false;                    // queue_ground() found the counter record damaged; scrub() reports it
   std::array<NodeRx, kNodes> rx_{};
   std::array<float, kVoteChannels> last_good_{};   // last trustworthy voted value per channel
   std::array<float, kVoteChannels> prev_good_{};   // the trustworthy value before that (gives the motion)

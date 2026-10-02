@@ -124,6 +124,30 @@ char node_state(const tfc::FrameReport& r, unsigned n) {
   return ((r.valid_mask >> n) & 1U) != 0U ? '+' : '?';
 }
 
+// Parse the 32 hex digits of CONFIG_TFC_GROUND_KEY; returns false (and leaves `key` untouched) if it is not exactly that.
+bool parse_key(const char* hex, tfc::AuthKey& key) {
+  tfc::AuthKey out{};
+  for (unsigned i = 0; i < 32U; ++i) {
+    const char c = hex[i];
+    unsigned v = 0U;
+    if (c >= '0' && c <= '9') {
+      v = static_cast<unsigned>(c - '0');
+    } else if (c >= 'a' && c <= 'f') {
+      v = static_cast<unsigned>(c - 'a') + 10U;
+    } else if (c >= 'A' && c <= 'F') {
+      v = static_cast<unsigned>(c - 'A') + 10U;
+    } else {
+      return false;  // too short, or not hex
+    }
+    out[i / 2U] = static_cast<uint8_t>((i % 2U == 0U) ? (v << 4U) : (out[i / 2U] | v));
+  }
+  if (hex[32] != '\0') {
+    return false;  // too long
+  }
+  key = out;
+  return true;
+}
+
 }  // namespace
 
 int main() {
@@ -134,6 +158,9 @@ int main() {
   cfg.startup_grace_frames = kStartupGraceFrames;
   cfg.policy = IS_ENABLED(CONFIG_TFC_AUTO_REINTEGRATE) ? tfc::ReintegrationPolicy::AutoTransient
                                                        : tfc::ReintegrationPolicy::Manual;
+  if (!parse_key(CONFIG_TFC_GROUND_KEY, cfg.ground_key)) {
+    printk("CONFIG ERROR: TFC_GROUND_KEY must be exactly 32 hex digits; using the PUBLIC bench key\n");
+  }
   tfc::RedundancyManager mgr(cfg);
   if (mgr.config_errors() != 0U) {  // a bad configuration is replaced by defaults, never run silently
     printk("CONFIG ERROR: invalid fields (mask 0x%x) replaced by defaults\n", static_cast<unsigned>(mgr.config_errors()));
@@ -154,7 +181,7 @@ int main() {
     const int64_t base = start + static_cast<int64_t>(k) * period;
     k_sleep(K_TIMEOUT_ABS_TICKS(base));
     const uint8_t seq = static_cast<uint8_t>(k);
-    mgr.begin_frame();
+    mgr.begin_frame(k);  // SYNC's frame number: the number every node stamps its frames with (ADR-018)
     if (k == 0U) {
       k_msgq_purge(&rx_msgq);  // anything queued before the first SYNC belongs to no frame
       k_msgq_purge(&rx_all_msgq);
@@ -208,8 +235,12 @@ int main() {
     const tfc::FrameReport& rep = mgr.end_frame();
 
     for (unsigned i = 0; i < rep.command_count; ++i) {
-      printk("[frame %u] GROUND COMMAND %s %c: %s\n", k, tfc::op_text(rep.commands[i].op),
-             'A' + static_cast<char>(rep.commands[i].node), tfc::result_text(rep.commands[i].result));
+      const tfc::CommandEvent& ce = rep.commands[i];
+      printk("[frame %u] GROUND COMMAND %s%s %c: %s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "", tfc::op_text(ce.op),
+             'A' + static_cast<char>(ce.node), tfc::result_text(ce.result));
+      if ((ce.flags & tfc::cmdflag::kCritical) != 0U) {
+        printk("[frame %u] !!! CRITICAL: the last voting node was removed by operator command !!!\n", k);
+      }
     }
     for (unsigned n = 0; n < tfc::kNodes; ++n) {
       const unsigned bit = 1U << n;

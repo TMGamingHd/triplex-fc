@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "tfc/redundancy.hpp"
+#include "ground.hpp"
 #include "tfc_test.hpp"
 
 using namespace tfc;
@@ -561,6 +562,14 @@ void drive(RedundancyManager& m, int from, int to, float (*tr)(int), Make make, 
 }
 auto no_report = [](int, const FrameReport&) {};
 
+// The life-cycle tests below pin the mechanism with the FULL dwell (200 frames) for every cause; the shorter dwell after a first
+// transient-looking latch (ADR-010 amended) has its own tests (test_ground.cpp: transient_dwell_*).
+RedundancyConfig full_dwell() {
+  RedundancyConfig c;
+  c.min_dwell_frames_transient = c.min_dwell_frames;
+  return c;
+}
+
 // Records the frames on which `bit` of a mask selected by `pick` is set.
 struct Events {
   int latched = -1;
@@ -589,7 +598,7 @@ struct Events {
 }  // namespace
 
 TFC_TEST(life_cycle_transient_fault_is_reintegrated_after_dwell_and_probation) {
-  RedundancyManager m;
+  RedundancyManager m(full_dwell());
   Events ev;
   drive(m, 0, 400, smooth,
         [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = (k >= 10 && k < 15) ? 3.0F : 0.0F; },
@@ -618,7 +627,7 @@ TFC_TEST(life_cycle_transient_fault_is_reintegrated_after_dwell_and_probation) {
 }
 
 TFC_TEST(life_cycle_manual_policy_never_readmits_without_a_request) {
-  RedundancyManager m;
+  RedundancyManager m(full_dwell());
   drive(m, 0, 700, smooth, [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = (k >= 10 && k < 15) ? 3.0F : 0.0F; },
         no_report);
   CHECK(m.state(1) == NodeState::Latched);  // perfectly clean for 600 frames, still out
@@ -629,7 +638,7 @@ TFC_TEST(life_cycle_a_still_broken_node_is_refused_by_the_shadow_vote) {
   // The hole the audit found: a node that is STILL biased used to pass "100 clean frames" because a
   // latched node was never compared with the vote, and then bounced back in (and in Duplex would have
   // pulled the system to Safe). Now probation compares it with the healthy nodes' voted output.
-  RedundancyManager m;
+  RedundancyManager m(full_dwell());
   Events ev;
   drive(m, 0, 700, smooth, [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = k >= 10 ? 3.0F : 0.0F; },
         [&](int k, const FrameReport& r) {
@@ -650,7 +659,7 @@ TFC_TEST(life_cycle_a_still_broken_node_is_refused_by_the_shadow_vote) {
 }
 
 TFC_TEST(life_cycle_one_disagreeing_frame_during_probation_sends_the_node_back) {
-  RedundancyManager m;
+  RedundancyManager m(full_dwell());
   Events ev;
   drive(m, 0, 500, smooth,
         [](int k, std::array<NodeFault, 3>& f) {
@@ -668,7 +677,7 @@ TFC_TEST(life_cycle_one_disagreeing_frame_during_probation_sends_the_node_back) 
 
 TFC_TEST(life_cycle_probation_pauses_when_there_is_no_reference_and_resumes) {
   // Two frames in which nobody healthy delivers: no reference, so the frame neither counts nor fails.
-  RedundancyManager m;
+  RedundancyManager m(full_dwell());
   Events ev;
   drive(m, 0, 400, smooth,
         [](int k, std::array<NodeFault, 3>& f) {
@@ -688,7 +697,7 @@ TFC_TEST(life_cycle_probation_pauses_when_there_is_no_reference_and_resumes) {
 }
 
 TFC_TEST(life_cycle_auto_policy_readmits_a_first_transient_latch_by_itself) {
-  RedundancyConfig cfg;
+  RedundancyConfig cfg = full_dwell();
   cfg.policy = ReintegrationPolicy::AutoTransient;
   RedundancyManager m(cfg);
   Events ev;
@@ -800,7 +809,7 @@ TFC_TEST(life_cycle_old_strikes_are_forgotten_when_a_window_is_configured) {
 }
 
 TFC_TEST(life_cycle_only_one_node_is_on_probation_at_a_time) {
-  RedundancyManager m;
+  RedundancyManager m(full_dwell());
   Events e1;
   Events e2;
   drive(m, 0, 700, smooth,
@@ -830,7 +839,7 @@ TFC_TEST(life_cycle_ground_command_frames_drive_the_same_state_machine) {
         [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = (k >= 10 && k < 15) ? 3.0F : 0.0F; },
         [&](int k, const FrameReport& r) {
           if (k == 18) {  // a command that arrives as a frame is applied when that frame closes (k == 19)
-            m.on_frame(pack_ground(GroundOp::Reintegrate, 1, seq++));
+            m.on_frame(tfct::gcmd(GroundOp::Reintegrate, 1, ++seq));
           }
           if (k == 19) {
             CHECK(r.command_count == 1U);
@@ -845,15 +854,12 @@ TFC_TEST(life_cycle_ground_command_frames_drive_the_same_state_machine) {
 TFC_TEST(life_cycle_ground_frames_are_validated_and_refusals_are_reported) {
   RedundancyManager m;
   m.begin_frame();
-  Frame bad = pack_ground(GroundOp::Disable, 1, 0);
-  bad.data[7] = static_cast<uint8_t>(bad.data[7] ^ 1U);  // corrupted
+  Frame bad = tfct::gcmd(GroundOp::Disable, 1, 1);
+  bad.data[7] = static_cast<uint8_t>(bad.data[7] ^ 1U);  // corrupted: the CRC catches it
   m.on_frame(bad);
-  m.on_frame(pack_ground(GroundOp::Reintegrate, 1, 1));    // node 1 is healthy: nothing to reintegrate
-  m.on_frame(pack_ground(GroundOp::Reintegrate, 9, 2));    // no such node
-  Frame unknown = pack_ground(GroundOp::Disable, 1, 3);
-  unknown.data[0] = 99;                                    // no such operation (CRC re-sealed)
-  unknown.data[7] = crc8(unknown.data.data(), 7);
-  m.on_frame(unknown);
+  m.on_frame(tfct::gcmd(GroundOp::Reintegrate, 1, 2));   // node 1 is healthy: nothing to reintegrate
+  m.on_frame(tfct::gcmd(GroundOp::Reintegrate, 9, 3));   // no such node
+  m.on_frame(tfct::gcmd_raw(99, 1, 4));                  // no such operation (authentic, so the manager's own check is reached)
   const FrameReport& r = m.end_frame();
   CHECK(r.command_count == 3U);
   CHECK(r.commands[0].result == CommandResult::RefusedNotLatched);
@@ -869,16 +875,17 @@ TFC_TEST(life_cycle_operator_can_disable_a_node_and_bring_it_back_through_the_no
   drive(m, 0, 700, smooth, [](int, std::array<NodeFault, 3>&) {},
         [&](int k, const FrameReport& r) {
           ev.see(k, r, 2);
-          if (k == 20) m.on_frame(pack_ground(GroundOp::Disable, 2, 0));
+          if (k == 20) m.on_frame(tfct::gcmd(GroundOp::Disable, 2, 1));  // Triplex -> Duplex: a plain command is allowed
           if (k == 21) {
             CHECK((r.newly_disabled & 0x4U) != 0U && r.disabled_mask == 0x4U);
             CHECK(r.mode == Mode::Duplex && r.valid_mask == 0x3U);  // healthy and talking, but not voting
           }
-          if (k == 50) m.on_frame(pack_ground(GroundOp::ClearDisabled, 2, 1));
+          if (k == 48) m.on_frame(tfct::gcmd(GroundOp::ClearDisabled, 2, 2, true));  // ARM, then EXECUTE (ADR-019)
+          if (k == 49) m.on_frame(tfct::gcmd(GroundOp::ClearDisabled, 2, 3));
           if (k == 52) m.request_reintegration(2);
         });
-  CHECK(ev.probation_started == 251);  // the clear is applied in frame 51; the dwell counts the 200 frames after it
-  CHECK(ev.reintegrated == 351);       // (it was 250/350: the frame of the clear itself used to count, E1)
+  CHECK(ev.probation_started == 250);  // the EXECUTE is applied in frame 50; the dwell counts the 200 frames after it
+  CHECK(ev.reintegrated == 350);       // (the frame of the clear itself used to count: E1)
   CHECK(m.state(2) == NodeState::Healthy && m.strikes(2) == 0U);
 }
 
@@ -891,12 +898,14 @@ TFC_TEST(life_cycle_clear_safe_works_as_a_ground_command) {
     frame(m, k, f, smooth);
   }
   CHECK(m.safe_requested());
-  m.on_frame(pack_ground(GroundOp::ClearSafe, 0, 0));
-  const std::array<NodeFault, 3> none{};
-  m.begin_frame();
-  const FrameReport& r = m.end_frame();  // the command is applied at the end of this (empty) frame
-  CHECK(r.commands[0].result == CommandResult::Accepted);
-  (void)none;
+  m.begin_frame(40U);
+  m.on_frame(tfct::gcmd(GroundOp::ClearSafe, 0, 1, true));   // ARM
+  m.on_frame(tfct::gcmd(GroundOp::ClearSafe, 0, 2));         // EXECUTE, same frame
+  const FrameReport& r = m.end_frame();
+  CHECK(r.command_count == 2U);
+  CHECK(r.commands[0].result == CommandResult::Accepted && (r.commands[0].flags & cmdflag::kArm) != 0U);
+  CHECK(r.commands[1].result == CommandResult::Accepted && (r.commands[1].flags & cmdflag::kArmed) != 0U);
+  CHECK(!m.safe_requested());
 }
 
 TFC_TEST(life_cycle_probation_failure_names_a_digest_mismatch) {

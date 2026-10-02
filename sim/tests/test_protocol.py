@@ -14,10 +14,12 @@ GOLDEN = [
     ("sync 0x01020304 seq9", P.pack_sync(0x01020304, 9), 0x010, "0403020100000915"),
     ("sync 0 seq0", P.pack_sync(0, 0), 0x010, "000000000000000a"),
     ("sync max seq255", P.pack_sync(0xFFFFFFFF, 255), 0x010, "ffffffff0000ff7b"),
-    ("ground reintegrate B seq5", P.pack_ground(P.GROUND_OPS["reintegrate"], 1, 5), 0x510, "0101000000000578"),
-    ("ground disable C seq0", P.pack_ground(P.GROUND_OPS["disable"], 2, 0), 0x510, "020200000000003c"),
-    ("ground clear-disabled A seq255", P.pack_ground(P.GROUND_OPS["clear-disabled"], 0, 255), 0x510, "030000000000ff29"),
-    ("ground clear-safe seq9", P.pack_ground(P.GROUND_OPS["clear-safe"], 0, 9), 0x510, "0400000000000996"),
+    # authenticated ground frames (SipHash-2-4 tag under the public bench key): the bytes were produced by core/ (pack_ground_auth)
+    ("ground reintegrate B counter5", P.pack_ground(P.GROUND_OPS["reintegrate"], 1, 5), 0x510, "01015111f4fc05c0"),
+    ("ground disable C counter0", P.pack_ground(P.GROUND_OPS["disable"], 2, 0), 0x510, "02027c782ce00045"),
+    ("ground clear-disabled A counter255", P.pack_ground(P.GROUND_OPS["clear-disabled"], 0, 255), 0x510, "0300d314200cffe9"),
+    ("ground clear-safe counter9", P.pack_ground(P.GROUND_OPS["clear-safe"], 0, 9), 0x510, "04007c5aaa820940"),
+    ("ground ARM disable B counter8", P.pack_ground(P.GROUND_OPS["disable"], 1, 8, arm=True), 0x510, "8201d33d99d008bf"),
 ]
 
 
@@ -56,7 +58,7 @@ class ProtocolTests(unittest.TestCase):
     def test_ground_roundtrip_describe_and_corruption(self):
         f = P.pack_ground(P.GROUND_OPS["reintegrate"], 1, 77)
         g = P.unpack_ground(f)
-        self.assertEqual((g.op, g.node, g.seq), (1, 1, 77))
+        self.assertEqual((g.op, g.node, g.counter, g.arm), (1, 1, 77, False))
         self.assertIn("reintegrate B", P.describe(f))
         for bit in range(64):
             data = bytearray(f.data)
@@ -64,6 +66,33 @@ class ProtocolTests(unittest.TestCase):
             self.assertIsNone(P.unpack_ground(P.Frame(f.id, bytes(data))), bit)
         self.assertIsNone(P.unpack_ground(P.Frame(0x100, f.data)))
         self.assertIn("CRC-BAD", P.describe(P.Frame(f.id, f.data[:7] + bytes([f.data[7] ^ 1]))))
+
+    def test_siphash_matches_the_published_reference_vectors(self):
+        key = bytes(range(16))
+        want = {0: "310e0edd47db6f72", 1: "fd67dc93c539f874", 2: "5a4fa9d909806c0d", 15: "e545be4961ca29a1"}
+        for n, hexdigest in want.items():
+            self.assertEqual(P.siphash24(key, bytes(range(n))).to_bytes(8, "little").hex(), hexdigest, n)
+
+    def test_ground_tag_binds_op_node_counter_arm_and_key(self):
+        base = P.pack_ground(2, 1, 7)
+        for other in (P.pack_ground(1, 1, 7), P.pack_ground(2, 2, 7), P.pack_ground(2, 1, 8), P.pack_ground(2, 1, 7, arm=True),
+                      P.pack_ground(2, 1, 7, key=bytes(range(1, 17)))):
+            self.assertNotEqual(base.data[2:6], other.data[2:6])
+        self.assertNotEqual(base.data[2:6], P.pack_ground(2, 1, 7, forged=True).data[2:6])
+        g = P.unpack_ground(P.pack_ground(2, 1, 7, arm=True))
+        self.assertTrue(g.arm and g.op == 2)
+
+    def test_ground_key_can_come_from_the_environment(self):
+        import os
+        os.environ["TFC_GROUND_KEY"] = "ff" * 16
+        try:
+            self.assertEqual(P.ground_key(), b"\xff" * 16)
+            os.environ["TFC_GROUND_KEY"] = "zz"
+            with self.assertRaises(ValueError):
+                P.ground_key()
+        finally:
+            del os.environ["TFC_GROUND_KEY"]
+        self.assertEqual(P.ground_key(), P.BENCH_KEY)
 
     def test_every_single_bit_flip_is_detected(self):
         f = P.pack_cmd(0, 12.345, -6.789, 0x1234, 42)

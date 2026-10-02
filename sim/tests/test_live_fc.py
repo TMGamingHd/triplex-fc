@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 from tfc_peers import bus as B
-from tfc_peers.commands import parse_command
+from tfc_peers.commands import parse_commands
 from tfc_peers.faults import parse_fault
 from tfc_peers.peers import Scenario
 
@@ -39,7 +39,7 @@ class LiveFcAgainstPeers(unittest.TestCase):
             bus = B.SocketCanBus("vcan0")
             try:
                 B.run_synced(Scenario(list(nodes), [parse_fault(f) for f in faults], 1,
-                                      [parse_command(c) for c in commands]), bus, peer_frames)
+                                      [x for c in commands for x in parse_commands(c)]), bus, peer_frames)
             finally:
                 bus.close()
             out, _ = fc.communicate(timeout=30)
@@ -117,8 +117,8 @@ class LiveFcAgainstPeers(unittest.TestCase):
         return None
 
     def test_transient_fault_then_operator_reintegration_end_to_end(self):  # TFC-FDIR-006/020
-        # Bias on B for 30 frames (latched ~302), operator asks at 450 (queued: the 200-frame dwell ends ~502),
-        # probation ~502, 100 agreeing frames, readmitted ~602, back in Triplex.
+        # Bias on B for 30 frames (latched ~302), a vote latch is transient-looking so the dwell is 50 frames (ends ~352), the operator
+        # asks at 450, probation starts at once (~450), 100 agreeing frames, readmitted ~550, back in Triplex.
         lines = self.live(["B:bias:start=300,end=330"], peer_frames=620, commands=["450:reintegrate:B"])
         text = "\n".join(lines)
         latched = self.first(lines, r"node B LATCHED OUT")
@@ -126,9 +126,22 @@ class LiveFcAgainstPeers(unittest.TestCase):
         back = self.first(lines, r"node B REINTEGRATED")
         self.assertTrue(300 <= (latched or 0) <= 306, text)
         self.assertIn("GROUND COMMAND reintegrate B: accepted", text)
-        self.assertTrue(probation and latched + 200 <= probation <= latched + 208, text)
+        self.assertTrue(probation and 450 <= probation <= 458, text)
         self.assertTrue(back and probation + 100 <= back <= probation + 108, text)
         self.assertIn("MODE DUPLEX -> TRIPLEX", text)
+
+    def test_authenticated_arm_execute_commands_and_the_interlock_live(self):  # TFC-FDIR-031/032/033
+        # The tag is computed by the Python peers and checked by the real firmware (two independent SipHash implementations).
+        # 450 disable C: Triplex -> Duplex, plain. 500 disable B: would leave one voter, refused. 550 armed-disable B: accepted.
+        # 600: a forged command and a replay leave no trace on the console (only counters).
+        lines = self.live([], peer_frames=700, commands=["450:disable:C", "500:disable:B", "550:armed-disable:B", "600:forged-clear-safe", "620:replay"])
+        text = "\n".join(lines)
+        self.assertIn("GROUND COMMAND disable C: accepted", text)
+        self.assertIn("GROUND COMMAND disable B: refused: needs an ARM frame first", text)
+        self.assertIn("GROUND COMMAND ARM disable B: accepted", text)
+        self.assertRegex(text, r"GROUND COMMAND disable B: accepted")
+        self.assertNotIn("CRITICAL", text)  # Simplex on A, not yet the last voter
+        self.assertNotRegex(text, r"\[frame (6[0-9][0-9])\] GROUND COMMAND")  # the forged and the replayed frames were dropped silently
 
     def test_a_node_that_is_still_faulty_fails_probation_live(self):  # TFC-FDIR-020
         lines = self.live(["B:bias:start=300"], peer_frames=520, commands=["450:reintegrate:B"])

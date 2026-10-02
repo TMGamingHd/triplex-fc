@@ -36,7 +36,7 @@ peers, a total loss, and ten-minute runs. A *scenario* is one such run through t
 | `cmd_offset` | 180 | 72,000 |
 | `cmdinvert` | 9 | 3,600 |
 | `cmdstuck` | 9 | 3,600 |
-| `commands_misc` | 24 | 18,400 |
+| `commands_misc` | 28 | 21,200 |
 | `commands_persistent` | 12 | 10,800 |
 | `commands_strikes` | 15 | 16,800 |
 | `commands_transient` | 42 | 37,800 |
@@ -47,8 +47,10 @@ peers, a total loss, and ten-minute runs. A *scenario* is one such run through t
 | `digest` | 60 | 24,000 |
 | `drift` | 150 | 105,000 |
 | `dropout` | 192 | 76,800 |
+| `duplex_boundary` | 360 | 61,200 |
 | `duplicate` | 24 | 9,606 |
 | `early` | 72 | 28,800 |
+| `ground_security` | 33 | 12,000 |
 | `intermittent` | 270 | 189,000 |
 | `invert` | 24 | 9,600 |
 | `jitter` | 108 | 43,216 |
@@ -61,13 +63,13 @@ peers, a total loss, and ten-minute runs. A *scenario* is one such run through t
 | `pairs` | 702 | 316,008 |
 | `partial` | 42 | 16,800 |
 | `phase_*` (every kind, 40 start instants, Triplex and Duplex) | 2,560 | 507,120 |
-| `reboot` | 90 | 36,000 |
+| `reboot` | 180 | 72,000 |
 | `recovery_edges` | 12 | 16,200 |
 | `repeat` | 36 | 14,400 |
 | `replay` | 66 | 26,400 |
 | `saturate` | 90 | 36,000 |
 | `scale` | 336 | 134,400 |
-| `seqgap` | 60 | 24,000 |
+| `seqgap` | 123 | 49,200 |
 | `seqstuck` | 6 | 2,400 |
 | `spike` | 864 | 345,600 |
 | `startup_edges` | 152 | 6,327 |
@@ -76,10 +78,10 @@ peers, a total loss, and ten-minute runs. A *scenario* is one such run through t
 | `swap` | 36 | 14,400 |
 | `total_loss` | 16 | 19,000 |
 | `zero` | 12 | 4,800 |
-| **total** | **10,713** | **4,524,817** |
+| **total** | **11,263** | **4,662,017** |
 <!-- campaign:groups:end -->
 
-The `phase_*` groups start every fault kind at 40 different instants (the vehicle's motion is sinusoidal, so what a frozen or
+The `ground_security` group sends forged, replayed, armed, expired and interlocked operator commands; `duplex_boundary` sweeps a Duplex bias around the 2x tolerance threshold over 20 seeds per magnitude. The `phase_*` groups start every fault kind at 40 different instants (the vehicle's motion is sinusoidal, so what a frozen or
 stale value looks like depends on the moment). See ADR-016.
 
 **Expectations.** From each fault's parameters and the documented thresholds (vote tolerances 1.0 dps / 0.02 g / 0.01 deg,
@@ -92,7 +94,7 @@ fault may end in a Safe request instead of an isolation, because two nodes canno
 ## 3. The properties checked
 
 <!-- campaign:properties:begin -->
-10,713 scenarios, 4,524,817 frames of manager decisions checked.
+11,263 scenarios, 4,662,017 frames of manager decisions checked.
 
 | Property | Statement | Violations |
 |---|---|---|
@@ -135,20 +137,20 @@ column is the outcome with only two nodes alive (isolated / Safe requested / nei
 |---|---|---|---|---|---|---|---|
 | `dropout` | 192 | 72/72 | 2 / 2 / 2 / 2 | 0/24 | 0/0 | missing | 72 / 0 / 24 |
 | `stuck` | 264 | 12/12 | 6 / 6 / 7 / 7 | 0/0 | 48/54 | vote | 36 / 24 / 6 |
-| `bias_gyro` | 414 | 144/144 | 2 / 2 / 2 / 2 | 0/90 | 76/90 | vote, vote+intermittent | 24 / 42 / 24 |
+| `bias_gyro` | 414 | 144/144 | 2 / 2 / 2 / 2 | 0/90 | 76/90 | vote, vote+intermittent | 25 / 41 / 24 |
 | `bias_accel` | 414 | 144/144 | 2 / 2 / 2 / 2 | 0/90 | 90/90 | vote, vote+intermittent | 24 / 46 / 20 |
-| `drift` | 150 | 84/84 | 2 / 13 / 105 / 112 | 0/24 | 12/12 | vote, vote+intermittent | 3 / 21 / 6 |
+| `drift` | 150 | 84/84 | 2 / 13 / 105 / 112 | 0/24 | 12/12 | vote, vote+intermittent | 4 / 20 / 6 |
 | `spike` | 864 | 144/144 | 2 / 2 / 7 / 7 | 0/288 | 204/432 | vote, vote+intermittent | - |
 | `saturate` | 90 | 27/27 | 2 / 2 / 2 / 2 | 0/18 | 0/0 | vote | 27 / 0 / 18 |
 | `corrupt` | 198 | 54/54 | 2 / 2 / 2 / 2 | 0/18 | 104/126 | crc, crc+intermittent | - |
-| `cmd_offset` | 180 | 42/42 | 2 / 2 / 2 / 2 | 0/24 | 18/24 | vote, vote+intermittent | 39 / 21 / 30 |
+| `cmd_offset` | 180 | 42/42 | 2 / 2 / 2 / 2 | 0/24 | 18/24 | vote, vote+intermittent | 0 / 60 / 30 |
 | `digest` | 60 | 24/24 | 2 / 2 / 2 / 2 | 0/6 | 0/0 | digest | 0 / 24 / 6 |
 | `babble` | 66 | 0/0 | - | 0/66 | 0/0 | - | - |
-| `seqgap` | 60 | 0/0 | - | 0/60 | 0/0 | - | - |
-| `reboot` | 90 | 39/39 | 2 / 2 / 2 / 2 | 0/3 | 3/3 | missing, seq | 42 / 0 / 3 |
-| `late` | 108 | 40/40 | 2 / 2 / 2 / 2 | 0/14 | 0/0 | vote+digest | 0 / 40 / 14 |
-| `scale` | 336 | 102/102 | 2 / 2 / 2 / 48 | 0/108 | 16/42 | vote, vote+intermittent | 44 / 16 / 24 |
-| `noise` | 120 | 18/18 | 2 / 2 / 2 / 3 | 0/18 | 18/24 | vote, vote+intermittent | 12 / 25 / 23 |
+| `seqgap` | 123 | 48/48 | 2 / 2 / 3 / 3 | 0/75 | 0/0 | seq | - |
+| `reboot` | 180 | 84/84 | 2 / 2 / 2 / 2 | 0/6 | 0/0 | missing, seq | 84 / 0 / 6 |
+| `late` | 108 | 40/40 | 2 / 2 / 2 / 2 | 0/14 | 0/0 | seq | 40 / 0 / 14 |
+| `scale` | 336 | 102/102 | 2 / 2 / 2 / 48 | 0/108 | 16/42 | vote, vote+intermittent | 45 / 15 / 24 |
+| `noise` | 120 | 18/18 | 2 / 2 / 2 / 3 | 0/18 | 18/24 | vote, vote+intermittent | 13 / 24 / 23 |
 | `invert` | 24 | 18/18 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | vote | 6 / 0 / 0 |
 | `swap` | 36 | 36/36 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | vote | - |
 | `zero` | 12 | 3/3 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | vote | 3 / 0 / 0 |
@@ -160,12 +162,12 @@ column is the outcome with only two nodes alive (isolated / Safe requested / nei
 | `cmdstuck` | 9 | 3/3 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | vote | 0 / 3 / 0 |
 | `cmdinvert` | 9 | 3/3 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | vote | 3 / 0 / 0 |
 | `partial` | 42 | 21/21 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | missing | 21 / 0 / 0 |
-| `duplicate` | 24 | 0/0 | - | 0/0 | 24/24 | seq | - |
-| `replay` | 66 | 33/33 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | vote+digest | 33 / 0 / 0 |
+| `duplicate` | 24 | 24/24 | 2 / 2 / 3 / 3 | 0/0 | 0/0 | seq | - |
+| `replay` | 66 | 33/33 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | seq, vote+digest | 33 / 0 / 0 |
 | `seqstuck` | 6 | 3/3 | 3 / 3 / 3 / 3 | 0/0 | 0/0 | seq | 3 / 0 / 0 |
-| `early` | 72 | 0/0 | - | 0/18 | 3/18 | vote+digest | 0 / 3 / 33 |
-| `jitter` | 108 | 36/36 | 2 / 7 / 39 / 68 | 0/51 | 14/21 | vote+digest, missing | - |
-| `clockdrift` | 51 | 24/24 | 3 / 44 / 341 / 401 | 0/12 | 12/15 | vote+digest | - |
+| `early` | 72 | 9/9 | 1 / 1 / 1 / 1 | 0/18 | 3/9 | seq | 12 / 0 / 24 |
+| `jitter` | 108 | 36/36 | 1 / 6 / 22 / 68 | 0/51 | 15/21 | seq, vote+digest | - |
+| `clockdrift` | 51 | 39/39 | 3 / 58 / 451 / 491 | 0/12 | 0/0 | seq | - |
 <!-- campaign:single:end -->
 
 Reading the table: every detect-class scenario of every kind is isolated, no ignore-class scenario ever costs a healthy node,
@@ -301,38 +303,38 @@ healthy node and an isolated one.
 | 500 | 3 | 0 | - | - |
 | 1000 | 3 | 0 | - | - |
 | 1399 | 1 | 0 | - | - |
-| 1400 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 1401 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 1500 | 3 | 1 | 2 / 2 / 2 | vote+digest |
+| 1400 | 1 | 1 | 2 / 2 / 2 | seq |
+| 1401 | 1 | 1 | 2 / 2 / 2 | seq |
+| 1500 | 3 | 1 | 2 / 2 / 2 | seq |
 | 1699 | 1 | 0 | - | - |
-| 1700 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 1701 | 1 | 1 | 2 / 2 / 2 | vote+digest |
+| 1700 | 1 | 1 | 2 / 2 / 2 | seq |
+| 1701 | 1 | 1 | 2 / 2 / 2 | seq |
 | 1999 | 1 | 0 | - | - |
-| 2000 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 2001 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 3000 | 3 | 3 | 2 / 2 / 2 | vote+digest |
-| 4000 | 3 | 3 | 2 / 2 / 2 | vote+digest |
-| 4299 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 4300 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 4301 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 4499 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 4500 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 4501 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 4699 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 4700 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 4701 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 5099 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 5100 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 5101 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 5299 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 5300 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 5301 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 5499 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 5500 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 5501 | 1 | 1 | 2 / 2 / 2 | vote+digest |
-| 6000 | 3 | 3 | 2 / 2 / 2 | vote+digest |
-| 8000 | 3 | 3 | 2 / 2 / 2 | vote+digest |
-| 9000 | 3 | 3 | 2 / 2 / 2 | vote+digest |
+| 2000 | 1 | 1 | 2 / 2 / 2 | seq |
+| 2001 | 1 | 1 | 2 / 2 / 2 | seq |
+| 3000 | 3 | 3 | 2 / 2 / 2 | seq |
+| 4000 | 3 | 3 | 2 / 2 / 2 | seq |
+| 4299 | 1 | 1 | 2 / 2 / 2 | seq |
+| 4300 | 1 | 1 | 2 / 2 / 2 | seq |
+| 4301 | 1 | 1 | 2 / 2 / 2 | seq |
+| 4499 | 1 | 1 | 2 / 2 / 2 | seq |
+| 4500 | 1 | 1 | 2 / 2 / 2 | seq |
+| 4501 | 1 | 1 | 2 / 2 / 2 | seq |
+| 4699 | 1 | 1 | 2 / 2 / 2 | seq |
+| 4700 | 1 | 1 | 2 / 2 / 2 | seq |
+| 4701 | 1 | 1 | 2 / 2 / 2 | seq |
+| 5099 | 1 | 1 | 2 / 2 / 2 | seq |
+| 5100 | 1 | 1 | 2 / 2 / 2 | seq |
+| 5101 | 1 | 1 | 2 / 2 / 2 | seq |
+| 5299 | 1 | 1 | 2 / 2 / 2 | seq |
+| 5300 | 1 | 1 | 2 / 2 / 2 | seq |
+| 5301 | 1 | 1 | 2 / 2 / 2 | seq |
+| 5499 | 1 | 1 | 2 / 2 / 2 | seq |
+| 5500 | 1 | 1 | 2 / 2 / 2 | seq |
+| 5501 | 1 | 1 | 2 / 2 / 2 | seq |
+| 6000 | 3 | 3 | 2 / 2 / 2 | seq |
+| 8000 | 3 | 3 | 2 / 2 / 2 | seq |
+| 9000 | 3 | 3 | 2 / 2 / 2 | seq |
 <!-- campaign:curve-late:end -->
 
 **Scale-factor error** (factor on one axis; gravity on the accel z axis is constant, so small errors are visible immediately there,
@@ -409,57 +411,63 @@ until the accumulated drift reaches the margin of the tightest frame.
 | 500 | 9 | 0 | - | - |
 | 1000 | 9 | 0 | - | - |
 | 1300 | 9 | 0 | - | - |
-| 1500 | 9 | 0 | - | - |
-| 2000 | 9 | 5 | 23 / 59 / 84 | vote+digest, vote+digest+intermittent |
-| 3000 | 9 | 9 | 6 / 16 / 78 | vote+digest, vote+digest+intermittent |
-| 4000 | 9 | 9 | 4 / 12 / 52 | vote+digest, missing+intermittent |
-| 4500 | 9 | 9 | 6 / 11 / 68 | vote+digest, missing+intermittent |
-| 5000 | 9 | 9 | 3 / 7 / 34 | missing, missing+intermittent |
-| 8000 | 9 | 9 | 2 / 2 / 4 | missing, missing+seq |
+| 1500 | 9 | 1 | 25 / 25 / 25 | seq |
+| 2000 | 9 | 5 | 23 / 59 / 84 | vote+digest, seq |
+| 3000 | 9 | 9 | 2 / 9 / 31 | seq, vote+digest |
+| 4000 | 9 | 9 | 2 / 12 / 26 | seq, missing+intermittent |
+| 4500 | 9 | 9 | 2 / 11 / 68 | seq, vote+digest |
+| 5000 | 9 | 9 | 3 / 7 / 14 | missing, seq |
+| 8000 | 9 | 9 | 1 / 2 / 4 | missing, seq |
 <!-- campaign:curve-jitter:end -->
 
 <!-- campaign:curve-clockdrift:begin -->
 | `d` | Scenarios | Isolated | Latency, frames (min / median / max) | Caught by |
 |---|---|---|---|---|
-| -1000 | 3 | 3 | 9 / 9 / 9 | vote+digest |
-| -200 | 3 | 3 | 41 / 42 / 44 | vote+digest |
-| -50 | 3 | 3 | 161 / 167 / 173 | vote+digest |
-| -20 | 3 | 3 | 401 / 416 / 431 | vote+digest |
-| -10 | 3 | 0 | - | - |
+| -1000 | 3 | 3 | 5 / 5 / 5 | seq |
+| -200 | 3 | 3 | 23 / 24 / 25 | seq |
+| -50 | 3 | 3 | 91 / 95 / 99 | seq |
+| -20 | 3 | 3 | 226 / 236 / 246 | seq |
+| -10 | 3 | 3 | 451 / 471 / 491 | seq |
 | -5 | 3 | 0 | - | - |
 | -1 | 3 | 0 | - | - |
 | 1 | 3 | 0 | - | - |
 | 2 | 3 | 0 | - | - |
-| 5 | 3 | 3 | 281 / 341 / 401 | vote+digest |
-| 10 | 3 | 3 | 141 / 171 / 201 | vote+digest |
-| 20 | 3 | 3 | 71 / 86 / 101 | vote+digest |
-| 30 | 3 | 3 | 48 / 58 / 68 | vote+digest |
-| 50 | 3 | 3 | 29 / 35 / 41 | vote+digest |
-| 100 | 3 | 3 | 15 / 18 / 21 | vote+digest |
-| 200 | 3 | 3 | 8 / 10 / 11 | vote+digest |
-| 1000 | 3 | 3 | 3 / 3 / 3 | vote+digest |
+| 5 | 3 | 3 | 281 / 341 / 401 | seq |
+| 10 | 3 | 3 | 141 / 171 / 201 | seq |
+| 20 | 3 | 3 | 71 / 86 / 101 | seq |
+| 30 | 3 | 3 | 48 / 58 / 68 | seq |
+| 50 | 3 | 3 | 29 / 35 / 41 | seq |
+| 100 | 3 | 3 | 15 / 18 / 21 | seq |
+| 200 | 3 | 3 | 8 / 10 / 11 | seq |
+| 1000 | 3 | 3 | 3 / 3 / 3 | seq |
 <!-- campaign:curve-clockdrift:end -->
 
 ## 5. Proving the campaign can fail: mutation testing
 
-A campaign that cannot fail proves nothing. 49 deliberate bugs (`tools/mutation/mutations.py`) are injected, one at a time, into a
+A campaign that cannot fail proves nothing. 72 deliberate bugs (`tools/mutation/mutations.py`) are injected, one at a time, into a
 copy of the core: a hold that returns zero, a Safe flag that is not sticky, a latched node that still votes, a probation that cannot
 fail, a strike limit that never disables, a tolerance doubled, an arbitration that compares with a standstill, a check removed from
 the self-protection, and so on. Each mutant must be caught.
 
 | Suite | Mutants | Caught | How |
 |---|---|---|---|
-| C++ tests (unit, property, fuzz, recovery; ASan + UBSan) | 49 | 49 | `python3 tools/mutation/run_unit.py` |
-| Fault campaign | 37 (the other 12 are C++-only, see below) | 37 | `python3 -m campaign.mutate` (stops at the first group that raises an anomaly) |
+| C++ tests (unit, property, fuzz, recovery, ground commands; ASan + UBSan) | 72 | 72 | `python3 tools/mutation/run_unit.py` |
+| Fault campaign | 58 (the other 14 are C++-only, see below) | 58 | `python3 -m campaign.mutate` (stops at the first group that raises an anomaly) |
 
 The first version of the campaign missed 4 of 12 mutants. That is how the always-true properties M7 (hold exactness) and M8 (one
 probation at a time), the `commands_strikes` group and the readmission and counter checks came to exist. The C++ suite initially
 missed 3 of 47, all exact-boundary cases (the bus-alarm threshold, the late-sequence allowance, the dwell after a failed
 probation); tests for each were added and the mutants are now killed.
 
+Building the frame-number check and the ground-command security added 23 mutants and found the same kind of gaps again: one survivor
+in the C++ suite (a damaged frame fills its slot: no test sent a clean copy a cycle later) and five in the campaign (`duplicate` was only
+a "gray" expectation so a tracker that accepted duplicates passed; no scenario sent a stale copy of a damaged frame; the exact edge of
+the 250-frame ARM window; the Duplex decision band, now pinned by `duplex_boundary`, 20 seeds per magnitude; the exact edge of the
+counter window). Each was closed with a test or a scenario, or recorded as unit-only with its reason.
+
 Mutants the campaign cannot see by construction (the peers never present a bad configuration, flip a bit of the manager's memory,
 overflow its command queue, send a NaN or a frame of the wrong length) are covered by the C++ tests alone and are excluded from the
-campaign run; the twelve are listed, with the reason for each, in `CAMPAIGN_SKIP` in `tools/mutation/mutations.py`.
+campaign run; the fourteen are listed, with the reason for each, in `CAMPAIGN_SKIP` in `tools/mutation/mutations.py`.
 
 ## 6. Edge cases found, and what was done
 
@@ -476,28 +484,30 @@ for the vehicle in the scenario that triggers it.
 | E14 | **A babbler on a CAN id above 0x500** | Every id from 0x500 up was "known", so it was not counted and could not raise the alarm | Low | **Fixed**: only the ids in the schedule are known. Test `unknown_ids_*` |
 | E1 | `clear-disabled` (and a failed probation), then the dwell | The dwell counted the frame of the command, so readmission was one frame early (399 instead of 400) and a node thrown back from probation could start again one frame early | Low | **Fixed**: the frame of the event is not part of the dwell. Tests `life_cycle_operator_can_disable_*`, `boundary_the_dwell_restarts_*`; the campaign's `E_READMIT` count went 3 to 0 |
 | E18 | Hardening found by static analysis | `AlphaCount` converted a float constant to an integer without range check (undefined behaviour for NaN or a huge value); one loop was data-dependent (`while`), against the fixed-bound rule | Low | **Fixed**: saturating conversion; a fixed 32-iteration loop. Tests in `test_fault_monitor.cpp`; `tools/check_standard.py` |
-| E3 | **Lateness is a cliff.** A frame that leaves 1 us before its deadline is fine, 1 us after is a lost sample | A creeping clock or a slowly loaded node goes from healthy to isolated within one frame, with no earlier warning | Medium | **Documented, accepted for the SIL**. Recommended: arrival-time margin telemetry per node so a drift is seen before the cliff (needs the rig; the target's timestamps) |
-| E11 | **A consistently early gyro/accel stream** (frames leaving more than about 4.5 ms early land in the previous frame's window) | Not detected: the counter stays contiguous and the data are one frame ahead, which on this motion is under one tolerance. The vote cannot see it | Low to medium | **Documented**. Recommended: derive each node's sequence number from SYNC's frame number and check it (a protocol change, needs an ADR) |
-| E19 | Fault magnitude exactly on the 2 x tolerance boundary in Duplex | Isolate or Safe depending on the noise (the motion-aware reference adds the noise of two samples); five boundary cases changed from isolate to Safe after ADR-017 | Low | **Accepted**: both are safe outcomes |
-| E6 | Duplex, faults between 1x and 2x tolerance, slow drifts, a signal that barely moves | Nobody can be attributed: hold, Safe request | by design | **Accepted** (ADR-008, FDIR-008). Remedy is analytical redundancy (cross-sensor plausibility), later work |
+| E3 | **Lateness is a cliff.** A frame that leaves 1 us before its deadline is fine, 1 us after is a lost sample | A creeping clock or a slowly loaded node goes from healthy to isolated within one frame, with no earlier warning | Medium | **Deferred by decision, with the design written down** (`docs/DEFERRED.md` section 2): keep the cliff (a node outside its window is failed, as in time-triggered systems) and add per-node arrival-margin telemetry and a non-latching "timing degraded" warning once the board and receive timestamps exist |
+| E11 | **A consistently early gyro/accel stream** (frames leaving more than about 4.5 ms early land in the previous frame's window) | Was not detected: the counter stayed contiguous and the data were one frame ahead (under one tolerance on this motion). The vote could not see it | Low to medium | **Fixed for whole-frame phase errors** (ADR-018): frames carry SYNC's number and the receiver checks it, so such a stream is isolated in 3 frames (as is any early, late, repeated or off-by-N stream). **Still blind:** a frame up to about 4.5 ms early inside its own window, with the right number; closing that needs the arrival-time check, deferred with telemetry first (`docs/DEFERRED.md`). Tests `phase_*`, `test_F43_*`, mutants `phase_*` |
+| E19 | Fault magnitude near the 2x tolerance boundary in Duplex (found while checking E16) | After ADR-017 the motion reference added the noise of two samples on channels that barely move: the isolate-or-Safe threshold moved from 2.0x to about 2.3x tolerance (60 seeds per magnitude) and the transition widened. Both outcomes are safe, but isolations became Safe requests | Low | **Fixed** (ADR-017 amended): the step is added only where the signal moves more than a tolerance per frame (weight 0 below one, 1 from two). Gyro and accel channels are exactly as before ADR-017 (the decision hashes of 531 Duplex scenarios are identical); the command channels keep the E16 fix. Tests `reference_*`, mutants `reference_*` |
+| E6 | Duplex, faults between 1x and about 2.3x tolerance, slow drifts, a digest mismatch, a signal that barely moves | Nobody can be attributed: hold, Safe request | by design | **Accepted for this project** (ADR-008). The exposure was shortened (50-frame dwell after a first transient latch, ADR-010 amended) and the operator can resolve it (`armed-disable` of the node known to be bad, then `armed-clear-safe`: the interlock tiers allow it). **Deferred with triggers:** define the Safe action when the actuator node exists; self-test at power-up when the sensor driver exists; analytical redundancy when the estimator exists (`docs/DEFERRED.md` section 3) |
 | E5 | **Correlated (common-cause) faults**: two nodes wrong the same way | The two outvote the healthy third, which is blamed. No vote can help | inherent | **Accepted**; remedy is design diversity (ARCHITECTURE section 7) |
 | E7 | Safe request | Sticky until an operator clears it; if the cause persists it is raised again in 3 frames. A probation is neutral while Safe is requested | by design | **Accepted** (ADR-008, ADR-014) |
 | E8 | One sensor axis frozen while the others move | The stuck detector hashes all 12 payload bytes, so it does not fire; at rest nothing is wrong, and as soon as the vehicle moves the vote sees the frozen axis | Low | **Accepted** |
 | E9 | The digest cross-check | Blind to a digest error that is identical on two nodes; in Duplex a mismatch cannot be attributed | inherent | **Accepted** |
 | E4 | A one-frame outage or reboot | One lost sample is tolerated; a two-frame silence is isolated through the sequence break, three or more through missing frames | by design | **Accepted** |
 | E2 | The frame in which Safe is first raised | Channels that had a trusted vote in that frame hold that frame's fresh value rather than an older one; the hold-exactness oracle exempts that frame | none | **Accepted** |
-| E10 | Operator commands | CRC-checked but not authenticated and not protected against replay (ADR-011); all commands are idempotent, so a duplicate is harmless, but a stale replay of `disable` would be applied | Medium for a flight uplink | **Documented** (bench only); a real uplink needs authentication and a counter |
+| E10 | Operator commands | CRC-checked only: a replayed or stale frame, a corrupted frame that passes the CRC, a node stuck on the id, or any node on the bus could issue a valid command; nothing stopped disabling every node; the seq byte was ignored | Low on the bench, medium for a flight uplink | **Fixed on the bench** (ADR-019): 32-bit SipHash-2-4 tag, counter window against replays, ARM/EXECUTE for `clear-disabled`, `clear-safe` and any `disable` that leaves fewer than two healthy nodes, the last voter reported as critical. Still open for a real uplink: key provisioning, authentication at the vehicle gateway, constant-time comparison (`docs/DEFERRED.md`). Tests `ground_*`, `arm_*`, `interlock_*`, `test_F52_*`, `test_F53_*`, group `ground_security` |
 | E20 | A lone candidate in total loss | One node alone on probation has no reference and waits indefinitely | Low | **Documented**: needs two candidates, or a reset |
+| E21 | A node that permanently stamps the number of the PREVIOUS frame (found by the campaign while building ADR-018) | Every such frame looked like a legitimate late frame (a number not seen before) and was accepted: the label fault was invisible | Low | **Fixed in the same change**: a late frame is only accepted into a slot that came up empty; a stream that delivers one frame every cycle labelled for the cycle before is isolated in 3 frames. Test `phase_a_stream_that_is_permanently_one_number_behind_*`, group `seqgap` (gap = 255) |
 
-### Recommended next steps (not done: they need a decision or the rig)
+### Recommended next steps
 
-1. **Arrival-time and phase monitor** (E3, E11): per-node timestamp margin telemetry, and each node's sequence number derived from the
-   SYNC frame number, so a stream that is early, late or one frame off is seen before it matters. Protocol change: ADR first.
-2. **Analytical redundancy for Duplex** (E6): a cross-sensor plausibility check (gyro vs integrated attitude, accel vs expected gravity) to
-   attribute drifts and small steps that continuity cannot.
+The decisions taken on the open items, the work postponed until its trigger exists, and the design notes for each are in `docs/DEFERRED.md`. In short:
+
+1. **Arrival-time monitoring** (E3, E11 option B): per-node arrival-margin telemetry and a non-latching warning first, a slot-window check once measured; needs the board.
+2. **Safe action, self-test, analytical redundancy** (E6): define what the vehicle does in Safe when the actuator node exists; sensor self-test at power-up when the driver exists; analytical redundancy when the estimator exists.
 3. **Membership agreement** between the flight computers (ADR-010 limit): today each decides alone.
-4. **Authenticated, replay-protected ground commands** (E10) before any real uplink.
-5. **Measure on the target**: WCET and stack of `end_frame` with the cycle counter, real CAN error rates (to re-tune the leaky count),
+4. **Real-uplink security** (E10): key provisioning, gateway authentication, constant-time comparison.
+5. **Firmware requirements from ADR-018** for nodes B, C and ACT: take the frame number from SYNC, keep it through SYNC loss and sync-master takeover.
+6. **Measure on the target**: WCET and stack of `end_frame` with the cycle counter, real CAN error rates (to re-tune the leaky count),
    inconsistent frame omission and duplication (a CAN property no software model reproduces).
 
 ## 7. Results of the latest run
@@ -507,21 +517,23 @@ for the vehicle in the scenario that triggers it.
 <!-- campaign:multi:begin -->
 | Group | Scenarios | Frames simulated | Ended in triplex / duplex / simplex / safe | Safe requested at some point | Nodes disabled (total) | Anomalies |
 |---|---|---|---|---|---|---|
-| `pairs` | 702 | 316,008 | 9 / 141 / 273 / 279 | 273 | 0 | none |
-| `new_pairs` | 855 | 384,944 | 0 / 54 / 515 / 286 | 283 | 0 | none |
+| `pairs` | 702 | 316,008 | 9 / 135 / 320 / 238 | 232 | 0 | none |
+| `new_pairs` | 855 | 384,944 | 0 / 0 / 558 / 297 | 293 | 0 | none |
 | `correlated` | 108 | 43,200 | 24 / 60 / 18 / 6 | 6 | 0 | none |
-| `cascades` | 231 | 254,133 | 32 / 165 / 0 / 34 | 34 | 0 | none |
-| `contexts` | 108 | 42,309 | 0 / 6 / 72 / 30 | 21 | 0 | none |
+| `cascades` | 231 | 254,133 | 32 / 169 / 0 / 30 | 30 | 0 | none |
+| `contexts` | 108 | 42,309 | 0 / 0 / 75 / 33 | 18 | 0 | none |
 | `startup_edges` | 152 | 6,327 | 8 / 120 / 24 / 0 | 0 | 0 | none |
 | `intermittent` | 270 | 189,000 | 111 / 159 / 0 / 0 | 0 | 0 | none |
-| `new_intermittent` | 270 | 216,000 | 78 / 192 / 0 / 0 | 0 | 0 | none |
+| `new_intermittent` | 270 | 216,000 | 90 / 180 / 0 / 0 | 0 | 0 | none |
 | `corrupt_periodic` | 45 | 31,500 | 15 / 30 / 0 / 0 | 0 | 0 | none |
 | `commands_transient` | 42 | 37,800 | 30 / 12 / 0 / 0 | 0 | 0 | none |
 | `commands_persistent` | 12 | 10,800 | 0 / 12 / 0 / 0 | 0 | 0 | none |
 | `commands_strikes` | 15 | 16,800 | 6 / 9 / 0 / 0 | 0 | 12 | none |
-| `commands_misc` | 24 | 18,400 | 9 / 11 / 2 / 2 | 2 | 15 | none |
+| `commands_misc` | 28 | 21,200 | 9 / 14 / 2 / 3 | 3 | 18 | none |
+| `ground_security` | 33 | 12,000 | 3 / 21 / 6 / 3 | 0 | 27 | none |
 | `recovery_edges` | 12 | 16,200 | 9 / 3 / 0 / 0 | 0 | 3 | none |
 | `total_loss` | 16 | 19,000 | 14 / 2 / 0 / 0 | 0 | 0 | none |
+| `duplex_boundary` | 360 | 61,200 | 0 / 0 / 180 / 180 | 180 | 0 | none |
 | `long_run` | 4 | 240,000 | 4 / 0 / 0 / 0 | 0 | 0 | none |
 <!-- campaign:multi:end -->
 
@@ -554,7 +566,7 @@ cmake -S . -B build/rel -DCMAKE_BUILD_TYPE=Release && cmake --build build/rel --
 cd sim && export TFC_REPLAY_BIN=$PWD/../build/rel/tfc_replay
 python3 -m campaign.run --strict --out /tmp/campaign.jsonl            # about 2 minutes on 12 cores; exit 1 on any anomaly
 python3 -m campaign.report /tmp/campaign.jsonl --update-doc ../docs/FAULT_CAMPAIGN.md
-python3 ../tools/mutation/run_unit.py                                 # 49 mutants against the C++ tests
+python3 ../tools/mutation/run_unit.py                                 # 72 mutants against the C++ tests
 python3 -m campaign.mutate                                            # the same against the campaign
 python3 ../tools/coverage/core_coverage.py --list                     # structural coverage of core/
 ```

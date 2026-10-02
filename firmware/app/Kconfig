@@ -19,4 +19,13 @@ config TFC_AUTO_REINTEGRATE
 	  damaged frames, one vote episode) goes on probation by itself. A stuck sensor, a digest
 	  mismatch and a repeat offender are never readmitted automatically. See docs/DECISIONS.md ADR-010.
 
+config TFC_GROUND_KEY
+	string "Ground-command authentication key (32 hex digits = 128 bits)"
+	default "000102030405060708090a0b0c0d0e0f"
+	help
+	  The shared key for the SipHash-2-4 tag on ground commands (docs/DECISIONS.md ADR-019). The default is the PUBLIC
+	  bench key that the host tools and the tests also use, so the bench works out of the box. It protects nothing:
+	  provision your own before any real use (docs/DEFERRED.md). The value ends up in the binary and in the build
+	  directory: it is a bench secret at best, not a flight key store.
+
 source "Kconfig.zephyr"

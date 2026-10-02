@@ -300,8 +300,10 @@ int main(int argc, char** argv) {
     }
     if (verbose) {
       for (unsigned i = 0; i < rep.command_count; ++i) {
-        std::printf("frame %zu: ground command %s %c: %s\n", k, tfc::op_text(rep.commands[i].op),
-                    static_cast<char>('A' + rep.commands[i].node), tfc::result_text(rep.commands[i].result));
+        const tfc::CommandEvent& ce = rep.commands[i];
+        std::printf("frame %zu: ground command %s%s %c: %s%s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "",
+                    tfc::op_text(ce.op), static_cast<char>('A' + ce.node), tfc::result_text(ce.result),
+                    (ce.flags & tfc::cmdflag::kCritical) != 0U ? "  *** CRITICAL: the last voting node was removed ***" : "");
       }
       for (unsigned n = 0; n < tfc::kNodes; ++n) {
         const unsigned bit = 1U << n;
@@ -371,7 +373,11 @@ int main(int argc, char** argv) {
                                                    {"commands_refused", c.commands_refused},
                                                    {"commands_bad", c.commands_bad},
                                                    {"integrity_faults", c.integrity_faults},
-                                                   {"invariant_violations", c.invariant_violations}};
+                                                   {"invariant_violations", c.invariant_violations},
+                                                   {"commands_unauthentic", c.commands_unauthentic},
+                                                   {"commands_replayed", c.commands_replayed},
+                                                   {"arms_expired", c.arms_expired},
+                                                   {"critical_commands", c.critical_commands}};
   for (const auto& kv : stats) {
     std::printf("%s=%lu\n", kv.first.c_str(), kv.second);
   }

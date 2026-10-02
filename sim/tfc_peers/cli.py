@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
+from pathlib import Path
 
 from . import bus as B
 from . import protocol as P
-from .commands import GroundCommand, parse_command
+from .commands import GroundCommand, parse_commands
 from .faults import KINDS, FaultSpecError, parse_fault, parse_node
 from .peers import Scenario
 from .protocol import describe
@@ -22,7 +24,7 @@ def _scenario(args: argparse.Namespace) -> Scenario:
     for f in faults:
         if f.node not in nodes:
             raise FaultSpecError(f"fault {f} targets a node that is not simulated (--nodes {args.nodes})")
-    commands = [parse_command(c) for c in args.command]
+    commands = [c for spec in args.command for c in parse_commands(spec)]
     return Scenario(nodes, faults, args.seed, commands)
 
 
@@ -34,7 +36,8 @@ def _add_scenario_args(p: argparse.ArgumentParser) -> None:
                    help="NODE:KIND[:key=value,...], repeatable; see `faults` (e.g. B:bias:start=100,mag=3)")
     p.add_argument("--command", action="append", default=[], metavar="SPEC",
                    help="scripted operator command FRAME:OP[:NODE], repeatable; OP is reintegrate, disable, "
-                        "clear-disabled or clear-safe (e.g. 450:reintegrate:B). Sent as a ground-command frame "
+                        "clear-disabled or clear-safe, optionally prefixed arm-, armed- or forged- (e.g. 450:reintegrate:B, "
+                        "600:armed-clear-safe), or FRAME:replay. Sent as an authenticated ground-command frame "
                         "in that frame number")
     p.add_argument("--seed", type=int, default=1,
                    help="seed for sensor noise and random faults; the same seed gives byte-identical traffic (default 1)")
@@ -113,6 +116,29 @@ def cmd_decode(args: argparse.Namespace) -> int:
     return 0
 
 
+def _counter_file() -> Path:
+    base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    return base / "tfc_peers" / "ground_counter"
+
+
+def _next_counter(count: int, explicit: int | None) -> int:
+    """The first of `count` consecutive command counters, remembered between runs (the flight computer wants them to increase)."""
+    path = _counter_file()
+    if explicit is not None:
+        first = explicit
+    else:
+        try:
+            first = (int(path.read_text()) + 1) & 0xFF
+        except (OSError, ValueError):
+            first = 1
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str((first + count - 1) & 0xFF))
+    except OSError:
+        pass  # the counter is only a convenience; --counter overrides it
+    return first
+
+
 def cmd_command(args: argparse.Namespace) -> int:
     op = args.op.lower()
     if op not in P.GROUND_OPS:
@@ -120,17 +146,18 @@ def cmd_command(args: argparse.Namespace) -> int:
     if op != "clear-safe" and args.node is None:
         raise FaultSpecError(f"command {op!r} needs a node (A, B or C)")
     node = parse_node(args.node) if args.node is not None else 0
-    cmd = GroundCommand(0, op, node)
+    steps = [GroundCommand(0, op, node, arm=True), GroundCommand(0, op, node)] if args.arm else [GroundCommand(0, op, node)]
+    counter = _next_counter(len(steps), args.counter)
     bus = B.SocketCanBus(args.iface)
     try:
-        for i in range(args.count):
-            bus.send(0, cmd.frame_for((int(time.time() * 1000) + i) & 0xFF))
-            if i + 1 < args.count:
-                time.sleep(0.02)
+        for i, cmd in enumerate(steps):
+            bus.send(0, cmd.frame_for((counter + i) & 0xFF))
+            time.sleep(0.05)  # five frames between the ARM and the EXECUTE
     finally:
         bus.close()
     who = "" if op == "clear-safe" else f" {P.NODE_NAMES[node]}"
-    print(f"sent ground command: {op}{who} on {args.iface}; the flight computer prints the outcome "
+    print(f"sent ground command: {'ARM + ' if args.arm else ''}{op}{who} (counter {counter}"
+          f"{'-' + str((counter + 1) & 0xFF) if args.arm else ''}) on {args.iface}; the flight computer prints the outcome "
           f"(accepted or why it was refused) on its console")
     return 0
 
@@ -177,7 +204,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("op", help="reintegrate, disable, clear-disabled or clear-safe")
     p.add_argument("node", nargs="?", help="A, B or C (not needed for clear-safe)")
     p.add_argument("--iface", default="vcan0", help="SocketCAN interface to send on (default vcan0)")
-    p.add_argument("--count", type=int, default=1, help="send the frame this many times, 20 ms apart (default 1)")
+    p.add_argument("--arm", action="store_true", help="send the ARM frame, then the EXECUTE frame 50 ms later (clear-safe, "
+                   "clear-disabled and a disable that would leave fewer than two healthy nodes need this)")
+    p.add_argument("--counter", type=int, default=None, metavar="N", help="command counter of the first frame (default: the next one "
+                   "after the last this tool sent, remembered in ~/.cache/tfc_peers/ground_counter)")
     p.set_defaults(fn=cmd_command)
 
     p = sub.add_parser("faults", help="list fault kinds and their options")

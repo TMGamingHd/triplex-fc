@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "tfc/redundancy.hpp"
+#include "ground.hpp"
 #include "tfc_test.hpp"
 
 using namespace tfc;
@@ -27,6 +28,10 @@ struct ManagerTestAccess {
   static void flip_config_tolerance(RedundancyManager& m) { m.cfg_.tol[0] *= 2.0F; }
   static void set_pending_count(RedundancyManager& m, unsigned n) { m.npending_ = n; }
   static void flip_backup_tolerance(RedundancyManager& m) { m.cfg_backup_.tol[0] *= 2.0F; }
+  static void flip_arm_complement(RedundancyManager& m) { m.arm_code_.n_ = static_cast<uint8_t>(m.arm_code_.n_ ^ 0x04U); }
+  static void flip_arm_timer(RedundancyManager& m) { m.arm_left_.v_ = static_cast<uint8_t>(m.arm_left_.v_ ^ 0x01U); }
+  static void flip_cmd_counter(RedundancyManager& m) { m.cmd_ctr_.v_ = static_cast<uint8_t>(m.cmd_ctr_.v_ ^ 0x80U); }
+  static void flip_cmd_have(RedundancyManager& m) { m.cmd_have_.n_ = static_cast<uint8_t>(m.cmd_have_.n_ ^ 0x01U); }
   static void set_failures(uint32_t& counter, uint32_t v) { counter = v; }
 };
 }  // namespace tfc
@@ -99,14 +104,14 @@ TFC_TEST(total_loss_every_node_latched_can_be_recovered_by_cohort_probation) {
       CHECK(r.latched_mask == 0x7U && r.mode == Mode::Safe);  // no healthy node left
       for (unsigned n = 0; n < 3; ++n) CHECK(m.request_reintegration(n) == CommandResult::Accepted);
     }
-    if (k == 250) {
+    if (k == 100) {
       CHECK(r.probation_mask == 0x7U);  // all three at once: with no healthy reference there is no other way
       CHECK(r.mode == Mode::Safe);      // and nobody is voting yet
     }
   }
   for (unsigned n = 0; n < 3; ++n) {
-    CHECK(s.probation_started[n] == 212);  // latched at 12 + 200-frame dwell
-    CHECK(s.reintegrated[n] == 312);       // 100 frames in which the cohort agreed
+    CHECK(s.probation_started[n] == 62);   // latched at 12 + the 50-frame dwell after a first transient-looking latch
+    CHECK(s.reintegrated[n] == 162);       // 100 frames in which the cohort agreed
     CHECK(m.state(n) == NodeState::Healthy);
     CHECK(m.strikes(n) == 1U);
   }
@@ -126,13 +131,13 @@ TFC_TEST(total_loss_cohort_throws_out_a_member_that_disagrees_and_readmits_the_o
     if (k == 20) {
       for (unsigned n = 0; n < 3; ++n) m.request_reintegration(n);
     }
-    if (k == 213) {
+    if (k == 63) {
       CHECK(m.state(1) == NodeState::Latched);  // thrown back the first frame it was compared
     }
   }
-  CHECK(s.probation_failed[1] == 213);  // refused on the first frame it is compared (probation started at 212)
+  CHECK(s.probation_failed[1] == 63);  // refused on the first frame it is compared (probation started at 62)
   CHECK(s.reintegrated[1] < 0 && m.state(1) != NodeState::Healthy);
-  CHECK(s.reintegrated[0] == 312 && s.reintegrated[2] == 312);
+  CHECK(s.reintegrated[0] == 162 && s.reintegrated[2] == 162);
   CHECK(m.state(0) == NodeState::Healthy && m.state(2) == NodeState::Healthy);
   CHECK(m.last_report().mode == Mode::Duplex);
 }
@@ -149,7 +154,7 @@ TFC_TEST(total_loss_two_candidates_that_agree_are_readmitted_without_the_third) 
       m.request_reintegration(2);
     }
   }
-  CHECK(s.reintegrated[0] == 312 && s.reintegrated[2] == 312);
+  CHECK(s.reintegrated[0] == 162 && s.reintegrated[2] == 162);
   CHECK(m.state(1) == NodeState::Latched);  // nobody asked for B
   CHECK(m.last_report().mode == Mode::Duplex);
 }
@@ -200,7 +205,7 @@ TFC_TEST(with_a_healthy_node_probation_is_still_one_at_a_time) {
     }
   }
   CHECK(s.max_on_probation == 1);  // C is healthy, so the shadow vote is the reference and the old rule holds
-  CHECK(s.reintegrated[0] == 312 && s.reintegrated[1] == 412);
+  CHECK(s.reintegrated[0] == 162 && s.reintegrated[1] == 262);
 }
 
 // ============================== E13: configuration validation ==============================
@@ -416,16 +421,18 @@ TFC_TEST(boundary_bus_alarm_is_raised_at_exactly_the_configured_count) {
   }
 }
 
-TFC_TEST(boundary_a_duplicate_of_the_last_frame_is_not_the_late_frame_that_was_assumed_missing) {
-  SeqTracker t;
-  CHECK(t.accept(10));
-  t.note_missing();       // slot 11 passed with nothing: assumed lost
-  CHECK(!t.accept(10));   // a repeat of frame 10 is an error, not the late 11
-  SeqTracker u;
-  CHECK(u.accept(10));
-  u.note_missing();
-  CHECK(u.accept(11));    // the late frame itself is accepted ...
-  CHECK(!u.accept(11));   // ... once
+TFC_TEST(boundary_a_duplicate_of_a_frame_already_seen_is_not_a_late_frame) {
+  PhaseTracker t;
+  t.next_frame();
+  CHECK(t.classify(10, 10) == FrameTiming::OnTime);
+  t.next_frame();                                       // cycle 11: nothing on time
+  CHECK(t.classify(10, 11) == FrameTiming::Bad);        // frame 10 again: a repeat, not the late 11
+  PhaseTracker u;
+  u.next_frame();
+  CHECK(u.classify(10, 10) == FrameTiming::OnTime);
+  u.next_frame();
+  CHECK(u.classify(11, 11) == FrameTiming::OnTime);
+  CHECK(u.classify(11, 11) == FrameTiming::Bad);        // the same number twice
 }
 
 TFC_TEST(boundary_the_dwell_restarts_the_frame_after_a_failed_probation) {
@@ -433,17 +440,17 @@ TFC_TEST(boundary_the_dwell_restarts_the_frame_after_a_failed_probation) {
   std::array<int, 8> starts{};
   unsigned n_starts = 0;
   int failed_at = -1;
-  for (int k = 0; k < 700; ++k) {
+  for (int k = 0; k < 400; ++k) {
     Nodes f{};
     f[1].present = !(k >= 10 && k < 15);  // B latches at 12; A and C stay healthy and are the reference
-    f[1].bias = k == 213 ? 3.0F : 0.0F;    // B's first compared frame is wrong: probation fails at 213
+    f[1].bias = k == 63 ? 3.0F : 0.0F;     // B's first compared frame is wrong: probation (started at 62) fails at 63
     const FrameReport& r = step(m, k, f);
     if ((r.probation_started & 2U) != 0U && n_starts < starts.size()) starts[n_starts++] = k;
     if ((r.probation_failed & 2U) != 0U && failed_at < 0) failed_at = k;
-    if (k == 20 || k == 214) (void)m.request_reintegration(1);
+    if (k == 20 || k == 64) (void)m.request_reintegration(1);
   }
-  CHECK(failed_at == 213);
-  CHECK(n_starts == 2U && starts[0] == 212 && starts[1] == 413);  // 200 whole frames after the failure, like after a latch
+  CHECK(failed_at == 63);
+  CHECK(n_starts == 2U && starts[0] == 62 && starts[1] == 113);  // 50 whole frames after the failure, like after a latch
 }
 
 // ============================== E16: Duplex arbitration with a moving signal ==============================
@@ -581,6 +588,7 @@ TFC_TEST(coverage_max_strikes_zero_never_disables) {
 TFC_TEST(coverage_dwell_saturates_at_its_16_bit_limit) {
   RedundancyConfig cfg;
   cfg.min_dwell_frames = 0xFFFFU;
+  cfg.min_dwell_frames_transient = 0xFFFFU;
   RedundancyManager m(cfg);
   int started = -1;
   for (int k = 0; k < 66000; ++k) {
@@ -609,7 +617,7 @@ TFC_TEST(coverage_the_failed_probation_counter_saturates) {
 TFC_TEST(coverage_a_full_command_queue_drops_and_counts_the_excess) {
   RedundancyManager m;
   m.begin_frame();
-  for (uint8_t i = 0; i < kMaxCommandsPerFrame + 2U; ++i) (void)m.on_frame(pack_ground(GroundOp::ClearSafe, 0U, i));
+  for (uint8_t i = 0; i < kMaxCommandsPerFrame + 2U; ++i) (void)m.on_frame(tfct::gcmd(GroundOp::Reintegrate, 1U, static_cast<uint8_t>(i + 1U)));
   const FrameReport& r = m.end_frame();
   CHECK(r.command_count == kMaxCommandsPerFrame);
   CHECK(m.counters().commands_bad == 2U);
@@ -705,7 +713,7 @@ TFC_TEST(coverage_total_loss_cohort_names_a_digest_outlier_and_cannot_judge_thre
         for (unsigned n = 0; n < 3; ++n) (void)m.request_reintegration(n);
       }
     }
-    CHECK(s.probation_failed[1] == 213 && s.reintegrated[0] == 312 && s.reintegrated[2] == 312);
+    CHECK(s.probation_failed[1] == 63 && s.reintegrated[0] == 162 && s.reintegrated[2] == 162);
   }
   {
     RedundancyManager m;  // three different digests: no reference at all, nobody is judged
@@ -746,9 +754,9 @@ TFC_TEST(coverage_every_state_operation_and_result_has_its_text) {
   CHECK(std::strcmp(op_text(static_cast<uint8_t>(GroundOp::Disable)), "disable") == 0);
   CHECK(std::strcmp(op_text(static_cast<uint8_t>(GroundOp::ClearDisabled)), "clear-disabled") == 0);
   CHECK(std::strcmp(op_text(static_cast<uint8_t>(GroundOp::ClearSafe)), "clear-safe") == 0);
-  const std::array<CommandResult, 7> all = {CommandResult::Accepted, CommandResult::AlreadyDone, CommandResult::RefusedDisabled,
+  const std::array<CommandResult, 8> all = {CommandResult::Accepted, CommandResult::AlreadyDone, CommandResult::RefusedDisabled,
                                            CommandResult::RefusedNotLatched, CommandResult::RefusedNotDisabled,
-                                           CommandResult::RefusedBadNode, CommandResult::RefusedBadOp};
+                                           CommandResult::RefusedBadNode, CommandResult::RefusedBadOp, CommandResult::RefusedNotArmed};
   for (std::size_t i = 0; i < all.size(); ++i) {
     for (std::size_t j = i + 1U; j < all.size(); ++j) CHECK(std::strcmp(result_text(all[i]), result_text(all[j])) != 0);  // all distinct
     CHECK(std::strcmp(result_text(all[i]), "?") != 0);
@@ -817,4 +825,41 @@ TFC_TEST(coverage_the_strike_counter_saturates_at_255) {
     if (k % 40 == 20) (void)m.request_reintegration(1);
   }
   CHECK(m.strikes(1) == 255U);  // 300 latches happened; the count stops at 255 instead of wrapping to 44
+}
+
+// ============================== SEU in the command path (ADR-015 + ADR-019) ==============================
+TFC_TEST(seu_an_upset_in_an_armed_state_disarms_it_and_is_reported) {
+  for (int which = 0; which < 2; ++which) {
+    RedundancyManager m;
+    for (int k = 0; k < 5; ++k) (void)step(m, k, kNone);
+    (void)m.command(GroundOp::Disable, 1);
+    m.begin_frame();
+    (void)m.on_frame(tfct::gcmd(GroundOp::ClearDisabled, 1, 1, true));  // ARM
+    (void)m.end_frame();
+    if (which == 0) ManagerTestAccess::flip_arm_complement(m); else ManagerTestAccess::flip_arm_timer(m);
+    m.begin_frame();
+    (void)m.on_frame(tfct::gcmd(GroundOp::ClearDisabled, 1, 2));         // EXECUTE: the damaged arm is gone, so this is refused
+    const FrameReport& r = m.end_frame();
+    CHECK((r.integrity_mask & 16U) != 0U && m.counters().integrity_faults == 1U);
+    CHECK(r.commands[0].result == CommandResult::RefusedNotArmed && m.state(1) == NodeState::Disabled);
+  }
+}
+
+TFC_TEST(seu_an_upset_in_the_command_counter_forgets_the_history_and_is_reported) {
+  for (int which = 0; which < 2; ++which) {
+    RedundancyManager m;
+    for (int k = 0; k < 5; ++k) (void)step(m, k, kNone);
+    (void)step(m, 5, kNone);
+    m.begin_frame();
+    (void)m.on_frame(tfct::gcmd(GroundOp::Reintegrate, 0, 50));
+    (void)m.end_frame();
+    if (which == 0) ManagerTestAccess::flip_cmd_counter(m); else ManagerTestAccess::flip_cmd_have(m);
+    m.begin_frame();
+    (void)m.on_frame(tfct::gcmd(GroundOp::Reintegrate, 0, 10));  // older than 50: a replay if the history were intact
+    const FrameReport& r = m.end_frame();
+    CHECK((r.integrity_mask & 16U) != 0U && r.command_count == 1U);  // the history was damaged, so the next authentic command re-establishes it
+    m.begin_frame();
+    (void)m.on_frame(tfct::gcmd(GroundOp::Reintegrate, 0, 10));
+    CHECK(m.end_frame().command_count == 0U && m.counters().commands_replayed == 1U);  // and replay protection works again from there
+  }
 }

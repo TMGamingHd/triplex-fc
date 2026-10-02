@@ -9,6 +9,7 @@ traffic with the real C++ code.
 from __future__ import annotations
 
 import math
+import os
 import struct
 from dataclasses import dataclass, field
 
@@ -124,11 +125,82 @@ def pack_cmd(node: int, pitch_deg: float, yaw_deg: float, digest: int, seq: int)
 
 GROUND_OPS = {"reintegrate": 1, "disable": 2, "clear-disabled": 3, "clear-safe": 4}
 GROUND_OP_NAMES = {v: k for k, v in GROUND_OPS.items()}
+ARM_FLAG = 0x80
+
+BENCH_KEY = bytes(range(16))  # the PUBLIC bench key shared with core/ (auth.hpp), the firmware default and the tests
 
 
-def pack_ground(op: int, node: int, seq: int) -> Frame:
-    """Operator command: opcode | node | 4 reserved bytes | seq | crc8 (see core protocol.hpp)."""
-    return Frame(ID_GROUND, seal(bytes([op & 0xFF, node & 0xFF, 0, 0, 0, 0]), seq))
+def ground_key() -> bytes:
+    """The key used for ground commands: $TFC_GROUND_KEY (32 hex digits) or the public bench key."""
+    text = os.environ.get("TFC_GROUND_KEY")
+    if not text:
+        return BENCH_KEY
+    try:
+        key = bytes.fromhex(text)
+    except ValueError:
+        key = b""
+    if len(key) != 16:
+        raise ValueError("TFC_GROUND_KEY must be exactly 32 hex digits (128 bits)")
+    return key
+
+
+_M64 = (1 << 64) - 1
+
+
+def _rotl(x: int, b: int) -> int:
+    return ((x << b) | (x >> (64 - b))) & _M64
+
+
+def siphash24(key: bytes, data: bytes) -> int:
+    """SipHash-2-4 (reference algorithm; checked against the published vectors and against core/auth.hpp)."""
+    k0 = int.from_bytes(key[:8], "little")
+    k1 = int.from_bytes(key[8:16], "little")
+    v = [k0 ^ 0x736F6D6570736575, k1 ^ 0x646F72616E646F6D, k0 ^ 0x6C7967656E657261, k1 ^ 0x7465646279746573]
+
+    def rnd() -> None:
+        v[0] = (v[0] + v[1]) & _M64
+        v[1] = _rotl(v[1], 13) ^ v[0]
+        v[0] = _rotl(v[0], 32)
+        v[2] = (v[2] + v[3]) & _M64
+        v[3] = _rotl(v[3], 16) ^ v[2]
+        v[0] = (v[0] + v[3]) & _M64
+        v[3] = _rotl(v[3], 21) ^ v[0]
+        v[2] = (v[2] + v[1]) & _M64
+        v[1] = _rotl(v[1], 17) ^ v[2]
+        v[2] = _rotl(v[2], 32)
+
+    n = len(data)
+    for i in range(0, n - n % 8, 8):
+        m = int.from_bytes(data[i:i + 8], "little")
+        v[3] ^= m
+        rnd()
+        rnd()
+        v[0] ^= m
+    last = (n << 56) | int.from_bytes(data[n - n % 8:], "little")
+    v[3] ^= last
+    rnd()
+    rnd()
+    v[0] ^= last
+    v[2] ^= 0xFF
+    for _ in range(4):
+        rnd()
+    return (v[0] ^ v[1] ^ v[2] ^ v[3]) & _M64
+
+
+def ground_mac(key: bytes, op_byte: int, node: int, counter: int) -> int:
+    """32-bit tag of a ground command: low 32 bits of SipHash-2-4 over (id hi, id lo, opcode byte, node, counter)."""
+    msg = bytes([(ID_GROUND >> 8) & 0xFF, ID_GROUND & 0xFF, op_byte & 0xFF, node & 0xFF, counter & 0xFF])
+    return siphash24(key, msg) & 0xFFFFFFFF
+
+
+def pack_ground(op: int, node: int, counter: int, key: bytes | None = None, arm: bool = False, forged: bool = False) -> Frame:
+    """Operator command: opcode(+arm flag) | node | 32-bit tag | counter | crc8 (see core protocol.hpp, ADR-019).
+    `forged` flips a bit of the tag (a frame an attacker without the key, or a corrupted frame with a valid CRC, would send)."""
+    op_byte = (op & 0x7F) | (ARM_FLAG if arm else 0)
+    tag = ground_mac(key if key is not None else ground_key(), op_byte, node, counter)
+    if forged:
+        tag ^= 0x00010000
+    return Frame(ID_GROUND, seal(bytes([op_byte, node & 0xFF]) + tag.to_bytes(4, "little"), counter))
 
 
 def pack_sync(frame_no: int, seq: int) -> Frame:
@@ -174,13 +246,16 @@ def unpack_sync(frame: Frame) -> SyncSample | None:
 class GroundSample:
     op: int
     node: int
-    seq: int
+    counter: int
+    arm: bool
+    tag: int
 
 
 def unpack_ground(frame: Frame) -> GroundSample | None:
     if frame.id != ID_GROUND or not check(frame):
         return None
-    return GroundSample(frame.data[0], frame.data[1], frame.data[6])
+    return GroundSample(frame.data[0] & 0x7F, frame.data[1], frame.data[6], bool(frame.data[0] & ARM_FLAG),
+                        int.from_bytes(frame.data[2:6], "little"))
 
 
 def unpack_cmd(frame: Frame) -> CmdSample | None:
@@ -224,7 +299,8 @@ def describe(frame: Frame) -> str:
             return f"GROUND -  CRC-BAD  {frame.hex()}"
         name = GROUND_OP_NAMES.get(g.op, f"op{g.op}")
         who = NODE_NAMES[g.node] if g.node < 3 else f"node{g.node}"
-        return f"GROUND -  {name} {who} seq={g.seq}"
+        verified = "tag ok under the bench key" if g.tag == ground_mac(BENCH_KEY, g.op | (ARM_FLAG if g.arm else 0), g.node, g.counter) else "tag NOT valid under the bench key"
+        return f"GROUND -  {'ARM ' if g.arm else ''}{name} {who} counter={g.counter} ({verified})"
     if i == ID_ACT_OUT:
         return f"ACT   -  {frame.hex()}"
     if ID_HEARTBEAT <= i <= ID_HEARTBEAT + 2:

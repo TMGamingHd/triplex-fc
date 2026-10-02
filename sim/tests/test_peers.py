@@ -166,12 +166,21 @@ class RecoveryFaults(unittest.TestCase):
     def seqs(self, t, node=1):
         return [by_id(fk, 0x100 + node)[0].data[6] if by_id(fk, 0x100 + node) else None for fk in t]
 
-    def test_reboot_is_silent_then_the_counter_restarts_at_zero(self):
+    def test_reboot_is_silent_then_back_in_phase_with_sync(self):
         t = traffic([1], ["B:reboot:start=20,down=10"], 50)
         self.assertEqual(self.seqs(t)[19], 19)
         self.assertEqual(set(self.seqs(t)[20:30]), {None})          # silent
-        self.assertEqual(self.seqs(t)[30:33], [0, 1, 2])              # back, counting from 0
+        self.assertEqual(self.seqs(t)[30:33], [30, 31, 32])           # back, numbered from SYNC: no break
+        self.assertEqual(self.seqs(t)[49], 49)
+
+    def test_a_reboot_that_does_not_resync_restarts_its_frame_number_at_zero(self):
+        t = traffic([1], ["B:reboot:start=20,down=10,resync=0"], 50)
+        self.assertEqual(self.seqs(t)[30:33], [0, 1, 2])
         self.assertEqual(self.seqs(t)[49], 19)
+
+    def test_seqgap_offsets_the_frame_number_while_it_is_active(self):
+        t = traffic([1], ["B:seqgap:start=10,end=12,gap=5"], 20)
+        self.assertEqual(self.seqs(t)[8:14], [8, 9, 15, 16, 12, 13])
 
     def test_late_shifts_every_scheduled_frame_inside_the_window_only(self):
         base = traffic([1], [], 20)

@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from tfc_peers import bus as B
-from tfc_peers.commands import parse_command
+from tfc_peers.commands import parse_commands
 from tfc_peers.faults import parse_fault
 from tfc_peers.peers import Scenario
 
@@ -24,7 +24,7 @@ FRAMES = 400
 @unittest.skipIf(REPLAY is None, "tfc_replay not built (cmake --build build/host)")
 class ReplayBase(unittest.TestCase):
     def replay(self, faults, *expect, nodes=(0, 1, 2), frames=FRAMES, seed=1, commands=()):
-        sc = Scenario(list(nodes), [parse_fault(f) for f in faults], seed, [parse_command(c) for c in commands])
+        sc = Scenario(list(nodes), [parse_fault(f) for f in faults], seed, [x for c in commands for x in parse_commands(c)])
         with tempfile.TemporaryDirectory() as d:
             log = os.path.join(d, "t.log")
             bus = B.LogBus(log)
@@ -86,7 +86,7 @@ class ReplayThroughCore(ReplayBase):
         self.assertEqual((out["crc_bad"], out["seq_bad"]), ("6", "0"))
 
     def test_F08_corruption_does_not_hide_a_real_sequence_gap(self):
-        out = self.replay(["B:corrupt:start=100,end=101,p=1.0", "B:seqgap:start=110,gap=4"],
+        out = self.replay(["B:corrupt:start=100,end=101,p=1.0", "B:seqgap:start=110,end=111,gap=4"],
                           "--expect-no-latch", "B")
         self.assertEqual((out["crc_bad"], out["seq_bad"]), ("3", "3"))
 
@@ -106,9 +106,22 @@ class ReplayThroughCore(ReplayBase):
                     "--expect-no-latch", "A", "--expect-no-latch", "B", "--expect-no-latch", "C",
                     "--expect-mode", "triplex")
 
-    def test_sequence_gap_costs_one_frame_not_the_node(self):
-        out = self.replay(["B:seqgap:start=100,gap=4"], "--expect-no-latch", "B", "--expect-mode", "triplex")
-        self.assertEqual(out["seq_bad"], "3")  # one jump seen on each of B's three streams
+    def test_a_one_frame_glitch_of_the_frame_number_costs_one_frame_not_the_node(self):
+        out = self.replay(["B:seqgap:start=100,end=101,gap=4"], "--expect-no-latch", "B", "--expect-mode", "triplex")
+        self.assertEqual(out["seq_bad"], "3")  # the wrong number seen once on each of B's three streams
+
+    def test_a_node_whose_frame_number_stays_wrong_is_isolated(self):  # ADR-018: frames carry SYNC's number, so a wrong one is a wrong frame
+        out = self.replay(["B:seqgap:start=100,gap=4"], "--expect-latch", "B:102", "--expect-mode", "duplex")
+        self.assertGreater(int(out["seq_bad"]), 100)
+
+    def test_a_reboot_that_resyncs_comes_back_in_phase_and_one_that_does_not_is_isolated_for_good(self):
+        out = self.replay(["B:reboot:start=100,down=30"], "--expect-latch", "B:100-103", "--expect-mode", "duplex")
+        self.assertEqual(out["seq_bad"], "0")  # no sequence break at all: the frame number came from SYNC
+        out = self.replay(["B:reboot:start=100,down=30,resync=0"], "--expect-latch", "B:100-103", frames=500)
+        self.assertGreater(int(out["seq_bad"]), 100)  # still restarting from 0: every frame is the wrong frame
+
+    def test_a_two_frame_silence_is_not_enough_to_isolate(self):  # E4: 3-of-5 needs three bad frames
+        self.replay(["B:reboot:start=100,down=2"], "--expect-no-latch", "B", "--expect-mode", "triplex")
 
     def test_dropout_then_recovery_is_still_latched_until_reintegrated(self):
         self.replay(["B:dropout:start=100,end=150"], "--expect-latch", "B:100-102", "--expect-mode", "duplex")
@@ -247,7 +260,7 @@ class NodeLifeCycle(ReplayBase):
 
     def test_operator_can_disable_and_clear_a_node(self):
         self.replay([], "--expect-state", "B:healthy", "--expect-mode", "triplex", frames=800,
-                    commands=["200:disable:B", "300:clear-disabled:B", "310:reintegrate:B"])
+                    commands=["200:disable:B", "300:armed-clear-disabled:B", "310:reintegrate:B"])
         self.replay([], "--expect-state", "B:disabled", "--expect-mode", "duplex", frames=400,
                     commands=["200:disable:B"])
 
