@@ -27,13 +27,13 @@ firmware/
 
 Console: a status line each second (`A+ B+ C+` = all voting; `X` = latched out; `p` = on probation; `D` = disabled for the run; `?` = no good data; `oos=` counts frames on IDs outside the schedule), and an
 event line whenever a node joins, latches out (with the reason in words), goes on probation, fails probation, is reintegrated or disabled, a ground command is applied (and whether it was accepted or refused), the mode changes, the bus alarm is raised or cleared (`BUS ALARM`, 3+ stray frames per 10 ms frame), or Safe is requested (`SAFE REQUESTED`, sticky: two voting nodes disagree and nobody can be blamed; output held).
-A peer that has never been seen is not judged for the first 5 s (`startup_grace_frames`); once seen, it always is. The console also reports an invalid configuration at start (`CONFIG ERROR`, the field is replaced by its default) and any repaired memory upset (`INTEGRITY FAULT`, ADR-015). The firmware is linked without the C library's heap (`CONFIG_COMMON_LIBC_MALLOC=n`) and `tools/check_elf.sh` verifies the binary has no heap, exception or RTTI symbols.
+FC-A passes SYNC's frame number to the manager every frame (`begin_frame(k)`), and the peers stamp their frames with it (ADR-018). A peer that has never been seen is not judged for the first 5 s (`startup_grace_frames`); once seen, it always is. The console also reports an invalid configuration at start (`CONFIG ERROR`, the field is replaced by its default) and any repaired memory upset (`INTEGRITY FAULT`, ADR-015). The firmware is linked without the C library's heap (`CONFIG_COMMON_LIBC_MALLOC=n`) and `tools/check_elf.sh` verifies the binary has no heap, exception or RTTI symbols.
 
 ## Reintegration and operator commands
 A latched node is out of the vote until an operator readmits it: after a 200-frame dwell it goes on probation, where its
 data are compared every frame with the voted output of the healthy nodes (a *shadow vote*), and 100 agreeing frames
 readmit it; a node that keeps misbehaving is disabled (3rd latch; 2nd for a stuck sensor). Rules and reasons: `docs/DECISIONS.md` ADR-010.
-- **Commands** arrive as CAN ground frames (`0x510`): `reintegrate`, `disable`, `clear-disabled`, `clear-safe`. From `sim/`:
+- **Commands** arrive as authenticated CAN ground frames (`0x510`; SipHash tag with `CONFIG_TFC_GROUND_KEY`, default the public bench key, plus a counter that rejects replays): `reintegrate`, `disable`, `clear-disabled`, `clear-safe`. `clear-disabled`, `clear-safe` and a `disable` that would leave fewer than two healthy nodes need an ARM frame first (`tfc_peers command ... --arm`); removing the last voter prints a `CRITICAL` line. From `sim/`:
   `python3 -m tfc_peers command reintegrate B`, or scripted at an exact frame with `run --follow-sync --command 450:reintegrate:B`.
   FC-A answers on its console: `GROUND COMMAND reintegrate B: accepted` or `refused: <why>`.
 - **Automatic readmission** of a first, transient-looking latch is off by default; enable it with `CONFIG_TFC_AUTO_REINTEGRATE=y`

@@ -22,14 +22,17 @@ slots (A, B, C) plus ACT. A missing node is just a node that never sends frames.
 6. **Printed rack has four slots** even if three are empty.
 7. **Digest from the start.** The estimator-state digest is computed and logged even with one
    node; it is checked against a golden run on the PC. Later it is compared across nodes.
-8. **CAN needs a second node.** A lone CAN node gets no ACK and goes bus-off. Stage 1 uses the
+8. **Frames are numbered from SYNC.** Every node stamps its frames with the number of the SYNC frame of the cycle (not a counter of
+   its own), keeps counting if SYNC is lost, and takes the number from SYNC when it boots or joins; the sync-master takeover keeps the
+   number continuous (ADR-018). Writing the first firmware this way is cheap; retrofitting it into three nodes is not.
+9. **CAN needs a second node.** A lone CAN node gets no ACK and goes bus-off. Stage 1 uses the
    USB-CAN adapter as the second node, so it is required from the first day.
 
 ## Stages
 
 | Stage | Hardware | What runs | Exit test |
 |---|---|---|---|
-| S1 Single FC | 1 Nucleo + CAN Pal + IMU, USB-CAN adapter, PC | FC-A runs the full 100 Hz frame in Simplex. PC plays ACT and ground station, logs frames, feeds sim data. | 10 min at 100 Hz, zero frame errors; WCET and jitter measured; digest matches PC golden run |
+| S1 Single FC | 1 Nucleo + CAN Pal + IMU, USB-CAN adapter, PC | FC-A runs the full 100 Hz frame in Simplex. PC plays ACT and ground station, logs frames, feeds sim data. | 10 min at 100 Hz, zero frame errors; WCET and jitter measured; digest matches PC golden run. **Also deferred to this stage** (docs/DEFERRED.md): the sensor self-test at power-up, per-frame arrival-margin telemetry, and the ground key set with `CONFIG_TFC_GROUND_KEY` |
 | S1b Virtual peers | same | PC publishes frames as FC-B and FC-C (replayed or generated data, injected faults) through the USB-CAN adapter | FC-A sees Duplex/Triplex behaviour and FDIR transitions against fake peers; runs in CI on `native_sim` too |
 | S2 Add ACT | +1 Nucleo + CAN Pal, servo rail | Real ACT node votes the commands and drives the servos. Motion platform closes the loop. | Platform tracks simulated ascent with one FC |
 | S3 Duplex | +FC-B (Nucleo, CAN Pal, IMU) | Two FCs; miscompare is detectable but cannot say who is wrong | Unplug B: back to Simplex without a glitch. Inject a bad value: miscompare flagged |

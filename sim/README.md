@@ -109,7 +109,7 @@ Virtual time, no sleeping: 400 frames take milliseconds. Output is identical on 
 | `--nodes LIST` | `B,C` | Which flight computers to simulate, comma separated from `A,B,C` (or `0,1,2`; case and spaces ignored). Use **`A,B,C`** for a fully virtual triplex: `tfc_replay` needs all three present, otherwise it correctly treats the missing one as dead. |
 | `--fault SPEC` | none | `NODE:KIND[:key=value,...]`. **Repeatable**; any number of faults, on any nodes, overlapping or not. A fault must target a node listed in `--nodes`. See [Fault reference](#fault-reference). |
 | `--frames N` | `1000` | Number of 10 ms major frames. 100 = 1 s, 400 = 4 s. |
-| `--command SPEC` | none | Scripted operator command `FRAME:OP[:NODE]`, **repeatable**: `OP` is `reintegrate`, `disable`, `clear-disabled` (these three need a node) or `clear-safe` (no node). Sent as a ground-command frame in that frame number, 6.5 ms in, so the flight computer applies it in that very frame. See [Recovery](#recovery-latch-probation-readmission-and-disabling). |
+| `--command SPEC` | none | Scripted operator command `FRAME:OP[:NODE]`, **repeatable**: `OP` is `reintegrate`, `disable`, `clear-disabled` (these three need a node) or `clear-safe` (no node), optionally prefixed `arm-` (only the ARM frame), `armed-` (the whole two-step: ARM in that frame, EXECUTE two frames later) or `forged-` (a wrong tag: refused without a trace); `FRAME:replay` re-sends the previous command frame unchanged (a replay). Sent as an authenticated ground-command frame in that frame number, 6.5 ms in, so the flight computer applies it in that very frame; counters are assigned 1, 2, 3... in time order. `clear-disabled`, `clear-safe` and a `disable` that would leave fewer than two healthy nodes need the `armed-` form. See [Operator commands](#operator-commands-authentication-arm-and-the-interlock) and [Recovery](#recovery-latch-probation-readmission-and-disabling). |
 | `--seed N` | `1` | Seed for sensor noise and for the random faults (`spike`, `corrupt`, `babble`). Same seed = byte-identical log. Change it to see how a result varies. |
 | `--iface NAME` | `vcan0` | Only the interface name written into each log line; has no other effect. |
 
@@ -151,11 +151,16 @@ anything and what it prints is not a replayable log.
 | `OP` | (required) | `reintegrate`, `disable`, `clear-disabled` or `clear-safe` |
 | `NODE` | none | `A`, `B` or `C`; required except for `clear-safe` |
 | `--iface NAME` | `vcan0` | SocketCAN interface to send on |
-| `--count N` | `1` | Send the frame N times, 20 ms apart. Every operation is idempotent, so repeats are harmless |
+| `--arm` | off | Send the ARM frame, then the EXECUTE frame 50 ms later. Needed for `clear-disabled`, `clear-safe` and a `disable` that would leave fewer than two healthy nodes |
+| `--counter N` | next after the last this tool sent | Command counter of the first frame. The flight computer accepts only counters that are 1 to 32 ahead of the last one it accepted, so the tool remembers its last counter in `~/.cache/tfc_peers/ground_counter` (override the directory with `$XDG_CACHE_HOME`) |
 
-Sends a single ground-command frame (`0x510`) to whichever flight computers are on the bus and exits. It does not wait
-for an answer: the flight computer prints the outcome on its console (`GROUND COMMAND reintegrate B: accepted`, or
-`refused: <why>`). It is the interactive twin of `--command`; use `--command` when the command must land in an exact frame.
+Sends an authenticated ground-command frame (`0x510`; tag key from `$TFC_GROUND_KEY`, 32 hex digits, default the public bench key) to
+whichever flight computers are on the bus and exits. It does not wait for an answer: the flight computer prints the outcome on its
+console (`GROUND COMMAND reintegrate B: accepted`, or `refused: <why>`; a frame with a wrong tag or a stale counter is dropped without
+a trace and only counted). If the flight computer was restarted while this tool kept running, the counters still increase and are
+accepted (the first command after a restart is accepted whatever its counter); if you delete the counter file while the flight
+computer keeps running, restart it or pass `--counter` above its last one. It is the interactive twin of `--command`; use
+`--command` when the command must land in an exact frame.
 
 ### `python3 -m tfc_peers faults`
 Lists every fault kind with its fault-matrix row and options. Same information as the next section.
@@ -212,8 +217,8 @@ from `start` (so `B:corrupt:start=100,period=3,duty=1` damages one frame in thre
 | `cmd_offset` | F09 | A wrong-but-valid command (software bug) | `mag` (1.0; degrees) | Adds `mag` to the pitch command; everything else, including the CRC, stays valid |
 | `digest` | F10 | Silent internal state divergence | `xor` (1; 16-bit mask) | XORs the estimator-state digest in the command frame; pitch and yaw unchanged |
 | `babble` | F11 | A node flooding the bus | `n` (5; extra frames per 10 ms), `id` (32 = 0x020) | Adds `n` extra frames per cycle on the 16 out-of-schedule IDs from `id` up (default `0x020`-`0x02F`, higher priority than every sensor ID). `id` may be written `0x520`; ids that overlap the flight-bus schedule are rejected. `n` of 3 or more raises the bus alarm, whatever the id |
-| `seqgap` | IF | A node that skipped sequence numbers | `gap` (3) | At `start`, the sequence counter jumps ahead by `gap`, once, then counts normally |
-| `reboot` | F24 | A node that resets | `down` (50; frames of silence) | Silent for `down` frames, then back with its **sequence counter restarted at 0** (one sequence break on its first frame back) |
+| `seqgap` | IF | A node whose frame number is wrong (it lost SYNC, or its counter is off) | `gap` (3) | The frame number is off by `gap` for as long as the fault is active (frames carry the number of the SYNC frame of their cycle). With no `end` it stays wrong: the node is out of phase and is isolated; give an `end` for a one-frame glitch, which 3-of-5 tolerates |
+| `reboot` | F24 | A node that resets | `down` (50; frames of silence), `resync` (1) | Silent for `down` frames, then back **in phase** (it takes the frame number from SYNC), so a restart is no sequence break. `resync=0` is a node that does not resync and restarts its frame number at 0: every frame is then the wrong frame, for good |
 | `late` | F25 | Stale data from a late node | `us` (4000; 1-9000) | Every scheduled frame leaves `us` microseconds later. The command frame (due at ~5.3 ms) then misses the 7 ms vote and is judged a frame late, with a stale digest |
 | `scale` | F27 | A scale-factor error | `sensor` (gyro), `axis` (0), `factor` (1.2) | Multiplies that axis by `factor` (1.0 is healthy, -1 inverts, 0 kills the axis) |
 | `noise` | F28 | A noisy sensor | `sensor` (gyro), `mult` (20.0) | The noise standard deviation grows to `mult` x the healthy value (0.1 dps, 0.002 g) on all three axes of that sensor |
@@ -230,7 +235,7 @@ from `start` (so `B:corrupt:start=100,period=3,duty=1` damages one frame in thre
 | `partial` | F39 | Only some frame types are sent | `mask` (4) | Bit mask of the frame types **not** sent: 1 gyro, 2 accel, 4 command (1-7) |
 | `duplicate` | F40 | Every frame sent twice | `gap_us` (300) | Each scheduled frame is repeated `gap_us` microseconds later (0-9000) |
 | `replay` | F41 | Stale frames re-sent | `age` (10) | Sends the frames of `age` frames ago in place of the current ones: valid CRC, old sequence number (1-300) |
-| `seqstuck` | F42 | A frozen sequence counter | none | The sequence number stays at the value it had when the fault began |
+| `seqstuck` | F42 | A frozen frame-number counter | none | The frame number stays at the value it had when the fault began |
 | `early` | F43 | Frames sent early | `us` (2000) | Every scheduled frame leaves `us` microseconds earlier (never before time 0; 1-9000) |
 | `jitter` | F44 | Random timing jitter | `us` (1500) | Every frame leaves up to +-`us` microseconds from its slot, random but fixed by `--seed` (1-9000) |
 | `clockdrift` | F45 | A drifting clock | `us_per_frame` (20) | Frames leave `us_per_frame` later each frame, cumulatively (negative = earlier; 1-1000) |
@@ -258,9 +263,12 @@ harm, bus load and arbitration starvation, only shows on real CAN hardware.
 | `cmd_offset` (1.0 deg) | 102 | vote on the command | duplex |
 | `digest` | 102 | digest cross-check | duplex |
 | `babble` | never | out-of-schedule frames counted; `bus_alarm_frames` (BUS ALARM) raised, no node blamed | triplex |
-| `seqgap` | never | one bad frame (`seq_bad=3`: once per frame type) | triplex |
-| `reboot` (down=50) | 102 | missing frames; readmitted if the operator asks (see Recovery) | duplex, then triplex |
-| `late` (us=4000) | 102 | stale data: vote disagreement + digest mismatch (the command is a frame behind) | duplex |
+| `seqgap` (a number that stays wrong, gap=3) | 102 | sequence errors (every frame is out of phase) | duplex |
+| `seqgap` with an `end` one frame later | never | one bad frame (`seq_bad=3`: once per frame type) | triplex |
+| `reboot` (down=50) | 102 | missing frames; it comes back in phase and is readmitted if the operator asks (see Recovery) | duplex, then triplex |
+| `reboot` (down=2) | never | two lost frames are below 3-of-5 | triplex |
+| `reboot` (down=50, resync=0) | 102 | missing frames, and after it is back every frame is the wrong frame: it stays isolated | duplex |
+| `late` (us=4000) | 102 | stale data (vote + digest) and a frame numbered for the previous cycle (sequence) | duplex |
 | `scale` (factor 1.5) | 102 | vote (a 50% error on a 10 dps axis is 5 dps) | duplex |
 | `noise` (mult 30) | 102 | vote (sigma 3 dps against a 1 dps tolerance) | duplex |
 | `invert`, `swap`, `zero`, `clip` (limit 4) | 102 | vote | duplex |
@@ -273,7 +281,7 @@ harm, bus load and arbitration starvation, only shows on real CAN hardware.
 | `duplicate` | 102 | sequence errors (the second copy repeats a number) | duplex |
 | `replay` (age 3) | 102 | stale data: vote + digest | duplex |
 | `seqstuck` | 103 | sequence errors | duplex |
-| `early` (6000 us) | never | the gyro and accel frames land in the *previous* frame's window as a consistently one-frame-ahead stream: contiguous counter, data error below tolerance. Not detectable by this design (campaign E11) | triplex |
+| `early` (6000 us) | 101 | the gyro and accel frames arrive in the *previous* frame's window carrying the next frame's number: sequence errors (this used to be invisible; ADR-018). Up to about 4.5 ms early (e.g. `us=4500`) the frame is still in its own window with the right number: not detected until arrival times are checked (`docs/DEFERRED.md`) | duplex |
 | `jitter` (3000 us) | 106 | missing frames (some frames miss the 7 ms vote) | duplex |
 | `clockdrift` (+40 us/frame) | 144 | the command frame crosses the 7 ms vote deadline once the drift reaches about 1.7 ms: vote + digest | duplex |
 | `corrupt` at 1 frame in 3 (`period=3,duty=1`) | 112 | the leaky count ("intermittent fault"); 3-of-5 alone never fills | duplex |
@@ -295,7 +303,7 @@ A Safe request is *sticky*: it stays until an operator clears it (`clear_safe_re
 A node that latches is out of the vote, but it is not necessarily gone for good. The life cycle (ADR-010; state diagram
 in `docs/ARCHITECTURE.md`) is **Healthy → Latched → Probation → Healthy**, or **→ Disabled**:
 
-1. **Latched:** excluded from the vote; a *strike* is counted against it. It must wait out a **dwell** of 200 frames (2 s).
+1. **Latched:** excluded from the vote; a *strike* is counted against it. It must wait out a **dwell**: 50 frames (0.5 s) after a first, transient-looking latch (missing or damaged frames, one vote episode), 200 frames (2 s) after a digest mismatch, a stuck or intermittent node, and after every repeat latch.
 2. **Probation:** starts when the dwell is over *and* it is asked: by an operator command (default), or automatically
    with `--policy auto` for a first latch whose cause looks transient (missing/damaged frames or a vote episode; never a
    stuck sensor or digest mismatch, never a repeat offender). The node is still out of the vote, but every frame its data is
@@ -308,22 +316,31 @@ in `docs/ARCHITECTURE.md`) is **Healthy → Latched → Probation → Healthy**,
 | Setting | Default | Meaning |
 |---|---|---|
 | `policy` | Manual | Manual: only an operator command starts probation. AutoTransient: also automatic for a first, transient-looking latch |
-| `min_dwell_frames` | 200 | Minimum time latched before probation can start |
+| `min_dwell_frames` / `min_dwell_frames_transient` | 200 / 50 | Minimum time latched before probation can start; the shorter one applies to a first, transient-looking latch (it shortens the time the system runs with less redundancy; the node still has to pass the whole probation) |
+| `ground_auth`, `ground_key` | on, the public bench key | Require a valid tag and a fresh counter on ground frames (`ground_key` is replaced if it is all zeros) |
+| `command_window`, `arm_window_frames` | 32, 250 | How far ahead a command counter may be, and how long an ARM stays valid |
 | `probation_frames` / `probation_frames_repeat` | 100 / 300 | Agreeing frames needed after the first / a repeat latch |
 | `max_strikes` / `max_strikes_physical` | 3 / 2 | Latches before the node is disabled; for a physical cause (`physical_causes`, default stuck sensor or intermittent fault) |
 | `strike_window_frames` | 0 (whole run) | Strikes older than this are forgotten; 0 = never |
 | `auto_eligible_causes`, `auto_max_attempts` | frame problems + vote; 3 | Which causes the auto policy may readmit, and failed probations tolerated |
 
-**Operator commands** (`--command FRAME:OP[:NODE]` or `tfc_peers command OP [NODE]`) and their outcomes:
+### Operator commands: authentication, ARM and the interlock
+Commands are ground-command frames (`0x510`, ADR-019): `opcode (+ ARM flag) | node | 32-bit SipHash-2-4 tag | counter | CRC-8`.
+A frame with a wrong tag, or a counter that is not 1 to 32 ahead of the last accepted one (a replay), is dropped and counted
+(`commands_unauthentic`, `commands_replayed`) with no trace on the bus. Accepted commands are answered with `accepted`, `already done`
+(idempotent repeat) or `refused: <reason>`. Use `--command FRAME:OP[:NODE]` (scripted) or `tfc_peers command OP [NODE]` (live):
 
 | Command | Effect | Refused when |
 |---|---|---|
-| `reintegrate B` | Queue probation for latched node B (starts after its dwell) | B is healthy (`not latched`) or disabled |
-| `disable B` | Exclude B for the rest of the run | (always applies; `already done` if disabled) |
-| `clear-disabled B` | Maintenance: disabled → latched, strikes cleared | B is not disabled |
-| `clear-safe` | Lift a sticky Safe request | (`already done` if none) |
+| `reintegrate B` | Queue probation for latched node B (starts after its dwell). Never needs an ARM: the shadow vote is its check | B is healthy (`not latched`) or disabled |
+| `disable B` | Exclude B for the rest of the run. **Plain** while it leaves at least two healthy nodes (Triplex to Duplex) or if B is not voting; **needs an ARM** to leave one voter (Duplex to Simplex); removing the **last voter** needs an ARM and is reported `CRITICAL` | `needs an ARM frame first` |
+| `clear-disabled B` | Maintenance: disabled → latched, strikes cleared. **Always needs an ARM** | B is not disabled; no ARM |
+| `clear-safe` | Lift a sticky Safe request. **Always needs an ARM** | (`already done` if none); no ARM |
 
-Outcomes: `accepted`, `already done` (idempotent repeat), or `refused: <reason>`; the flight computer reports each one.
+An **ARM** is the same frame with bit 7 of the opcode set; the matching EXECUTE must follow within 250 frames, one ARM covers one
+EXECUTE of one operation and node, and an ARM that is not followed expires (`arms_expired`). In a script, `armed-OP` does both
+(`600:armed-clear-safe`); live, `tfc_peers command clear-safe --arm`. The interlock exists so one corrupted frame, one replay or one
+script slip cannot remove redundancy, while an operator who knows a node is bad (the case Duplex cannot decide by itself) still can.
 
 **Try it offline** (real output, `--frames 700`; the fault ends at frame 130, so the node is healthy again but stays out until asked):
 ```bash
@@ -346,15 +363,16 @@ frame 800: node B on probation (shadow vote against the healthy nodes)
 frame 801: node B FAILED probation, back to latched: vote disagreement
 mode=duplex   state.B=latched   strikes.B=1   probation_failures=2
 ```
-**A repeat offender is disabled** (three fault windows, `reintegrate` after the first two, a third after the node is back):
+**A repeat offender is disabled** (three fault windows at 100, 600 and 1200, `reintegrate` at 450, 700 and 1300):
 ```
-frame 102: node B latched (strike 1)  -> 450 command accepted -> 550 REINTEGRATED
+frame 102: node B latched (strike 1)  -> 450 command accepted, on probation at once -> 550 REINTEGRATED
 frame 602: node B latched (strike 2)  -> 700 command queued (dwell ends 802) -> 802 on probation -> 1102 REINTEGRATED (300 frames)
 frame 1202: node B DISABLED for the run (strikes: 3)
 frame 1300: ground command reintegrate B: refused: node is disabled
 mode=duplex   state.B=disabled   strikes.B=3
 ```
-**Automatic policy** (`--policy auto`, `B:dropout:start=100,end=120`, no command): latched 102, on probation 302, REINTEGRATED 402,
+(The first dwell is the short one, 50 frames, so the command at 450 finds it already served; the second latch is a repeat and waits the full 200.)
+**Automatic policy** (`--policy auto`, `B:dropout:start=100,end=120`, no command): latched 102, on probation 152, REINTEGRATED 252,
 `mode=triplex`. The same run without `--policy auto` leaves B latched for ever.
 
 **Live:** the same `--command` works with `run --follow-sync`, and FC-A prints `GROUND COMMAND`, `ON PROBATION`,
@@ -369,7 +387,7 @@ Every 10 ms major frame, each simulated node sends three frames (CAN IDs from `c
 | `0x010` | SYNC (sent by the sync master, FC-A; the peers only *listen* for it) | 0.0 ms | frame number (u32, little endian), 2 reserved bytes |
 | `0x100+n` | GYRO | 1.5 ms + 0.2 ms x n | 3 x int16, 0.125 dps per count |
 | `0x110+n` | ACCEL | 2.3 ms + 0.2 ms x n | 3 x int16, 1/2048 g per count |
-| `0x510` | GROUND (operator command; sent only by `--command` / `tfc_peers command`) | 6.5 ms in the frame it is scripted for | opcode (1 reintegrate, 2 disable, 3 clear-disabled, 4 clear-safe), node, 4 reserved bytes |
+| `0x510` | GROUND (operator command; sent only by `--command` / `tfc_peers command`) | 6.5 ms in the frame it is scripted for | opcode (1 reintegrate, 2 disable, 3 clear-disabled, 4 clear-safe; +0x80 = ARM), node, 32-bit SipHash tag, command counter |
 | `0x200+n` | CMD (command + digest) | 5.0 ms + 0.3 ms x n | pitch int16 and yaw int16 (0.001 deg per count), digest u16 |
 
 `n` is the node number: A=0, B=1, C=2. The sequence number counts frames (wraps at 256). FC-A itself sends its
@@ -432,6 +450,8 @@ bad sample, not two; ADR-007), `vote disagreement`, `digest mismatch`, `stuck se
 | `held_frames` | Frames in which some output channel held its last good value (unresolved, no majority, no data, or Safe requested) |
 | `safe_request_frames` | Frames spent with the (sticky) Safe request raised |
 | `bus_alarm_frames` | Frames with the out-of-schedule flood alarm raised |
+| `commands_unauthentic`, `commands_replayed` | Ground frames dropped because their tag did not verify, or because their counter was a repeat or too old (a replay); neither leaves a trace on the bus or reaches the command queue (ADR-019) |
+| `arms_expired`, `critical_commands` | ARM frames never followed by their EXECUTE in time; commands that removed the last voting node (`--verbose` prints `*** CRITICAL ***`) |
 | `integrity_faults`, `invariant_violations` | Upsets found and repaired in the manager's own state (node states, Safe flag, configuration, command queue), and internal invariants that did not hold. Both are 0 in any normal run; `--verbose` prints `INTEGRITY FAULT` when one happens (ADR-015) |
 
 ## Live CAN in depth
@@ -499,12 +519,13 @@ timing are desktop-Linux numbers. Treat them as "good enough for logic", never a
 FC-A prints each step of the life cycle (real output of `--fault B:bias:start=300,end=330 --command 450:reintegrate:B`):
 ```
 [frame 302] node B LATCHED OUT: vote disagreement
+[frame 302] MODE TRIPLEX -> DUPLEX
 [frame 450] GROUND COMMAND reintegrate B: accepted
-[frame 502] node B ON PROBATION: shadow vote against the healthy nodes (strikes: 1)
-[frame 602] node B REINTEGRATED into the vote (strikes on record: 1)
-[frame 602] MODE DUPLEX -> TRIPLEX
+[frame 450] node B ON PROBATION: shadow vote against the healthy nodes (strikes: 1)
+[frame 550] node B REINTEGRATED into the vote (strikes on record: 1)
+[frame 550] MODE DUPLEX -> TRIPLEX
 ```
-The command at 450 was accepted but queued: the dwell (302 + 200) ends at 502. In the status line `p` means on probation and `D`
+The command at 450 was accepted and acted on at once: the dwell after a first transient latch is 50 frames (302 + 50 = 352), long over. In the status line `p` means on probation and `D`
 disabled. To send a command at an arbitrary moment instead of a scripted frame: `python3 -m tfc_peers command reintegrate B`.
 
 ### Typical sessions
@@ -584,7 +605,7 @@ nodes) and a seed; an *oracle* is a property checked on the per-frame CSV from `
 cmake -S .. -B ../build/rel -DCMAKE_BUILD_TYPE=Release && cmake --build ../build/rel --target tfc_replay
 export TFC_REPLAY_BIN=$PWD/../build/rel/tfc_replay
 python3 -m campaign.run --list                                   # the groups and their sizes
-python3 -m campaign.run --out /tmp/campaign.jsonl                # everything (about 10,700 scenarios, 2 minutes on 12 cores)
+python3 -m campaign.run --out /tmp/campaign.jsonl                # everything (about 11,300 scenarios, 2 minutes on 12 cores)
 python3 -m campaign.run --group bias_gyro --group phase_sweep    # only some groups (repeatable); --limit N for a quick look
 python3 -m campaign.report /tmp/campaign.jsonl bias_gyro drift   # the Markdown tables of docs/FAULT_CAMPAIGN.md, plus response curves
 python3 -m campaign.mutate                                       # does the campaign notice deliberate bugs in core/? (about 90 minutes)
@@ -599,7 +620,7 @@ python3 -m campaign.mutate                                       # does the camp
 | `--strict` | Exit status 1 if any anomaly was raised (CI uses this). Without it the status is 0 and the anomalies are only printed and stored. |
 
 With `--strict` the exit status is 1 if any scenario raised an anomaly. Two further tools prove the *tests* can fail:
-`python3 tools/mutation/run_unit.py` (49 deliberate bugs in `core/`, each must be caught by the C++ tests) and
+`python3 tools/mutation/run_unit.py` (72 deliberate bugs in `core/`, each must be caught by the C++ tests) and
 `python3 -m campaign.mutate` (the same bugs against this campaign). The decision hash in the results makes a refactor
 provable: run the campaign before and after, and the hashes of every scenario must be identical.
 
@@ -651,7 +672,8 @@ going backwards needs `reset()`.
   must be re-tuned from measurements on the rig. Sparse trouble (one bad frame in 5 or fewer) is deliberately left alone.
 - **Total loss is recoverable, with at least two candidates** (ADR-014): when no node is healthy the probationers judge each other,
   which needs two of them to agree. A single surviving candidate has no reference and waits; that case needs a restart.
-- **No authentication** on ground commands (any node on the bus could send one): fine for a bench, not for a flight uplink.
+- **Ground-command security is bench-grade** (ADR-019): the default key is the public SipHash test key, there is no key provisioning, the tag comparison is not constant-time and the uplink itself is not modelled; fine for a bench, not for a flight uplink (`docs/DEFERRED.md`).
+- **A frame a few milliseconds early inside its own window is not seen**: frames carry SYNC's frame number, so whole-frame phase errors are, but the arrival-time check against the slot is deferred until the board exists (`docs/DEFERRED.md`).
 - **Bus effects:** arbitration, bus load, babbling's real harm, bus-off and wiring faults need hardware.
 - **FC-A only:** the firmware implements node A, the sync master. Firmware for B and C and sync-master takeover
   (F15) are not built; until then B and C are always the virtual peers.

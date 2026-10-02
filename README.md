@@ -7,10 +7,10 @@ A desk-scale fault-tolerant flight computer: three redundant STM32 flight comput
 | Area | Status |
 |---|---|
 | Architecture / requirements / fault matrix | Draft v0.1, in `docs/` |
-| `core/` voter, FDIR, protocol, `RedundancyManager` (C++17, header-only, no heap) | Done: 150 host tests under ASan+UBSan, 100% line / 98.9% branch coverage, 49 deliberate bugs all caught, strict warning gate and the flight-code standard enforced ([CODING_STANDARD](docs/CODING_STANDARD.md)) |
+| `core/` voter, FDIR, protocol, `RedundancyManager` (C++17, header-only, no heap) | Done: 178 host tests under ASan+UBSan, 100% line / 98.6% branch coverage, 72 deliberate bugs all caught, strict warning gate and the flight-code standard enforced ([CODING_STANDARD](docs/CODING_STANDARD.md)) |
 | Firmware (Zephyr, Nucleo-G474RE) | FC-A (sync master) runs the 100 Hz loop on `native_sim` against virtual peers on `vcan0`; builds for `nucleo_g474re` (not run on hardware); see [firmware/README.md](firmware/README.md) |
 | Virtual peers (S1b): fake FC-B/C with 32 kinds of fault injection, replayed through `core/` | Done (host and vcan); see [sim/README.md](sim/README.md) |
-| Fault campaign: every fault kind over its input range, safety properties checked on every frame | 10,713 scenarios, 4.5 million frames, no property violated; edge cases found and fixed: [FAULT_CAMPAIGN](docs/FAULT_CAMPAIGN.md), failure-mode analysis: [FMEA](docs/FMEA.md) |
+| Fault campaign: every fault kind over its input range, safety properties checked on every frame | 11,263 scenarios, 4.7 million frames, no property violated; edge cases found and fixed: [FAULT_CAMPAIGN](docs/FAULT_CAMPAIGN.md), failure-mode analysis: [FMEA](docs/FMEA.md) |
 | Simulator + motion platform | Not started |
 | Hardware fault campaign | Not started |
 

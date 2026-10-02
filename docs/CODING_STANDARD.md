@@ -13,7 +13,7 @@
 |---|---|---|---|
 | 1 | Simple control flow: no `goto`, `setjmp`/`longjmp`, no recursion | None used. The deepest call chain is `end_frame` -> `advance_life_cycle` -> `judge_probation` -> `cohort_verdict`; every function is non-recursive and stack use is static | clang-tidy `misc-no-recursion`, `cppcoreguidelines-avoid-goto`; `tools/check_standard.py`; GCC `-Wstack-usage=2048` (every function) and `-fstack-usage` (reports `static`) |
 | 2 | Every loop has a fixed upper bound | Every loop is a `for` over a compile-time constant: nodes (3), streams (3), vote channels (8), command queue (4), bits (16/32), or the caller's buffer size. There is no `while` and no `do` in the core | `tools/check_standard.py` rejects `while`/`do`; `bugprone-infinite-loop` |
-| 3 | No dynamic memory after initialisation | No heap at all: no `new`, `malloc`, containers or strings. All state lives inside the `RedundancyManager` object (876 bytes) | `tools/check_standard.py`; `tools/check_elf.sh` scans the ARM binary for `malloc`, `operator new`, exception, RTTI and vtable symbols; the firmware sets `CONFIG_COMMON_LIBC_MALLOC=n`, so an accidental use is a *link error* |
+| 3 | No dynamic memory after initialisation | No heap at all: no `new`, `malloc`, containers or strings. All state lives inside the `RedundancyManager` object (1,080 bytes) | `tools/check_standard.py`; `tools/check_elf.sh` scans the ARM binary for `malloc`, `operator new`, exception, RTTI and vtable symbols; the firmware sets `CONFIG_COMMON_LIBC_MALLOC=n`, so an accidental use is a *link error* |
 | 4 | No function longer than about 60 lines | The longest core function is under 60 lines. `vote3` and `judge_nodes`, which were not, were split | clang-tidy `readability-function-size` (60 lines, 80 statements, 20 branches, 4 nesting, 6 parameters) and `readability-function-cognitive-complexity` (25), as errors |
 | 5 | At least two assertions per function on average | **Partly met, by design**: see section 4. Runtime invariants are checked where a corrupted value or a coding error would change a *safety decision*: configuration on entry (`validate_config`), node states, the Safe flag, the configuration copy and the command-queue length every frame (`scrub`), every external frame (`decode`: length, CRC), every public node index. Compile-time: four `static_assert`s on the table sizes. None aborts: a failure is counted, repaired on the safe side, and reported (`ensure`, `integrity_faults`) | unit tests that inject each upset (`seu_*`, `config_*`); mutation testing removes each check and the tests notice |
 | 6 | Declare data at the smallest scope | No namespace-scope variables: the compiled core has no writable data or bss symbol of its own | `tools/check_standard.py` compiles the core and fails on any `b`/`d` symbol; `-Wshadow` |
@@ -30,7 +30,7 @@
 | **Fail to the safe side** | Every unresolved doubt resolves to "exclude the node", "hold the last good value" or "request Safe", never to "trust it". A Safe flag or node state that fails its integrity check reads as the restrictive value | `seu_*` tests; fuzz invariants I1-I8 |
 | **Validate at the boundary** | Frames: length, CRC, sequence. Configuration: every field range-checked and replaced by its default if invalid, and the fact reported. Faults for the test rig: every parameter validated | `decoders_reject_every_malformed_frame`, `config_every_invalid_field_*`, `tests/test_faults_fmea.py` |
 | **Protect critical state against upsets (SEU)** | Node states and the Safe flag are stored with their bitwise complement; the configuration is stored twice with a checksum; all are scrubbed at the start of every frame. An upset is repaired on the safe side, counted and reported (ADR-015) | `seu_*` tests; mutants `scrub_ignores_*` |
-| **Bounded, measured cost** | One frame of the manager costs about 0.4 us on a desktop CPU (section 5); worst-case on the target is to be measured with the cycle counter (milestone M2) | `tools/bench/bench_end_frame.cpp` |
+| **Bounded, measured cost** | One frame of the manager costs about 0.5 us on a desktop CPU (section 5); worst-case on the target is to be measured with the cycle counter (milestone M2) | `tools/bench/bench_end_frame.cpp` |
 | **Single thread, no shared state** | The core is a plain object driven from one task; there are no atomics, locks or callbacks | by construction |
 | **Traceability** | Every requirement maps to a test or a measurement (`docs/REQUIREMENTS.md`); every fault to a matrix row (`docs/FAULT_MATRIX.md`); every design decision to an ADR (`docs/DECISIONS.md`) | `TFC-SW-005` |
 
@@ -44,8 +44,8 @@
 | Mechanical rules | No `goto`/`while`/heap/macros/exceptions/RTTI/globals in the core | `python3 tools/check_standard.py` | every PR |
 | Target binary scan | The ARM binary has no heap, exception, RTTI or vtable symbols | `tools/check_elf.sh build/nucleo_g474re/zephyr/zephyr.elf` | every PR |
 | Structural coverage | Which lines and branches of the core the tests execute | `python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98` | every PR |
-| Fault campaign | Safety properties on every frame of 10,713 scenarios covering all 32 fault kinds | `python3 -m campaign.run --strict` | every PR |
-| Mutation: unit tests | 49 deliberate bugs in the core; every one must be caught by the C++ tests | `python3 tools/mutation/run_unit.py` | weekly |
+| Fault campaign | Safety properties on every frame of 11,263 scenarios covering all 32 fault kinds | `python3 -m campaign.run --strict` | every PR |
+| Mutation: unit tests | 72 deliberate bugs in the core; every one must be caught by the C++ tests | `python3 tools/mutation/run_unit.py` | weekly |
 | Mutation: campaign | The same bugs against the campaign's oracles | `python3 -m campaign.mutate` | weekly |
 
 Mutation testing is the check on the checks: a test suite that cannot tell a deliberately broken core from the real one is not
@@ -59,7 +59,7 @@ bus-alarm boundary nobody had tested), each now closed.
 | 5 (two assertions per function) | Assertions are placed at safety-decision points, not in every function | A check that cannot fail in any reachable state is dead code, and dead code cannot be covered or mutation-tested. Many functions here are pure and total (every input maps to an output) | checks at every external boundary; a periodic scrub of the state that matters; `static_assert` for the tables |
 | 1 / 3 (stack, heap) | `std::array`, `<cmath>` and `<cstring>` come from the C++ library | They are header-only use of fixed-size types and `memcpy`/`fabs`, with no allocation | the ELF scan proves no heap or exception machinery is linked |
 | 9 (pointers) | `crc8`, `fnv1a`, `format_reasons` and the payload `memcpy` take pointers | They are the interfaces of byte-oriented operations | each takes its length; covered by the fuzz and decoder tests |
-| Branch coverage 100% | Line coverage is 100%; branch coverage is 98.9% (700 of 708 compiler branches) | The eight untaken branches are sub-conditions of compound tests that cannot be separated (for example `i < npending_ && i < kMaxCommandsPerFrame`, whose second half is a guard that `scrub` makes redundant) and the compiler's own short-circuit edges; each is listed by `core_coverage.py --list` | the gate is set at the measured value and may only rise |
+| Branch coverage 100% | Line coverage is 100%; branch coverage is 98.6% (823 of 835 compiler branches) | The twelve untaken branches are sub-conditions of compound tests that cannot be separated (for example `i < npending_ && i < kMaxCommandsPerFrame`, whose second half is a guard that `scrub` makes redundant) and the compiler's own short-circuit edges; each is listed by `core_coverage.py --list` | the gate is set at the measured value and may only rise |
 | Worst-case execution time | Measured on the host only | The target is not here yet | `tools/bench` runs on the board in milestone M2 using the DWT cycle counter |
 
 ## 5. Measured cost
@@ -68,17 +68,16 @@ Host (desktop CPU, `-O2`, 400,000 frames each; 9 `on_frame` calls plus `end_fram
 
 | Case | median | p99 | p99.9 |
 |---|---|---|---|
-| healthy triplex | 0.39 us | 0.41 us | 0.44 us |
-| node biased, latched (duplex) | 0.37 us | 0.38 us | 0.41 us |
-| node silent (duplex) | 0.33 us | 0.35 us | 0.36 us |
+| healthy triplex | 0.50 us | 0.80 us | 1.02 us |
+| node biased, latched (duplex) | 0.47 us | 0.58 us | 0.88 us |
+| node silent (duplex) | 0.43 us | 0.45 us | 0.72 us |
 
 The worst single sample in each run is 17-47 us and is the operating system preempting the benchmark, not the code: there is
 no allocation, no loop over unbounded data and no I/O in the path. A frame is 10,000,000 ns.
 
-Object sizes: `RedundancyManager` 876 bytes, `FrameReport` 148, `RedundancyConfig` 76, `Counters` 84.
-Cortex-M4F (`-Os`, `arm-zephyr-eabi-g++`): the deepest function uses 200 bytes of stack (`scrub`), the `end_frame` chain
-well under 500 bytes in total, all statically known (`-fstack-usage` reports `static`); the whole core is about 7 KB of
-code. The full firmware for the Nucleo-G474RE is 44.4 KB of its 512 KB flash and 6.3 KB (6,464 bytes) of its 128 KB RAM.
+Object sizes: `RedundancyManager` 1,080 bytes, `FrameReport` 152, `RedundancyConfig` 100, `Counters` 100.
+Cortex-M4F (`-Os`, `arm-zephyr-eabi-g++`): the deepest function uses 120 bytes of stack (`sanitize_config`, at construction only; on the per-frame path SipHash, run only for a ground frame, uses 96), all statically known (`-fstack-usage` reports `static`); the whole core is about 9 KB of
+code. The full firmware for the Nucleo-G474RE is 46.5 KB of its 512 KB flash and 6.3 KB (6,464 bytes) of its 128 KB RAM.
 
 These are *host* and *size* figures. A desktop executes this code perhaps a hundred times faster than a 170 MHz Cortex-M4,
 so the estimate on the target is in the tens of microseconds, a fraction of a percent of the 10 ms frame, to be confirmed
