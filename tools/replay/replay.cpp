@@ -2,7 +2,7 @@
 // tfc_replay: feed recorded flight-bus traffic (candump -L format) through the real core/
 // code the way a flight computer would, and report what its FDIR decided.
 //
-//   tfc_replay LOG [--t0 SECONDS] [--vote-us MICROSECONDS] [--policy manual|auto] [--verbose]
+//   tfc_replay LOG [--t0 SECONDS] [--vote-us MICROSECONDS] [--policy manual|auto] [--verbose] [--dump CSV]
 //              [--expect-latch NODE:FRAME | NODE:MIN-MAX] [--expect-no-latch NODE]
 //              [--expect-state NODE:healthy|latched|probation|disabled]
 //              [--expect-mode triplex|duplex|simplex|safe] [--expect-min STAT:N]
@@ -123,7 +123,7 @@ bool parse_node(const std::string& s, unsigned& node) {
 
 int usage() {
   (void)std::fprintf(stderr,
-               "usage: tfc_replay LOG [--t0 SECONDS] [--vote-us US] [--policy manual|auto] [--verbose]\n"
+               "usage: tfc_replay LOG [--t0 SECONDS] [--vote-us US] [--policy manual|auto] [--verbose] [--dump CSV]\n"
                "                      [--expect-latch NODE:FRAME|NODE:MIN-MAX]\n"
                "                      [--expect-no-latch NODE] [--expect-state NODE:STATE] [--expect-mode MODE]\n"
                "                      [--expect-min STAT:N]\n");
@@ -140,6 +140,7 @@ int main(int argc, char** argv) {
   bool verbose = false;
   uint64_t t0_us = 0;
   uint64_t vote_us = kDefaultVoteUs;
+  std::string dump_path;
   tfc::RedundancyConfig cfg;
   Expect ex;
   for (int i = 2; i < argc; ++i) {
@@ -154,6 +155,8 @@ int main(int argc, char** argv) {
       if (vote_us == 0U || vote_us > kFrameUs) {
         return usage();
       }
+    } else if (a == "--dump" && has_val) {
+      dump_path = argv[++i];
     } else if (a == "--policy" && has_val) {
       const std::string v = argv[++i];
       if (v == "auto") {
@@ -235,6 +238,19 @@ int main(int argc, char** argv) {
     return 2;
   }
 
+  // Optional per-frame CSV for offline analysis (the fault campaign checks safety properties on it).
+  std::FILE* dump = nullptr;
+  if (!dump_path.empty()) {
+    dump = std::fopen(dump_path.c_str(), "w");
+    if (dump == nullptr) {
+      (void)std::fprintf(stderr, "tfc_replay: cannot write %s\n", dump_path.c_str());
+      return 2;
+    }
+    (void)std::fprintf(dump,
+                       "frame,mode,healthy,valid,latched,probation,disabled,safe,alarm,held,unresolved,newly_latched,"
+                       "newly_started,newly_readmitted,newly_disabled,probation_failed,integrity,reason_a,reason_b,reason_c,out0,out1,out2,out3,out4,out5,out6,out7\n");
+  }
+
   // ---- feed the log to the redundancy manager, one 10 ms frame at a time ----
   tfc::RedundancyManager mgr(cfg);
   std::array<long, tfc::kNodes> latch_frame{-1, -1, -1};
@@ -260,8 +276,28 @@ int main(int argc, char** argv) {
                     rep.bus_alarm ? "raised" : "cleared", static_cast<unsigned>(rep.out_of_schedule_in_frame));
       }
     }
+    if (verbose && rep.integrity_mask != 0U) {
+      std::printf("frame %zu: INTEGRITY FAULT repaired (mask %u: 1 node state, 2 Safe flag, 4 configuration, 8 invariant)\n", k,
+                  static_cast<unsigned>(rep.integrity_mask));
+    }
     prev_safe_request = rep.safe_request;
     prev_bus_alarm = rep.bus_alarm;
+    if (dump != nullptr) {
+      (void)std::fprintf(dump, "%zu,%u,%u,%u,%u,%u,%u,%d,%d,%u,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u", k, static_cast<unsigned>(rep.mode),
+                         rep.healthy, static_cast<unsigned>(rep.valid_mask), static_cast<unsigned>(rep.latched_mask),
+                         static_cast<unsigned>(rep.probation_mask), static_cast<unsigned>(rep.disabled_mask),
+                         rep.safe_request ? 1 : 0, rep.bus_alarm ? 1 : 0, static_cast<unsigned>(rep.held_mask),
+                         rep.unresolved ? 1 : 0, static_cast<unsigned>(rep.newly_latched),
+                         static_cast<unsigned>(rep.probation_started), static_cast<unsigned>(rep.newly_reintegrated),
+                         static_cast<unsigned>(rep.newly_disabled), static_cast<unsigned>(rep.probation_failed),
+                         static_cast<unsigned>(rep.integrity_mask),
+                         static_cast<unsigned>(rep.reason[0]), static_cast<unsigned>(rep.reason[1]),
+                         static_cast<unsigned>(rep.reason[2]));
+      for (unsigned ch = 0; ch < tfc::kVoteChannels; ++ch) {
+        (void)std::fprintf(dump, ",%.6f", static_cast<double>(rep.output[ch]));
+      }
+      (void)std::fprintf(dump, "\n");
+    }
     if (verbose) {
       for (unsigned i = 0; i < rep.command_count; ++i) {
         std::printf("frame %zu: ground command %s %c: %s\n", k, tfc::op_text(rep.commands[i].op),
@@ -299,6 +335,9 @@ int main(int argc, char** argv) {
     }
   }
 
+  if (dump != nullptr) {
+    (void)std::fclose(dump);
+  }
   const tfc::Counters& c = mgr.counters();
   std::printf("frames=%zu\n", frames.size());
   for (unsigned n = 0; n < tfc::kNodes; ++n) {
@@ -330,7 +369,9 @@ int main(int argc, char** argv) {
                                                    {"nodes_disabled", c.nodes_disabled},
                                                    {"commands_accepted", c.commands_accepted},
                                                    {"commands_refused", c.commands_refused},
-                                                   {"commands_bad", c.commands_bad}};
+                                                   {"commands_bad", c.commands_bad},
+                                                   {"integrity_faults", c.integrity_faults},
+                                                   {"invariant_violations", c.invariant_violations}};
   for (const auto& kv : stats) {
     std::printf("%s=%lu\n", kv.first.c_str(), kv.second);
   }

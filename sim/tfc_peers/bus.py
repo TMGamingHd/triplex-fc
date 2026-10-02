@@ -102,12 +102,12 @@ class SocketCanBus:
 
 def record(scenario: Scenario, bus: Bus, frames: int) -> int:
     """Generate `frames` major frames into `bus` with virtual time (no sleeping). Returns count sent."""
-    n = 0
-    for k in range(frames):
-        for tf in scenario.frames(k):
-            bus.send(tf.t_us, tf.frame)
-            n += 1
-    return n
+    end_us = frames * FRAME_US
+    timed = [tf for k in range(frames) for tf in scenario.frames(k) if tf.t_us < end_us]  # the recording stops at the end
+    timed.sort(key=lambda tf: tf.t_us)  # timing faults (early, clock drift) cross frame boundaries; a log is time-ordered
+    for tf in timed:
+        bus.send(tf.t_us, tf.frame)
+    return len(timed)
 
 
 def _wait_until(deadline_ns: int) -> None:
