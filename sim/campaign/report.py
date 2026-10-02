@@ -23,7 +23,7 @@ SINGLE = ["dropout", "stuck", "bias_gyro", "bias_accel", "drift", "spike", "satu
           "seqgap", "reboot", "late", "scale", "noise", "invert", "swap", "zero", "clip", "oscillate", "repeat", "bitflip", "stuckbit",
           "cmdstuck", "cmdinvert", "partial", "duplicate", "replay", "seqstuck", "early", "jitter", "clockdrift"]
 MULTI = ["pairs", "new_pairs", "correlated", "cascades", "contexts", "startup_edges", "intermittent", "new_intermittent", "corrupt_periodic",
-         "commands_transient", "commands_persistent", "commands_strikes", "commands_misc", "recovery_edges", "total_loss", "long_run"]
+         "commands_transient", "commands_persistent", "commands_strikes", "commands_misc", "ground_security", "recovery_edges", "total_loss", "duplex_boundary", "long_run"]
 
 
 def load(path: str) -> list[dict]:

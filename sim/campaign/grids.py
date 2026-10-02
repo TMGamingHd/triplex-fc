@@ -187,11 +187,21 @@ def babble() -> list[Scenario]:
 
 
 def seqgap() -> list[Scenario]:
+    """Frames carry the number of the SYNC frame they belong to (ADR-018): a node whose number is wrong is a node out of phase."""
     out = []
     for n, start, gap in itertools.product(range(3), (0, 100), (0, 1, 2, 3, 10, 100, 255, 256, 257, 511)):
-        eff = gap % 256 != 0 and start > 0  # at frame 0 there is no previous frame to disagree with
-        out.append(_sc("seqgap", [f"{N[n]}:seqgap:start={start},gap={gap}"], "ignore", frames=FRAMES,
-                       tag=dict(node=N[n], gap=gap, seq_bad_expected=3 if eff else 0)))
+        eff = gap % 256 != 0
+        # a number that stays wrong: isolated within 3 frames (a no-op offset, a multiple of 256, is the right number)
+        out.append(_sc("seqgap", [f"{N[n]}:seqgap:start={start},gap={gap}"], "detect" if eff else "ignore", 3, frames=FRAMES,
+                       tag=dict(node=N[n], gap=gap, persistent=True)))
+        # one frame with a wrong number: tolerated (3-of-5), seen once on each of the node's three streams
+        # (at frame 0 a number one behind cannot be told from a late frame of a cycle that never existed: nothing to contradict it)
+        seen = eff and not (start == 0 and gap % 256 == 255)
+        out.append(_sc("seqgap", [f"{N[n]}:seqgap:start={start},end={start + 1},gap={gap}"], "ignore", frames=FRAMES,
+                       tag=dict(node=N[n], gap=gap, seq_bad_expected=3 if seen else 0)))
+    for n in range(3):  # a damaged frame fills its slot: the clean copy of it that turns up a cycle later is a repeat, not a late frame
+        out.append(_sc("seqgap", [f"{N[n]}:corrupt:start=100,end=101,p=1.0", f"{N[n]}:replay:start=101,end=102,age=1"], "ignore", frames=FRAMES,
+                       tag=dict(node=N[n], kind="damaged-then-stale", seq_bad_expected=3)))
     return out
 
 
@@ -199,9 +209,13 @@ def reboot() -> list[Scenario]:
     out = []
     for n, down in itertools.product(range(3), (1, 2, 3, 4, 5, 10, 20, 31, 32, 33, 34, 40, 50, 100, 300)):
         for ctx in _ctxs(n):
-            exp = "detect" if down >= 3 else ("gray" if down == 2 else "ignore")
+            # a node that resyncs from SYNC comes back in phase: only the missing frames count (3-of-5 needs three of them)
+            exp = "detect" if down >= 3 else "ignore"
             out.append(_sc("reboot", [f"{N[n]}:reboot:start=100,down={down}"], _dx(exp, ctx), 2, context=ctx, frames=FRAMES,
-                           tag=dict(node=N[n], down=down)))
+                           tag=dict(node=N[n], down=down, resync=1)))
+            # a node that does not resync restarts its frame number at 0: every frame is the wrong frame, for good
+            out.append(_sc("reboot", [f"{N[n]}:reboot:start=100,down={down},resync=0"], _dx("detect", ctx), 3 if down < 3 else 2, context=ctx,
+                           frames=FRAMES, tag=dict(node=N[n], down=down, resync=0)))
     return out
 
 
@@ -242,11 +256,12 @@ def intermittent() -> list[Scenario]:
 
 # ------------------------------------------------------------------ recovery, commands, interactions
 def commands_transient() -> list[Scenario]:
-    """A 30-frame bias on a node, then `reintegrate` at many moments. Latched at 102; dwell ends 302."""
+    """A 30-frame bias on a node, then `reintegrate` at many moments. Latched at 102 by the vote (a transient-looking cause): the dwell is
+    50 frames and ends at 152."""
     out = []
     for n, at in itertools.product(range(3), (0, 50, 101, 102, 103, 105, 150, 250, 301, 302, 303, 350, 400, 600)):
         spec = f"{N[n]}:bias:start=100,end=130"
-        latch, dwell_end = 102, 302
+        latch, dwell_end = 102, 152
         if at <= latch:
             readmit = None  # the node is not latched yet: the command is refused and nothing else asks
         else:
@@ -286,9 +301,9 @@ def commands_strikes() -> list[Scenario]:
         out.append(_sc("commands_strikes", [f"{nm}:corrupt:start=100,end=200,p=1.0,period=3,duty=1", f"{nm}:corrupt:start=600,p=1.0,period=3,duty=1"],
                        "any", commands=[f"450:reintegrate:{nm}"], frames=1000,
                        tag=dict(node=nm, final_state="disabled", strikes_expected=2, nodes_disabled_expected=1)))
-        # disable by operator, clear, then it can be readmitted through the normal path
-        out.append(_sc("commands_strikes", [], "any", commands=[f"50:disable:{nm}", f"100:clear-disabled:{nm}", f"110:reintegrate:{nm}"], frames=700,
-                       tag=dict(node=nm, final_state="healthy", strikes_expected=0, readmit_at=400)))  # clear at 100 + dwell 200 + probation 100
+        # disable by operator (Triplex -> Duplex: plain), clear (ARM at 100, EXECUTE at 102), then it can be readmitted through the normal path
+        out.append(_sc("commands_strikes", [], "any", commands=[f"50:disable:{nm}", f"100:armed-clear-disabled:{nm}", f"110:reintegrate:{nm}"], frames=700,
+                       tag=dict(node=nm, final_state="healthy", strikes_expected=0, readmit_at=402)))  # clear at 102 + dwell 200 + probation 100
     return out
 
 
@@ -296,14 +311,18 @@ def commands_misc() -> list[Scenario]:
     c = []
     A = lambda *cmds, **kw: c.append(_sc("commands_misc", list(kw.pop("faults", [])), "any", commands=list(cmds), frames=kw.pop("frames", 700), tag=kw))  # noqa: E731
     A("50:reintegrate:B", final_state="healthy", note="reintegrate a healthy node: refused")
-    A("50:disable:B", final_state="disabled", note="disable a healthy node")
+    A("50:disable:B", final_state="disabled", note="disable a healthy node in Triplex: plain")
     A("50:disable:B", "60:disable:B", final_state="disabled", note="disable twice")
     A("50:disable:B", "60:reintegrate:B", final_state="disabled", note="reintegrate a disabled node: refused")
-    A("50:disable:B", "60:clear-disabled:B", "70:reintegrate:B", final_state="healthy", note="disable, clear, reintegrate")
+    A("50:disable:B", "60:armed-clear-disabled:B", "70:reintegrate:B", final_state="healthy", note="disable, clear (armed), reintegrate")
+    A("50:disable:B", "60:clear-disabled:B", "70:reintegrate:B", final_state="disabled", commands_refused_min=2, note="clear-disabled without an ARM is refused")
     A("50:clear-disabled:B", final_state="healthy", note="clear a node that is not disabled: refused")
-    A("50:clear-safe", final_state="healthy", note="clear-safe with no Safe request")
-    A("0:disable:A", "0:disable:B", final_state="disabled", note="disable two nodes at frame 0")
-    A("50:disable:A", "50:disable:B", "50:disable:C", final_state="disabled", note="disable all three")
+    A("50:clear-safe", final_state="healthy", note="clear-safe with no Safe request: refused (no ARM)")
+    A("0:disable:A", "0:disable:B", final_state="healthy", commands_refused_min=1, note="the second plain disable would leave one voter: refused")
+    A("0:disable:A", "0:armed-disable:B", final_state="disabled", note="the same, armed")
+    A("50:disable:A", "50:disable:B", "50:disable:C", final_state="healthy", commands_refused_min=2, note="disable all three, plain: only the first gets through")
+    A("50:disable:A", "50:armed-disable:B", "60:armed-disable:C", final_state="disabled", critical_commands_expected=1,
+      note="disable all three, armed: the last voter is reported loudly")
     A("50:disable:B", "50:disable:B", final_state="disabled", note="same command twice in one frame")
     A("50:reintegrate:B", "50:disable:B", "50:reintegrate:B", final_state="disabled", note="command order inside one frame")
     A("100:reintegrate:B", faults=["B:dropout:start=100,end=120"], final_state="latched", note="command before the latch frame is refused; nobody asks again")
@@ -317,10 +336,47 @@ def commands_misc() -> list[Scenario]:
     for at in (302, 330, 400):
         A(f"{at}:disable:B", "310:reintegrate:B", faults=["B:bias:start=100,end=130"], frames=900, note="disable while latched / during probation")
     A("400:disable:B", "300:reintegrate:B", faults=["B:bias:start=100,end=130"], frames=900, note="disable while on probation", final_state="disabled")
-    A("350:clear-safe", faults=["C:dropout:start=5", "B:digest:start=100"], frames=700, note="clear-safe while the disagreement persists: re-raised")
-    A("250:clear-safe", faults=["C:dropout:start=5", "B:digest:start=100,end=200"], frames=700, note="clear-safe after the cause is gone")
+    A("350:armed-clear-safe", faults=["C:dropout:start=5", "B:digest:start=100"], frames=700, note="clear-safe while the disagreement persists: re-raised")
+    A("250:armed-clear-safe", faults=["C:dropout:start=5", "B:digest:start=100,end=200"], frames=700, note="clear-safe after the cause is gone")
+    A("250:clear-safe", faults=["C:dropout:start=5", "B:digest:start=100,end=200"], frames=700, final_mode="safe", note="the same without an ARM: stays Safe")
     A("1:clear-safe", "2:clear-safe", "3:clear-safe", note="clear-safe spam")
     return c
+
+
+def ground_security() -> list[Scenario]:
+    """Authentication, replay protection, ARM/EXECUTE and the interlock tiers (ADR-019), through the real core."""
+    out = []
+    for n in range(3):
+        nm, o, p = N[n], N[(n + 1) % 3], N[(n + 2) % 3]
+        # a frame with a wrong tag never acts, never reaches the queue, and never moves the counter
+        out.append(_sc("ground_security", [], "any", commands=[f"100:forged-disable:{nm}", "110:forged-armed-clear-safe", f"120:reintegrate:{o}"], frames=300,
+                       tag=dict(node=nm, final_state="healthy", commands_unauthentic_expected=3, commands_replayed_expected=0)))
+        # a replay is refused; the original acts once
+        out.append(_sc("ground_security", [], "any", commands=[f"100:disable:{nm}", "110:replay", "120:replay"], frames=300,
+                       tag=dict(node=nm, final_state="disabled", commands_replayed_expected=2, commands_accepted_expected=1)))
+        # ARM/EXECUTE mismatch (another node), expiry, and the one-shot nature of an ARM
+        out.append(_sc("ground_security", [], "any", commands=[f"50:disable:{nm}", f"100:arm-clear-disabled:{o}", f"101:clear-disabled:{nm}"], frames=300,
+                       tag=dict(node=nm, final_state="disabled", commands_refused_min=1)))
+        out.append(_sc("ground_security", [], "any", commands=[f"50:disable:{nm}", f"100:arm-clear-disabled:{nm}", f"400:clear-disabled:{nm}"], frames=600,
+                       tag=dict(node=nm, final_state="disabled", arms_expired_expected=1)))
+        out.append(_sc("ground_security", [], "any", commands=[f"50:disable:{nm}", f"100:arm-clear-disabled:{nm}", f"101:clear-disabled:{nm}", f"150:disable:{nm}",
+                                                              f"160:clear-disabled:{nm}"], frames=300,
+                       tag=dict(node=nm, final_state="disabled", commands_refused_min=1)))
+        # the ARM window to the frame: valid for 250 frames (an EXECUTE at +249 acts, at +250 the ARM has expired)
+        out.append(_sc("ground_security", [], "any", commands=[f"50:disable:{nm}", f"100:arm-clear-disabled:{nm}", f"349:clear-disabled:{nm}"], frames=400,
+                       tag=dict(node=nm, final_state="latched", arms_expired_expected=0)))
+        out.append(_sc("ground_security", [], "any", commands=[f"50:disable:{nm}", f"100:arm-clear-disabled:{nm}", f"350:clear-disabled:{nm}"], frames=400,
+                       tag=dict(node=nm, final_state="disabled", arms_expired_expected=1)))
+        # the interlock tiers: Duplex -> Simplex needs an ARM (the third node is dropped), the last voter needs one and is reported loudly
+        out.append(_sc("ground_security", [f"{p}:dropout:start=5"], "any", commands=[f"100:disable:{nm}"], frames=300,
+                       tag=dict(node=nm, final_state="healthy", final_mode="duplex", commands_refused_min=1)))
+        out.append(_sc("ground_security", [f"{p}:dropout:start=5"], "any", commands=[f"100:armed-disable:{nm}"], frames=300,
+                       tag=dict(node=nm, final_state="disabled", final_mode="simplex", critical_commands_expected=0)))
+        out.append(_sc("ground_security", [f"{o}:dropout:start=5", f"{p}:dropout:start=5"], "any", commands=[f"200:armed-disable:{nm}"], frames=400,
+                       tag=dict(node=nm, final_state="disabled", final_mode="safe", critical_commands_expected=1)))
+        out.append(_sc("ground_security", [f"{o}:dropout:start=5", f"{p}:dropout:start=5"], "any", commands=[f"200:disable:{nm}"], frames=400,
+                       tag=dict(node=nm, final_state="healthy", commands_refused_min=1, critical_commands_expected=0)))
+    return out
 
 
 def pairs() -> list[Scenario]:
@@ -482,7 +538,7 @@ def new_frame_faults() -> list[Scenario]:
     for mask in range(1, 8):
         out += _new_each_context("partial", lambda nd, m=mask: f"{nd}:partial:start=100,mask={m}", "detect", 6, mask=mask)
     for gap in (0, 1, 100, 300, 1000, 3000, 6000, 9000):
-        out += _new_each_context("duplicate", lambda nd, g=gap: f"{nd}:duplicate:start=100,gap_us={g}", "gray", None, duplex=False, gap=gap)
+        out += _new_each_context("duplicate", lambda nd, g=gap: f"{nd}:duplicate:start=100,gap_us={g}", "detect", 3, duplex=False, gap=gap)
     for age in (1, 2, 3, 5, 10, 50, 100, 255, 256, 257, 300):
         out += _new_each_context("replay", lambda nd, a=age: f"{nd}:replay:start=300,age={a}", "detect", 6, age=age)
     out += _new_each_context("seqstuck", lambda nd: f"{nd}:seqstuck:start=100", "detect", 6)
@@ -494,9 +550,10 @@ def new_timing_faults() -> list[Scenario]:
     for n in range(3):
         thr = 4500 + 200 * n  # the gyro frame crosses into the previous frame's window before its 7 ms vote
         for us in sorted({100, 500, 1000, 2000, 3000, 4000, thr - 1, thr, thr + 1, 6000, 8000, 9000}):
-            # Past `thr` the gyro/accel frames land in the previous frame's window: a stream that is consistently one frame
-            # ahead (contiguous counter, small data error). Whether that is caught is reported, not judged (FAULT_CAMPAIGN E11).
-            exp = "gray" if us >= thr - 1 else "ignore"
+            # Past `thr` the gyro/accel frames land in the previous frame's window carrying the NEXT frame's number: detected since ADR-018
+            # (E11). Below it the frame still arrives in the right window with the right number: invisible until arrival times are
+            # checked (docs/DEFERRED.md).
+            exp = "gray" if abs(us - thr) <= 1 else ("detect" if us > thr else "ignore")
             for ctx in _ctxs(n):
                 out.append(_sc("early", [f"{N[n]}:early:start=100,us={us}"], exp, 6, context=ctx, frames=FRAMES,
                                tag=dict(node=N[n], us=us, thr=thr)))
@@ -512,7 +569,7 @@ def new_timing_faults() -> list[Scenario]:
             if d > 0:
                 exp = "detect" if span >= cmd_thr + 1000 else ("ignore" if span < cmd_thr - 100 else "gray")
             else:
-                exp = "ignore" if span < 4400 else "gray"  # early beyond the gyro threshold: see the early group
+                exp = "detect" if span >= 5500 else ("ignore" if span < 4400 else "gray")  # beyond the gyro threshold the number gives it away
             out.append(_sc("clockdrift", [f"{N[n]}:clockdrift:start=100,us_per_frame={d}"], exp, None, frames=700, tag=dict(node=N[n], d=d)))
     return out
 
@@ -659,14 +716,28 @@ def recovery_edges() -> list[Scenario]:
         # frames with no reference (the other two silent for two frames, below the latch threshold) neither advance nor fail a probation
         out.append(_sc("recovery_edges", [f"{nm}:bias:start=100,end=130"] + [f"{o}:dropout:start=320,end=322" for o in others], "any",
                        commands=[f"302:reintegrate:{nm}"], frames=700, tag=dict(node=nm, readmit_at=404, final_state="healthy", probation_failures_min=0)))
-        # a failed probation restarts the dwell: probation at 302 fails at 303, the next one starts 200 whole frames later (503), and so on
+        # a failed probation restarts the dwell: probation at 302 fails at 303, the next one may start 50 whole frames later (353, the
+        # request at 304 is waiting), then fails at 354; the request at 505 starts the third at once (505)
         out.append(_sc("recovery_edges", [f"{nm}:bias:start=100"], "any", commands=[f"302:reintegrate:{nm}", f"304:reintegrate:{nm}", f"505:reintegrate:{nm}"],
-                       frames=800, tag=dict(node=nm, starts_expected=[302, 503, 704], final_state="latched")))
+                       frames=800, tag=dict(node=nm, starts_expected=[302, 353, 505], final_state="latched")))
         # clear-disabled really clears the strikes: after three strikes and a maintenance clear, a fresh transient fault is strike 1, not 4
         faults = [f"{nm}:bias:start=100,end=130", f"{nm}:bias:start=600,end=630", f"{nm}:bias:start=1200,end=1230", f"{nm}:bias:start=2400,end=2430"]
-        cmds = [f"450:reintegrate:{nm}", f"700:reintegrate:{nm}", f"1300:clear-disabled:{nm}", f"1510:reintegrate:{nm}", f"2700:reintegrate:{nm}"]
+        cmds = [f"450:reintegrate:{nm}", f"700:reintegrate:{nm}", f"1300:armed-clear-disabled:{nm}", f"1510:reintegrate:{nm}", f"2700:reintegrate:{nm}"]
         out.append(_sc("recovery_edges", faults, "any", commands=cmds, frames=3000,
                        tag=dict(node=nm, final_state="healthy", strikes_expected=1, nodes_disabled_expected=1)))
+    return out
+
+
+def duplex_boundary() -> list[Scenario]:
+    """Where Duplex stops being able to blame a node: a gyro bias of m x tolerance on one of two nodes, 20 seeds each. Gyro channels move less
+    than a tolerance per frame, so the decision band is the classic one (about 50% isolated at 2.0x; the motion reference of ADR-017 had
+    shifted it to 2.3x, E19). At 2.4x and above every seed must be isolated; below 1.7x none may be."""
+    out = []
+    for n, m, seed in itertools.product(range(3), (1.0, 1.4, 1.6, 2.4, 2.6, 3.0), range(1, 21)):
+        exp = "detect" if m >= 2.4 else "ignore"
+        out.append(Scenario(group="duplex_boundary", faults=[f"{N[n]}:bias:start=100,sensor=gyro,axis=0,mag={m * GYRO_TOL:g}"], expect=exp,
+                            latency_max=4 if exp == "detect" else None, context=f"duplex-{N[(n + 1) % 3]}", frames=170, seed=seed,
+                            tag=dict(node=N[n], rel=m)))
     return out
 
 
@@ -679,5 +750,5 @@ def all_groups() -> dict:
         "commands_misc": commands_misc, "commands_strikes": commands_strikes, "pairs": pairs, "correlated": correlated, "startup_edges": startup_edges,
         "contexts": contexts, "new_sensor": new_sensor_faults, "new_bits": new_bit_faults, "new_command": new_command_faults,
         "new_frame": new_frame_faults, "new_timing": new_timing_faults, "new_intermittent": new_intermittent, "new_pairs": new_pairs,
-        "cascades": cascades, "total_loss": total_loss, "long_run": long_run, "phase_sweep": phase_sweep, "recovery_edges": recovery_edges,
+        "cascades": cascades, "ground_security": ground_security, "duplex_boundary": duplex_boundary, "total_loss": total_loss, "long_run": long_run, "phase_sweep": phase_sweep, "recovery_edges": recovery_edges,
     }

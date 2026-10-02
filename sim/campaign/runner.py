@@ -12,7 +12,7 @@ from pathlib import Path
 
 from tfc_peers import bus as B
 from tfc_peers import peers
-from tfc_peers.commands import parse_command
+from tfc_peers.commands import parse_commands
 from tfc_peers.faults import parse_fault, parse_node
 from tfc_peers.peers import Scenario
 
@@ -48,7 +48,7 @@ def execute(sc: Sc, tmp: str, want_dump: bool = True) -> tuple[dict, list[dict],
     try:
         nodes = [parse_node(n) for n in sc.nodes.split(",")]
         faults = [parse_fault(f) for f in sc.all_fault_specs()]
-        commands = [parse_command(c) for c in sc.commands]
+        commands = [x for c in sc.commands for x in parse_commands(c)]
         scen = Scenario(nodes, faults, sc.seed, commands)
         log = os.path.join(tmp, "s.log")
         csvp = os.path.join(tmp, "s.csv")
@@ -68,10 +68,12 @@ def execute(sc: Sc, tmp: str, want_dump: bool = True) -> tuple[dict, list[dict],
 
 
 def commands_by_op(sc: Sc) -> dict[str, set[int]]:
+    """Frames at which each operation is EXECUTED (not armed, not forged, not a replay); `armed-OP` executes two frames later."""
     d: dict[str, set[int]] = defaultdict(set)
-    for c in sc.commands:
-        frame, op = c.split(":")[0:2]
-        d[op].add(int(frame))
+    for spec in sc.commands:
+        for c in parse_commands(spec):
+            if not c.arm and not c.forged and not c.replay:
+                d[c.op].add(c.frame)
     return d
 
 
@@ -187,7 +189,10 @@ def evaluate(sc: Sc, tmp: str) -> Result:
         starts = [r["frame"] for r in rows if r.get("newly_started", 0) & (1 << node)]
         if starts != tag["starts_expected"]:
             res.anomalies.append(("E_START", f"probation of node {'ABC'[node]} started at {starts}, expected {tag['starts_expected']}"))
-    for key in ("reintegrations", "nodes_disabled", "probation_failures", "commands_refused", "commands_accepted"):
+    if "final_mode" in tag and res.final_mode != tag["final_mode"]:
+        res.anomalies.append(("E_MODE", f"final mode {res.final_mode}, expected {tag['final_mode']}"))
+    for key in ("reintegrations", "nodes_disabled", "probation_failures", "commands_refused", "commands_accepted", "commands_unauthentic",
+                "commands_replayed", "arms_expired", "critical_commands"):
         if f"{key}_expected" in tag and res.counters.get(key, -1) != tag[f"{key}_expected"]:
             res.anomalies.append(("E_COUNT", f"{key}={res.counters.get(key)} expected {tag[key + '_expected']}"))
         if f"{key}_min" in tag and res.counters.get(key, -1) < tag[f"{key}_min"]:
