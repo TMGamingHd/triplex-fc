@@ -184,6 +184,42 @@ def cmd_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_pico(args: argparse.Namespace) -> int:
+    from . import pico_link as L
+
+    port = L.open_serial(args.port)
+    client = L.PicoClient(port)
+    op = args.op.lower()
+    if op == "status":
+        pass
+    elif op == "platform":
+        if len(args.operands) != 2:
+            raise ValueError("platform needs two tilts: platform X_DEG Y_DEG [--for SECONDS]")
+        x, y = float(args.operands[0]), float(args.operands[1])
+        end = time.monotonic() + max(args.seconds, 0.0)
+        client.platform(x, y)
+        while time.monotonic() < end:  # the driver holds after 100 ms without a command: keep sending at 100 Hz
+            time.sleep(0.01)
+            client.platform(x, y)
+            client.poll()
+    elif op == "cut":
+        if len(args.operands) != 2:
+            raise ValueError("cut needs a node and a time: cut B 3000 (A, B, C or ACT; milliseconds, at most 30000; it ends by itself)")
+        client.cut(args.operands[0], int(args.operands[1]))
+    elif op == "restore":
+        if len(args.operands) != 1:
+            raise ValueError("restore needs a node or 'all'")
+        if args.operands[0].lower() == "all":
+            client.restore_all()
+        else:
+            client.restore(args.operands[0])
+    else:
+        raise ValueError(f"unknown pico operation {args.op!r}: status, platform, cut or restore")
+    st = client.wait_status(1.0)
+    print(st.describe() if st is not None else "no status from the board (is the port right, and the firmware running?)")
+    return 0 if st is not None else 1
+
+
 def cmd_faults(_args: argparse.Namespace) -> int:
     print("Fault kinds (NODE:KIND[:start=N,end=N,period=N,duty=N,key=value,...]; frame numbers are 10 ms frames)\n")
     print("Any fault also accepts period=N,duty=K: intermittent, active K frames out of every N from `start`.\n")
@@ -237,6 +273,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--counter", type=int, default=None, metavar="N", help="command counter of the first frame (default: the next one "
                    "after the last this tool sent, remembered in ~/.cache/tfc_peers/ground_counter)")
     p.set_defaults(fn=cmd_command)
+
+    p = sub.add_parser("pico", help="talk to the Pico (platform driver and fault injector) over USB serial: status, platform X Y, cut NODE MS, restore NODE|all")
+    p.add_argument("op", help="status, platform, cut or restore")
+    p.add_argument("operands", nargs="*", help="platform: X_DEG Y_DEG; cut: NODE MS (A, B, C or ACT); restore: NODE or all")
+    p.add_argument("--port", default="/dev/ttyACM0", help="the Pico's serial port (default /dev/ttyACM0)")
+    p.add_argument("--for", dest="seconds", type=float, default=0.0, help="platform: keep sending the tilt at 100 Hz for this many seconds")
+    p.set_defaults(fn=cmd_pico)
 
     p = sub.add_parser("faults", help="list fault kinds and their options")
     p.set_defaults(fn=cmd_faults)

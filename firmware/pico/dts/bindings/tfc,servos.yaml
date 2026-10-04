@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+description: The platform's two servo signals, one PWM channel each (tilt about X first, then about Y)
+compatible: "tfc,servos"
+properties:
+  pwms:
+    type: phandle-array
+    required: true

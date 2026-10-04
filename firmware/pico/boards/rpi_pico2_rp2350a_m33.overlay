@@ -1,0 +1,49 @@
+/* Platform driver and fault injector on the Pico 2 (docs/PICO.md, docs/PARTS_CHECK.md, ADR-026).
+ *
+ * Servos: GP2 (PWM slice 1, channel A) tilt about X, GP3 (slice 1, channel B) tilt about Y. Both channels of a slice share a period, 20 ms here.
+ * The slice clock is divided by 64 so that 20 ms is 46,875 counts (16 bits), a resolution of 0.43 us.
+ * Relays: GP10 (node A), GP11 (B), GP12 (C), GP13 (ACT). The ELEGOO module's inputs are active low; each line needs an external pull-up to 3.3 V
+ * (SUPERVISOR.md section 4) so that a pin that is not driven (reset, boot, a crashed program) leaves the relay off, which is a powered node
+ * (normally-closed contacts). The module's VCC/JD-VCC jumper is removed (PARTS_CHECK.md item 7).
+ */
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
+#include <zephyr/dt-bindings/pinctrl/rpi-pico-rp2350a-pinctrl.h>
+
+&pinctrl {
+	pwm_servos_default: pwm_servos_default {
+		group1 {
+			pinmux = <PWM_1A_P2>, <PWM_1B_P3>;
+		};
+	};
+};
+
+&pwm {
+	pinctrl-0 = <&pwm_servos_default>;
+	pinctrl-names = "default";
+	divider-int-1 = <64>;
+	status = "okay";
+};
+
+/ {
+	servos: servos {
+		compatible = "tfc,servos";
+		pwms = <&pwm 2 PWM_MSEC(20) PWM_POLARITY_NORMAL>,
+		       <&pwm 3 PWM_MSEC(20) PWM_POLARITY_NORMAL>;
+	};
+
+	relays: relays {
+		compatible = "tfc,relays";
+		relay-gpios = <&gpio0 10 GPIO_ACTIVE_LOW>,
+			      <&gpio0 11 GPIO_ACTIVE_LOW>,
+			      <&gpio0 12 GPIO_ACTIVE_LOW>,
+			      <&gpio0 13 GPIO_ACTIVE_LOW>;
+	};
+};
+
+/* The USB serial port to the PC: one CDC ACM function on the board's USB device controller. */
+&zephyr_udc0 {
+	cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};

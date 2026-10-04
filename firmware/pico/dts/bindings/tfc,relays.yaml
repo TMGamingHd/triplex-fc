@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+description: The fault injector's four relay inputs (nodes A, B, C and ACT), active low, with external pull-ups to 3.3 V so that a floating pin means "off"
+compatible: "tfc,relays"
+properties:
+  relay-gpios:
+    type: phandle-array
+    required: true

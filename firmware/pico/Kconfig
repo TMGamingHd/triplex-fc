@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: MIT
+mainmenu "Platform driver and fault injector (Pico 2)"
+
+config TFC_USB_VID
+	hex "USB vendor id"
+	default 0x1209
+	help
+	  The pid.codes open vendor id, for a private bench device (its test product id is 0x0001). Zephyr's own vendor id must not be used outside
+	  Zephyr's samples. Nothing here is for sale or for the field.
+
+config TFC_USB_PID
+	hex "USB product id"
+	default 0x0001
+
+config TFC_LINK_TIMEOUT_MS
+	int "Nothing from the PC for this long: release every relay (milliseconds)"
+	default 2000
+	range 200 30000
+	help
+	  The PC keeps a cut alive by sending it again; if the link goes quiet for this long every node is powered again, whatever time was left on a cut.
+
+config TFC_SERVO_NEUTRAL_US
+	int "Servo pulse at level (microseconds)"
+	default 1500
+
+config TFC_SERVO_US_PER_DEG_X100
+	int "Servo pulse per degree, times 100"
+	default 1034
+	help
+	  The D85MG's 850 to 2350 us over 145 degrees is about 10.34 us per degree (parts sheet row 29).
+
+config TFC_SERVO_X_SIGN
+	int "Direction of the tilt-about-X servo (1 or -1)"
+	default 1
+	range -1 1
+
+config TFC_SERVO_Y_SIGN
+	int "Direction of the tilt-about-Y servo (1 or -1)"
+	default 1
+	range -1 1
+
+config TFC_SERVO_X_TRIM_X100
+	int "Mounting offset of the X servo, degrees times 100"
+	default 0
+
+config TFC_SERVO_Y_TRIM_X100
+	int "Mounting offset of the Y servo, degrees times 100"
+	default 0
+
+config TFC_PLATFORM_LIMIT_DEG
+	int "Platform travel limit, each plane (degrees)"
+	default 45
+	range 1 70
+
+config TFC_PLATFORM_RATE_DPS
+	int "Platform rate limit (degrees per second)"
+	default 300
+	range 10 1000
+
+config TFC_WATCHDOG_TIMEOUT_MS
+	int "Hardware watchdog timeout (milliseconds)"
+	default 100
+	range 20 4000
+
+source "Kconfig.zephyr"

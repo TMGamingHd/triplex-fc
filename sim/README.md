@@ -42,6 +42,7 @@ Details of the difference are in [Offline vs live](#offline-vs-live).
 | I want to... | Run |
 |---|---|
 | See which faults exist and their options | `python3 -m tfc_peers faults` |
+| Move the platform, cut a node's power, or read the Pico's status (USB serial) | `python3 -m tfc_peers pico status`, `pico platform 10 -5 --for 3`, `pico cut B 3000`, `pico restore all` |
 | Generate traffic into a file | `python3 -m tfc_peers record ... --out FILE` |
 | Read a log file in plain English | `python3 -m tfc_peers decode FILE` |
 | Ask "what would a flight computer decide about this log?" | `../build/host/tfc_replay FILE --verbose` |
@@ -171,6 +172,18 @@ a trace and only counted). If the flight computer was restarted while this tool 
 accepted (the first command after a restart is accepted whatever its counter); if you delete the counter file while the flight
 computer keeps running, restart it or pass `--counter` above its last one. It is the interactive twin of `--command`; use
 `--command` when the command must land in an exact frame.
+
+### `python3 -m tfc_peers pico OP [OPERANDS]`: the Pico (platform driver and fault injector) over USB serial
+Talks to the board of `docs/PICO.md`; needs `pyserial` (`pip install pyserial`) and a Pico running `firmware/pico`. Each call sends one command and prints the board's status.
+
+| Operation | Operands | Meaning |
+|---|---|---|
+| `status` | none | Ask for the status: the platform's output tilts, the command age, the flags (saturated, holding, levelling, link lost, watchdog reset, rejected command) and which nodes are cut. |
+| `platform` | `X_DEG Y_DEG` | Command the platform's tilts about X and Y. The board limits the travel (45 degrees) and the rate (300 degrees per second) whatever is sent, holds after 100 ms without a command and levels after 1 s, so one command alone does not stay: add `--for SECONDS` to keep sending at 100 Hz. |
+| `cut` | `NODE MS` | Cut the power of node `A`, `B`, `C` or `ACT` for `MS` milliseconds (at most 30,000). It ends by itself, so a crash of this tool cannot leave a node cut. |
+| `restore` | `NODE` or `all` | Power the node (or every node) at once. |
+
+Flags: `--port PORT` (default `/dev/ttyACM0`), `--for SECONDS` (default 0).
 
 ### `python3 -m tfc_peers faults`
 Lists every fault kind with its fault-matrix row and options. Same information as the next section.
