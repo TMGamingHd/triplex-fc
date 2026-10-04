@@ -63,7 +63,7 @@ Bus load **target**: about 14 frames per 10 ms, roughly 20% of a 1 Mbit/s classi
 
 **SYNC frame.** `0x010`, payload = 32-bit frame number (little endian) | 2 reserved bytes | seq | CRC-8 (`tfc::pack_sync`). The frame number lets late joiners and restarted nodes agree on which frame it is; receivers lock their frame timer to its arrival.
 
-**Clock sync.** Each node runs a free-running frame timer aligned to the hardware RX timestamp of SYNC. The sync master is the lowest-numbered healthy FC; if SYNC is missing for 2 frames the next-lowest healthy FC takes over. This avoids making a single node the time authority.
+**Clock sync.** Each node runs a free-running frame timer aligned to the hardware RX timestamp of SYNC. The sync master is the lowest-numbered healthy FC; if SYNC is missing for 2 frames the next-lowest healthy FC takes over. This avoids making a single node the time authority. The mechanism is ADR-025: a follower waits `1.0 + 0.5 x node` ms for SYNC, so the lowest node's takeover SYNC is heard by the others before their own windows end; a node with no SYNC heard stays silent.
 
 ## 4. Agreement and voting
 

@@ -33,6 +33,7 @@ class SimImu {
  public:
   explicit SimImu(unsigned node) : noise_(0x1234U + node) {}
   bool init() { return true; }
+  void feed(const tfc::Frame&) {}
   bool sample(uint32_t frame, tfc::Vec3& gyro, tfc::Vec3& accel) {
     const fc::sim::Truth tr = fc::sim::truth(frame);
     for (unsigned i = 0; i < 3U; ++i) {
@@ -46,6 +47,49 @@ class SimImu {
 
  private:
   fc::sim::Noise noise_;
+};
+
+// The simulated IMU fed by the vehicle simulator over the bus: the body rates and acceleration of frame k arrive as 0x501 and 0x502 just after SYNC; this
+// node adds its own noise. If either frame did not arrive for this frame the sample is missing, as for any dead sensor.
+class BusImu {
+ public:
+  explicit BusImu(unsigned node) : noise_(0x1234U + node) {}
+  bool init() { return true; }
+  void feed(const tfc::Frame& f) {
+    if (f.id == tfc::id::kSimRates) {
+      const tfc::DecodedVec3 d = tfc::unpack_vec3(f, tfc::kGyroLsbDps);
+      have_rates_ = d.ok;
+      rates_ = d.x;
+    } else if (f.id == tfc::id::kSimAccel) {
+      const tfc::DecodedVec3 d = tfc::unpack_vec3(f, tfc::kAccelLsbG);
+      have_accel_ = d.ok;
+      accel_ = d.x;
+    }
+  }
+  bool sample(uint32_t, tfc::Vec3& gyro, tfc::Vec3& accel) {
+    const bool ok = have_rates_ && have_accel_;
+    if (!ok) {
+      ++missing_;
+    } else {
+      for (unsigned i = 0; i < 3U; ++i) {
+        gyro.v[i] = rates_.v[i] + (0.17F * noise_.uniform());
+        accel.v[i] = accel_.v[i] + (0.0035F * noise_.uniform());
+      }
+    }
+    have_rates_ = false;  // each frame needs its own
+    have_accel_ = false;
+    return ok;
+  }
+  [[nodiscard]] uint32_t stale() const { return 0U; }
+  [[nodiscard]] uint32_t errors() const { return missing_; }
+
+ private:
+  fc::sim::Noise noise_;
+  tfc::Vec3 rates_{};
+  tfc::Vec3 accel_{};
+  bool have_rates_ = false;
+  bool have_accel_ = false;
+  uint32_t missing_ = 0U;
 };
 
 #if DT_NODE_EXISTS(DT_NODELABEL(imu_home))
@@ -101,6 +145,7 @@ class Ism330Imu {
     tfc::ism::convert(raw, chip_.config(), gyro, accel);
     return true;
   }
+  void feed(const tfc::Frame&) {}
   [[nodiscard]] uint32_t stale() const { return stale_; }
   [[nodiscard]] uint32_t errors() const { return errors_; }
 
@@ -113,6 +158,8 @@ class Ism330Imu {
 };
 
 using Imu = Ism330Imu;
+#elif IS_ENABLED(CONFIG_TFC_SIM_BUS_IMU)
+using Imu = BusImu;
 #else
 using Imu = SimImu;
 #endif
