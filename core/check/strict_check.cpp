@@ -3,7 +3,10 @@
 // the project uses, as errors, and exercises the main entry points so that code which only inlines at -O2 is analysed
 // too (null dereference, stack usage). It is never linked into anything. Each header is also compiled on its own
 // (see CMakeLists.txt) so it cannot rely on another header having been included first.
+#include "tfc/consensus.hpp"
+#include "tfc/controller.hpp"
 #include "tfc/crc8.hpp"
+#include "tfc/estimator.hpp"
 #include "tfc/fault_monitor.hpp"
 #include "tfc/integrity.hpp"
 #include "tfc/ism330dhcx.hpp"
@@ -57,6 +60,20 @@ int exercise(unsigned frames) {
   tfc::ResetLog resets(record);
   resets.boot(tfc::ResetCause::Watchdog);
   acc += resets.loop_detected() ? 1U : 0U;
+  tfc::SensorConsensus consensus;
+  tfc::AttitudeEstimator estimator;
+  tfc::Controller controller;
+  tfc::Guidance guidance;
+  (void)guidance.add(1U, 0U, 0.0F);
+  (void)guidance.add(1U, 600U, -10.0F);
+  consensus.begin_frame(0x07U);
+  for (uint8_t n = 0; n < 3U; ++n) {
+    (void)consensus.on_frame(tfc::pack_gyro(n, tfc::Vec3{{1.0F, 2.0F, 3.0F}}, 0U));
+    (void)consensus.on_frame(tfc::pack_accel(n, tfc::Vec3{{0.0F, 0.0F, 1.0F}}, 0U));
+  }
+  estimator.update(consensus.consensus(), 0.01F);
+  const tfc::Command cmd = controller.step(estimator.attitude(), guidance.at(frames), 0.01F);
+  acc += static_cast<unsigned>(cmd.state_digest) + static_cast<unsigned>(estimator.digest()) + static_cast<unsigned>(controller.digest());
   char text[64];
   tfc::format_reasons(static_cast<uint8_t>(acc), text, sizeof text);
   return static_cast<int>(acc) + static_cast<int>(tfc::validate_config(mgr.config())) + static_cast<int>(text[0]);
