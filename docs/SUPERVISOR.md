@@ -124,10 +124,10 @@ All prices are from the parts sheet (checked 2026-09-29) unless marked.
 
 | Change | Cost | Note |
 |---|---|---|
-| Second Pico 2 (SUP-Lite) | 6.00 | The existing Pico is the fault injector and must stay separate |
-| TCXO RTC module | not checked, small | DS3231 or similar; confirm the output and the price |
-| Resistors (pull-ups, pull-downs) | already in stock, to confirm | the kit only has 120 ohm parts |
-| Relay channels | 0 | the 4 spare channels of module 2 |
+| Second Pico 2 (SUP-Lite) | 6.00 | **Added to the order 4 Oct 2026.** The existing Pico is the fault injector and must stay separate |
+| TCXO RTC module | not checked, small | **Added to the order 4 Oct 2026**; DS3231 or similar; confirm the output and the price |
+| Resistors (pull-ups, pull-downs) | owned (owner, 4 Oct 2026) | |
+| Relay channels | 6.99 | the 4 spare channels of module 2; **a third module is added** for the injector's sensor and bus faults (ADR-026) |
 | **SUP-Full instead of Lite** | +18.08 (Nucleo 20.13 + CAN Pal 3.95, in place of the 6.00 Pico) | Needs a CAN tap on the backbone board |
 
 The sheet's budget page already reads 677.81 USD (with the 8% allowance) against a 600 USD ceiling, over by 77.81. Anything added widens
