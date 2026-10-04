@@ -616,6 +616,7 @@ python3 -m campaign.mutate                                       # does the camp
 | `--workers N` | Parallel scenarios (default 8). |
 | `--out FILE` | Where the per-scenario results go (JSON lines: latch frames, reasons, counters, metrics, anomalies, a hash of every per-frame decision). |
 | `--limit N` | At most N scenarios per group. |
+| `--every K` | Every K-th scenario of each group, always including the first: a spread-out sample (CI runs `--every 8` on pull requests and the full set on `main`). |
 | `--quiet` | No progress lines. |
 | `--strict` | Exit status 1 if any anomaly was raised (CI uses this). Without it the status is 0 and the anomalies are only printed and stored. |
 
