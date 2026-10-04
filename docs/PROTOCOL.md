@@ -50,5 +50,5 @@ simulation time in 10 ms frames (32 bits). Their timing and use: `VEHICLE_SIM.md
 - A frame that does not decode is a bad frame and costs its sender one bad sample (ADR-007), exactly like a corrupted sensor frame.
 
 ## Not yet
-The `noop` and `phase` ground opcodes (FDIR-043, PHASE-004), which touch the fault manager; the production of these frames by the firmware (heartbeats, state share) and by the simulator's runner (P1-4);
-`to_act_frame()`, the converter from the actuator logic's output to the ACT frame, which goes in with the actuator logic (`docs/ACT_LOGIC.md`).
+The `noop` and `phase` ground opcodes (FDIR-043, PHASE-004), which touch the fault manager; the state share (`0x410+n`) and the release hash in the heartbeat (the flight computers send heartbeats since P1-4c,
+with the release hash zero); the simulator's frames from the runner (P1-4d).

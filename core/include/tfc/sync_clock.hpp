@@ -28,7 +28,8 @@ constexpr int64_t sync_window_us(unsigned node, int64_t stagger_us = 500) noexce
 enum class SyncStart : uint8_t {
   Master = 0,      // node A powering up: the master from the first frame
   Listen = 1,      // node A after a reset: follow a master if there is one, claim the bus if there is none after `boot_listen_frames`
-  FollowOnly = 2   // nodes B and C: follow; take over only after having locked to a SYNC and then lost it
+  FollowOnly = 2,  // nodes B and C: follow; take over only after having locked to a SYNC and then lost it
+  Observer = 3     // the actuator node: follows and counts like a follower but is never the master
 };
 
 struct SyncTick {
@@ -45,7 +46,7 @@ struct SyncTick {
 class SyncClock {
  public:
   explicit SyncClock(SyncStart start, SyncPolicy policy = SyncPolicy{}) noexcept
-      : policy_(policy), master_(start == SyncStart::Master), may_claim_(start != SyncStart::FollowOnly) {}
+      : policy_(policy), master_(start == SyncStart::Master), may_claim_(start == SyncStart::Master || start == SyncStart::Listen), observer_(start == SyncStart::Observer) {}
 
   // Call once per frame at the end of the wait for SYNC: `heard` is whether a SYNC arrived in the window and `number` its frame number.
   [[nodiscard]] SyncTick cycle(bool heard, uint32_t number) noexcept {
@@ -59,7 +60,7 @@ class SyncClock {
     } else if (!master_) {
       missed_ = missed_ < 255U ? static_cast<uint8_t>(missed_ + 1U) : missed_;
       const uint8_t needed = ever_locked_ ? policy_.takeover_frames : policy_.boot_listen_frames;
-      if ((ever_locked_ || may_claim_) && missed_ >= needed) {
+      if (!observer_ && (ever_locked_ || may_claim_) && missed_ >= needed) {
         master_ = true;
         t.took_over = true;
       }
@@ -80,6 +81,7 @@ class SyncClock {
   SyncPolicy policy_;
   bool master_;
   bool may_claim_;
+  bool observer_;
   bool ever_locked_ = false;
   uint8_t missed_ = 0U;
   uint32_t next_ = 0U;

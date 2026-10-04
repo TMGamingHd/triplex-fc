@@ -115,7 +115,7 @@ jobs:
           wget -q https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZEPHYR_SDK_VERSION}/zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz
           tar xf zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz -C "$HOME"
           "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}/setup.sh" -t arm-zephyr-eabi -h -c
-      - name: Build FC-A, FC-B and FC-C for native_sim
+      - name: Build FC-A (for the Python peers), the three flight computers of the triplex and ACT for native_sim
         run: |
           . firmware/env.sh
           west build -p always -b native_sim/native/64 firmware/app -d build/native_sim
@@ -124,6 +124,7 @@ jobs:
           for n in 0 1 2; do
             west build -p always -b native_sim/native/64 firmware/app -d "build/triplex_${letters[$n]}" -- -DCONFIG_TFC_NODE_ID=$n
           done
+          west build -p always -b native_sim/native/64 firmware/act -d build/act_native
       - name: Live FC-A against virtual peers (needs vcan; tests skip if the runner has none)
         run: |
           # The runner's Azure kernel ships vcan in linux-modules-extra.
@@ -132,7 +133,7 @@ jobs:
             || echo "vcan unavailable on this runner: live tests will be skipped"
           cd sim
           TFC_FC_BIN="$GITHUB_WORKSPACE/build/native_sim/zephyr/zephyr.exe" python3 -m unittest tests.test_live_fc -v
-      - name: Live software triplex (three firmware instances on one vcan0; A is killed and B must take over SYNC)
+      - name: Live software triplex (firmware instances on one vcan0; A is killed and B takes over SYNC; ACT votes, excludes dead computers, and safes with none)
         run: |
           cd sim
           python3 -m unittest tests.test_live_triplex -v
@@ -140,5 +141,8 @@ jobs:
         run: |
           . firmware/env.sh
           west build -p always -b nucleo_g474re firmware/app -d build/nucleo_g474re
+          west build -p always -b nucleo_g474re firmware/act -d build/act_nucleo
       - name: No heap, exceptions, RTTI or vtables in the flight binary
-        run: tools/check_elf.sh build/nucleo_g474re/zephyr/zephyr.elf
+        run: |
+          tools/check_elf.sh build/nucleo_g474re/zephyr/zephyr.elf
+          tools/check_elf.sh build/act_nucleo/zephyr/zephyr.elf

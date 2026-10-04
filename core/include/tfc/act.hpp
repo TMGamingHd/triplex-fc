@@ -344,4 +344,52 @@ class ActLogic {
   uint32_t held_frames_ = 0U;
 };
 
+// What ACT concludes from the flight computers' heartbeats: do they ask for Safe? A heartbeat is fresh for `fresh_frames` frames. Of the fresh heartbeats of the
+// nodes ACT has not excluded, a majority must ask (so a single faulty computer cannot safe the vehicle by itself); if only one is fresh, that one decides (a lone
+// survivor's request is all there is). Two computers that disagree and cannot blame each other both ask, which is a majority of two.
+class HeartbeatMonitor {
+ public:
+  explicit HeartbeatMonitor(uint8_t fresh_frames = 3U) noexcept : fresh_(fresh_frames) {}
+
+  // Call once per frame before the heartbeats of that frame are offered: ages every record.
+  void begin_frame() noexcept {
+    for (uint8_t& a : age_) {
+      a = a < 255U ? static_cast<uint8_t>(a + 1U) : a;
+    }
+  }
+
+  // Offer a frame; true if it was a good heartbeat of node 0..2.
+  bool on_frame(const Frame& f) noexcept {
+    const DecodedHeartbeat d = unpack_heartbeat(f);
+    if (!d.ok) {
+      return false;
+    }
+    const unsigned node = f.id - id::kHeartbeat;
+    asks_[node] = d.hb.safe_requested;
+    age_[node] = 0U;
+    seen_ = static_cast<uint8_t>(seen_ | (1U << node));
+    return true;
+  }
+
+  // `excluded`: bit n set if ACT has excluded node n.
+  [[nodiscard]] bool safe_requested(uint8_t excluded) const noexcept {
+    unsigned fresh = 0U;
+    unsigned asking = 0U;
+    for (unsigned n = 0; n < kChannels; ++n) {
+      const bool usable = ((seen_ >> n) & 1U) != 0U && age_[n] < fresh_ && ((excluded >> n) & 1U) == 0U;
+      if (usable) {
+        ++fresh;
+        asking += asks_[n] ? 1U : 0U;
+      }
+    }
+    return fresh > 0U && (asking * 2U > fresh || (fresh == 1U && asking == 1U));
+  }
+
+ private:
+  uint8_t fresh_;
+  std::array<uint8_t, kChannels> age_{};
+  std::array<bool, kChannels> asks_{};
+  uint8_t seen_ = 0U;
+};
+
 }  // namespace tfc
