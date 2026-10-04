@@ -10,12 +10,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 mode="${1:-}"; shift || true
-extra=()
+flight=n
+simimu=n
 secs=10
 for a in "$@"; do
   case "$a" in
-    --flight) extra+=("-DCONFIG_TFC_FLIGHT_FUNCTION=y") ;;
-    --sim-imu) extra+=("-DCONFIG_TFC_SIM_BUS_IMU=y") ;;
+    --flight) flight=y ;;
+    --sim-imu) simimu=y ;;
     [0-9]*) secs="$a" ;;
     *) echo "unknown option $a" >&2; exit 2 ;;
   esac
@@ -26,7 +27,7 @@ case "$mode" in
     . firmware/env.sh
     for n in 0 1 2; do
       dir=build/native_sim; [ "$n" != 0 ] && dir="build/native_sim_n$n"
-      west build -p auto -b native_sim/native/64 firmware/app -d "$dir" -- -DCONFIG_TFC_NODE_ID="$n" "${extra[@]}"
+      west build -p auto -b native_sim/native/64 firmware/app -d "$dir" -- -DCONFIG_TFC_NODE_ID="$n" -DCONFIG_TFC_FLIGHT_FUNCTION="$flight" -DCONFIG_TFC_SIM_BUS_IMU="$simimu"
     done ;;
   --test)
     (cd sim && python3 -m unittest tests.test_live_triplex -v) ;;

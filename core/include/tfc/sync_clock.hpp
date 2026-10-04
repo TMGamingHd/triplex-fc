@@ -20,8 +20,10 @@ struct SyncPolicy {
   uint8_t boot_listen_frames = 5U;  // after a restart a node listens this long before it may become the master
 };
 
-// How long node `node` waits for SYNC at the start of a frame before it gives up on it, microseconds after the nominal start.
-constexpr int64_t sync_window_us(unsigned node) noexcept { return 1000 + (500 * static_cast<int64_t>(node)); }
+// How long node `node` waits for SYNC at the start of a frame before it gives up on it, microseconds after the nominal start. The stagger between
+// nodes must be longer than the time a SYNC takes to be heard by another node: about 0.1 ms on the wire, plus the receive latency (interrupt-driven on the
+// board; up to 1 ms on the host, whose CAN driver polls its socket, so the host builds use a longer stagger).
+constexpr int64_t sync_window_us(unsigned node, int64_t stagger_us = 500) noexcept { return 1000 + (stagger_us * static_cast<int64_t>(node)); }
 
 enum class SyncStart : uint8_t {
   Master = 0,      // node A powering up: the master from the first frame

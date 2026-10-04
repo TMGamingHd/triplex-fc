@@ -236,7 +236,7 @@ int main() {
   tfc::ProgressMonitor progress(kProgressRequired);
   constexpr int64_t kPeriodUs = fc::sim::kFrameUs;
   const int64_t period = k_us_to_ticks_ceil64(kPeriodUs);
-  const int64_t window = k_us_to_ticks_ceil64(tfc::sync_window_us(kNodeId));
+  const int64_t window = k_us_to_ticks_ceil64(tfc::sync_window_us(kNodeId, CONFIG_TFC_SYNC_STAGGER_US));
   // Node A listens first, even after a power-up (it may be the one that was off while B took over: two masters would collide on one id), and
   // claims the bus if nobody is sending after a few frames; B and C only follow, and take over only after they have heard a master and lost it.
   const tfc::SyncStart sync_start = kNodeId != 0U ? tfc::SyncStart::FollowOnly : tfc::SyncStart::Listen;
