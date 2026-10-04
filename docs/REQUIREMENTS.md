@@ -58,7 +58,7 @@ All numeric limits are **proposals**. Each will be confirmed, tightened or dropp
 ## Architecture: sensing and software diversity (ADR-020 accepted for case 1, ADR-021 proposed)
 | ID | Requirement | Verif. |
 |---|---|---|
-| TFC-ARCH-001 | *(Accepted, ADR-020 case 1; testable in simulation now, end to end with the estimator.)* Sensor-channel health shall be tracked separately from compute-channel health: a flight computer whose IMU is isolated shall remain a voter for commands for as long as its commands agree with the others, and only a disagreement of its commands shall remove it from the command vote. The numbers of healthy sensor channels and of healthy compute channels shall be reported separately. | T |
+| TFC-ARCH-001 | *(Accepted, ADR-020 case 1; to be built after the loop and before stage S3 (3 Nov), with the degradation rule chosen by TS-15.)* Sensor-channel health shall be tracked separately from compute-channel health: a flight computer whose IMU is isolated shall remain a voter for commands for as long as its commands agree with the others, and only a disagreement of its commands shall remove it from the command vote. The numbers of healthy sensor channels and of healthy compute channels shall be reported separately. | T |
 | TFC-ARCH-002 | Every flight computer shall obtain the IMU samples of the other computers only through the bus frames of the sensor exchange, so that all healthy computers form their consensus from identical inputs; no computer shall read another computer's IMU at the same time as its owner does. The one-owner-at-a-time exception is ARCH-003. | I |
 | TFC-ARCH-003 | *(Deferred stretch, after S4; ADR-020 case 2.)* Each IMU shall be connectable to its home computer or to one backup host (the ring: IMU k to computer k-1) by a switch that connects it to exactly one at a time and defaults to home; the switch shall be driven only by the supervisor's `ADOPT` line, which also tells the backup host to read the orphaned IMU. The adopted channel shall start on probation and shall not count in the consensus until it has agreed with it for the probation length. | M |
 | TFC-ARCH-009 | *(Planned, with the node firmware; ADR-020.)* A sensor frame shall identify the IMU channel it carries, not only the computer that sends it, and at any time there shall be exactly one publisher per channel. | I, T |
@@ -67,11 +67,11 @@ All numeric limits are **proposals**. Each will be confirmed, tightened or dropp
 | TFC-ARCH-004 | *(Deferred, until FC-B and FC-C have firmware.)* Each node's heartbeat shall carry a protocol version and the source hash of its release, and the system shall run correctly with node C on the golden release and nodes A and B on the current one. | I, T |
 | TFC-ARCH-005 | *(Deferred, with ARCH-004.)* The golden release shall be a tagged release that passed the full fault campaign and the hardware stage exit tests, built reproducibly with a recorded toolchain and hash, and changed afterwards only for a safety fix. | I |
 | TFC-ARCH-006 | *(Deferred, with ARCH-004.)* A behavioural-compatibility gate in CI shall replay a defined scenario set through the current and the golden release and require their commands to agree within the version tolerance (proposal: 1.5 times the vote tolerance); a release that fails it shall not be fielded against that golden release. | T |
-| TFC-ARCH-007 | When two nodes running one release agree with each other and disagree with the node running the other release beyond the version tolerance for M of N frames, no node shall be isolated, the output shall be held and a Safe request raised; the operator shall be able to resolve it by disabling one side under an ARM and clearing Safe (ADR-021, ADR-008). | T |
+| TFC-ARCH-007 | *(Accepted 4 Oct 2026, ADR-021.)* When two nodes running one release agree with each other and disagree with the node running the other release beyond the version tolerance for M of N frames, no node shall be isolated, the output shall be held and a Safe request raised; the operator shall be able to resolve it by disabling one side under an ARM and clearing Safe (ADR-021, ADR-008). | T |
 | TFC-ARCH-008 | *(Deferred, with ARCH-004.)* The estimator-state digest shall be computed over a version-stable, quantised state, so that nodes of different releases behaving correctly produce the same digest. | T |
 
-## Supervisor (proposed, ADR-022; docs/SUPERVISOR.md)
-All deferred until the supervisor hardware exists. Items marked Full need the variant with a listen-only CAN tap.
+## Supervisor (accepted 4 Oct 2026 as SUP-Lite, ADR-022; docs/SUPERVISOR.md)
+All deferred until the supervisor hardware exists. Items marked Full need the variant with a listen-only CAN tap, which was **not** chosen: they are not built unless Full is taken later.
 
 | ID | Requirement | Verif. |
 |---|---|---|
@@ -79,7 +79,7 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-SUP-002 | The supervisor shall act only through discrete lines (`NRST`, `PWR`, `SAFE`, `SEL`) and its USB link, and shall never transmit on the flight bus. | I, T |
 | TFC-SUP-003 | Each flight computer and ACT shall pulse its `KICK` line only from the end-of-frame path of a completed frame (FDIR-038). The supervisor shall reset a node whose kicks are missing for 3 frames, power-cycle it after 3 resets in 60 s, and hold it in reset and report it dead after 2 power-cycles in 5 min. | T, M |
 | TFC-SUP-004 | The supervisor shall measure the period of each node's `FRAME` line against its own clock and the phase between nodes, and shall report a period error above 200 ppm (10 s average) or a phase difference above 200 us. It shall not isolate a working node on these alone. | T, M |
-| TFC-SUP-005 | *(Full.)* The supervisor shall record, per node and stream, the arrival margin to the vote deadline with its own clock (the telemetry of FDIR-037, taken outside the flight computers). | M |
+| TFC-SUP-005 | *(Full only; not built with SUP-Lite.)* The supervisor shall record, per node and stream, the arrival margin to the vote deadline with its own clock (the telemetry of FDIR-037, taken outside the flight computers). | M |
 | TFC-SUP-006 | The supervisor shall execute the hardware commands `reset`, `cycle`, `hold`, `release`, `safe-now` (and `sel` if a second ACT exists) received over USB without the participation of any flight computer, and shall answer and log each with its own time. | T, M |
 | TFC-SUP-007 | A supervisor that is unpowered, in reset or hung shall leave every node running and every selection at its default: no relay energised by a floating line, no `SAFE` asserted. | M |
 | TFC-SUP-008 | The supervisor shall have its own hardware watchdog and shall report its own reset count and the cause of its last reset. | M |
@@ -96,6 +96,7 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-SAFE-005 | The neutral command, `T_hold`, the rate limit and the lost-vote count shall be parameters with defaults in non-volatile memory, validated like FDIR-026: an invalid value is replaced by its default and reported. | T |
 | TFC-SAFE-006 | The Safe action shall be defined per mission phase (docs/MISSION_PHASES.md). | I |
 | TFC-SAFE-007 | Responses shall follow the ladder: ignore, flag, isolate, degrade, hold and request Safe, Safe; the lowest adequate rung shall be used, and no monitor shall be allowed to trip on a single sample or be disabled by a parameter (docs/SAFE_MODE.md section 8). | I, T |
+| TFC-SAFE-008 | *(Accepted 4 Oct 2026.)* A Safe event shall be reported to the vehicle simulator as a flag; the simulator shall keep the run going with the frozen or nulled output and mark it safed, and only an operator abort shall end it. | T |
 
 ## Mission phases (proposed, ADR-023; docs/MISSION_PHASES.md)
 | ID | Requirement | Verif. |

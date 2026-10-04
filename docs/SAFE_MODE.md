@@ -1,6 +1,6 @@
 # Safe mode: research and proposal
 
-> Status: **proposed** (resolves the "define the Safe action" item of `DEFERRED.md` section 3 as far as it can be resolved before the
+> Status: **accepted for Safe mode, 4 Oct 2026** (the open questions in section 10 were answered by the owner); the phase table it refers to is still a proposal (resolves the "define the Safe action" item of `DEFERRED.md` section 3 as far as it can be resolved before the
 > actuator node exists). All numbers are proposals. Sources were read as search summaries, not in full; check them before quoting them in
 > the write-up (section 9).
 
@@ -102,12 +102,14 @@ lowest adequate rung is used:
 - Fail-operational and fail-passive definitions: [MIT OCW 16.885, Flight Controls](https://ocw.mit.edu/courses/16-885j-aircraft-systems-engineering-fall-2004/de14f682fa69f4e7379d7ae861f7f4a2_flight_controls_2.pdf); [US patent 4612844, fail-passive actuator control](https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/4612844).
 - TVC actuator failure modes (hard-over, fail in place, fail to null) came out of a search over several documents and are not tied to one source here; find the primary reference before citing. A related read: [Georgia Tech repository record, SRB control limitations on loss of a hydraulic power unit](https://repository.gatech.edu/entities/publication/4f8cb417-f6d3-4780-8585-b4083b76d39e) (about command-position deltas; not read in full).
 
-## 10. Open questions for the owner
+## 10. Decisions (owner, 4 Oct 2026)
 
-1. Is "null the gimbal" right for the *rig*, or should Safe on the rig depower the servos? (Proposal: null in ascent, depower on the pad.)
-2. Should a Safe request also stop the simulator (S4), or only the electronics?
-3. Is a 0.5 s hold acceptable, or should Safe null at once (S2)?
+| # | Question | Decision | Why |
+|---|---|---|---|
+| 1 | Null the gimbal, or depower the servos, on the rig? | **Null in ascent; depower on the pad** | A depowered 2-axis platform droops onto its stops and the IMU on it is thrown about; nulling keeps it under control |
+| 2 | Should Safe stop the simulated run? | **No.** The simulator is told (a flag), keeps flying with the frozen or nulled gimbal, and marks the run "safed"; only an operator **abort** ends it (TFC-SAFE-008) | The continued run is the data for TS-4: how long the vehicle stays recoverable |
+| 3 | A 0.5 s hold, or null at once? | **0.5 s as a parameter** (`T_hold`); TS-4 chooses the value from data | A parameter, not a belief |
 
 ## 11. Requirements and tests
 
-TFC-SAFE-001 to 007 (`REQUIREMENTS.md`); fault-matrix rows F69 (ACT alone enters Safe) and F70 (Safe exit refused without its conditions).
+TFC-SAFE-001 to 008 (`REQUIREMENTS.md`); fault-matrix rows F69 (ACT alone enters Safe) and F70 (Safe exit refused without its conditions).

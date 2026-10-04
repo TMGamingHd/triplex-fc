@@ -1,6 +1,6 @@
 # Fault response: what the flight computers do, and what the vehicle does
 
-> Status: **proposed**. It joins the fault matrix (`FAULT_MATRIX.md`: what is detected and how) with the vehicle's side: what the
+> Status: **proposed; the open questions of section 6 were answered on 4 Oct 2026**. It joins the fault matrix (`FAULT_MATRIX.md`: what is detected and how) with the vehicle's side: what the
 > output does, who acts, what the operator does, and how it ends. Rows marked "today" describe the current software; everything else
 > is the intended behaviour and needs the Safe action, the supervisor or the phases (`SAFE_MODE.md`, `SUPERVISOR.md`,
 > `MISSION_PHASES.md`). Detection times are those of the matrix (10 ms frames). Numbers are proposals.
@@ -158,11 +158,11 @@ held and Safe flags.
 | R4, unattributable disagreement | Safe: servos neutral or depowered | Freeze, null after `T_hold` | Freeze only | Freeze, null after `T_hold` |
 | R5, no valid votes | Neutral or depowered | Freeze, then null | Freeze | Freeze, then null |
 
-## 6. Open questions for the owner
-1. **Abort.** Should Simplex in ascent trigger a hold or abort message to the simulator, or only an alert? (A real vehicle has abort rules; the rig can model one as a message.)
-2. **ACT reset.** Resume from the stored last output (proposed) or always start at neutral? And what does the D85MG do with no signal? (a measurement for M2).
-3. **Which phase minimums** are right, with the pad needing three and ascent needing two? (`MISSION_PHASES.md`.)
-4. **Whether the supervisor may reset a computer while its output is the only one agreeing** (a Duplex where one computer is the last good one): proposed no, only the operator may (`hold`).
+## 6. Decisions (owner, 4 Oct 2026)
+1. **Abort.** Simplex in ascent **alerts only**; there is no automatic abort. An abort is a launch rule, not a flight-computer rule; the rig models one as an operator command to the simulator (`SAFE_MODE.md`, TFC-SAFE-008).
+2. **ACT reset.** ACT **resumes from its stored last output** and then ramps (TFC-RESP-003), kept behind a parameter so that "always start at neutral" is one setting away. To be confirmed by the servo no-signal measurement (P-M1-01 step 10): if the servo goes limp the behaviour is revisited.
+3. **Phase minimums** stand as in `MISSION_PHASES.md`: three at the pad, two in ascent.
+4. **The supervisor does not reset the last agreeing computer** on its own; only the operator's `hold` may (TFC-RESP-004).
 
 ## 7. What this adds to the requirements
 TFC-RESP-001 to 004 in `REQUIREMENTS.md`: every fault-matrix row names a response class; the table of section 5 is the phase rule; ACT starts in Safe after a reset and resumes from a stored output; the supervisor never resets the last agreeing computer on its own.
