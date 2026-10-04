@@ -22,7 +22,8 @@ add_executable(tfc_tests
   tests/test_fuzz.cpp
   tests/test_recovery.cpp
   tests/test_ground.cpp
-  tests/test_triplex_scenarios.cpp)
+  tests/test_triplex_scenarios.cpp
+  tests/test_hw_logic.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
 target_include_directories(tfc_tests PRIVATE tests)
 target_compile_options(tfc_tests PRIVATE
