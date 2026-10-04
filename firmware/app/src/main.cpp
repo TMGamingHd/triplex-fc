@@ -443,6 +443,18 @@ int main() {
     const tfc::FrameReport& rep = mgr.end_frame();
     usable_nodes = static_cast<uint8_t>(~rep.latched_mask & 0x07U);  // next frame's flight function uses only the nodes that are voting
     progress.report(kTaskVote);
+    {  // the heartbeat: what ACT and the supervisor need to know (protocol v2): mode, Safe request, bus alarm, how this node sees the three
+      tfc::Heartbeat hb;
+      hb.mode = static_cast<uint8_t>(rep.mode);
+      hb.safe_requested = rep.safe_request;
+      hb.bus_alarm = rep.bus_alarm;
+      for (unsigned n = 0; n < tfc::kNodes; ++n) {
+        const unsigned bit = 1U << n;
+        hb.node_state[n] = (rep.disabled_mask & bit) != 0U ? 3U : ((rep.probation_mask & bit) != 0U ? 2U : ((rep.latched_mask & bit) != 0U ? 1U : 0U));
+      }
+      hb.reset_count = static_cast<uint8_t>(resets.boots() > 255U ? 255U : resets.boots());
+      tx_errors += send(tfc::pack_heartbeat(kNodeId, hb, seq)) ? 0U : 1U;
+    }
     if (progress.end_of_frame(true)) {  // the one place the watchdog is serviced, and the one place KICK is raised
       wdt.feed();
       lines.kick(true);

@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: MIT
+mainmenu "Triplex actuator node (ACT)"
+
+config TFC_GROUND_KEY
+	string "Ground-command authentication key (32 hex digits = 128 bits)"
+	default "000102030405060708090a0b0c0d0e0f"
+	help
+	  The shared key for the SipHash-2-4 tag on ground commands (docs/DECISIONS.md ADR-019). The default is the PUBLIC bench key that the
+	  host tools, the tests and the flight computers also use. It protects nothing: provision your own before any real use.
+
+config TFC_SYNC_STAGGER_US
+	int "Stagger of the SYNC wait windows between nodes (microseconds)"
+	default 500
+	range 200 2000
+	help
+	  The wait for SYNC lasts 1.0 ms plus this much for each node after A, so the lowest node's takeover SYNC is heard by the others before their own
+	  windows end (ADR-025). It must exceed the receive latency of a frame. The host's native_sim CAN driver polls its socket every millisecond, so
+	  the host board file lengthens it.
+
+config TFC_ACT_VOTE_US
+	int "Time of ACT's vote within the frame (microseconds after SYNC)"
+	default 6500
+	range 5500 9000
+	help
+	  The schedule's ACT slot (ARCHITECTURE section 3): the flight computers' commands are in by then. The host's native_sim CAN driver polls its
+	  socket every millisecond, so there the host board file moves it later.
+
+source "Kconfig.zephyr"
+
+config TFC_WATCHDOG_TIMEOUT_MS
+	int "Hardware watchdog timeout (ms)"
+	default 100
+	range 20 4000
+
+config TFC_RESET_LOOP_BOOTS
+	int "Short boots in a row that make a reset loop"
+	default 3
+	range 1 20
+
+config TFC_SHORT_BOOT_S
+	int "A boot shorter than this many seconds is short"
+	default 60
+	range 1 3600

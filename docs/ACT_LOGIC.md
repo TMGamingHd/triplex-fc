@@ -1,7 +1,7 @@
 # Actuator node logic
 
-> Status: **built and tested on the host** (`core/include/tfc/act.hpp`, `tests/test_act.cpp`, P1-3). Not yet an application: the Zephyr app, the bus I/O and the
-> ground-command path (authentication of `clear-safe`) are P1-4. Per ADR-024, ACT has **no servo output**: its output is the voted gimbal command on the bus (`0x300`),
+> Status: **built and tested on the host** (`core/include/tfc/act.hpp`, `act_ground.hpp`, `tests/test_act.cpp`, `tests/test_act_ground.cpp`) **and running as an application**
+> (`firmware/act`, Zephyr; native_sim on `vcan0` and the Nucleo; `sim/tests/test_live_triplex.py`). Per ADR-024, ACT has **no servo output**: its output is the voted gimbal command on the bus (`0x300`),
 > and its Safe action is the value of that command.
 
 ## What it does, each frame
@@ -35,6 +35,16 @@ are held through and the third enters Safe; the output never moves faster than t
 for each missing condition and accepted when all hold; the reset behaviour; the stored record detects damage in every field; and **a 20,000-frame deterministic fuzz** (random commands, drops, wild nodes, Safe requests) shows the output finite,
 never stepping by more than the bound, and never leaving Safe without a clear. Coverage of `act.hpp`: 100% of lines, 99.1% of branches.
 
+## The application (`firmware/act`)
+It follows SYNC and never becomes the master (`SyncStart::Observer`); it is silent until the first SYNC. At 6.5 ms (7.5 ms on the host, whose CAN driver polls every millisecond) it drains the
+commands, the heartbeats and any ground frames, votes, and sends `0x300` (`to_act_frame`). The flight computers' Safe request comes from their heartbeats through `HeartbeatMonitor`: **a majority
+of the fresh heartbeats of the nodes ACT has not excluded must ask** (so one faulty computer cannot safe the vehicle; two computers that disagree and cannot blame each other both ask; a lone survivor decides).
+Ground commands go through `ActGround`: the same tag, counter window and ARM-then-EXECUTE as the flight computers (ADR-019); `clear-safe` needs an ARM and lifts Safe only if `clear_safe()` accepts
+(votes good for 100 frames since Safe was entered, from two nodes, no request active); `reintegrate` readmits the nodes ACT excluded, whatever its node field says. The output survives a reset in
+no-init RAM (`ActRecord`). Live, with three flight-computer instances: Standby goes to Nominal after 100 good frames (frame 103), a computer that dies is excluded at the same frame the flight computers latch it,
+ACT keeps flying on two and then on one, and with none it enters Safe on lost votes.
+
 ## Not yet
-The application and the bus I/O; `clear_safe` and `reintegrate` through the authenticated ground-command path (the manager's authentication and ARM logic is the thing to reuse); the output frame `0x300` (protocol v2, P1-1);
-the supervisor's `KICK`, `FRAME` and `SAFE` lines in the app; the hardware test of a real ACT reset (F17); an oracle S5 for the campaign (the output step bound) once the campaign drives ACT.
+The supervisor's `KICK`, `FRAME` and `SAFE` lines in the app (`hardware_safe()` is wired to nothing); the hardware test of a real ACT reset (F17); an oracle S5 for the campaign (the output step bound) once the
+campaign drives ACT; a live test of the heartbeat-driven Safe request and of `clear-safe` (needs a fault that makes the firmware's flight computers request Safe: fault injection in the firmware or the Pico, P1-5 and later;
+the logic is covered on the host).

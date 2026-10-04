@@ -164,3 +164,16 @@ TFC_TEST(sync_windows_grow_with_the_node_number_so_the_lowest_takeover_is_heard_
   CHECK(tfc::sync_window_us(1U) - tfc::sync_window_us(0U) >= 500);  // enough for a SYNC frame (about 0.1 ms) to cross the bus and be heard
   CHECK(tfc::sync_window_us(2U, 2500) == 6000 && tfc::sync_window_us(0U, 2500) == 1000);  // a longer stagger for the host
 }
+
+TFC_TEST(sync_an_observer_follows_and_counts_but_never_becomes_the_master) {
+  SyncClock act(SyncStart::Observer);
+  CHECK(act.cycle(true, 10U).frame == 10U && act.cycle(true, 11U).synced);
+  for (uint32_t k = 12; k < 400U; ++k) {  // SYNC is gone for good
+    const tfc::SyncTick t = act.cycle(false, 0U);
+    CHECK(!t.master && !t.took_over && t.frame == k && t.synced);
+  }
+  SyncClock fresh(SyncStart::Observer);
+  for (int i = 0; i < 50; ++i) {
+    CHECK(!fresh.cycle(false, 0U).master);
+  }
+}

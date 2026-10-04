@@ -411,3 +411,59 @@ TFC_TEST(act_output_becomes_the_act_frame_field_for_field_and_survives_the_wire)
   const ActFrame idle = to_act_frame(ActOutput{});  // the defaults: Standby, neutral, nothing voted
   CHECK(idle.state == 0U && !idle.held && idle.cause == 0U && idle.pitch_deg == 0.0F);
 }
+
+namespace {
+
+tfc::Frame heartbeat(unsigned node, bool asks) {
+  Heartbeat h;
+  h.safe_requested = asks;
+  return pack_heartbeat(static_cast<uint8_t>(node), h, 0U);
+}
+
+}  // namespace
+
+TFC_TEST(heartbeat_monitor_a_majority_of_fresh_heartbeats_decides) {
+  HeartbeatMonitor m;
+  CHECK(!m.safe_requested(0U));  // nothing heard
+  m.begin_frame();
+  CHECK(m.on_frame(heartbeat(0U, true)) && m.on_frame(heartbeat(1U, false)) && m.on_frame(heartbeat(2U, false)));
+  CHECK(!m.safe_requested(0U));  // one of three is not a majority: a single faulty computer cannot safe the vehicle
+  m.begin_frame();
+  CHECK(m.on_frame(heartbeat(0U, true)) && m.on_frame(heartbeat(1U, true)) && m.on_frame(heartbeat(2U, false)));
+  CHECK(m.safe_requested(0U));  // two of three is
+}
+
+TFC_TEST(heartbeat_monitor_in_duplex_both_must_ask_and_a_lone_survivor_decides) {
+  HeartbeatMonitor m;
+  m.begin_frame();
+  (void)m.on_frame(heartbeat(0U, true));
+  (void)m.on_frame(heartbeat(1U, false));
+  CHECK(!m.safe_requested(0x4U));  // C is excluded; one of two asks: no
+  m.begin_frame();
+  (void)m.on_frame(heartbeat(0U, true));
+  (void)m.on_frame(heartbeat(1U, true));
+  CHECK(m.safe_requested(0x4U));  // both ask: yes
+  CHECK(m.safe_requested(0x2U));  // B excluded: A is the lone fresh heartbeat in the vote, and it asks
+  CHECK(!m.safe_requested(0x7U));  // every node excluded: nobody to ask
+}
+
+TFC_TEST(heartbeat_monitor_a_stale_or_excluded_heartbeat_does_not_count_and_bad_frames_are_refused) {
+  HeartbeatMonitor m(3U);
+  m.begin_frame();
+  (void)m.on_frame(heartbeat(0U, true));
+  CHECK(m.safe_requested(0U));  // the lone fresh one asks
+  m.begin_frame();
+  m.begin_frame();
+  CHECK(m.safe_requested(0U));   // age 2 is still fresh
+  m.begin_frame();
+  CHECK(!m.safe_requested(0U));  // age 3 is not
+  Frame bad = heartbeat(1U, true);
+  bad.data[1] = static_cast<uint8_t>(bad.data[1] ^ 0x55U);  // fails its CRC
+  CHECK(!m.on_frame(bad));
+  Frame not_a_heartbeat = pack_cmd(0U, Command{}, 0U);
+  CHECK(!m.on_frame(not_a_heartbeat));
+  for (int i = 0; i < 300; ++i) {
+    m.begin_frame();  // the age saturates, it does not wrap into "fresh"
+  }
+  CHECK(!m.safe_requested(0U));
+}
