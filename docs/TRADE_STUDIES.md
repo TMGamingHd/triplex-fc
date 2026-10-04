@@ -46,6 +46,7 @@ campaign; HIL needs the rig.
 | TS-11 | Duplex attribution | How should a Duplex disagreement be attributed (continuity, analytical redundancy, none)? | SIL, estimator | 2 | large |
 | TS-12 | Autonomy against ground command | Which responses are autonomous and which need the operator? | analysis | 2 | small |
 | TS-13 | Toolchain and RTOS | C++17 subset against C or Rust; Zephyr against bare metal | analysis (partly decided in ADR-001, ADR-002) | 2 | small |
+| TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `DEFERRED.md` section 7 |
 
 Recommended order, by value and by when the data exist: **TS-0** now; **TS-1, TS-2, TS-3, TS-4** on the simulator in October and
 November, while the hardware is built; **TS-5, TS-8, TS-9** on the rig after S3; the others as short write-ups.
@@ -218,6 +219,7 @@ cannot be met; a second bus is chosen only to remove the bus as a single point o
 | TS-11 Duplex attribution | Continuity (today), analytical redundancy (gyro against accelerometer tilt), none. False-blame rate, Safe rate | Needs the estimator; the existing `duplex_boundary` sweep is the baseline |
 | TS-12 Autonomy | For each response (isolate, reintegrate, Safe, clear), autonomous or operator. Time available, risk of a wrong action, operator availability in each phase | A table with the reasoning; ADR-010 and ADR-019 already take positions |
 | TS-13 Toolchain and RTOS | Language subset, RTOS, build and static-analysis tools. Determinism, certification evidence, ecosystem | A short write-up; decided in ADR-001 and ADR-002, add the rejected options with reasons |
+| TS-14 Learned against deterministic detection | A learned detector (for example residual-based) against the persistence filters; detection time, false-alarm rate, training data needed, verification effort, determinism | The campaign scenarios as labelled data, held-out fault kinds as the test; shadow mode only; a table and one plot; the result may well be that the deterministic design wins, and that is a finding |
 
 ## 10. Schedule
 
