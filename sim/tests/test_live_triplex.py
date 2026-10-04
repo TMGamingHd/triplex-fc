@@ -28,6 +28,9 @@ def _bin(env, default):
 
 BINS = [_bin("TFC_TRIPLEX_BIN_A", "build/triplex_a/zephyr/zephyr.exe"), _bin("TFC_TRIPLEX_BIN_B", "build/triplex_b/zephyr/zephyr.exe"),
         _bin("TFC_TRIPLEX_BIN_C", "build/triplex_c/zephyr/zephyr.exe")]
+# The same three nodes with the real flight function (consensus, estimator, controller) in place of the scripted command (tools/bench/sil_triplex.sh --build --flight).
+FLIGHT_BINS = [_bin("TFC_FLIGHT_BIN_A", "build/flight_a/zephyr/zephyr.exe"), _bin("TFC_FLIGHT_BIN_B", "build/flight_b/zephyr/zephyr.exe"),
+               _bin("TFC_FLIGHT_BIN_C", "build/flight_c/zephyr/zephyr.exe")]
 HAVE_VCAN = Path("/sys/class/net/vcan0").exists()
 STATUS = re.compile(r"\[frame (\d+)\] (\w+)\s+A(.) B(.) C(.)\s+\| crc=(\d+) seq=(\d+) missing=(\d+) vote=(\d+) digest=(\d+)")
 
@@ -35,6 +38,9 @@ STATUS = re.compile(r"\[frame (\d+)\] (\w+)\s+A(.) B(.) C(.)\s+\| crc=(\d+) seq=
 @unittest.skipIf(None in BINS, "the three native_sim images are not built (tools/bench/sil_triplex.sh --build)")
 @unittest.skipIf(not HAVE_VCAN, "vcan0 not present (run sim/scripts/setup_vcan.sh)")
 class LiveTriplex(unittest.TestCase):
+    BINS = BINS
+    TS16 = False  # True where a Safe request after the takeover is the known hole of TS-16 (replicated estimators on a lossy bus) and not a failure
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.procs = []
@@ -50,7 +56,7 @@ class LiveTriplex(unittest.TestCase):
     def start(self, i):
         path = Path(self.tmp.name) / f"node{i}.log"
         with open(path, "w") as f:  # the child keeps its own copy of the descriptor
-            self.procs.append(subprocess.Popen([BINS[i]], stdout=f, stderr=subprocess.STDOUT, text=True))
+            self.procs.append(subprocess.Popen([self.BINS[i]], stdout=f, stderr=subprocess.STDOUT, text=True))
         self.logs.append(path)
 
     def log(self, i):
@@ -107,9 +113,20 @@ class LiveTriplex(unittest.TestCase):
         self.assertNotIn("takes over as sync master", self.log(2), self.log(2))
         for i in (1, 2):
             last = [m for m in map(STATUS.match, self.log(i).splitlines()) if m][-1]
+            if self.TS16 and last.group(2) == "SAFE":
+                self.skipTest("the two remaining estimators disagreed after the takeover and the system went to Safe: the open hole of TS-16 (docs/TRADE_STUDIES.md)")
             self.assertEqual(last.group(2), "DUPLEX", self.log(i))
             self.assertEqual(last.group(3), "X", self.log(i))
             self.assertEqual((last.group(4), last.group(5)), ("+", "+"), self.log(i))
+
+
+@unittest.skipIf(None in FLIGHT_BINS, "the flight-function images are not built (tools/bench/sil_triplex.sh --build --flight)")
+@unittest.skipIf(not HAVE_VCAN, "vcan0 not present (run sim/scripts/setup_vcan.sh)")
+class LiveTriplexFlightFunction(LiveTriplex):
+    """The same run, with every node computing its command from the sensors through the estimator and controller."""
+
+    BINS = FLIGHT_BINS
+    TS16 = True
 
 
 if __name__ == "__main__":

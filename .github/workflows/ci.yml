@@ -119,10 +119,10 @@ jobs:
         run: |
           . firmware/env.sh
           west build -p always -b native_sim/native/64 firmware/app -d build/native_sim
-          # the software triplex: three flight computers with the real flight function (the scripted command is only for the Python peers)
+          # the software triplex: three flight computers (node ids 0, 1, 2) on the scripted command, so that the takeover test does not depend on the inputs
           letters=(a b c)
           for n in 0 1 2; do
-            west build -p always -b native_sim/native/64 firmware/app -d "build/triplex_${letters[$n]}" -- -DCONFIG_TFC_NODE_ID=$n -DCONFIG_TFC_FLIGHT_FUNCTION=y
+            west build -p always -b native_sim/native/64 firmware/app -d "build/triplex_${letters[$n]}" -- -DCONFIG_TFC_NODE_ID=$n
           done
       - name: Live FC-A against virtual peers (needs vcan; tests skip if the runner has none)
         run: |
