@@ -58,6 +58,20 @@ struct ActOutput {
   uint8_t vote_status = 0U;    // tfc::VoteStatus of the pitch vote
 };
 
+// ACT's output as the frame it broadcasts (protocol.hpp, ActFrame): the voted command and the status field that tells everyone what ACT is doing.
+[[nodiscard]] constexpr ActFrame to_act_frame(const ActOutput& o) noexcept {
+  ActFrame a;
+  a.pitch_deg = o.pitch_deg;
+  a.yaw_deg = o.yaw_deg;
+  a.state = static_cast<uint8_t>(o.mode);
+  a.held = o.held;
+  a.vote_status = o.vote_status;
+  a.voted_nodes = o.voted_nodes;
+  a.excluded_nodes = o.excluded_nodes;
+  a.cause = static_cast<uint8_t>(o.cause);
+  return a;
+}
+
 // What ACT keeps across a reset (in no-init RAM): the last output. Plain data with no initialisers, like ResetRecord.
 constexpr uint32_t kActMagic = 0x54464143U;  // "TFAC"
 

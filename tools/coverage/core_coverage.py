@@ -32,7 +32,7 @@ def main(argv=None) -> int:
         tmp = Path(d)
         sources = sorted(str(p) for p in (ROOT / "tests").glob("*.cpp"))
         subprocess.run(["g++", "-std=c++17", "-O0", "-g", "--coverage", "-fno-exceptions", "-fno-rtti", f"-I{ROOT / 'core/include'}",
-                        f"-I{ROOT / 'tests'}", f"-I{ROOT / 'tools' / 'vehicle'}", f"-I{ROOT / 'sim' / 'vehicle'}", *sources, "-o", str(tmp / "tests_cov")], check=True, cwd=tmp)
+                        f"-I{ROOT / 'tests'}", f"-I{ROOT / 'tools' / 'vehicle'}", f"-I{ROOT / 'sim' / 'vehicle'}", f"-I{ROOT / 'firmware' / 'app' / 'src'}", *sources, "-o", str(tmp / "tests_cov")], check=True, cwd=tmp)
         r = subprocess.run([str(tmp / "tests_cov")], capture_output=True, text=True, cwd=tmp)
         if r.returncode != 0:
             print(r.stdout[-2000:])

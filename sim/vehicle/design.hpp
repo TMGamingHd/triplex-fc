@@ -7,6 +7,7 @@
 #include <cmath>
 #include <vector>
 
+#include "tfc/controller.hpp"
 #include "vehicle6.hpp"
 
 namespace sim {
@@ -139,6 +140,29 @@ inline std::vector<GainPoint> gain_schedule(const std::vector<NominalPoint>& nom
     g.push_back(p);
   }
   return g;
+}
+
+// The tables the flight computers carry: the pitch program at sixteen points of the nominal trajectory, and the gains designed every `every_s` seconds
+// (up to the sixteen the schedule holds). The firmware's generated tables (firmware/app/src/flight_tables.hpp) and the closed-loop tests both come from here.
+struct FlightTables {
+  tfc::Guidance guidance;
+  tfc::GainSchedule gains;
+};
+
+inline FlightTables flight_tables(const Params& p, double every_s = 6.0, double wn = 2.5, double zeta = 0.8, double ki_over_kp = 0.2) {
+  FlightTables t;
+  const std::vector<NominalPoint> nominal = nominal_trajectory(p);
+  for (unsigned k = 0; k < tfc::Guidance::kMaxPoints; ++k) {
+    const std::size_t idx = (nominal.size() - 1U) * k / (tfc::Guidance::kMaxPoints - 1U);
+    (void)t.guidance.add(1U, static_cast<uint32_t>(idx), static_cast<float>(nominal[idx].theta_deg));
+  }
+  for (const GainPoint& g : gain_schedule(nominal, every_s, wn, zeta, ki_over_kp)) {
+    if (t.gains.size() < tfc::GainSchedule::kMaxPoints) {
+      (void)t.gains.add(static_cast<uint32_t>(g.t / 0.01),
+                        tfc::ControllerGains{static_cast<float>(g.kp), static_cast<float>(g.kd), static_cast<float>(g.ki)});
+    }
+  }
+  return t;
 }
 
 }  // namespace sim
