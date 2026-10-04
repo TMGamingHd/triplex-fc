@@ -43,19 +43,21 @@ decision, and (c) end in a position everyone agrees on.
 
 ## 5. Options for the Safe action
 
+> **Correction, 4 Oct 2026.** The two servos are the *platform's* (driven by the Pico from the simulator), not an actuator behind ACT: ACT has no servo output, and its Safe action is the *value of the gimbal command it puts on the bus* (`docs/VEHICLE_SIM.md` section 2). Where this page says "servos" it means the platform: the platform's own protection is the Pico's limits and link watchdog (PLAT-001 to 004) and the E-stop.
+
 | Option | What the output does | For | Against |
 |---|---|---|---|
 | S0 hold forever (today) | Last good command, indefinitely | No motion at all | A held off-centre command can be wrong for long on a real vehicle; no defined end |
 | **S1 hold, then null (proposed)** | Freeze at once; after `T_hold`, ramp to neutral at a limited rate; hold neutral | No step; gives a transient and the operator time; ends in a known position | A frozen command costs `T_hold` of wrong steering if the last value was bad |
 | S2 null at once | Ramp to neutral immediately | Shortest exposure to a bad held value | A fast move can itself be a disturbance; loses the chance that a transient clears |
-| S3 depower the servos | Remove drive | Simplest, nothing can run away | The platform goes where gravity and friction take it; fine on the ground, not on a rig carrying an IMU you want to keep calibrated |
+| S3 stop the platform | The Pico holds the platform level or depowers it | Simplest, nothing can run away | Not a flight-computer action: it is the Pico's and the E-stop's; the platform goes where gravity and friction take it if depowered |
 | S4 abort the run | Tell the simulator to end the scenario | Matches range-safety logic | Not a flight-computer decision; a message to the simulator |
 
 **Proposal: S1 in ascent, S3 on the pad, S4 as an additional message to the simulator.** Per phase (`MISSION_PHASES.md`):
 
 | Phase | Safe action |
 |---|---|
-| Power-up, checkout, pad hold | Servos depowered or neutral; nothing moves |
+| Power-up, checkout, pad hold | The command is neutral and the platform sits level (the Pico may depower it); nothing moves |
 | Ascent (all three hot) | Freeze, then null after `T_hold` at the rate limit; message to the simulator |
 | Coast / burn-free | Freeze; null only on operator command (no steering needed) |
 | Recovery after a Safe | The operator clears Safe (ARM) once the exit conditions hold |

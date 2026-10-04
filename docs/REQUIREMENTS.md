@@ -131,6 +131,20 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-LOOP-005 | A non-finite gyro value shall be treated as untrustworthy and a non-finite or out-of-gate accelerometer value shall not correct the attitude; the estimator's state shall stay finite. | T |
 | TFC-LOOP-006 | The estimator shall align from the first trustworthy gravity reading, and the controller's gimbal command shall never exceed its angle limit or change by more than its slew limit in a frame. | T |
 
+## Vehicle simulator and platform (ADR-024; docs/VEHICLE_SIM.md)
+| ID | Requirement | Verif. |
+|---|---|---|
+| TFC-SIM-001 | The simulator shall be deterministic: the same scenario and seed shall give a byte-identical state history. | T |
+| TFC-SIM-002 | The vehicle model shall be a 6-DOF rigid body with variable mass properties, thrust that depends on altitude, thrust-vector control, an atmosphere and a wind, aerodynamic instability and engine-out, and shall pass the conservation and known-value tests of `VEHICLE_SIM.md` section 9 (circular orbit, the rocket equation, standard atmosphere, torque-free rotation). | T |
+| TFC-SIM-003 | Scenarios (nominal, wind shear and gust at max-Q, engine-out at a chosen time, a mass or centre-of-gravity offset) shall be files with a seed and timed events, and every one shall be logged. | T |
+| TFC-SIM-004 | The simulator shall advance on ACT's output frame, or, if it does not arrive within 8 ms of SYNC, on the last command held and counted, and shall publish the next frame's sensor inputs, so that its timing does not depend on the host's jitter. | T |
+| TFC-SIM-005 | The simulator shall provide a platform mode (the platform's rates and gravity in the platform frame) and a vehicle-true mode (the vehicle's rates and specific force). | T |
+| TFC-SIM-006 | A Safe event shall not end the run; it shall be reported to the simulator, which marks the run safed and continues; only an operator abort ends it (SAFE-008). | T |
+| TFC-PLAT-001 | The platform driver (the Pico) shall limit the platform's rate and travel in its own firmware, whatever the PC commands. | T, M |
+| TFC-PLAT-002 | If no platform command arrives for 100 ms the driver shall hold the platform; after 1 s it shall bring it to level at a limited rate. | T, M |
+| TFC-PLAT-003 | The E-stop shall cut the servo rail independently of every firmware. | I, M |
+| TFC-PLAT-004 | The platform shall show the vehicle's long-axis tilt in the pitch and yaw planes within +-45 degrees; beyond that it shall saturate and the simulator shall mark the run. | T, M |
+
 ## Software quality
 | ID | Requirement | Verif. |
 |---|---|---|

@@ -38,10 +38,10 @@ Why this loop: the IMUs feel real motion with real noise, latency and vibration,
 | Node | Hardware | Software |
 |---|---|---|
 | FC-A/B/C | Nucleo-G474RE + ISM330DHCX (SPI) + CAN transceiver | Zephyr app, C++17: acquisition, consensus, estimator, controller, FDIR |
-| ACT | Nucleo-G474RE + CAN transceiver | Zephyr app: command vote, output latch, safe state, watchdog |
-| Fault injector | Pico 2 + relay/MOSFET module | Firmware: platform servo PWM, power-cut/sensor-line fault commands |
+| ACT | Nucleo-G474RE + CAN transceiver | Zephyr app: command vote, output latch, safe state, watchdog. **No PWM output:** the voted gimbal command goes to the simulator on the bus (`docs/VEHICLE_SIM.md`) |
+| Platform driver and fault injector | Pico 2 + relay/MOSFET module | Firmware: platform servo PWM from the simulator's attitude with its own rate and travel limits and a watchdog on the PC link (PLAT-001 to 004), power-cut/sensor-line fault commands |
 | Supervisor (proposed, ADR-022) | Pico 2 + TCXO clock module + the spare relay channels | Own firmware, no `core/`: watchdog on every node, resets and power-cycles, independent clock, hardware commands (`docs/SUPERVISOR.md`) |
-| Sim host | Ubuntu PC | Python or C++ sim, SocketCAN test runner, log analysis |
+| Sim host | Ubuntu PC | C++ 6-DOF vehicle simulator (a library plus a SocketCAN runner, `docs/VEHICLE_SIM.md`); Python for scenario files and analysis; SocketCAN test runner, log analysis |
 
 All flight-critical logic lives in the portable `core/` library (header-only, no heap, no exceptions, no RTTI) so it runs identically in host tests, in Zephyr `native_sim`, and on the target.
 

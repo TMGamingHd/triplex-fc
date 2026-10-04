@@ -105,7 +105,7 @@ F17 reset or brownout, and the loss of ACT's own output.
 |---|---|
 | Detected | The supervisor's missing `KICK` from ACT, 3 frames; ACT's own watchdog |
 | Class | **R6** on ACT, then **R5**: after any ACT reset ACT starts **in Safe**, as the lecture's reset pattern does, not in the nominal mode |
-| Vehicle | **Open problem.** A servo with no signal may hold or go limp (not known for the D85MG; measure it). On boot ACT has no last command, so naive start-up would jump the output to neutral: a step. Proposal: ACT keeps its last output in memory that survives a reset (no-init RAM, CRC-checked) and resumes from it, then nulls at the rate limit; if that memory is invalid it starts from neutral. |
+| Vehicle | ACT's output is the gimbal command on the bus; there is no servo behind it (`docs/VEHICLE_SIM.md`). On boot ACT has no last command, so naive start-up would jump the output to neutral: a step. Proposal: ACT keeps its last output in memory that survives a reset (no-init RAM, CRC-checked) and resumes from it, then nulls at the rate limit; if that memory is invalid it starts from neutral. |
 | Operator | `clear-safe` under an ARM when the exit conditions hold |
 | Limit | While ACT is single (ADR-023) this is fail-passive, not fail-operational |
 
@@ -155,8 +155,8 @@ held and Safe flags.
 |---|---|---|---|---|
 | R2, one computer or sensor lost | **No go**: hold the launch until it is repaired (go/no-go needs 3) | Continue; no replacement while a burn runs | Promote the warm spare (probation first) | P5: promote and re-check before the burn; P6: continue |
 | R3, down to Simplex | No go | Continue; alert; **abort criteria are a decision for the owner** (open question 1) | Alert; operator decides, spare promoted | Continue; alert |
-| R4, unattributable disagreement | Safe: servos neutral or depowered | Freeze, null after `T_hold` | Freeze only | Freeze, null after `T_hold` |
-| R5, no valid votes | Neutral or depowered | Freeze, then null | Freeze | Freeze, then null |
+| R4, unattributable disagreement | Safe: command neutral, platform level | Freeze, null after `T_hold` | Freeze only | Freeze, null after `T_hold` |
+| R5, no valid votes | Neutral | Freeze, then null | Freeze | Freeze, then null |
 
 ## 6. Decisions (owner, 4 Oct 2026)
 1. **Abort.** Simplex in ascent **alerts only**; there is no automatic abort. An abort is a launch rule, not a flight-computer rule; the rig models one as an operator command to the simulator (`SAFE_MODE.md`, TFC-SAFE-008).

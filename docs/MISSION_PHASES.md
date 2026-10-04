@@ -35,7 +35,7 @@ mode but is a *planned* Duplex, which the phase table marks as allowed; the same
 |---|---|---|---|---|---|---|---|
 | P0 | Off | 0 | 0 | COLD (supervisor only) | n/a | n/a | |
 | P1 | Power-up and checkout | up to 3, one at a time | 1 | joining through startup grace | by the manager | none | Boot order, key check, sensor self-test (FDIR-036), SYNC lock |
-| P2 | Pre-launch hold | 3 | 3 | none | operator | servos neutral or depowered | **Go/no-go: fewer than 3 healthy HOT is a hold**, not a launch |
+| P2 | Pre-launch hold | 3 | 3 | none | operator | command neutral; platform level | **Go/no-go: fewer than 3 healthy HOT is a hold**, not a launch |
 | P3 | Ascent (boost) | 3 | 2 | none; a lost node is not replaced while a burn is under way | automatic only for a first transient latch; otherwise after the phase | freeze, then null (`SAFE_MODE.md`) | an event that cannot be repeated: fail-operational with no spare to wake |
 | P4 | Coast | 2 | 2 | 1 WARM | operator | freeze | no steering is needed, so the third node can rest; this is where the exposure is saved |
 | P5 | Pre-burn | 3 | 3 | the WARM node promoted at least N s before the burn | by the phase | as P3 | the promotion must be finished and proved before it is needed |
