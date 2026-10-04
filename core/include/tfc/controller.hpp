@@ -65,6 +65,12 @@ class Guidance {
     return r;
   }
 
+  // The points of one plane's table, for tools that print or check it (a plane or index out of range gives size 0 or a zero point).
+  [[nodiscard]] unsigned size(unsigned plane) const noexcept { return plane < 2U ? n_[plane] : 0U; }
+  [[nodiscard]] GuidancePoint point(unsigned plane, unsigned i) const noexcept {
+    return (plane < 2U && i < n_[plane]) ? pt_[plane][i] : GuidancePoint{};
+  }
+
  private:
   // The value and slope (deg per second, at 100 frames per second) of one plane's table at `frame`.
   [[nodiscard]] float eval(unsigned plane, uint32_t frame, float& rate_dps) const noexcept {
@@ -134,6 +140,10 @@ class GainSchedule {
     }
     return gain_[n_ - 1U];
   }
+
+  // The points, for tools that print or check the table (an index out of range gives a zero point).
+  [[nodiscard]] uint32_t frame_at(unsigned i) const noexcept { return i < n_ ? frame_[i] : 0U; }
+  [[nodiscard]] ControllerGains gains_at(unsigned i) const noexcept { return i < n_ ? gain_[i] : ControllerGains{}; }
 
  private:
   std::array<uint32_t, kMaxPoints> frame_{};

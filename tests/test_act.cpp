@@ -390,3 +390,24 @@ TFC_TEST(act_in_standby_does_not_count_untrustworthy_votes_towards_nominal) {
   b.run_same(0.0F, 0.0F, 20U);
   CHECK(b.act.output().mode == ActMode::Nominal);
 }
+
+TFC_TEST(act_output_becomes_the_act_frame_field_for_field_and_survives_the_wire) {
+  ActOutput o;
+  o.pitch_deg = -3.25F;
+  o.yaw_deg = 1.5F;
+  o.mode = ActMode::Safe;
+  o.phase = SafePhase::Hold;
+  o.cause = SafeCause::FcRequest;
+  o.held = true;
+  o.voted_nodes = 0x5U;
+  o.excluded_nodes = 0x2U;
+  o.vote_status = 3U;
+  const ActFrame a = to_act_frame(o);
+  CHECK(a.pitch_deg == -3.25F && a.yaw_deg == 1.5F && a.state == 2U && a.held && a.vote_status == 3U && a.voted_nodes == 5U && a.excluded_nodes == 2U &&
+        a.cause == 2U);
+  const DecodedAct d = unpack_act_out(pack_act_out(a, 9U));
+  CHECK(d.ok && d.seq == 9U && d.act.state == 2U && d.act.cause == 2U && d.act.voted_nodes == 5U && d.act.excluded_nodes == 2U && d.act.held);
+  CHECK(std::fabs(d.act.pitch_deg - (-3.25F)) < 0.001F);
+  const ActFrame idle = to_act_frame(ActOutput{});  // the defaults: Standby, neutral, nothing voted
+  CHECK(idle.state == 0U && !idle.held && idle.cause == 0U && idle.pitch_deg == 0.0F);
+}

@@ -32,6 +32,9 @@ Every computer runs the whole chain on **the same consensus input**, so the thre
 - The build must not fuse multiply-adds: **`-ffp-contract=off`** is now set for every host target and for the firmware app (GCC would otherwise contract on any target that has an FMA unit, such as the Cortex-M4F). `-ffast-math` stays off.
 - A non-finite gyro is treated as untrustworthy, so the estimator's state can never become NaN; a NaN or out-of-gate accelerometer skips the correction.
 
+**One object.** The chain above is `tfc::FlightFunction` (`core/include/tfc/flight.hpp`): `begin_frame(k, usable_nodes)`, `on_frame()` for every frame heard, `step()` at the command slot. The firmware, `tests/test_flight.cpp` and the closed-loop flights of `tests/test_vehicle.cpp` all run that one class. The pitch program and the gains it uses are not designed on the target: `tools/vehicle/gen_tables.cpp` writes them
+from the vehicle's nominal ascent into `firmware/app/src/flight_tables.hpp` (regenerate with `build/host/tfc_gen_tables firmware/app/src/flight_tables.hpp`), and a unit test fails if the committed file no longer matches the design.
+
 ## 4. Results (host, closed loop, three replicas, real frame protocol with CRC and quantisation)
 Plant: open-loop divergence time constant about 1.5 s, control effectiveness 2 (rad/s^2 per rad), gimbal limit 8 degrees at 60 deg/s, platform lag 60 ms. Reference: a 20 degree nose-down pitch program over one minute. Sensor noise 0.1 dps and 0.002 g per IMU.
 

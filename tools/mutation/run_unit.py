@@ -23,7 +23,7 @@ def one(name: str) -> tuple[str, str, str]:
         tmp = Path(d)
         inc = build_include(name, tmp)
         exe = tmp / "tests_mut"
-        r = subprocess.run(["g++", *FLAGS, f"-I{inc}", f"-I{ROOT / 'tests'}", f"-I{ROOT / 'tools' / 'vehicle'}", f"-I{ROOT / 'sim' / 'vehicle'}", *map(str, TESTS), "-o", str(exe)], capture_output=True, text=True)
+        r = subprocess.run(["g++", *FLAGS, f"-I{inc}", f"-I{ROOT / 'tests'}", f"-I{ROOT / 'tools' / 'vehicle'}", f"-I{ROOT / 'sim' / 'vehicle'}", f"-I{ROOT / 'firmware' / 'app' / 'src'}", *map(str, TESTS), "-o", str(exe)], capture_output=True, text=True)
         if r.returncode:
             return name, "BUILD-FAILED", r.stderr.strip().splitlines()[0][:120] if r.stderr.strip() else ""
         run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=600)
