@@ -27,6 +27,9 @@ slots (A, B, C) plus ACT. A missing node is just a node that never sends frames.
    number continuous (ADR-018). Writing the first firmware this way is cheap; retrofitting it into three nodes is not.
 9. **CAN needs a second node.** A lone CAN node gets no ACK and goes bus-off. Stage 1 uses the
    USB-CAN adapter as the second node, so it is required from the first day.
+10. **Every node has the supervisor lines from the start (proposed).** Each flight computer and ACT brings out `FRAME` and `KICK` outputs and
+    takes `NRST` from the supervisor, on the same pins in every harness (rule 5), even before the supervisor exists; the supervisor's
+    `PWR` relay is in series with each node's feed. Adding the supervisor later then needs no rewiring.
 
 ## Stages
 
@@ -35,6 +38,7 @@ slots (A, B, C) plus ACT. A missing node is just a node that never sends frames.
 | S1 Single FC | 1 Nucleo + CAN Pal + IMU, USB-CAN adapter, PC | FC-A runs the full 100 Hz frame in Simplex. PC plays ACT and ground station, logs frames, feeds sim data. | 10 min at 100 Hz, zero frame errors; WCET and jitter measured; digest matches PC golden run. **Also deferred to this stage** (docs/DEFERRED.md): the sensor self-test at power-up, per-frame arrival-margin telemetry, and the ground key set with `CONFIG_TFC_GROUND_KEY` |
 | S1b Virtual peers | same | PC publishes frames as FC-B and FC-C (replayed or generated data, injected faults) through the USB-CAN adapter | FC-A sees Duplex/Triplex behaviour and FDIR transitions against fake peers; runs in CI on `native_sim` too |
 | S2 Add ACT | +1 Nucleo + CAN Pal, servo rail | Real ACT node votes the commands and drives the servos. Motion platform closes the loop. | Platform tracks simulated ascent with one FC |
+| S2b Supervisor (proposed, ADR-022) | + Pico 2, TCXO module, the spare relay channels | The supervisor watches FC-A and ACT through `FRAME`/`KICK` lines, resets them on missing kicks, takes hardware commands over USB, sequences boot | A node made to hang is reset within 3 frames; the supervisor unplugged leaves FC-A and ACT running (F57, F58, F66) |
 | S3 Duplex | +FC-B (Nucleo, CAN Pal, IMU) | Two FCs; miscompare is detectable but cannot say who is wrong | Unplug B: back to Simplex without a glitch. Inject a bad value: miscompare flagged |
 | S4 Triplex | +FC-C | Full 2-of-3, fault campaign F01-F18 | Fault matrix filled with measured data |
 

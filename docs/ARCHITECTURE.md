@@ -26,6 +26,9 @@ flowchart LR
   ACT -- voted TVC cmd (CAN) --> CANABLE
   CANABLE --> SIM
   PICO -. relays: power-cut / sensor-line faults .-> FCA & FCB & FCC
+  SUP[Supervisor<br/>own clock, watchdog,<br/>proposed ADR-022] -. FRAME/KICK in, NRST/PWR out .- FCA & FCB & FCC
+  SUP -. SAFE line .-> ACT
+  PC2[PC] -- USB hardware commands --> SUP
 ```
 
 Why this loop: the IMUs feel real motion with real noise, latency and vibration, so the estimator and voter face real data, while the vehicle physics (gravity, thrust, mass loss, wind, engine-out) live in software where they can be repeated exactly. The A/B demonstration is the headline: same scenario with voting on (platform tracks the trajectory through a fault) and voting off (it diverges).
@@ -37,6 +40,7 @@ Why this loop: the IMUs feel real motion with real noise, latency and vibration,
 | FC-A/B/C | Nucleo-G474RE + ISM330DHCX (SPI) + CAN transceiver | Zephyr app, C++17: acquisition, consensus, estimator, controller, FDIR |
 | ACT | Nucleo-G474RE + CAN transceiver | Zephyr app: command vote, output latch, safe state, watchdog |
 | Fault injector | Pico 2 + relay/MOSFET module | Firmware: platform servo PWM, power-cut/sensor-line fault commands |
+| Supervisor (proposed, ADR-022) | Pico 2 + TCXO clock module + the spare relay channels | Own firmware, no `core/`: watchdog on every node, resets and power-cycles, independent clock, hardware commands (`docs/SUPERVISOR.md`) |
 | Sim host | Ubuntu PC | Python or C++ sim, SocketCAN test runner, log analysis |
 
 All flight-critical logic lives in the portable `core/` library (header-only, no heap, no exceptions, no RTTI) so it runs identically in host tests, in Zephyr `native_sim`, and on the target.
@@ -123,11 +127,27 @@ sim/  (host)                             <- vehicle model, scenarios, fault camp
 
 Rules for `core/`: no dynamic allocation, no exceptions, no RTTI, fixed-size containers, bounded loops, warnings as errors, clang-tidy clean, deterministic floating point (same flags on host and target for the digest-critical path; check `-ffast-math` stays OFF). The full rule set (JPL Power of Ten, NASA-STD-8719.13) with the tool that enforces each is `docs/CODING_STANDARD.md`; the fault-coverage evidence is `docs/FAULT_CAMPAIGN.md`, and the failure-mode analysis behind the fault list is `docs/FMEA.md`.
 
-## 7. Known limitations (state these in the write-up)
+## 7. Architecture proposals under review (ADR-020 to ADR-023)
 
-- ACT is a single point of failure in v1. Mitigations: watchdog and safe-hold output. Stretch goal: duplicate ACT.
+Five changes are proposed and documented; none is built. They are decided by the ADRs marked *proposed* until the owner accepts them.
+
+| Topic | Proposal | Where |
+|---|---|---|
+| Sensing | Keep one IMU per computer; the three are cross-strapped *logically* by the CAN exchange; separate sensor health from compute health; no direct multi-master IMU wiring | ADR-020 |
+| Software diversity | Node C runs the previous known-good release; a disagreement between releases holds the output and asks the operator, because a plain vote would isolate the healthy node | ADR-021 |
+| Supervisor | A separate small computer with its own clock and the watchdog the computers cannot give themselves; acts through discrete lines only | ADR-022, `docs/SUPERVISOR.md` |
+| Fail-operational scope | Fail-operational through sensing and computing, fail-passive beyond; a second ACT is a stretch | ADR-023 |
+| Phases and Safe | HOT, WARM and COLD roles set by the mission phase; Safe is freeze, then null | ADR-023, `docs/MISSION_PHASES.md`, `docs/SAFE_MODE.md` |
+
+**Fail-safe against fail-operational** (the lecture's terms): fail-safe pulls over and waits for help; fail-operational keeps driving because the spare was already turning, and needs a spare already running. The project's first fault is fail-operational (Triplex to Duplex); beyond that it is fail-passive. In the lecture's classification, a mission that asks for a pointing constraint that protects the hardware, an event that cannot be repeated, or crewed flight is the kind that asks for fail-operational; an ascent is one.
+
+**Trades recorded (the lecture's step 2):** ground-commanded against autonomous: everything in FDIR is autonomous except reintegration, clearing Safe and clearing Disabled, which stay with the operator on purpose (ADR-010, ADR-019); redundancy: three computers, hot; processor: one family for the computers, another for the supervisor; point-to-point against bus: a shared CAN bus for the flight data (a babbling node is the known cost, ADR-009), discrete lines for the supervisor; interface throughput and memory sizing: bus load is a target (about 20%) to be re-measured with the added traffic of IF-005, IF-006 and the state records of FDIR-041; code and data sizing on the G474 (512 KB flash, 128 KB RAM per the datasheet figures to be checked) has to hold a golden image and a current one (ADR-021).
+
+## 8. Known limitations (state these in the write-up)
+
+- ACT is a single point of failure in v1. Mitigations: watchdog, the supervisor's reset, and a Safe sequence ACT can run alone (ADR-023). Stretch goal: duplicate ACT with an output selector driven by the supervisor.
 - One shared CAN bus is a common-cause failure. Stretch goal: second bus.
-- Identical software on all replicas cannot survive a shared software bug (no design diversity). Discuss, and optionally add a simple diverse monitor.
+- Identical software on all replicas cannot survive a shared software bug. Proposed mitigation: node C runs the previous known-good release (ADR-021), which protects against regressions, not against a bug present in both.
 - The motion platform is bandwidth-limited by the servos, so the simulated vehicle is time-scaled to slow rates; the sim must clamp platform rate and travel.
 - Classic CAN has no time-triggered guarantee in hardware; determinism is by schedule and measured, not proven.
 - Educational scale: this shows the technique, not flight qualification.
