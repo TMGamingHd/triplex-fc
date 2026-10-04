@@ -3,8 +3,11 @@
 // output for this one arrives (sim/vehicle/runner.hpp explains why one frame ahead), and steps the 6-DOF vehicle with the gimbal command in ACT's frame. Its time is the
 // frame number: a SYNC that skips numbers (a sync-master takeover) steps the world over the skipped frames with the last command held, so sim time never drifts from the
 // flight computers' frame count. A run starts at the first SYNC heard and starts over if the frame number goes backwards (the sync master was reset).
-//   tfc_simd [--iface vcan0] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
+// With --pico PORT it also streams the vehicle's tilts to the Pico that drives the platform (docs/PICO.md): one platform frame per simulated frame, so 100 Hz.
+//   tfc_simd [--iface vcan0] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
+#include <fcntl.h>
 #include <poll.h>
+#include <termios.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -22,6 +25,7 @@
 
 #include "design.hpp"
 #include "runner.hpp"
+#include "tfc/pico_link.hpp"
 #include "tfc/protocol.hpp"
 
 namespace {
@@ -71,6 +75,33 @@ void send_all(int s, const sim::SimFrames& fr, unsigned& errors) {
   }
 }
 
+// The Pico's USB serial port, raw and non-blocking: a frame that cannot be written now is dropped (the Pico holds and levels by itself if the stream stops).
+int open_pico(const std::string& path) {
+  const int fd = ::open(path.c_str(), O_WRONLY | O_NOCTTY | O_NONBLOCK);
+  if (fd < 0) {
+    std::perror(path.c_str());
+    return -1;
+  }
+  termios tio{};
+  if (::tcgetattr(fd, &tio) == 0) {
+    ::cfmakeraw(&tio);
+    ::tcsetattr(fd, TCSANOW, &tio);
+  }
+  return fd;
+}
+
+void send_platform(int fd, uint8_t seq, const sim::Tilts& t, unsigned& drops) {
+  tfc::pico::PlatformCommand c;
+  c.seq = seq;
+  c.tilt_x_deg = static_cast<float>(t.x_deg);
+  c.tilt_y_deg = static_cast<float>(t.y_deg);
+  std::array<uint8_t, tfc::pico::kMaxFrame> b{};
+  const std::size_t n = tfc::pico::encode(tfc::pico::pack_platform(c), b.data());
+  if (::write(fd, b.data(), n) != static_cast<ssize_t>(n)) {
+    ++drops;
+  }
+}
+
 bool split(const std::string& arg, double* out, int n) {
   std::size_t pos = 0;
   for (int i = 0; i < n; ++i) {
@@ -94,6 +125,7 @@ int main(int argc, char** argv) {
   std::string iface = "vcan0";
   sim::RunnerConfig cfg;
   uint32_t max_frames = 0U;
+  std::string pico_port;
   bool quiet = false;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -107,6 +139,8 @@ int main(int argc, char** argv) {
     double v[3] = {0.0, 0.0, 0.0};
     if (a == "--iface") {
       iface = next();
+    } else if (a == "--pico") {
+      pico_port = next();
     } else if (a == "--vehicle-true") {
       cfg.vehicle_true = true;
     } else if (a == "--wind-scale") {
@@ -127,7 +161,7 @@ int main(int argc, char** argv) {
     } else if (a == "--quiet") {
       quiet = true;
     } else {
-      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
+      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
       return 2;
     }
   }
@@ -135,6 +169,14 @@ int main(int argc, char** argv) {
   if (sock < 0) {
     return 1;
   }
+  int pico = -1;
+  if (!pico_port.empty()) {
+    pico = open_pico(pico_port);
+    if (pico < 0) {
+      return 1;
+    }
+  }
+  unsigned pico_drops = 0U;
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
 
@@ -179,6 +221,9 @@ int main(int argc, char** argv) {
       while (runner.frame() < k) {
         const uint32_t m = runner.frame();
         send_all(sock, runner.end_of_frame(m, nullptr), tx_errors);
+        if (pico >= 0) {
+          send_platform(pico, static_cast<uint8_t>(runner.frame()), runner.vehicle().tilts(), pico_drops);
+        }
       }
       continue;
     }
@@ -191,6 +236,9 @@ int main(int argc, char** argv) {
       acted = k;
       last_act_state = d.act.state;
       send_all(sock, runner.end_of_frame(k, &d.act), tx_errors);
+      if (pico >= 0) {
+        send_platform(pico, static_cast<uint8_t>(runner.frame()), runner.vehicle().tilts(), pico_drops);
+      }
       if (!quiet && runner.frame() % 100U == 0U) {
         const sim::Tilts t = runner.vehicle().tilts();
         std::fprintf(stderr, "t=%6.2f s  alt %8.0f m  speed %7.1f m/s  tilt pitch %7.3f yaw %7.3f deg  gimbal %6.2f %6.2f  ACT state %u  tx_err %u\n",
@@ -203,6 +251,9 @@ int main(int argc, char** argv) {
     }
   }
   ::close(sock);
+  if (pico >= 0) {
+    ::close(pico);
+  }
   std::fprintf(stderr, "tfc_simd: stopped at frame %u (t = %.2f s), altitude %.0f m\n", static_cast<unsigned>(runner.frame()), static_cast<double>(runner.frame()) * 0.01,
                runner.vehicle().altitude());
   return 0;
