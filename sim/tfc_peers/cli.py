@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Command line: python3 -m tfc_peers {run,record,listen,decode,faults} ..."""
+"""Command line: python3 -m tfc_peers {run,record,listen,log,decode,command,faults} ..."""
 from __future__ import annotations
 
 import argparse
@@ -107,6 +107,28 @@ def cmd_listen(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_log(args: argparse.Namespace) -> int:
+    """Record what is on a CAN interface into a candump -L log that `decode` and `tfc_replay` read (timestamps from 0)."""
+    bus = B.SocketCanBus(args.iface)
+    out = B.LogBus(args.out, args.iface)
+    t0 = time.monotonic()
+    n = 0
+    try:
+        while args.duration is None or time.monotonic() - t0 < args.duration:
+            frame = bus.recv(0.2)
+            if frame is None:
+                continue
+            out.send(int((time.monotonic() - t0) * 1e6), frame)
+            n += 1
+    except KeyboardInterrupt:
+        pass
+    finally:
+        bus.close()
+        out.close()
+    print(f"wrote {n} frames from {args.iface} to {args.out}")
+    return 0
+
+
 def cmd_decode(args: argparse.Namespace) -> int:
     limit = args.limit
     for i, (t_us, _iface, frame) in enumerate(B.read_log(args.log)):
@@ -194,6 +216,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--iface", default="vcan0", help="SocketCAN interface to monitor (default vcan0)")
     p.add_argument("--duration", type=float, default=None, help="stop after this many seconds (default: run until Ctrl+C)")
     p.set_defaults(fn=cmd_listen)
+
+    p = sub.add_parser("log", help="record the frames on a SocketCAN interface into a candump-format log (live)")
+    p.add_argument("--iface", default="vcan0", help="SocketCAN interface to record (default vcan0; can0 for the USB-CAN adapter)")
+    p.add_argument("--out", required=True, help="log file to write (candump -L format, timestamps from 0); overwritten if it exists")
+    p.add_argument("--duration", type=float, default=None, help="stop after this many seconds (default: run until Ctrl+C)")
+    p.set_defaults(fn=cmd_log)
 
     p = sub.add_parser("decode", help="print a candump-format log in decoded form")
     p.add_argument("log", help="candump -L format log, e.g. one written by `record`")
