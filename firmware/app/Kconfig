@@ -29,3 +29,29 @@ config TFC_GROUND_KEY
 	  directory: it is a bench secret at best, not a flight key store.
 
 source "Kconfig.zephyr"
+
+config TFC_WATCHDOG_TIMEOUT_MS
+	int "Hardware watchdog timeout (ms)"
+	default 100
+	range 20 4000
+	help
+	  The watchdog is serviced once per frame, at the end of a completed frame (TFC-FDIR-038). The default is ten frames: loose
+	  enough to survive a long console line on the target, tight enough to catch a hang in a tenth of a second. The requirement's
+	  proposal is three frames (30 ms); tighten it once the frame time with the console is measured on the board.
+
+config TFC_QUARANTINE_ON_RESET_LOOP
+	bool "Stay silent after a reset loop"
+	default y
+	help
+	  After TFC_RESET_LOOP_BOOTS fault resets in a row, each after a boot shorter than TFC_SHORT_BOOT_S, the node stops transmitting
+	  and says so on the console once a second until it is power-cycled (TFC-FDIR-042). The others then see a silent node.
+
+config TFC_RESET_LOOP_BOOTS
+	int "Short boots in a row that make a reset loop"
+	default 3
+	range 1 20
+
+config TFC_SHORT_BOOT_S
+	int "A boot shorter than this many seconds is short"
+	default 60
+	range 1 3600

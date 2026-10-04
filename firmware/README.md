@@ -20,10 +20,11 @@ firmware/
 ## What the app does (every 10 ms major frame)
 | t | FC-A |
 |---|---|
-| 0.0 ms | broadcasts **SYNC** (32-bit frame number) |
-| 1.5 ms | samples its IMU, broadcasts gyro + accel |
+| 0.0 ms | broadcasts **SYNC** (32-bit frame number); FRAME line rises |
+| 0.5 ms | latches its IMU sample (one SPI burst on the board); FRAME line falls |
+| 1.5 ms | broadcasts gyro + accel (nothing if the sensor could not be read) |
 | 5.0 ms | broadcasts its command + estimator digest |
-| 7.0 ms | hands every frame received to `tfc::RedundancyManager` (decode, CRC/sequence, 8-channel vote, digest check, stuck detector, 3-of-5 latch) and prints what it decided |
+| 7.0 ms | hands every frame received to `tfc::RedundancyManager` (decode, CRC/sequence, 8-channel vote, digest check, stuck detector, 3-of-5 latch); if the frame completed (every phase ran) services the watchdog and raises KICK; then prints what it decided |
 
 Console: a status line each second (`A+ B+ C+` = all voting; `X` = latched out; `p` = on probation; `D` = disabled for the run; `?` = no good data; `oos=` counts frames on IDs outside the schedule), and an
 event line whenever a node joins, latches out (with the reason in words), goes on probation, fails probation, is reintegrated or disabled, a ground command is applied (and whether it was accepted or refused), the mode changes, the bus alarm is raised or cleared (`BUS ALARM`, 3+ stray frames per 10 ms frame), or Safe is requested (`SAFE REQUESTED`, sticky: two voting nodes disagree and nobody can be blamed; output held).
@@ -38,6 +39,45 @@ readmit it; a node that keeps misbehaving is disabled (3rd latch; 2nd for a stuc
   FC-A answers on its console: `GROUND COMMAND reintegrate B: accepted` or `refused: <why>`.
 - **Automatic readmission** of a first, transient-looking latch is off by default; enable it with `CONFIG_TFC_AUTO_REINTEGRATE=y`
   (`west build ... -- -DCONFIG_TFC_AUTO_REINTEGRATE=y`). A stuck sensor, a digest mismatch and a repeat offender are never readmitted automatically.
+
+## On the board (nucleo_g474re)
+
+The same app builds for the board (`west build -p always -b nucleo_g474re firmware/app -d build/nucleo_g474re`: about 52 KB of
+512 KB flash and 6.6 KB of 128 KB RAM). **Not yet run on hardware.** What the board build adds, all chosen by the devicetree
+(`boards/nucleo_g474re.overlay`) so that `native_sim` keeps its simulated stand-ins (`src/hw.hpp`):
+
+| Seam | Board | `native_sim` |
+|---|---|---|
+| IMU | ISM330DHCX on SPI2 through `core/include/tfc/ism330dhcx.hpp` (identity check, reset, configuration with read-back, one burst read per frame; +-16 g, +-500 dps, 833 Hz) | the simulated IMU |
+| Lines to the supervisor | FRAME, KICK, ADOPT, two node-id straps | none |
+| Watchdog | the independent watchdog, started at frame 0, serviced only at the end of a completed frame (`CONFIG_TFC_WATCHDOG_TIMEOUT_MS`, default 100) | none |
+| Reset record | reset count and cause in no-init RAM; a reset loop (`CONFIG_TFC_RESET_LOOP_BOOTS` short boots in a row) silences the node (`CONFIG_TFC_QUARANTINE_ON_RESET_LOOP`) | power-on every run |
+| CAN | FDCAN1 from the board file, 1 Mbit/s, receive timestamps enabled | the host's `vcan0` |
+
+**Pins** (looked up in the morpho-connector map that Zephyr takes from ST's data; check each against the board in hand before wiring):
+
+| Signal | Pin | Connector | Notes |
+|---|---|---|---|
+| FDCAN1 RX / TX | PA11 / PA12 | CN10 14 / 12 | from the board file |
+| IMU SPI2 SCK / MISO / MOSI / CS | PB13 / PB14 / PB15 / PB12 | CN10 30 / 28 / 26 / 16 | CS is a GPIO; 4 MHz, SPI mode 3 |
+| Backup IMU SPI3 (reserved, disabled) | PC10 / PC11 / PC12 / PA15 | CN7 1 / 2 / 3 / 17 | the ring re-homing stretch (ADR-020) |
+| FRAME (node to supervisor) | PC8 | CN10 2 | pulse at the start of a frame |
+| KICK (node to supervisor) | PC9 | CN10 1 | pulse at the end of a completed frame only |
+| ADOPT (supervisor to node) | PC6 | CN10 4 | input, pull-down |
+| Node-id straps bit 0 / bit 1 | PC2 / PC3 | CN7 35 / 37 | to ground reads as 1 |
+| Reset from the supervisor | NRST | the board's reset pin | open-drain from the supervisor, no firmware |
+
+Left alone on purpose: PA5 (the LED), PA2/PA3 (the ST-LINK serial port), PA13/PA14 (SWD), PC13 (the button), PC4/PC5, PB8/PB9.
+
+**What to know before the first run.**
+- The command is still the fixed function of the frame number (`sim_imu.hpp`), not an estimate, so the digest can be checked against a golden run; it
+  does not come from the IMU. The gyro and accelerometer frames are the real sensor's. Run **without the virtual peers** on the bench (they feel the
+  simulated motion, not the bench's, so the vote would correctly disagree), with the USB-CAN adapter as the second node.
+- The sensor's self-test is not called: the datasheet's limits are not set (`core/include/tfc/ism330dhcx.hpp`).
+- A sensor that cannot be read costs the frame its gyro and accelerometer frames (peers see a missing sample); `imu_err` in the status line counts them,
+  `imu_stale` counts reads that returned the previous sample.
+- The console is slow on the board (115200 baud): a status line takes several milliseconds. The watchdog is serviced before anything is printed, and its
+  default timeout is ten frames for that reason; measure the frame time on the board and tighten it (the requirement proposes three frames).
 
 ## One-time setup (Ubuntu)
 ```bash

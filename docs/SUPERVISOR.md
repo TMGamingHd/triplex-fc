@@ -59,8 +59,8 @@ Per flight computer (A, B, C) and for ACT:
 
 | Line | Direction | What it is |
 |---|---|---|
-| `FRAME` | node -> SUP | A pulse at the start of every frame, driven from the node's frame timer (aligned to SYNC). The supervisor measures period against its clock and phase against the other nodes |
-| `KICK` | node -> SUP | A pulse at the end of a **completed** frame, driven only from the end-of-frame path after the vote has run and every monitored task has reported progress (TFC-FDIR-038). This is the watchdog |
+| `FRAME` | node -> SUP | A pulse at the start of every frame, driven from the node's frame timer (aligned to SYNC): it rises at the start of the frame and falls when the IMU sample is latched, 0.5 ms later (implemented in `firmware/app/src/main.cpp`). The supervisor measures period against its clock and phase against the other nodes |
+| `KICK` | node -> SUP | A pulse at the end of a **completed** frame (it rises there and falls at the start of the next frame; no rising edge means a refused frame), driven only from the end-of-frame path after the vote has run and every monitored task has reported progress (TFC-FDIR-038). This is the watchdog |
 | `NRST` | SUP -> node | Open-drain on the board's reset pin; pulled low to reset the node |
 | `PWR` | SUP -> relay channel | A relay in series with the node's 5 V feed, in addition to the fault injector's own relay. De-energised means powered |
 

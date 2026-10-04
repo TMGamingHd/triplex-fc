@@ -25,13 +25,15 @@ enum class ResetCause : uint8_t {
 
 constexpr uint32_t kResetMagic = 0x54465243U;  // "TFRC"
 
+// Plain data with no initialisers on purpose: the firmware keeps one in no-init RAM, where a constructor would erase it at start-up.
+// Write `ResetRecord{}` for a zeroed one.
 struct ResetRecord {
-  uint32_t magic = 0U;
-  uint32_t boots = 0U;             // boots since the last power-on (saturating)
-  uint32_t short_boots = 0U;       // consecutive fault-reset boots that followed a short boot
-  uint32_t frames_last_boot = 0U;  // how long the current boot has run, in frames (updated while it runs)
-  uint8_t last_cause = 0U;
-  uint8_t crc = 0U;
+  uint32_t magic;
+  uint32_t boots;             // boots since the last power-on (saturating)
+  uint32_t short_boots;       // consecutive fault-reset boots that followed a short boot
+  uint32_t frames_last_boot;  // how long the current boot has run, in frames (updated while it runs)
+  uint8_t last_cause;
+  uint8_t crc;
 };
 
 struct ResetPolicy {

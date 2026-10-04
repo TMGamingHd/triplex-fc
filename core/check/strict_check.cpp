@@ -53,7 +53,7 @@ int exercise(unsigned frames) {
   tfc::ProgressMonitor progress(0x03U);
   progress.report(0U);
   acc += progress.end_of_frame(true) ? 1U : 0U;
-  tfc::ResetRecord record;
+  tfc::ResetRecord record{};
   tfc::ResetLog resets(record);
   resets.boot(tfc::ResetCause::Watchdog);
   acc += resets.loop_detected() ? 1U : 0U;
