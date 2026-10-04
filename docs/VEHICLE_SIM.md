@@ -1,8 +1,9 @@
 # Vehicle simulator: a 6-DOF ascent, the platform, and the bus
 
-> Status: **design, accepted 4 Oct 2026** (owner's choices: the servos are the platform driven by the Pico; the simulator is a C++ library
-> plus a runner; the physics is a full 6-DOF ascent, not the two-plane test model of `CONTROL_LOOP.md`). Nothing here is built yet except
-> that test model. Numbers are the parameters of a generic small launch vehicle, chosen to be plausible, not to copy any real one.
+> Status: **accepted 4 Oct 2026; the model, the platform, the design and the closed loop are built and tested on the host** (`sim/vehicle/`, `tests/test_vehicle.cpp`);
+> the runner on the bus and the Pico are not (section 6, PRs P1-4 and P1-5). Owner's choices: the servos are the platform driven by the Pico; the simulator is a C++
+> library plus a runner; the physics is a full 6-DOF ascent, not the two-plane test model of `CONTROL_LOOP.md`. The numbers are those of a generic small launch
+> vehicle, chosen to be plausible, not to copy any real one.
 
 ## 1. What it is for
 The simulator is the world the flight computers fly in. It integrates a rocket from the pad through max-Q to the end of the first-stage
@@ -20,8 +21,8 @@ must be deterministic, fast, and usable without any hardware.
 
 ## 3. The model
 **Frames.** A non-rotating inertial frame at the centre of a spherical Earth (radius 6,378,137 m, gravity `mu/r^2`); the launch point at the
-pole of the pad's local vertical. Attitude is the quaternion body-to-inertial; body X is the long axis, nose forward. Earth's rotation, slosh,
-flexibility and roll control are not modelled.
+pole of the pad's local vertical. Attitude is the quaternion body-to-inertial; body X is the long axis, nose forward. Earth's rotation, slosh and
+flexibility are not modelled, and **roll is held by an ideal roll controller** (the roll rate about the long axis is zero and roll torques are ignored; `Params::ideal_roll_control`).
 
 **Equations** (integrated with RK4 at 2 ms inside each 10 ms frame):
 - Translation: `m a = F_thrust + F_aero + m g` (inertial).
@@ -43,7 +44,7 @@ At liftoff the control effectiveness `b = T L_g / I` is about 4 per second squar
 ## 4. The platform and what it can show
 The platform has two tilt axes about horizontal axes. It shows the vehicle's **long axis relative to the pad vertical**, as two angles: the pitch
 plane (rotation about Y) and the yaw plane (rotation about X), within +-45 degrees (D85MG travel is about 60 degrees; hard stops are fitted). A rotation about the long axis
-(roll) is not a degree of freedom of the platform and is not reproduced; the ascent is flown without roll. If the vehicle's tilt leaves the platform's range the
+(roll) is not a degree of freedom of the platform and is not reproduced; the ascent is flown with roll held (section 3). If the vehicle's tilt leaves the platform's range the
 platform saturates and the simulator marks the run (PLAT-004). The first 80 to 100 seconds of an ascent stay within about 30 degrees of the vertical.
 
 ## 5. What the sensors feel (two modes)
@@ -84,6 +85,51 @@ Conservation and known values, each a unit test: **circular orbit** (zero thrust
 (angular momentum and energy conserved for an asymmetric body); quaternion norm; the **sign of the aerodynamic moment** (unstable); thrust rising with altitude; a **nominal gravity-turn ascent** inside sanity bounds
 (altitude, speed and max-Q time); and the closed loop with the scheduled controller and the real estimator holding the attitude through max-Q gusts and an engine-out.
 
+### Independent verification (what "accurate" means here)
+No simulator of an invented vehicle can be "100% accurate": there is no real vehicle to be accurate against, and the aerodynamic coefficients, the centre of pressure, the engine and the mass numbers are chosen, not measured. What can be shown is
+that the code solves the stated equations correctly, and that is what these tests do (`tests/test_vehicle.cpp`, the `verification_*` tests):
+- **A second implementation.** The pitch plane is written again from scratch in two dimensions (no quaternions, no cross products, no gimbal vector; it shares only the atmosphere and the mass properties) and flown beside the 3-D model for 50 s in a
+  closed pitching flight with an engine-out at 20 s. The two agree to **6e-14 m in position, 1e-14 degrees in attitude and exactly in mass**. This catches frame, sign, quaternion and rotation errors in the 3-D code.
+- **Plane symmetry.** The same flight in the yaw plane is the mirror image of the pitch plane (tilt, position and rates equal to 1e-6 or better).
+- **Step-size convergence.** Against a 0.5 ms reference after 40 s: 4 ms gives 6.5 mm, 2 ms (the simulator's step) **3.3 mm**, 1 ms 0.9 mm; attitude error under 1e-5 degrees. The convergence is first order, not RK4's fourth, because the gimbal is sampled and held over each substep.
+- **The unstable mode.** A coasting vehicle in 300 m/s air with its axis half a degree off the velocity diverges at the rate `sqrt(a)` the aerodynamics predict (`a = q A CNalpha (xcp - xcg) / I`): 0.687 degrees of angle of attack after 0.5 s
+  against 0.709 predicted by the linear model, the 3% difference being the sideways acceleration of the velocity that the linear model leaves out.
+- **Conservation and known values** (above): orbit, rocket equation, torque-free rotation, atmosphere.
+
+Still unverified against any outside data: the aerodynamic and engine numbers, the mean wind profile, and the real behaviour of the servo platform (that waits for the rig).
+
 ## 10. What it does not model, and the caveats
-Earth rotation and the shape of the geoid; propellant slosh; structural flexibility; roll; separation and a second stage; real atmospheric turbulence (gusts are scripted); the rig's accelerations (the platform does not
+Earth rotation and the shape of the geoid; propellant slosh; structural flexibility; roll control (it is idealised: see section 3); separation and a second stage; real atmospheric turbulence (gusts are scripted); the rig's accelerations (the platform does not
 accelerate, which is why the vehicle-true mode exists). The model is a believable vehicle, not a flight-qualified one: say so in the write-up.
+
+## 11. What was built and what it shows (host, 4 Oct 2026)
+**Code:** `sim/vehicle/math3.hpp`, `atmosphere.hpp` (US Standard Atmosphere 1976), `vehicle6.hpp` (the 6-DOF model, the gimbal actuator, wind, engine-out), `platform.hpp` (the platform model),
+`design.hpp` (the nominal ascent and the gain schedule); in `core/`, `GainSchedule` and a 16-point `Guidance`. **Tests:** `tests/test_vehicle.cpp`: maths, the atmosphere at the layer bases and across layer
+boundaries, mass properties, a circular orbit (radius, energy and angular momentum conserved), the rocket equation, torque-free rotation, thrust against altitude, the sign of the aerodynamic moment, the gimbal's signs and limits,
+engine-out, wind and gusts, the tilt mapping and the platform, the nominal ascent, the gain schedule, and eight closed-loop flights in seven tests.
+
+**The nominal ascent** (a 1 degree pitch kick at 8 to 12 s, then a gravity turn): max-Q **31.5 kPa at 65 s** (11 km, Mach 1.4); pitch **17 degrees at 60 s and 32 degrees at 100 s**; 32 km and 995 m/s at 100 s; the angle of attack stays under 3 degrees. The control
+effectiveness `b` is 8 to 11 per second squared and the divergence `a` rises to 4.4 around max-Q. The centre of gravity moves **aft** as the tank empties (the propellant column drops) and forward again at the end, which the design handles
+because the gains are computed from the local `a(t)` and `b(t)`.
+
+**The loop** (three replicas, platform-mode sensors, consensus, estimator, the scheduled controller, the actuator node's vote, the platform lag):
+
+| Flight | RMS error | Worst error | Platform saturated |
+|---|---|---|---|
+| Nominal | 0.07 deg | 0.31 deg | no |
+| 15 m/s crosswind gust at max-Q | 0.14 deg | 1.25 deg | no |
+| Mean wind doubled (56 m/s jet stream) | 0.14 deg | 0.57 deg | no |
+| Engine-out at 30 s | 0.18 deg | 1.5 deg | no |
+| Engine-out at 62 s (max-Q) | 0.20 deg | 1.95 deg | no |
+| Dry centre of gravity 0.8 m aft | 0.08 deg | 0.33 deg | no |
+| One IMU reading 15 dps too much on two axes | 0.08 deg | 0.31 deg | no |
+| Vehicle-true sensors (gyro only, gravity unobservable under thrust) | 0.08 deg | 0.25 deg | no |
+
+The replicas' commands and digests were bit-identical on every frame of every flight.
+
+**What the flights found.** The engine-out flights first tumbled. The cause was not the controller: a failed off-axis engine, with the gimbal deflected, produces a **roll torque**, and the roll inertia is about 40 times smaller than the pitch inertia, so the vehicle rolled
+until its body-fixed gimbal planes were no longer the pad's planes and control was lost. A real vehicle has roll control, which the flight computers' two-plane gimbal does not provide and which is not the subject here, so the model holds roll ideally (a test shows the roll rate stays zero, and
+drifts without the option). It is stated plainly in section 3 because it is an assumption that flatters the result. Earlier, a fixed-point iteration for the gravity turn converged to the trivial vertical flight; the pitch program is now computed causally (the attitude follows the velocity vector as it flies).
+
+**Limits.** The reference vehicle's parameters are mine; max-Q and the pitch history are plausible, not matched to any real vehicle. The aerodynamic model is a normal-force slope with a transonic axial-force bump, not a table from a wind tunnel. Closed-loop numbers are for one set of gains designed for `wn` 2.5 rad/s and damping 0.8; the margins
+(how much the gains or the delay can change before the loop is lost) are not yet measured and should be, as a trade study.

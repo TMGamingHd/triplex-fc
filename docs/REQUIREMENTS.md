@@ -130,6 +130,7 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-LOOP-004 | A consensus that is not a trustworthy value (two sensors that disagree, three with no majority, none) shall not be used: the estimator holds its rates and reports itself not valid, and the controller holds its last command and does not move its integrator. | T |
 | TFC-LOOP-005 | A non-finite gyro value shall be treated as untrustworthy and a non-finite or out-of-gate accelerometer value shall not correct the attitude; the estimator's state shall stay finite. | T |
 | TFC-LOOP-006 | The estimator shall align from the first trustworthy gravity reading, and the controller's gimbal command shall never exceed its angle limit or change by more than its slew limit in a frame. | T |
+| TFC-LOOP-007 | The controller's gains shall follow a schedule (up to sixteen points of kp, kd, ki against frame, interpolated, held at the ends), designed from the local divergence and control effectiveness of the nominal trajectory, and the pitch program shall have up to sixteen points. | T |
 
 ## Vehicle simulator and platform (ADR-024; docs/VEHICLE_SIM.md)
 | ID | Requirement | Verif. |

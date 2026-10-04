@@ -31,7 +31,7 @@ struct Reference {
   float rate_y_dps = 0.0F;
 };
 
-// A piecewise-linear reference over time (a pitch program): up to eight (frame, angle) points, in increasing frame order. Before the
+// A piecewise-linear reference over time (a pitch program): up to sixteen (frame, angle) points, in increasing frame order. Before the
 // first point it holds the first value, after the last it holds the last. Both planes have their own table.
 struct GuidancePoint {
   uint32_t frame = 0U;
@@ -40,7 +40,7 @@ struct GuidancePoint {
 
 class Guidance {
  public:
-  static constexpr unsigned kMaxPoints = 8U;
+  static constexpr unsigned kMaxPoints = 16U;
 
   Guidance() noexcept = default;
 
@@ -92,6 +92,55 @@ class Guidance {
   std::array<unsigned, 2> n_{0U, 0U};
 };
 
+// Controller gains that change through the flight: the plant (thrust, mass, inertia, dynamic pressure) changes by a large factor, so gains are
+// designed for each instant of the nominal trajectory and interpolated in time. Up to sixteen (frame, kp, kd, ki) points in increasing frame order;
+// before the first point the first values hold, after the last the last.
+struct ControllerGains {
+  float kp = 2.2F;
+  float kd = 1.6F;
+  float ki = 0.4F;
+};
+
+class GainSchedule {
+ public:
+  static constexpr unsigned kMaxPoints = 16U;
+
+  bool add(uint32_t frame, const ControllerGains& g) noexcept {
+    if (n_ >= kMaxPoints || (n_ > 0U && frame <= frame_[n_ - 1U])) {
+      return false;
+    }
+    frame_[n_] = frame;
+    gain_[n_] = g;
+    ++n_;
+    return true;
+  }
+
+  [[nodiscard]] unsigned size() const noexcept { return n_; }
+
+  [[nodiscard]] ControllerGains at(uint32_t frame) const noexcept {
+    if (n_ == 0U) {
+      return ControllerGains{};
+    }
+    if (frame <= frame_[0]) {
+      return gain_[0];
+    }
+    for (unsigned i = 1; i < n_; ++i) {
+      if (frame <= frame_[i]) {
+        const float f = static_cast<float>(frame - frame_[i - 1U]) / static_cast<float>(frame_[i] - frame_[i - 1U]);
+        const ControllerGains& a = gain_[i - 1U];
+        const ControllerGains& b = gain_[i];
+        return ControllerGains{a.kp + (f * (b.kp - a.kp)), a.kd + (f * (b.kd - a.kd)), a.ki + (f * (b.ki - a.ki))};
+      }
+    }
+    return gain_[n_ - 1U];
+  }
+
+ private:
+  std::array<uint32_t, kMaxPoints> frame_{};
+  std::array<ControllerGains, kMaxPoints> gain_{};
+  unsigned n_ = 0U;
+};
+
 class Controller {
  public:
   Controller() noexcept = default;
@@ -122,6 +171,13 @@ class Controller {
       h = (h ^ static_cast<uint32_t>(static_cast<int32_t>(quantize(v, 0.001F)))) * 16777619U;
     }
     return static_cast<uint16_t>((h ^ (h >> 16)) & 0xFFFFU);
+  }
+
+  // Replace the three gains (from a GainSchedule, once per frame).
+  void set_gains(const ControllerGains& g) noexcept {
+    cfg_.kp = g.kp;
+    cfg_.kd = g.kd;
+    cfg_.ki = g.ki;
   }
 
   [[nodiscard]] uint32_t holds() const noexcept { return holds_; }

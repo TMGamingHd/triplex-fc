@@ -30,9 +30,10 @@ add_executable(tfc_tests
   tests/test_hw_logic.cpp
   tests/test_loop.cpp
   tests/test_act.cpp
-  tests/test_protocol_v2.cpp)
+  tests/test_protocol_v2.cpp
+  tests/test_vehicle.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
-target_include_directories(tfc_tests PRIVATE tests tools/vehicle)
+target_include_directories(tfc_tests PRIVATE tests tools/vehicle sim/vehicle)
 target_compile_options(tfc_tests PRIVATE
   -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror
   -fno-exceptions -fno-rtti)
