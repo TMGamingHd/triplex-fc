@@ -74,6 +74,10 @@ injector) can carry the `PWR` lines, so no relay parts are added. The ELEGOO mod
 pull a relay in: the supervisor's `PWR` pins need external pull-ups to 3.3 V (and the check at 3.3 V drive in the compatibility audit,
 item 7, applies).
 
+**Channel allocation (decided 4 Oct 2026, ADR-026; `PARTS_CHECK.md` item 1).** The two relay modules give 8 channels: 4 for the injector's power cuts (A, B, C, ACT) and 4 for these `PWR`
+lines. The parts sheet also counts those four as the injector's sensor-line and bus-stub faults; both uses cannot have them, so a **third relay module** (6.99 USD) is proposed for the sensor
+and bus faults. Each relay bank's coil supply gets a disarm switch (`HARDWARE_OVERRIDE.md`, H4 and H5), so no program can cut a node when the switch is open.
+
 The fault injector keeps its own relays. Injected power cuts therefore stay a test action, and the supervisor's actions stay a protection
 action; the two are in series so neither can undo the other. When the injector has cut a node's power the supervisor will see it dead,
 will try its resets and power-cycles, and will give up after the limit in section 5 and report the node as `DEAD`.

@@ -146,6 +146,18 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-PLAT-003 | The E-stop shall cut the servo rail independently of every firmware. | I, M |
 | TFC-PLAT-004 | The platform shall show the vehicle's long-axis tilt in the pitch and yaw planes within +-45 degrees; beyond that it shall saturate and the simulator shall mark the run. | T, M |
 
+## Hardware override (proposed; docs/HARDWARE_OVERRIDE.md, ADR-027, TS-17)
+| ID | Requirement | Verif. |
+|---|---|---|
+| TFC-HWO-001 | With every program down or hung (PC, simulator, Pico, ACT, flight computers, supervisor), a person shall be able to bring the platform to a safe state with a manual control that contains no code. | D, M |
+| TFC-HWO-002 | Every override shall be wired so that a broken wire or a lost supply leaves its function in the safe state defined for it (`HARDWARE_OVERRIDE.md` section 4), or, where the break removes the override itself, the override shall be tested before each session. | I, M |
+| TFC-HWO-003 | The injector's relays shall be disarmable by a switch in their coil supply: with it open, every node is powered and no program can cut one. The same shall hold for the supervisor's power relays. | I, M |
+| TFC-HWO-004 | A manual override shall have priority over the supervisor, and the supervisor over the software: no output of either shall be able to undo a manual override. | I, M |
+| TFC-HWO-005 | Each override shall have a read-only sense line to the PC, which marks the run as overridden; a sense line shall never be an input to a control decision. | T, I |
+| TFC-HWO-006 | No override shall back-feed a de-energised node through a signal line. | M |
+| TFC-HWO-007 | Each override shall be operated and its result logged in a pre-session check; an override not tested in a session shall be reported at the start of the next run. | D |
+| TFC-HWO-008 | An override whose spurious activation would cost a run shall be guarded or keyed and shall show its state. | I |
+
 ## Software quality
 | ID | Requirement | Verif. |
 |---|---|---|

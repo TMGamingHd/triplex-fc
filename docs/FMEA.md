@@ -25,6 +25,7 @@ What a flight-computer FMEA must cover, by interface:
 | **Bus (CAN)** | bit errors, lost frames, **duplicated frames**, **stale replayed frames**, **frozen sequence counter**, babbling idiot, bus-off, open/short, ID collisions (two nodes with one ID), SYNC loss |
 | **Redundancy manager itself** | wrong tolerance configuration, **memory upsets in its own state (flags, counters)**, a latent bug that only shows with two faults |
 | **Operator / ground** | wrong command, command at the wrong moment, command that would remove redundancy, **forged command (no key, or a corrupted frame that passes the CRC)**, **replayed or stale command**, **a dangerous command without a deliberate second step** |
+| **Hardware override layer** | a switch that fails to act (latent), a spurious activation, an override that harms (a limp platform, a snap to level), a relay stuck on, a rail droop from the coils, a cut node still half powered, two authorities fighting, a common supply (`HARDWARE_OVERRIDE.md` section 6, F75 to F80) |
 | **Multi-fault** | two simultaneous independent faults, **common-cause faults (both peers wrong the same way)**, a fault during recovery |
 
 Items in **bold** were missing from the first version of the virtual peers; the campaign work added them (section 3).
