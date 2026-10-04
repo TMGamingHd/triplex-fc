@@ -395,7 +395,7 @@ TFC_TEST(progress_ignores_and_counts_a_task_that_does_not_exist) {
 // ---- reset log ----
 
 TFC_TEST(resetlog_a_power_on_starts_a_fresh_log) {
-  ResetRecord rec;
+  ResetRecord rec{};
   rec.boots = 99U;  // garbage in RAM
   ResetLog log(rec);
   log.boot(ResetCause::PowerOn);
@@ -404,7 +404,7 @@ TFC_TEST(resetlog_a_power_on_starts_a_fresh_log) {
 }
 
 TFC_TEST(resetlog_three_short_boots_in_a_row_are_a_loop) {
-  ResetRecord rec;
+  ResetRecord rec{};
   ResetLog log(rec);
   log.boot(ResetCause::PowerOn);
   log.running(200U);
@@ -420,7 +420,7 @@ TFC_TEST(resetlog_three_short_boots_in_a_row_are_a_loop) {
 }
 
 TFC_TEST(resetlog_a_long_boot_clears_the_count) {
-  ResetRecord rec;
+  ResetRecord rec{};
   ResetLog log(rec);
   log.boot(ResetCause::PowerOn);
   log.running(10U);
@@ -434,7 +434,7 @@ TFC_TEST(resetlog_a_long_boot_clears_the_count) {
 }
 
 TFC_TEST(resetlog_a_deliberate_software_reset_neither_counts_nor_clears) {
-  ResetRecord rec;
+  ResetRecord rec{};
   ResetLog log(rec);
   log.boot(ResetCause::PowerOn);
   log.running(10U);
@@ -452,7 +452,7 @@ TFC_TEST(resetlog_a_deliberate_software_reset_neither_counts_nor_clears) {
 }
 
 TFC_TEST(resetlog_a_damaged_record_is_discarded_not_trusted) {
-  ResetRecord rec;
+  ResetRecord rec{};
   ResetLog log(rec);
   log.boot(ResetCause::PowerOn);
   log.running(10U);
@@ -467,7 +467,7 @@ TFC_TEST(resetlog_a_damaged_record_is_discarded_not_trusted) {
 }
 
 TFC_TEST(resetlog_counters_saturate_instead_of_wrapping) {
-  ResetRecord rec;
+  ResetRecord rec{};
   ResetLog log(rec);
   log.boot(ResetCause::PowerOn);
   rec.boots = 0xFFFFFFFFU;
@@ -479,7 +479,7 @@ TFC_TEST(resetlog_counters_saturate_instead_of_wrapping) {
 }
 
 TFC_TEST(resetlog_policy_changes_what_counts_as_a_loop) {
-  ResetRecord rec;
+  ResetRecord rec{};
   ResetPolicy p;
   p.short_boot_frames = 100U;
   p.loop_boots = 1U;

@@ -1,0 +1,47 @@
+/* Nucleo-G474RE: the flight computer's wiring (docs/SUPERVISOR.md, docs/STAGED_BUILD.md rules 10 and 11).
+ *
+ * Every pin below was looked up in the morpho-connector map that Zephyr takes from ST's data
+ * (boards/st/nucleo_g474re/st_morpho_connector.dtsi); the connector pin is in each comment. Check each against the
+ * board in hand before wiring: a pin can be shared with a solder bridge or the ST-LINK.
+ *
+ * Avoided on purpose: PA5 (the user LED, the old SPI1 clock), PA2/PA3 (the ST-LINK serial port), PA13/PA14 (SWD),
+ * PC13 (the user button), PC4/PC5 (USART1), PB8/PB9 (I2C1), PA11/PA12 (FDCAN1, from the board file).
+ */
+
+/* The home IMU on SPI2. Chip select is a plain GPIO, so the hardware NSS function is dropped from the pin list.
+ * SCK PB13 (CN10 30), MISO PB14 (CN10 28), MOSI PB15 (CN10 26), CS PB12 (CN10 16). */
+&spi2 {
+	pinctrl-0 = <&spi2_sck_pb13 &spi2_miso_pb14 &spi2_mosi_pb15>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpiob 12 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+	status = "okay";
+
+	imu_home: imu@0 {
+		compatible = "tfc,spi-imu";
+		reg = <0>;
+		spi-max-frequency = <4000000>;
+	};
+};
+
+/* SPI3 is reserved for the backup IMU of the ring re-homing (ADR-020, a later stretch): SCK PC10 (CN7 1),
+ * MISO PC11 (CN7 2), MOSI PC12 (CN7 3), CS PA15 (CN7 17). Disabled so that nothing drives those pins yet. */
+&spi3 {
+	status = "disabled";
+};
+
+/* SPI1 is not used: it would take PA5, the LED pin. */
+&spi1 {
+	status = "disabled";
+};
+
+/ {
+	tfc_lines: tfc-lines {
+		compatible = "tfc,lines";
+		/* FRAME PC8 (CN10 2), KICK PC9 (CN10 1), ADOPT PC6 (CN10 4); straps PC2 (CN7 35) and PC3 (CN7 37), to ground = 1 */
+		frame-gpios = <&gpioc 8 GPIO_ACTIVE_HIGH>;
+		kick-gpios = <&gpioc 9 GPIO_ACTIVE_HIGH>;
+		adopt-gpios = <&gpioc 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+		id-gpios = <&gpioc 2 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>,
+			   <&gpioc 3 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+	};
+};

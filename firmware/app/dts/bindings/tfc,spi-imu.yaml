@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+description: |
+  A SPI IMU that the application drives with its own register driver (core/include/tfc/ism330dhcx.hpp), so that the
+  chip is configured in exactly one place and the same code is tested on the host. Deliberately not "st,ism330dhcx":
+  that would also start Zephyr's own driver on the same part.
+
+compatible: "tfc,spi-imu"
+
+include: spi-device.yaml

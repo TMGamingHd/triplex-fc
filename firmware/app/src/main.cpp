@@ -15,8 +15,12 @@
 #include <cstring>
 
 #include "sim_imu.hpp"
+#include "tfc/progress.hpp"
 #include "tfc/protocol.hpp"
 #include "tfc/redundancy.hpp"
+#include "tfc/resetlog.hpp"
+
+#include "hw.hpp"
 
 #include <zephyr/drivers/can.h>
 #include <zephyr/kernel.h>
@@ -26,14 +30,22 @@ namespace {
 constexpr unsigned kNodeId = CONFIG_TFC_NODE_ID;
 BUILD_ASSERT(kNodeId == 0, "this stage implements node A, the sync master; B and C need SYNC following");
 
-constexpr int64_t kGyroUs = 1500;
+constexpr int64_t kSampleUs = 500;   // the IMU sample is latched here (ARCHITECTURE section 3) ...
+constexpr int64_t kGyroUs = 1500;     // ... and sent here
 constexpr int64_t kCmdUs = 5000;
 constexpr int64_t kVoteUs = 7000;
 constexpr uint32_t kStatusEveryFrames = 100;
+// The phases of a frame that must each have run before the watchdog may be serviced (tfc::ProgressMonitor, FDIR-038).
+constexpr unsigned kTaskSample = 0U;
+constexpr unsigned kTaskSend = 1U;
+constexpr unsigned kTaskVote = 2U;
+constexpr uint8_t kProgressRequired = 0x07U;
 // Peers may boot after this node; judge a never-seen peer only after 5 s (RedundancyConfig).
 constexpr uint32_t kStartupGraceFrames = 500;
 
 const struct device* const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
+// Survives a reset (no-init RAM, kept intact because the record has no constructor): how often and why this node reset.
+tfc::ResetRecord g_reset_record __noinit;
 CAN_MSGQ_DEFINE(rx_msgq, 32);      // the three schedule slots (gyro, accel, command of every node)
 CAN_MSGQ_DEFINE(rx_all_msgq, 64);  // everything: only used to see what is NOT in the schedule (babbling)
 
@@ -165,7 +177,24 @@ int main() {
   if (mgr.config_errors() != 0U) {  // a bad configuration is replaced by defaults, never run silently
     printk("CONFIG ERROR: invalid fields (mask 0x%x) replaced by defaults\n", static_cast<unsigned>(mgr.config_errors()));
   }
-  fc::sim::Noise noise(0x1234U + kNodeId);
+  fc::hw::Imu imu(kNodeId);
+  const bool imu_ok = imu.init();
+  fc::hw::Lines lines;
+  lines.init();
+  const int strap_id = lines.node_id();
+  if (strap_id >= 0 && static_cast<unsigned>(strap_id) != kNodeId) {
+    printk("WARNING: the node-id straps read %d but this image is built for node %u\n", strap_id, kNodeId);
+  }
+  fc::hw::Watchdog wdt;
+  tfc::ResetPolicy reset_policy;
+  reset_policy.short_boot_frames = static_cast<uint32_t>(CONFIG_TFC_SHORT_BOOT_S) * 100U;
+  reset_policy.loop_boots = static_cast<uint32_t>(CONFIG_TFC_RESET_LOOP_BOOTS);
+  tfc::ResetLog resets(g_reset_record, reset_policy);
+  resets.boot(fc::hw::reset_cause());
+  printk("boot %u since power-on, last reset cause %u (1 power-on, 2 pin, 3 watchdog, 4 software, 5 brown-out, 6 fault), %u short boots in a row\n",
+         static_cast<unsigned>(resets.boots()), static_cast<unsigned>(resets.last_cause()), static_cast<unsigned>(resets.short_boots()));
+  const bool quarantined = IS_ENABLED(CONFIG_TFC_QUARANTINE_ON_RESET_LOOP) && resets.loop_detected();
+  tfc::ProgressMonitor progress(kProgressRequired);
   constexpr int64_t kPeriodUs = fc::sim::kFrameUs;
   const int64_t period = k_us_to_ticks_ceil64(kPeriodUs);
   const int64_t start = k_uptime_ticks() + k_ms_to_ticks_ceil64(200);
@@ -180,6 +209,23 @@ int main() {
   for (uint32_t k = 0;; ++k) {
     const int64_t base = start + static_cast<int64_t>(k) * period;
     k_sleep(K_TIMEOUT_ABS_TICKS(base));
+    if (k == 0U && !wdt.start(static_cast<uint32_t>(CONFIG_TFC_WATCHDOG_TIMEOUT_MS)) && DT_HAS_ALIAS(watchdog0)) {
+      printk("WATCHDOG: could not be started\n");
+    }
+    lines.kick(false);
+    lines.frame(true);  // FRAME: a pulse at the start of every frame, cleared when the sample is latched
+    if (quarantined) {  // a reset loop (TFC-FDIR-042): stay silent, keep the watchdog serviced, say so once a second
+      wdt.feed();
+      if (k % kStatusEveryFrames == 0U) {
+        printk("[frame %u] RESET LOOP: %u short boots in a row; this node is held out and silent until it is power-cycled\n", k,
+               static_cast<unsigned>(resets.short_boots()));
+      }
+      lines.frame(false);
+      continue;
+    }
+    if (k % kStatusEveryFrames == 0U) {
+      resets.running(k);  // how long this boot has lasted, for the next boot's loop check
+    }
     const uint8_t seq = static_cast<uint8_t>(k);
     mgr.begin_frame(k);  // SYNC's frame number: the number every node stamps its frames with (ADR-018)
     if (k == 0U) {
@@ -188,25 +234,31 @@ int main() {
     }
     tx_errors += send(tfc::pack_sync(k, seq)) ? 0U : 1U;
 
-    // ---- t = 1.5 ms: own IMU sample ----
-    sleep_until_us(base, kGyroUs);
-    const fc::sim::Truth tr = fc::sim::truth(k);
+    // ---- t = 0.5 ms: latch the IMU sample ----
+    sleep_until_us(base, kSampleUs);
     tfc::Vec3 gyro{};
     tfc::Vec3 accel{};
-    for (unsigned i = 0; i < 3U; ++i) {
-      gyro.v[i] = static_cast<float>(tr.gyro[i]) + 0.17F * noise.uniform();
-      accel.v[i] = static_cast<float>(tr.accel[i]) + 0.0035F * noise.uniform();
+    const bool have_sample = imu_ok && imu.sample(k, gyro, accel);
+    lines.frame(false);
+    progress.report(kTaskSample);
+
+    // ---- t = 1.5 ms: send it (nothing if the sensor could not be read: peers see a missing sample, as for any dead sensor) ----
+    sleep_until_us(base, kGyroUs);
+    if (have_sample) {
+      const tfc::Frame g = tfc::pack_gyro(kNodeId, gyro, seq);
+      const tfc::Frame a = tfc::pack_accel(kNodeId, accel, seq);
+      mgr.on_frame(g);
+      mgr.on_frame(a);
+      tx_errors += send(g) ? 0U : 1U;
+      tx_errors += send(a) ? 0U : 1U;
     }
-    const tfc::Frame g = tfc::pack_gyro(kNodeId, gyro, seq);
-    const tfc::Frame a = tfc::pack_accel(kNodeId, accel, seq);
-    mgr.on_frame(g);
-    mgr.on_frame(a);
-    tx_errors += send(g) ? 0U : 1U;
-    tx_errors += send(a) ? 0U : 1U;
+    progress.report(kTaskSend);
 
     // ---- t = 5.0 ms: command + digest ----
     sleep_until_us(base, kCmdUs);
-    const tfc::Frame c = tfc::pack_cmd(kNodeId, fc::sim::command(tr, k), seq);
+    // Until the estimator exists (SW-04) the command is a fixed function of the frame number, the same on every replica and on the
+    // PC, so the digest can be checked against a golden run; it does not come from the IMU on the bench.
+    const tfc::Frame c = tfc::pack_cmd(kNodeId, fc::sim::command(fc::sim::truth(k), k), seq);
     mgr.on_frame(c);
     tx_errors += send(c) ? 0U : 1U;
 
@@ -233,6 +285,11 @@ int main() {
       mgr.on_frame(f);  // counts it as out-of-schedule (or ignores SYNC/ACT/heartbeat/sim IDs)
     }
     const tfc::FrameReport& rep = mgr.end_frame();
+    progress.report(kTaskVote);
+    if (progress.end_of_frame(true)) {  // the one place the watchdog is serviced, and the one place KICK is raised
+      wdt.feed();
+      lines.kick(true);
+    }
 
     for (unsigned i = 0; i < rep.command_count; ++i) {
       const tfc::CommandEvent& ce = rep.commands[i];
@@ -293,12 +350,13 @@ int main() {
     }
     if (k % kStatusEveryFrames == 0U) {
       const tfc::Counters& cn = mgr.counters();
-      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u\n",
+      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u\n",
              k, mode_text(rep.mode), node_state(rep, 0), node_state(rep, 1), node_state(rep, 2),
              static_cast<unsigned>(cn.crc_bad), static_cast<unsigned>(cn.seq_bad),
              static_cast<unsigned>(cn.missing), static_cast<unsigned>(cn.vote_disagreements),
              static_cast<unsigned>(cn.digest_flags), static_cast<unsigned>(cn.stuck_flags),
-             static_cast<unsigned>(cn.out_of_schedule), tx_errors);
+             static_cast<unsigned>(cn.out_of_schedule), tx_errors, static_cast<unsigned>(imu.errors()),
+             static_cast<unsigned>(imu.stale()), static_cast<unsigned>(progress.refusals()));
     }
   }
 }
