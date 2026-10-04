@@ -113,6 +113,13 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-RESP-003 | *(Deferred, with the actuator node.)* After any reset ACT shall start in Safe, not in nominal mode, and shall resume from its last output, kept in memory that survives a reset and protected by a check; if that memory is invalid it shall start from neutral. The output shall not step by more than the rate limit across a reset. | T, M |
 | TFC-RESP-004 | *(Deferred, with the supervisor.)* The supervisor shall not reset or power-cycle a flight computer on its own while that computer is the only one whose output agrees with the vote; only the operator's `hold` may. | T |
 
+## AI boundary (proposed; docs/DEFERRED.md section 7)
+| ID | Requirement | Verif. |
+|---|---|---|
+| TFC-AI-001 | No learned or statistical-inference component shall run in the flight binaries or take part in a vote; the flight binaries shall contain no inference runtime. | I, T |
+| TFC-AI-002 | An AI-assisted tool shall not hold the ground-command key and shall not send a command; any suggestion shall be logged with its inputs, and a human shall issue the command. | I |
+| TFC-AI-003 | The campaign output shall be byte-identical with every AI-assisted component disabled and enabled. | T |
+
 ## Software quality
 | ID | Requirement | Verif. |
 |---|---|---|

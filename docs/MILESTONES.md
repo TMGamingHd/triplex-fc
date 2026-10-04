@@ -22,6 +22,7 @@ checking. The parts sheet's own budget page reads 677.81 USD against a 600 USD c
 
 In order. The first three have dates; the rest can overlap.
 
+0. **Software readiness first** (`docs/SOFTWARE_READINESS.md`): the audit shows the software is not complete; P0 (S1 on day one) is the target before the parts arrive, P1 (the loop for S2) a stretch.
 1. **By 5 Oct: the order.** Supervisor Lite or Full (TS-0 in `TRADE_STUDIES.md`), the clock module, the per-IMU power parts of ADR-020, and the budget cuts that make the total fit. The order closes 6 Oct.
 2. **Merge PR 15** (ADR-020 rework) and answer the open questions: `SAFE_MODE.md` section 10, `FAULT_RESPONSE.md` section 6, and the hold-and-ask rule of ADR-021.
 3. **M1 hardware checks** after the parts arrive (JP5, adapter voltage, relay at 3.3 V, servo at 3.3 V, mounting holes), plus two new ones: what the servo does with no signal, and the logic level and independent power of the IMU board.

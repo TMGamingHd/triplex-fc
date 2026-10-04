@@ -184,3 +184,37 @@ bold.**
 **What can be done now without hardware:** the `common_mode` campaign scenario (F63) against the current voter, which shows the
 weakness the golden-release rule is for (measured: the healthy node is latched at frame 102); the `noop` command (FDIR-043); the
 supervisor's decision table as host-tested logic; a three-process `native_sim` triplex on one `vcan0` to test mixed releases.
+
+## 7. Later step: AI-assisted tooling, outside the flight path
+
+Added 4 Oct 2026 from the owner's question. **Not scheduled before M4;** it is the kind of extra that is worth doing only if the core
+is finished and measured.
+
+**The rule.** No learned component is in the flight path, and none holds the ground-command key. Reasons that are specific to this
+project: the replicas must produce bit-identical state and digests (ADR-006), the fault management is argued by a deterministic design
+with oracles that are mutation-tested (ADR-016), and a learned model cannot be tested the same way; the project's coding standard is
+built for code that can be read and bounded; and an inference time that varies is a timing fault in a time-triggered schedule. A learned
+part would multiply the verification burden to gain little on a fault set that the deterministic design already covers. Saying where AI
+was *not* used, and why, is the point an avionics interviewer will probe.
+
+**Where it is useful, in order of value for the effort:**
+
+| # | Use | Where it runs | Risk to flight | What it gives |
+|---|---|---|---|---|
+| 1 | **Falsification search**: an optimiser (evolutionary, Bayesian) looks for fault parameters, start times and two-fault combinations that violate an oracle, beyond the campaign's grids | PC, offline | none | Finds the case nobody listed; each find becomes a regression scenario; a good partner to mutation testing |
+| 2 | **Log triage**: an assistant reads decoded logs, events and housekeeping (IF-005, IF-006), summarises what happened and why, and points at the first anomalous frame | PC, offline | none | Faster analysis of campaign failures and rig runs |
+| 3 | **Shadow anomaly detector**: a learned model on the telemetry runs *next to* the deterministic fault management and never acts; its alarms are compared with it for detection time and false alarms | PC, advisory | none | A data-based comparison (TS-14); an honest answer to "why not machine learning?" |
+| 4 | **Duplex attribution advisor**: for the case nobody can be blamed (E6, the Safe request), a model ranks which node is more likely wrong and shows it to the operator, who decides under an ARM | PC, advisory | none, the operator decides | Targets the weakest point of Duplex; compare with analytical redundancy (TS-11) |
+| 5 | **Offline tuning**: an optimiser or learner picks the estimator and controller gains, the persistence settings (TS-1) and the Safe parameters (TS-4) in simulation; the result is a fixed table | PC, offline; fixed numbers in flight | none if the table is verified like any other | Better settings, argued by data |
+| 6 | **Operator assistant**: explains events, drafts the command, **cannot send it**; the key stays with the human | PC | none by construction | Lower operator load in the Safe and recovery cases |
+| 7 | **Requirement and trace checking**, review of documents against the matrix | PC, offline | none | Catches stale references |
+
+**What stays out until a case is made:** a learned residual inside the estimator or the voter, a learned arbiter that decides who is
+right, anything whose output reaches ACT.
+
+**Boundary tests (to write with the first use).** The campaign gives byte-identical dumps with the AI components disabled and enabled;
+the flight binary contains no inference code (`tools/check_elf.sh` extended); the AI client has no access to the key.
+
+**Cost and order.** Items 1 and 3 are the two worth doing: they need only the PC, the existing campaign, and the telemetry of section 5.4.
+Item 5 comes free with TS-1 and TS-4. Do not start before the software-ready gate (`SOFTWARE_READINESS.md`) and the first hardware
+measurements. **Requirements:** TFC-AI-001 to 003 (proposed boundary). **Study:** TS-14.
