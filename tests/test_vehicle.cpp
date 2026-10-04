@@ -681,3 +681,239 @@ TFC_TEST(flight_on_vehicle_true_sensors_coasts_on_the_gyro_because_gravity_is_no
   CHECK(o.replicas_identical && o.finite);
   CHECK(o.max_err_deg < 3.0);
 }
+
+// ---- independent verification: a separately written planar model, step-size convergence, and plane symmetry ----
+
+namespace {
+
+// The pitch-plane flight written again from scratch in two dimensions (x vertical, y downrange, theta of the long axis from +x toward +y), with
+// no quaternions, no cross products and no gimbal vector: it shares only the atmosphere and the mass properties with the 3-D model.
+struct Planar {
+  sim::Params p;
+  double engine_out_t = -1.0;
+  double t = 0.0;
+  double x = sim::kEarthR;
+  double y = 0.0;
+  double vx = 0.0;
+  double vy = 0.0;
+  double th = 0.0;
+  double om = 0.0;
+  double m = 0.0;
+  double dp = 0.0;  // gimbal angle, rad
+  bool out1 = false;
+
+  explicit Planar(const sim::Params& pp) : p(pp), m(pp.m_dry + pp.m_prop0) {}
+
+  struct S {
+    double x, y, vx, vy, th, om, m;
+  };
+  [[nodiscard]] S s() const { return S{x, y, vx, vy, th, om, m}; }
+
+  static double cd(double mach) {
+    const double d = (mach - 1.1) / 0.35;
+    return 0.30 + (0.45 * std::exp(-d * d));
+  }
+
+  [[nodiscard]] S rate(const S& a, double gimbal) const {
+    const double r = std::hypot(a.x, a.y);
+    const sim::Air air = sim::air_at(r - sim::kEarthR);
+    const sim::MassProps mp = sim::Vehicle6(p).mass_props(a.m);
+    const double ex_x = std::cos(a.th);
+    const double ex_y = std::sin(a.th);
+    const double vbx = (a.vx * ex_x) + (a.vy * ex_y);        // velocity along the long axis
+    const double vby = (-a.vx * ex_y) + (a.vy * ex_x);       // and across it (body Y)
+    const double vabs = std::hypot(vbx, vby);
+    const double q = 0.5 * air.density * vabs * vabs;
+    const double area = sim::kPi * 0.25 * p.diameter * p.diameter;
+    double fbx = 0.0;
+    double fby = 0.0;
+    double mz = 0.0;
+    if (vabs > 1.0 && vbx > 0.0) {
+      const double alpha = std::atan2(std::fabs(vby), vbx);
+      fbx += -q * area * cd(vabs / air.sound);
+      const double fn = std::fabs(vby) > 1e-9 ? -q * area * p.c_n_alpha * alpha * (vby / std::fabs(vby)) : 0.0;
+      fby += fn;
+      mz += (p.x_cp - mp.x_cg) * fn;
+    }
+    double mdot = 0.0;
+    if (a.m > p.m_dry + 1e-6) {
+      for (int i = 0; i < p.engines; ++i) {
+        if (i == 1 && out1) {
+          continue;
+        }
+        const double ti = std::fmax(0.0, p.thrust_vac_each - (air.pressure * p.exit_area_each));
+        const double fx = ti * std::cos(gimbal);
+        const double fy = -ti * std::sin(gimbal);
+        const double ey = i == 1 ? p.engine_offset : (i == 2 ? -p.engine_offset : 0.0);
+        fbx += fx;
+        fby += fy;
+        mz += (-mp.x_cg * fy) - (ey * fx);
+        mdot += p.thrust_vac_each / (p.isp_vac * sim::kG0);
+      }
+    }
+    const double g = sim::kEarthMu / (r * r * r);
+    const double fx_in = (fbx * ex_x) - (fby * ex_y);
+    const double fy_in = (fbx * ex_y) + (fby * ex_x);
+    const sim::MassProps mp2 = sim::Vehicle6(p).mass_props(a.m + 1.0);
+    const double didt = (mp2.i_t - mp.i_t) * -mdot;
+    return S{a.vx, a.vy, (fx_in / a.m) - (g * a.x), (fy_in / a.m) - (g * a.y), a.om, (mz - (didt * a.om)) / mp.i_t, -mdot};
+  }
+
+  void step(double h, double cmd_deg) {
+    const double target = std::fmax(-p.gimbal_limit_deg, std::fmin(p.gimbal_limit_deg, cmd_deg)) * sim::kDeg2Rad;
+    const double lim = p.gimbal_rate_dps * sim::kDeg2Rad * h;
+    dp += std::fmax(-lim, std::fmin(lim, target - dp));
+    const S a = s();
+    auto add = [](const S& u, const S& d, double f) {
+      return S{u.x + (d.x * f), u.y + (d.y * f), u.vx + (d.vx * f), u.vy + (d.vy * f), u.th + (d.th * f), u.om + (d.om * f), u.m + (d.m * f)};
+    };
+    const S k1 = rate(a, dp);
+    const S k2 = rate(add(a, k1, 0.5 * h), dp);
+    const S k3 = rate(add(a, k2, 0.5 * h), dp);
+    const S k4 = rate(add(a, k3, h), dp);
+    auto mix = [&](double a1, double b1, double c1, double d1) { return (a1 + (2.0 * b1) + (2.0 * c1) + d1) / 6.0; };
+    const S k{mix(k1.x, k2.x, k3.x, k4.x),     mix(k1.y, k2.y, k3.y, k4.y),     mix(k1.vx, k2.vx, k3.vx, k4.vx), mix(k1.vy, k2.vy, k3.vy, k4.vy),
+              mix(k1.th, k2.th, k3.th, k4.th), mix(k1.om, k2.om, k3.om, k4.om), mix(k1.m, k2.m, k3.m, k4.m)};
+    const S n = add(a, k, h);
+    x = n.x;
+    y = n.y;
+    vx = n.vx;
+    vy = n.vy;
+    th = n.th;
+    om = n.om;
+    m = std::fmax(n.m, p.m_dry);
+    t += h;
+  }
+};
+
+// The vehicle is unstable, so the verification flights are closed with a fixed-gain PD law on the attitude and rate (degrees in, degrees out) that tracks a
+// slow sinusoid plus a step: the vehicle really pitches and the aerodynamics act, and the flight stays bounded so that two models can be compared along it.
+double program_cmd(double t, double tilt_deg, double rate_dps) {
+  const double ref = (2.0 * std::sin(2.0 * sim::kPi * t / 10.0)) + (t > 12.0 ? 1.0 : 0.0);
+  return (1.0 * (ref - tilt_deg)) - (0.5 * rate_dps);
+}
+
+}  // namespace
+
+TFC_TEST(verification_the_3d_model_matches_an_independently_written_planar_model_through_a_pitching_ascent_with_an_engine_out) {
+  using namespace sim;
+  Scenario sc;
+  sc.engine_out_time = 20.0;
+  sc.engine_out_index = 1;
+  sc.wind_scale = 0.0;
+  Vehicle6 v(Params{}, sc);
+  Planar pl(Params{});
+  const double h = 0.002;
+  double worst_pos = 0.0;
+  double worst_att = 0.0;
+  double worst_mass = 0.0;
+  double max_tilt = 0.0;
+  for (int k = 0; k < 5000; ++k) {  // 50 s in 10 ms frames
+    const double t0 = k * 0.01;
+    const double cmd = program_cmd(t0, v.tilts().y_deg, v.state().w.z * kRad2Deg);
+    const double cmd_pl = program_cmd(t0, pl.th * kRad2Deg, pl.om * kRad2Deg);
+    v.step(0.01, cmd, 0.0);
+    for (int i = 0; i < 5; ++i) {
+      if (pl.t >= 20.0) {
+        pl.out1 = true;
+      }
+      pl.step(h, cmd_pl);
+    }
+    worst_pos = std::fmax(worst_pos, std::hypot(v.state().r.x - pl.x, v.state().r.y - pl.y));
+    worst_att = std::fmax(worst_att, std::fabs(v.tilts().y_deg - (pl.th * kRad2Deg)));
+    worst_mass = std::fmax(worst_mass, std::fabs(v.mass() - pl.m));
+    max_tilt = std::fmax(max_tilt, std::fabs(v.tilts().y_deg));
+    CHECK(near_abs(v.state().r.z, 0.0, 1e-9));  // it never leaves the plane
+  }
+  std::printf("  planar cross-check over 50 s: worst position difference %.3g m, attitude %.3g deg, mass %.3g kg (final tilt %.1f deg, altitude %.0f m)\n",
+              worst_pos, worst_att, worst_mass, v.tilts().y_deg, v.altitude());
+  CHECK(worst_pos < 1e-3);
+  CHECK(worst_att < 1e-4);
+  CHECK(worst_mass < 1e-6);
+  CHECK(max_tilt > 2.0 && v.altitude() > 3000.0 && v.engines_on() == 4);  // a real flight, not a trivial one
+}
+
+TFC_TEST(verification_the_yaw_plane_is_the_mirror_of_the_pitch_plane) {
+  using namespace sim;
+  Scenario sc;
+  sc.wind_scale = 0.0;
+  Vehicle6 a(Params{}, sc);
+  Vehicle6 b(Params{}, sc);
+  for (int k = 0; k < 4000; ++k) {
+    const double ca = program_cmd(k * 0.01, a.tilts().y_deg, a.state().w.z * kRad2Deg);
+    const double cb = program_cmd(k * 0.01, b.tilts().x_deg, b.state().w.y * kRad2Deg);  // the yaw plane turns about body Y
+    a.step(0.01, ca, 0.0);
+    b.step(0.01, 0.0, cb);
+  }
+  CHECK(near_abs(a.tilts().y_deg, b.tilts().x_deg, 1e-6));
+  CHECK(near_abs(a.state().r.y, -b.state().r.z, 1e-6));  // downrange in one is -crossrange in the other
+  CHECK(near_abs(a.state().r.x, b.state().r.x, 1e-6));
+  CHECK(near_abs(a.mass(), b.mass(), 1e-9));
+  CHECK(near_abs(a.state().w.z, b.state().w.y, 1e-9));
+  CHECK(std::fabs(a.state().r.y) > 10.0);  // and the flight did move sideways
+}
+
+TFC_TEST(verification_the_answer_converges_as_the_integration_step_is_halved) {
+  using namespace sim;
+  auto fly_with = [](double substep) {
+    Params p;
+    p.max_substep = substep;
+    Scenario sc;
+    sc.wind_scale = 0.0;
+    Vehicle6 v(p, sc);
+    for (int k = 0; k < 4000; ++k) {
+      v.step(0.01, program_cmd(k * 0.01, v.tilts().y_deg, v.state().w.z * kRad2Deg), 0.0);
+    }
+    return v;
+  };
+  const Vehicle6 ref = fly_with(0.0005);
+  double prev = 0.0;
+  for (const double h : {0.004, 0.002, 0.001}) {
+    const Vehicle6 v = fly_with(h);
+    const double e = norm(v.state().r - ref.state().r);
+    const double ea = std::fabs(v.tilts().y_deg - ref.tilts().y_deg);
+    std::printf("  substep %.1f ms: position error %.3g m, attitude error %.3g deg (against 0.5 ms)\n", h * 1000.0, e, ea);
+    if (prev > 0.0) {
+      CHECK(e < prev / 1.8);  // converging, though not at RK4's order: the gimbal is sampled and held over each substep, which is first-order
+    }
+    prev = e;
+    if (h <= 0.002) {
+      CHECK(e < 0.01 && ea < 1e-3);  // the 2 ms the simulator uses is converged to a centimetre after 40 s
+    }
+  }
+}
+
+TFC_TEST(verification_the_unstable_pitch_mode_grows_at_the_rate_the_aerodynamics_predict) {
+  using namespace sim;
+  // A coasting, unpowered vehicle in fast air with its axis a small angle off the velocity: theta'' = a (theta - gamma) with a = q A CNalpha (xcp - xcg) / I,
+  // so the angle of attack grows as cosh(sqrt(a) t) while the sideways drift of the velocity is still small.
+  Params p;
+  p.gravity_scale = 0.0;
+  p.m_prop0 = 0.0;
+  Scenario sc;
+  sc.wind_scale = 0.0;
+  Vehicle6 v(p, sc);
+  State s;
+  s.m = p.m_dry;
+  s.r = V3{kEarthR + 8000.0, 0.0, 0.0};
+  const double a0 = 0.5 * kDeg2Rad;  // the axis points half a degree toward +Y of the velocity
+  s.v = V3{300.0, 0.0, 0.0};
+  s.q = normalized(Q4{std::cos(0.5 * a0), 0.0, 0.0, std::sin(0.5 * a0)});
+  v.set_state(s);
+  const Loads l0 = v.current_loads();
+  const MassProps mp = v.mass_props(p.m_dry);
+  const double area = kPi * 0.25 * p.diameter * p.diameter;
+  const double a_div = l0.dynamic_pressure * area * p.c_n_alpha * (p.x_cp - mp.x_cg) / mp.i_t;
+  const double rate = std::sqrt(a_div);
+  CHECK(rate > 0.5 && rate < 3.0);
+  const double t_end = 0.5;
+  v.step(t_end, 0.0, 0.0);
+  const double predicted = a0 * std::cosh(rate * t_end);
+  const double axis = std::atan2(2.0 * ((v.state().q.w * v.state().q.z) + (v.state().q.x * v.state().q.y)),
+                                 1.0 - (2.0 * ((v.state().q.y * v.state().q.y) + (v.state().q.z * v.state().q.z))));
+  const double vel = std::atan2(v.state().v.y, v.state().v.x);
+  const double alpha = axis - vel;
+  std::printf("  divergence: rate %.3f /s, angle of attack after %.1f s: %.4f deg (linear prediction %.4f deg)\n", rate, t_end, alpha * kRad2Deg,
+              predicted * kRad2Deg);
+  CHECK(close(alpha, predicted, 0.05));  // the 4% or so that the sideways acceleration of the velocity takes off the growth
+}

@@ -47,6 +47,8 @@ struct Params {
   bool ideal_roll_control = true;
   // tests only: 0 switches gravity off, so that the rocket equation can be checked exactly
   double gravity_scale = 1.0;
+  // the largest integration substep, s (tests lower it to check that the answer has converged)
+  double max_substep = 0.002;
 };
 
 struct Gust {  // a 1-cosine gust of peak velocity `peak` (m/s, inertial frame) lasting `duration` seconds from `t0`
@@ -103,9 +105,9 @@ class Vehicle6 {
     engine_on_.assign(static_cast<std::size_t>(p.engines), true);
   }
 
-  // Advance by dt seconds with the commanded gimbal angles (degrees). Substeps of at most 2 ms.
+  // Advance by dt seconds with the commanded gimbal angles (degrees). Substeps of at most `max_substep` (2 ms).
   void step(double dt, double cmd_pitch_deg, double cmd_yaw_deg) {
-    const int n = std::max(1, static_cast<int>(std::ceil(dt / 0.002 - 1e-9)));
+    const int n = std::max(1, static_cast<int>(std::ceil((dt / p_.max_substep) - 1e-9)));
     const double h = dt / n;
     for (int i = 0; i < n; ++i) {
       if (sc_.engine_out_time >= 0.0 && t_ >= sc_.engine_out_time && sc_.engine_out_index >= 0 &&

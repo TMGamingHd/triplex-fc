@@ -85,6 +85,19 @@ Conservation and known values, each a unit test: **circular orbit** (zero thrust
 (angular momentum and energy conserved for an asymmetric body); quaternion norm; the **sign of the aerodynamic moment** (unstable); thrust rising with altitude; a **nominal gravity-turn ascent** inside sanity bounds
 (altitude, speed and max-Q time); and the closed loop with the scheduled controller and the real estimator holding the attitude through max-Q gusts and an engine-out.
 
+### Independent verification (what "accurate" means here)
+No simulator of an invented vehicle can be "100% accurate": there is no real vehicle to be accurate against, and the aerodynamic coefficients, the centre of pressure, the engine and the mass numbers are chosen, not measured. What can be shown is
+that the code solves the stated equations correctly, and that is what these tests do (`tests/test_vehicle.cpp`, the `verification_*` tests):
+- **A second implementation.** The pitch plane is written again from scratch in two dimensions (no quaternions, no cross products, no gimbal vector; it shares only the atmosphere and the mass properties) and flown beside the 3-D model for 50 s in a
+  closed pitching flight with an engine-out at 20 s. The two agree to **6e-14 m in position, 1e-14 degrees in attitude and exactly in mass**. This catches frame, sign, quaternion and rotation errors in the 3-D code.
+- **Plane symmetry.** The same flight in the yaw plane is the mirror image of the pitch plane (tilt, position and rates equal to 1e-6 or better).
+- **Step-size convergence.** Against a 0.5 ms reference after 40 s: 4 ms gives 6.5 mm, 2 ms (the simulator's step) **3.3 mm**, 1 ms 0.9 mm; attitude error under 1e-5 degrees. The convergence is first order, not RK4's fourth, because the gimbal is sampled and held over each substep.
+- **The unstable mode.** A coasting vehicle in 300 m/s air with its axis half a degree off the velocity diverges at the rate `sqrt(a)` the aerodynamics predict (`a = q A CNalpha (xcp - xcg) / I`): 0.687 degrees of angle of attack after 0.5 s
+  against 0.709 predicted by the linear model, the 3% difference being the sideways acceleration of the velocity that the linear model leaves out.
+- **Conservation and known values** (above): orbit, rocket equation, torque-free rotation, atmosphere.
+
+Still unverified against any outside data: the aerodynamic and engine numbers, the mean wind profile, and the real behaviour of the servo platform (that waits for the rig).
+
 ## 10. What it does not model, and the caveats
 Earth rotation and the shape of the geoid; propellant slosh; structural flexibility; roll control (it is idealised: see section 3); separation and a second stage; real atmospheric turbulence (gusts are scripted); the rig's accelerations (the platform does not
 accelerate, which is why the vehicle-true mode exists). The model is a believable vehicle, not a flight-qualified one: say so in the write-up.
