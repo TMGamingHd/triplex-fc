@@ -12,6 +12,12 @@ Only nodes that have passed their stage are powered and plugged into the bus.
 | M4 | Nov 17 - Dec 1 | Automated fault campaign (F01-F18), detection-time histograms, SIL regression in CI, static analysis clean. **The software-in-the-loop part of this already exists** (`docs/FAULT_CAMPAIGN.md`: 32 fault kinds, 10,713 scenarios, in CI); M4 is the hardware-in-the-loop repeat of it on the rig, plus timing. | Fault matrix fully filled with measured data |
 | M5 | Dec 1 - 15 | Write-up, video, README, resume bullets, tag v1.0. | Everything in `PROOF.md` checklist ticked |
 
+**Decision due before the order closes (6 Oct, M0): the supervisor hardware.** `docs/SUPERVISOR.md` proposes one more Pico 2 (6.00 USD on the
+parts sheet) and a TCXO clock module (price not checked) for the Lite build; the Full build (a Nucleo and a CAN Pal in place of the Pico)
+adds 18.08 USD. The relay channels, wire, headers and USB cables already in the list cover the rest; the 1 k to 10 k resistors need
+checking. The parts sheet's own budget page reads 677.81 USD against a 600 USD ceiling before this change. A second ACT (stretch,
+`docs/DEFERRED.md` 6.6) would add about 24 USD plus a selector chip and need not be bought now.
+
 Each stage ends with a tagged commit and a short log or video.
 
 Slack is intentionally in M4/M5. If M2 slips, cut stretch goals, not the fault campaign.
