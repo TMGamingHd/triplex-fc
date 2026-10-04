@@ -48,6 +48,7 @@ writing. The rest runs alongside the hardware work (section 5).
 | 4 Oct 2026 | **P1, first increment** (SW-04, SW-05 on the host) | Sensor consensus, attitude estimator, controller and guidance in `core/`, closed around a host vehicle model with three replicas: nominal 0.17 deg RMS, bit-identical replicas, a wild, biased or frozen IMU masked (`docs/CONTROL_LOOP.md`). **Not yet wired into the firmware**, no vehicle-simulator gateway, no actuator node |
 | 4 Oct 2026 | SW-24 (CI) | Done: docs-only changes skip the build, pull requests run a sample of the campaign, `main` runs all of it (PR 22) |
 | 4 Oct 2026 | **State of the repository** | PRs 17 to 23 are merged and the remote branches deleted; CI on `main` passes; `can-utils` installed on the bench PC. The parts order is not placed yet (it still needs the supervisor's second Pico 2, clock module and resistors) |
+| 4 Oct 2026 | **SW-08 (ACT logic)** | `core/include/tfc/act.hpp`: the vote, node exclusion, the slew-bounded output, Safe (freeze, hold, ramp, neutral, no automatic exit), the reset behaviour; 19 tests including a 20,000-frame fuzz (`docs/ACT_LOGIC.md`). Not yet the app or the bus I/O |
 
 ## 3. What is missing, by area
 

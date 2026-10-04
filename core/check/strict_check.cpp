@@ -3,6 +3,7 @@
 // the project uses, as errors, and exercises the main entry points so that code which only inlines at -O2 is analysed
 // too (null dereference, stack usage). It is never linked into anything. Each header is also compiled on its own
 // (see CMakeLists.txt) so it cannot rely on another header having been included first.
+#include "tfc/act.hpp"
 #include "tfc/consensus.hpp"
 #include "tfc/controller.hpp"
 #include "tfc/crc8.hpp"
@@ -74,6 +75,14 @@ int exercise(unsigned frames) {
   estimator.update(consensus.consensus(), 0.01F);
   const tfc::Command cmd = controller.step(estimator.attitude(), guidance.at(frames), 0.01F);
   acc += static_cast<unsigned>(cmd.state_digest) + static_cast<unsigned>(estimator.digest()) + static_cast<unsigned>(controller.digest());
+  tfc::ActLogic act;
+  tfc::ActRecord stored{};
+  act.boot(tfc::ResetCause::PowerOn, stored);
+  act.begin_frame();
+  for (uint8_t n = 0; n < 3U; ++n) {
+    (void)act.on_frame(tfc::pack_cmd(n, tfc::Command{1.0F, 2.0F, 3U}, 0U));
+  }
+  acc += static_cast<unsigned>(act.end_frame().mode) + (act.clear_safe() ? 1U : 0U) + static_cast<unsigned>(act.record().crc);
   char text[64];
   tfc::format_reasons(static_cast<uint8_t>(acc), text, sizeof text);
   return static_cast<int>(acc) + static_cast<int>(tfc::validate_config(mgr.config())) + static_cast<int>(text[0]);

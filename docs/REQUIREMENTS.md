@@ -89,9 +89,9 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 ## Safe mode (proposed, ADR-023; docs/SAFE_MODE.md)
 | ID | Requirement | Verif. |
 |---|---|---|
-| TFC-SAFE-001 | On entering Safe the output shall freeze at the last good voted command at once, with no step; after `T_hold` (proposal: 50 frames) it shall move to the neutral command at no more than the rate limit (proposal: a quarter of full travel per second) and then hold neutral until Safe is cleared. | T, M |
-| TFC-SAFE-002 | ACT shall carry out the sequence of SAFE-001 by itself, without the flight computers or the bus, when it has had no valid vote for 3 frames, when the vote status carries a Safe request, or when its `SAFE` line is asserted. | T, M |
-| TFC-SAFE-003 | Safe shall be left only when at least two healthy flight computers have agreed for 100 frames, ACT sees valid votes, and an operator `clear-safe` under an ARM has been accepted (ADR-019). Nothing shall leave Safe by itself. | T |
+| TFC-SAFE-001 | *(Logic built and host-tested: `docs/ACT_LOGIC.md`.)* On entering Safe the output shall freeze at the last good voted command at once, with no step; after `T_hold` (proposal: 50 frames) it shall move to the neutral command at no more than the rate limit (proposal: a quarter of full travel per second) and then hold neutral until Safe is cleared. | T, M |
+| TFC-SAFE-002 | *(Logic built and host-tested.)* ACT shall carry out the sequence of SAFE-001 by itself, without the flight computers or the bus, when it has had no valid vote for 3 frames, when the vote status carries a Safe request, or when its `SAFE` line is asserted. | T, M |
+| TFC-SAFE-003 | *(Logic built and host-tested; the authenticated ground-command path is P1-4.)* Safe shall be left only when at least two healthy flight computers have agreed for 100 frames, ACT sees valid votes, and an operator `clear-safe` under an ARM has been accepted (ADR-019). Nothing shall leave Safe by itself. | T |
 | TFC-SAFE-004 | Every entry to and exit from Safe shall be recorded as an event with its cause and counted (IF-005, IF-006). | T |
 | TFC-SAFE-005 | The neutral command, `T_hold`, the rate limit and the lost-vote count shall be parameters with defaults in non-volatile memory, validated like FDIR-026: an invalid value is replaced by its default and reported. | T |
 | TFC-SAFE-006 | The Safe action shall be defined per mission phase (docs/MISSION_PHASES.md). | I |
@@ -111,7 +111,7 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 |---|---|---|
 | TFC-RESP-001 | Every row of the fault matrix shall name a response class (R0 to R6 of `FAULT_RESPONSE.md`) and the behaviour of the vehicle's output, and the response shall be demonstrated by the test named in the row. | I |
 | TFC-RESP-002 | The phase rules of `FAULT_RESPONSE.md` section 5 shall decide what loss of redundancy means in each phase: the pad holds the launch below Triplex, ascent continues in Duplex with an alert, and an unattributable disagreement is frozen in every phase. | T |
-| TFC-RESP-003 | *(Deferred, with the actuator node.)* After any reset ACT shall start in Safe, not in nominal mode, and shall resume from its last output, kept in memory that survives a reset and protected by a check; if that memory is invalid it shall start from neutral. The output shall not step by more than the rate limit across a reset. | T, M |
+| TFC-RESP-003 | *(Logic built and host-tested; the no-init RAM and the board are P1-4.)* After any reset ACT shall start in Safe, not in nominal mode, and shall resume from its last output, kept in memory that survives a reset and protected by a check; if that memory is invalid it shall start from neutral. The output shall not step by more than the rate limit across a reset. | T, M |
 | TFC-RESP-004 | *(Deferred, with the supervisor.)* The supervisor shall not reset or power-cycle a flight computer on its own while that computer is the only one whose output agrees with the vote; only the operator's `hold` may. | T |
 
 ## AI boundary (proposed; docs/DEFERRED.md section 7)
