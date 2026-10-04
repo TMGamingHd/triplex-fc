@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Command line: python3 -m campaign.run [--group NAME ...] [--workers N] [--out FILE.jsonl] [--limit N]"""
+"""Command line: python3 -m campaign.run [--group NAME ...] [--workers N] [--out FILE.jsonl] [--limit N] [--every K]"""
 from __future__ import annotations
 
 import argparse
@@ -20,6 +20,8 @@ def main(argv=None) -> int:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--out", default="campaign.jsonl")
     ap.add_argument("--limit", type=int, default=0, help="run at most N scenarios per group (for a quick look)")
+    ap.add_argument("--every", type=int, default=0, metavar="K",
+                    help="run every K-th scenario of each group, always including the first (a spread-out sample, for pull requests)")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--strict", action="store_true", help="exit 1 if any anomaly was raised (for CI)")
     args = ap.parse_args(argv)
@@ -32,6 +34,7 @@ def main(argv=None) -> int:
     scenarios = []
     for n in names:
         g = table[n]()
+        g = g[:: args.every] if args.every > 1 else g
         scenarios += g[: args.limit] if args.limit else g
     print(f"{len(scenarios)} scenarios, {args.workers} workers", flush=True)
     t0 = time.time()

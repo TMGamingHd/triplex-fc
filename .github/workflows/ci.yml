@@ -1,13 +1,64 @@
 name: ci
 # GitHub Flow: every change arrives as a PR, so run on PRs and on main.
 # (Running on every branch push as well would duplicate the PR run.)
+#
+# Minutes: the account is on the Free plan (2,000 Actions minutes a month for a private repository). A full run was about 16
+# billed minutes, 9 of them the fault campaign. So:
+#  - a push to a pull request cancels the run it supersedes;
+#  - a change that touches only documentation runs just the documentation check (about a minute), not the build;
+#  - a pull request runs a spread-out sample of the campaign (every 8th scenario of each group, about a minute);
+#    the FULL campaign runs on main (every merge) and on demand (Actions > ci > Run workflow);
+#  - every job has a timeout, so a hung run cannot burn the month.
+# Mutation testing is a separate weekly workflow (mutation.yml).
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  sil:
+  changes:
+    # Decides whether the heavy jobs are needed, and always runs the documentation check (it reads sim/README.md against the tools).
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Documentation check (every flag, fault kind and counter is documented)
+        run: cd sim && python3 -m unittest tests.test_docs
+      - name: Did anything besides documentation change?
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          # A manual run, a new branch or a rewritten history has no usable base: treat it as a code change.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "no usable base: running everything"
+            exit 0
+          fi
+          files="$(git diff --name-only "$base" HEAD)"
+          echo "changed files:"; echo "$files"
+          if echo "$files" | grep -qvE '^(docs/|README\.md$|firmware/README\.md$|tools/bench/README\.md$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "documentation only: the build and the campaign are skipped"
+          fi
+
+  sil:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
       - name: Install tools
@@ -26,12 +77,14 @@ jobs:
         run: python3 tools/check_standard.py
       - name: Structural coverage of core/ (gate may only be raised)
         run: python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98
-      - name: Fault campaign (every fault kind, safety properties on every frame; fails on any anomaly)
+      - name: Fault campaign (safety properties on every frame; fails on any anomaly; a sample on pull requests, everything on main)
         run: |
           cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build/rel --target tfc_replay
           cd sim
-          TFC_REPLAY_BIN="$GITHUB_WORKSPACE/build/rel/tfc_replay" python3 -m campaign.run --workers 4 --quiet --strict --out "$RUNNER_TEMP/campaign.jsonl"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then sample="--every 8"; else sample=""; fi
+          echo "campaign sample option: '${sample}'"
+          TFC_REPLAY_BIN="$GITHUB_WORKSPACE/build/rel/tfc_replay" python3 -m campaign.run --workers 4 --quiet --strict $sample --out "$RUNNER_TEMP/campaign.jsonl"
       - name: Campaign tables (for the job summary)
         if: always()
         run: |
@@ -40,7 +93,10 @@ jobs:
 
   firmware:
     # Builds the Zephyr app for the host (native_sim, runs it) and for the real board.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     env:
       ZEPHYR_SDK_VERSION: "1.0.1"
     steps:
