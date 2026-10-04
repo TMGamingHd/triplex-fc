@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
-// FC-A: the sync master and one of three flight computers. Every 10 ms major frame it
-//   t = 0.0 ms  broadcasts SYNC (frame number)
+// One of the three flight computers (node A, B or C, from CONFIG_TFC_NODE_ID). Node A is the sync master at power-up; B and C follow its SYNC, keep
+// counting through a gap, and the lowest of them takes over if SYNC stops (tfc::SyncClock). Every 10 ms major frame a node
+//   t = 0.0 ms  the master broadcasts SYNC (frame number); the others lock their frame to it
 //   t = 1.5 ms  samples its (simulated) IMU and broadcasts gyro + accel
 //   t = 5.0 ms  broadcasts its command + estimator digest
 //   t = 7.0 ms  hands everything received to tfc::RedundancyManager, which votes, cross-checks
 //               and runs FDIR; latch events and a once-a-second status line go to the console
-// (schedule: docs/ARCHITECTURE.md section 3). On native_sim the bus is the host's vcan0 and the
-// peers B and C are the virtual peers (sim/); on the Nucleo it is FDCAN1.
+// (schedule: docs/ARCHITECTURE.md section 3). On native_sim the bus is the host's vcan0 and the other nodes are either the virtual peers (sim/) or more
+// instances of this image; on the Nucleo it is FDCAN1.
+// With CONFIG_TFC_FLIGHT_FUNCTION the command comes from tfc::FlightFunction (consensus, estimator, controller) instead of a scripted function of the frame
+// number; with CONFIG_TFC_SIM_BUS_IMU the sensor input is the simulator's 0x501/0x502 frames instead of the scripted motion.
 //
 // Include core/ (and so the C++ standard library) BEFORE Zephyr headers: Zephyr defines an
 // `__unused` macro that breaks a glibc header (struct_mutex.h) on the native_sim host build.
@@ -15,10 +18,13 @@
 #include <cstring>
 
 #include "sim_imu.hpp"
+#include "flight_tables.hpp"
+#include "tfc/flight.hpp"
 #include "tfc/progress.hpp"
 #include "tfc/protocol.hpp"
 #include "tfc/redundancy.hpp"
 #include "tfc/resetlog.hpp"
+#include "tfc/sync_clock.hpp"
 
 #include "hw.hpp"
 
@@ -28,12 +34,14 @@
 namespace {
 
 constexpr unsigned kNodeId = CONFIG_TFC_NODE_ID;
-BUILD_ASSERT(kNodeId == 0, "this stage implements node A, the sync master; B and C need SYNC following");
+BUILD_ASSERT(kNodeId <= 2U, "the node id is 0 (A), 1 (B) or 2 (C)");
+constexpr bool kFlightFunction = IS_ENABLED(CONFIG_TFC_FLIGHT_FUNCTION);
+constexpr bool kSimBusImu = IS_ENABLED(CONFIG_TFC_SIM_BUS_IMU);
 
 constexpr int64_t kSampleUs = 500;   // the IMU sample is latched here (ARCHITECTURE section 3) ...
 constexpr int64_t kGyroUs = 1500;     // ... and sent here
-constexpr int64_t kCmdUs = 5000;
-constexpr int64_t kVoteUs = 7000;
+constexpr int64_t kCmdUs = 5000;   // the command goes out here; the peers' sensor frames (sent by 3 ms) are drained just before
+constexpr int64_t kVoteUs = CONFIG_TFC_VOTE_US;
 constexpr uint32_t kStatusEveryFrames = 100;
 // The phases of a frame that must each have run before the watchdog may be serviced (tfc::ProgressMonitor, FDIR-038).
 constexpr unsigned kTaskSample = 0U;
@@ -61,6 +69,11 @@ void can_state_changed(const struct device*, enum can_state state, struct can_bu
 tfc::ResetRecord g_reset_record __noinit;
 CAN_MSGQ_DEFINE(rx_msgq, 32);      // the three schedule slots (gyro, accel, command of every node)
 CAN_MSGQ_DEFINE(rx_all_msgq, 64);  // everything: only used to see what is NOT in the schedule (babbling)
+CAN_MSGQ_DEFINE(rx_sync_msgq, 4);  // SYNC, for the nodes that follow it (and for a master to see another's)
+CAN_MSGQ_DEFINE(rx_sim_msgq, 8);   // the simulator's sensor inputs (0x501, 0x502; the mask also lets 0x500, 0x503 through)
+
+// Statics, not locals: the flight function holds the tables and the filter state, about a kilobyte.
+tfc::FlightFunction g_flight;
 
 void sleep_until_us(int64_t base_ticks, int64_t offset_us) {
   k_sleep(K_TIMEOUT_ABS_TICKS(base_ticks + k_us_to_ticks_ceil64(offset_us)));
@@ -115,6 +128,18 @@ bool bus_init() {
   if (can_add_rx_filter_msgq(can_dev, &rx_all_msgq, &all) < 0) {
     printk("cannot add catch-all CAN rx filter\n");
     return false;
+  }
+  const can_filter sync{.id = tfc::id::kSync, .mask = 0x7FFU, .flags = 0U};
+  if (can_add_rx_filter_msgq(can_dev, &rx_sync_msgq, &sync) < 0) {
+    printk("cannot add the SYNC rx filter\n");
+    return false;
+  }
+  if (kSimBusImu) {
+    const can_filter sim{.id = tfc::id::kSim, .mask = 0x7FCU, .flags = 0U};
+    if (can_add_rx_filter_msgq(can_dev, &rx_sim_msgq, &sim) < 0) {
+      printk("cannot add the simulator rx filter\n");
+      return false;
+    }
   }
   can_set_state_change_callback(can_dev, can_state_changed, nullptr);
   const int rc = can_start(can_dev);
@@ -211,45 +236,159 @@ int main() {
   tfc::ProgressMonitor progress(kProgressRequired);
   constexpr int64_t kPeriodUs = fc::sim::kFrameUs;
   const int64_t period = k_us_to_ticks_ceil64(kPeriodUs);
-  const int64_t start = k_uptime_ticks() + k_ms_to_ticks_ceil64(200);
+  const int64_t window = k_us_to_ticks_ceil64(tfc::sync_window_us(kNodeId, CONFIG_TFC_SYNC_STAGGER_US));
+  // Node A listens first, even after a power-up (it may be the one that was off while B took over: two masters would collide on one id), and
+  // claims the bus if nobody is sending after a few frames; B and C only follow, and take over only after they have heard a master and lost it.
+  const tfc::SyncStart sync_start = kNodeId != 0U ? tfc::SyncStart::FollowOnly : tfc::SyncStart::Listen;
+  tfc::SyncClock sync_clock(sync_start);
+  int64_t nominal = k_uptime_ticks() + k_ms_to_ticks_ceil64(200);  // when the next frame should start
   tfc::Mode last_mode = tfc::Mode::Triplex;
   bool last_bus_alarm = false;
   bool last_safe_request = false;
   uint32_t tx_errors = 0;
+  uint32_t sync_missed_total = 0;
+  uint8_t usable_nodes = 0x07U;  // whose sensors the flight function may use: the nodes the fault manager has not excluded
+  if (kFlightFunction) {
+    tfc::GainSchedule gains;
+    tfc::Guidance guidance;
+    fc::tables::load(gains, guidance);
+    g_flight = tfc::FlightFunction(gains, guidance);
+  }
 
-  printk("FC-A (node %u): sync master, 100 Hz frame loop. Waiting for peers B and C on the bus.\n", kNodeId);
+  printk("FC-%c (node %u): %s, 100 Hz frame loop%s%s.\n", 'A' + static_cast<char>(kNodeId), kNodeId,
+         sync_start == tfc::SyncStart::Listen ? "listens for a master, then claims SYNC" : "following SYNC",
+         kFlightFunction ? ", flight function on" : "", kSimBusImu ? ", sensors from the simulator" : "");
   printk("status: '+' voting, 'X' latched out, 'p' on probation, 'D' disabled, '?' no good data this frame\n");
 
-  for (uint32_t k = 0;; ++k) {
-    const int64_t base = start + static_cast<int64_t>(k) * period;
-    k_sleep(K_TIMEOUT_ABS_TICKS(base));
-    if (k == 0U && !wdt.start(static_cast<uint32_t>(CONFIG_TFC_WATCHDOG_TIMEOUT_MS)) && DT_HAS_ALIAS(watchdog0)) {
+  // Hand every schedule-slot frame that has arrived to the manager (and the sensor frames to the flight function); our own frames are not repeated back.
+  auto drain_schedule_slots = [&]() {
+    can_frame cf;
+    while (k_msgq_get(&rx_msgq, &cf, K_NO_WAIT) == 0) {
+      tfc::Frame f;
+      f.id = cf.id;
+      f.len = static_cast<uint8_t>(can_dlc_to_bytes(cf.dlc));
+      std::memcpy(f.data.data(), cf.data, 8);
+      if (!is_own(f.id)) {
+        mgr.on_frame(f);
+        if (kFlightFunction) {
+          (void)g_flight.on_frame(f);
+        }
+      }
+    }
+  };
+
+  for (uint32_t cycle = 0;; ++cycle) {
+    if (quarantined) {  // a reset loop (TFC-FDIR-042): stay silent, keep the watchdog serviced, say so once a second
+      k_sleep(K_TIMEOUT_ABS_TICKS(nominal));
+      nominal += period;
+      if (cycle == 0U) {
+        (void)wdt.start(static_cast<uint32_t>(CONFIG_TFC_WATCHDOG_TIMEOUT_MS));
+      }
+      wdt.feed();
+      if (cycle % kStatusEveryFrames == 0U) {
+        printk("[cycle %u] RESET LOOP: %u short boots in a row; this node is held out and silent until it is power-cycled\n", cycle,
+               static_cast<unsigned>(resets.short_boots()));
+      }
+      continue;
+    }
+
+    // ---- the start of the frame: the master wakes on its own clock, a follower waits for SYNC (up to its window) ----
+    bool heard = false;
+    uint32_t heard_number = 0U;
+    int64_t base = nominal;
+    can_frame sf;
+    if (sync_clock.master()) {
+      k_sleep(K_TIMEOUT_ABS_TICKS(nominal));
+      while (k_msgq_get(&rx_sync_msgq, &sf, K_NO_WAIT) == 0) {  // another master's SYNC: this node yields
+        tfc::Frame f;
+        f.id = sf.id;
+        f.len = static_cast<uint8_t>(can_dlc_to_bytes(sf.dlc));
+        std::memcpy(f.data.data(), sf.data, 8);
+        const tfc::DecodedSync d = tfc::unpack_sync(f);
+        if (d.ok) {
+          heard = true;
+          heard_number = d.frame_no;
+        }
+      }
+    } else {
+      while (k_msgq_get(&rx_sync_msgq, &sf, K_TIMEOUT_ABS_TICKS(nominal + window)) == 0) {
+        tfc::Frame f;
+        f.id = sf.id;
+        f.len = static_cast<uint8_t>(can_dlc_to_bytes(sf.dlc));
+        std::memcpy(f.data.data(), sf.data, 8);
+        const tfc::DecodedSync d = tfc::unpack_sync(f);
+        if (d.ok) {
+          heard = true;
+          heard_number = d.frame_no;
+          base = k_uptime_ticks();  // the frame is locked to the arrival of SYNC
+          break;
+        }
+      }
+    }
+    const tfc::SyncTick tick = sync_clock.cycle(heard, heard_number);
+    const uint32_t k = tick.frame;
+    if (tick.took_over) {
+      base = k_uptime_ticks();  // the new master's frame starts now, at the end of its wait; its SYNC tells the others
+    }
+    nominal = base + period;  // (for a frame without SYNC, `base` is still the nominal start, so the cadence does not drift)
+    if (tick.took_over) {
+      printk("[frame %u] SYNC lost for %u frames: this node takes over as sync master\n", k, static_cast<unsigned>(tick.missed));
+    }
+    if (tick.yielded) {
+      printk("[frame %u] another node is sending SYNC: this node follows it\n", k);
+    }
+    if (tick.synced && !tick.locked && !tick.master) {
+      ++sync_missed_total;
+    }
+
+    if (cycle == 0U && !wdt.start(static_cast<uint32_t>(CONFIG_TFC_WATCHDOG_TIMEOUT_MS)) && DT_HAS_ALIAS(watchdog0)) {
       printk("WATCHDOG: could not be started\n");
+    }
+    if (!tick.synced) {  // no SYNC heard yet and not the master: there is no frame number to stamp frames with, so stay silent and keep the watchdog serviced
+      wdt.feed();
+      if (cycle % kStatusEveryFrames == 0U) {
+        printk("[cycle %u] waiting for SYNC (listening: nothing is sent until a master is heard or this node claims the bus)\n", cycle);
+      }
+      continue;
+    }
+    if (!tick.master && !tick.locked) {
+      // SYNC did not come in this frame and this node is not taking over: the frame is skipped, by every follower alike. Running it on the node's own
+      // clock would put each follower's frame at a different time (their windows differ), so two nodes could receive different mixes of the same frames,
+      // compute different inputs and drift apart for good (docs/DECISIONS.md ADR-025). The number still counts, so it stays continuous.
+      wdt.feed();
+      continue;
     }
     lines.kick(false);
     lines.frame(true);  // FRAME: a pulse at the start of every frame, cleared when the sample is latched
-    if (quarantined) {  // a reset loop (TFC-FDIR-042): stay silent, keep the watchdog serviced, say so once a second
-      wdt.feed();
-      if (k % kStatusEveryFrames == 0U) {
-        printk("[frame %u] RESET LOOP: %u short boots in a row; this node is held out and silent until it is power-cycled\n", k,
-               static_cast<unsigned>(resets.short_boots()));
-      }
-      lines.frame(false);
-      continue;
-    }
-    if (k % kStatusEveryFrames == 0U) {
-      resets.running(k);  // how long this boot has lasted, for the next boot's loop check
+    if (cycle % kStatusEveryFrames == 0U) {
+      resets.running(cycle);  // how long this boot has lasted, for the next boot's loop check
     }
     const uint8_t seq = static_cast<uint8_t>(k);
     mgr.begin_frame(k);  // SYNC's frame number: the number every node stamps its frames with (ADR-018)
-    if (k == 0U) {
-      k_msgq_purge(&rx_msgq);  // anything queued before the first SYNC belongs to no frame
-      k_msgq_purge(&rx_all_msgq);
+    if (kFlightFunction) {
+      g_flight.begin_frame(k, usable_nodes);
     }
-    tx_errors += send(tfc::pack_sync(k, seq)) ? 0U : 1U;
+    if (cycle == 0U) {
+      k_msgq_purge(&rx_msgq);  // anything queued before the first frame belongs to no frame
+      k_msgq_purge(&rx_all_msgq);
+      k_msgq_purge(&rx_sim_msgq);
+    }
+    if (tick.master) {
+      tx_errors += send(tfc::pack_sync(k, seq)) ? 0U : 1U;
+    }
 
     // ---- t = 0.5 ms: latch the IMU sample ----
     sleep_until_us(base, kSampleUs);
+    if (kSimBusImu) {
+      can_frame sim_cf;
+      while (k_msgq_get(&rx_sim_msgq, &sim_cf, K_NO_WAIT) == 0) {  // the simulator's inputs for this frame (sent just after SYNC)
+        tfc::Frame f;
+        f.id = sim_cf.id;
+        f.len = static_cast<uint8_t>(can_dlc_to_bytes(sim_cf.dlc));
+        std::memcpy(f.data.data(), sim_cf.data, 8);
+        imu.feed(f);
+      }
+    }
     tfc::Vec3 gyro{};
     tfc::Vec3 accel{};
     const bool have_sample = imu_ok && imu.sample(k, gyro, accel);
@@ -263,6 +402,10 @@ int main() {
       const tfc::Frame a = tfc::pack_accel(kNodeId, accel, seq);
       mgr.on_frame(g);
       mgr.on_frame(a);
+      if (kFlightFunction) {
+        (void)g_flight.on_frame(g);
+        (void)g_flight.on_frame(a);
+      }
       tx_errors += send(g) ? 0U : 1U;
       tx_errors += send(a) ? 0U : 1U;
     }
@@ -270,24 +413,23 @@ int main() {
 
     // ---- t = 5.0 ms: command + digest ----
     sleep_until_us(base, kCmdUs);
-    // Until the estimator exists (SW-04) the command is a fixed function of the frame number, the same on every replica and on the
-    // PC, so the digest can be checked against a golden run; it does not come from the IMU on the bench.
-    const tfc::Frame c = tfc::pack_cmd(kNodeId, fc::sim::command(fc::sim::truth(k), k), seq);
+    drain_schedule_slots();  // the peers' sensor frames, which the flight function needs now
+    tfc::Command cmd;
+    if (kFlightFunction) {
+      cmd = g_flight.step();
+    } else {
+      // Without the flight function the command is a fixed function of the frame number, the same on every replica and on the PC, so the digest can be
+      // checked against a golden run; it does not come from the IMU.
+      cmd = fc::sim::command(fc::sim::truth(k), k);
+    }
+    const tfc::Frame c = tfc::pack_cmd(kNodeId, cmd, seq);
     mgr.on_frame(c);
     tx_errors += send(c) ? 0U : 1U;
 
     // ---- t = 7.0 ms: everything from the peers has arrived; vote ----
     sleep_until_us(base, kVoteUs);
+    drain_schedule_slots();
     can_frame cf;
-    while (k_msgq_get(&rx_msgq, &cf, K_NO_WAIT) == 0) {
-      tfc::Frame f;
-      f.id = cf.id;
-      f.len = static_cast<uint8_t>(can_dlc_to_bytes(cf.dlc));
-      std::memcpy(f.data.data(), cf.data, 8);
-      if (!is_own(f.id)) {
-        mgr.on_frame(f);
-      }
-    }
     while (k_msgq_get(&rx_all_msgq, &cf, K_NO_WAIT) == 0) {
       if (is_schedule_slot(cf.id)) {
         continue;  // already handled through rx_msgq
@@ -299,6 +441,7 @@ int main() {
       mgr.on_frame(f);  // counts it as out-of-schedule (or ignores SYNC/ACT/heartbeat/sim IDs)
     }
     const tfc::FrameReport& rep = mgr.end_frame();
+    usable_nodes = static_cast<uint8_t>(~rep.latched_mask & 0x07U);  // next frame's flight function uses only the nodes that are voting
     progress.report(kTaskVote);
     if (progress.end_of_frame(true)) {  // the one place the watchdog is serviced, and the one place KICK is raised
       wdt.feed();
@@ -362,16 +505,17 @@ int main() {
       printk("[frame %u] MODE %s -> %s\n", k, mode_text(last_mode), mode_text(rep.mode));
       last_mode = rep.mode;
     }
-    if (k % kStatusEveryFrames == 0U) {
+    if (cycle % kStatusEveryFrames == 0U) {
       const tfc::Counters& cn = mgr.counters();
-      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u\n",
+      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u sync_missed=%u\n",
              k, mode_text(rep.mode), node_state(rep, 0), node_state(rep, 1), node_state(rep, 2),
              static_cast<unsigned>(cn.crc_bad), static_cast<unsigned>(cn.seq_bad),
              static_cast<unsigned>(cn.missing), static_cast<unsigned>(cn.vote_disagreements),
              static_cast<unsigned>(cn.digest_flags), static_cast<unsigned>(cn.stuck_flags),
              static_cast<unsigned>(cn.out_of_schedule), tx_errors, static_cast<unsigned>(imu.errors()),
              static_cast<unsigned>(imu.stale()), static_cast<unsigned>(progress.refusals()),
-             static_cast<unsigned>(atomic_get(&g_bus_off_events)), static_cast<unsigned>(atomic_get(&g_error_passive_events)));
+             static_cast<unsigned>(atomic_get(&g_bus_off_events)), static_cast<unsigned>(atomic_get(&g_error_passive_events)),
+             static_cast<unsigned>(sync_missed_total));
     }
   }
 }

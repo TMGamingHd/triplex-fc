@@ -47,6 +47,7 @@ campaign; HIL needs the rig.
 | TS-12 | Autonomy against ground command | Which responses are autonomous and which need the operator? | analysis | 2 | small |
 | TS-13 | Toolchain and RTOS | C++17 subset against C or Rust; Zephyr against bare metal | analysis (partly decided in ADR-001, ADR-002) | 2 | small |
 | TS-15 | Sensor and compute health split: the degradation rule | Once a sensor channel is excluded, how should the computer degrade, and what does the split buy? | SIL (campaign groups, after the split) | 3 | medium, **before S3** |
+| TS-16 | Keeping replicated estimators together on a lossy bus | When two nodes receive different sets of sensor frames in one frame their estimators diverge for good: agree on inputs, resynchronise state, or tolerate the digest mismatch? | SIL, live triplex | 3 | medium, **before the closed loop is relied on** |
 | TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `DEFERRED.md` section 7 |
 
 Recommended order, by value and by when the data exist: **TS-0** now; **TS-1, TS-2, TS-3, TS-4** on the simulator in October and
@@ -248,6 +249,29 @@ Variants for what the consensus is with two channels left: the mean, or the cont
 **Dependencies and timing.** Needs the estimator's channel interface (P1) and the campaign groups; run **after the loop and before S3 (3 Nov)**, in the same window as the split itself. The ring re-homing of ADR-020 is TS-7's question, not this one.
 
 **Talking point.** "I measured what splitting sensor health from computer health buys, and which rule for the degraded case was worth its complexity."
+
+## 9b. TS-16: keeping replicated estimators together on a lossy bus
+
+**Question.** Found by running three firmware instances with the real estimator (ADR-025): the estimator is stateful, so two nodes that receive a different set of sensor frames in one frame (a frame lost or late at one of them) compute different inputs, and their states drift apart for good, because the attitude is integrated from the gyro and only the accelerometer pulls it back, slowly. The state digest then disagrees, the two voting nodes cannot blame each other, and the system goes to Safe on one lost frame. How should the replicas stay together?
+
+**Options.**
+| | Rule | In words |
+|---|---|---|
+| A | Today | Nothing: a digest mismatch is a fault (frames are skipped alike when SYNC is lost, which removes only that cause) |
+| B | Agree on inputs | Each node broadcasts which sensor frames it used (a mask, or the consensus value itself) and all use the agreed set or value; costs a round of messages inside the frame |
+| C | Resynchronise state | Each node shares its quantised estimator state (the state-share frames) and every few frames adopts the mid-value state; a divergence heals in a frame or two, and the digest compares what is left |
+| D | Tolerate | Compare digests with persistence (a mismatch that persists for N frames), and let the filter's own gains pull the states together; no new traffic |
+| E | Contractive estimator | Choose the filter gains so that a difference in state decays in well under the persistence window, so D works |
+
+**Criteria and weights (proposed).** False isolation or Safe from one lost frame (weight 3: the single-fault tolerance of S1); time to reconverge after a lost frame; bus load and frame time (weight 2); detection of a *real* estimator fault (weight 3: the digest must still catch a corrupt node); complexity and verification effort (weight 2).
+
+**Method.** On the host: the live triplex with a bus fault injector (drop one sensor frame at one node in frame N, for several N and for each frame type) and the closed-loop flights with the real vehicle; for each option count false isolations, Safe requests, the time for the states to agree again and the detection time of an injected state corruption. The campaign's replay tool cannot show this by itself, because it feeds every node the same frames.
+
+**Decision rule.** The cheapest option with no false isolation or Safe from a single lost or late frame in any frame type and no loss of detection of a real estimator fault. Expected finding, to be shown or refuted: D with E is enough for gyro-bias and attitude differences, which decay, but not for a difference in the *controller's integrator*, which is held by anti-windup and does not decay on its own; that one needs C.
+
+**Dependencies and timing.** Needs the fault injector on the bus (P1-5, the Pico, or a host injector) and the runner's closed loop (P1-4d). Before the closed loop is used for the demonstration.
+
+**Talking point.** "I found that replicated estimators diverge permanently on a single lost frame, measured it, and compared four ways of keeping them together."
 
 ## 10. Schedule
 
