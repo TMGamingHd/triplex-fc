@@ -121,6 +121,16 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-AI-002 | An AI-assisted tool shall not hold the ground-command key and shall not send a command; any suggestion shall be logged with its inputs, and a human shall issue the command. | I |
 | TFC-AI-003 | The campaign output shall be byte-identical with every AI-assisted component disabled and enabled. | T |
 
+## Control loop (docs/CONTROL_LOOP.md)
+| ID | Requirement | Verif. |
+|---|---|---|
+| TFC-LOOP-001 | Given the same frames, every replica shall compute a bit-identical command and digest (sensor consensus, estimator and controller are deterministic: only arithmetic, comparisons and `sqrt`; no fused multiply-add, no fast-math). | T |
+| TFC-LOOP-002 | With three healthy sensors the loop shall hold a simulated vehicle on its pitch program to within 0.5 degree RMS and 1 degree at the worst, through a gust and an engine-out, and shall settle back within one degree after either. | T |
+| TFC-LOOP-003 | One sensor that is wild, biased or frozen shall not change the loop's tracking by more than 0.05 degree RMS (the consensus masks it); with two sensors left the loop shall continue within one degree. | T |
+| TFC-LOOP-004 | A consensus that is not a trustworthy value (two sensors that disagree, three with no majority, none) shall not be used: the estimator holds its rates and reports itself not valid, and the controller holds its last command and does not move its integrator. | T |
+| TFC-LOOP-005 | A non-finite gyro value shall be treated as untrustworthy and a non-finite or out-of-gate accelerometer value shall not correct the attitude; the estimator's state shall stay finite. | T |
+| TFC-LOOP-006 | The estimator shall align from the first trustworthy gravity reading, and the controller's gimbal command shall never exceed its angle limit or change by more than its slew limit in a frame. | T |
+
 ## Software quality
 | ID | Requirement | Verif. |
 |---|---|---|

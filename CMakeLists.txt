@@ -6,6 +6,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Replicas must compute the same bits (ADR-006), and the host must compute the same bits as the target: no fused multiply-add,
+# which GCC would otherwise contract on any target that has one. (-ffast-math stays off.)
+add_compile_options(-ffp-contract=off)
+
 # Portable flight-logic core: header-only, no heap, no exceptions, no RTTI.
 add_library(tfc_core INTERFACE)
 target_include_directories(tfc_core INTERFACE core/include)
@@ -23,9 +27,10 @@ add_executable(tfc_tests
   tests/test_recovery.cpp
   tests/test_ground.cpp
   tests/test_triplex_scenarios.cpp
-  tests/test_hw_logic.cpp)
+  tests/test_hw_logic.cpp
+  tests/test_loop.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
-target_include_directories(tfc_tests PRIVATE tests)
+target_include_directories(tfc_tests PRIVATE tests tools/vehicle)
 target_compile_options(tfc_tests PRIVATE
   -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror
   -fno-exceptions -fno-rtti)

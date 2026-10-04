@@ -125,7 +125,7 @@ tests/ (host)                            <- unit + scenario tests, sanitizers, s
 sim/  (host)                             <- vehicle model, scenarios, fault campaign runner
 ```
 
-Rules for `core/`: no dynamic allocation, no exceptions, no RTTI, fixed-size containers, bounded loops, warnings as errors, clang-tidy clean, deterministic floating point (same flags on host and target for the digest-critical path; check `-ffast-math` stays OFF). The full rule set (JPL Power of Ten, NASA-STD-8719.13) with the tool that enforces each is `docs/CODING_STANDARD.md`; the fault-coverage evidence is `docs/FAULT_CAMPAIGN.md`, and the failure-mode analysis behind the fault list is `docs/FMEA.md`.
+Rules for `core/`: no dynamic allocation, no exceptions, no RTTI, fixed-size containers, bounded loops, warnings as errors, clang-tidy clean, deterministic floating point (same flags on host and target for the digest-critical path; check `-ffast-math` stays OFF and `-ffp-contract=off` is set: see `docs/CONTROL_LOOP.md`). The full rule set (JPL Power of Ten, NASA-STD-8719.13) with the tool that enforces each is `docs/CODING_STANDARD.md`; the fault-coverage evidence is `docs/FAULT_CAMPAIGN.md`, and the failure-mode analysis behind the fault list is `docs/FMEA.md`.
 
 ## 7. Architecture proposals under review (ADR-020 to ADR-023)
 
