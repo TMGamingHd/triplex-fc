@@ -30,6 +30,11 @@ slots (A, B, C) plus ACT. A missing node is just a node that never sends frames.
 10. **Every node has the supervisor lines from the start (proposed).** Each flight computer and ACT brings out `FRAME` and `KICK` outputs and
     takes `NRST` from the supervisor, on the same pins in every harness (rule 5), even before the supervisor exists; the supervisor's
     `PWR` relay is in series with each node's feed. Adding the supervisor later then needs no rewiring.
+11. **Keep the sensing stretch possible (ADR-020).** Each IMU is powered from a rail that does not depend on its own computer being powered
+    (a small regulator per IMU from the node rail upstream of the relays, or a diode-OR of two computers' 3.3 V; check the IMU board's
+    logic level). Each computer's harness reserves a second SPI port and an `ADOPT` input, on the same pins in every node (rule 5). Sensor
+    frames name the IMU channel, and the calibration of every channel is in every computer's configuration. None of this costs anything
+    now; adding it after the harness is built does.
 
 ## Stages
 

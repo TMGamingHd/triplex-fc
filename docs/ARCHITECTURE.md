@@ -133,7 +133,7 @@ Five changes are proposed and documented; none is built. They are decided by the
 
 | Topic | Proposal | Where |
 |---|---|---|
-| Sensing | Keep one IMU per computer; the three are cross-strapped *logically* by the CAN exchange; separate sensor health from compute health; no direct multi-master IMU wiring | ADR-020 |
+| Sensing | One IMU per computer, cross-strapped *logically* by the CAN exchange. **Accepted:** separate sensor health from compute health, so a bad IMU does not make its computer useless. **Later stretch:** a ring that re-homes an orphaned IMU to a backup computer (one owner at a time) after a double fault. No simultaneous multi-master IMU wiring | ADR-020 |
 | Software diversity | Node C runs the previous known-good release; a disagreement between releases holds the output and asks the operator, because a plain vote would isolate the healthy node | ADR-021 |
 | Supervisor | A separate small computer with its own clock and the watchdog the computers cannot give themselves; acts through discrete lines only | ADR-022, `docs/SUPERVISOR.md` |
 | Fail-operational scope | Fail-operational through sensing and computing, fail-passive beyond; a second ACT is a stretch | ADR-023 |
