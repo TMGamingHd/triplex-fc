@@ -123,7 +123,7 @@ bool parse_node(const std::string& s, unsigned& node) {
 
 int usage() {
   (void)std::fprintf(stderr,
-               "usage: tfc_replay LOG [--t0 SECONDS] [--vote-us US] [--policy manual|auto] [--verbose] [--dump CSV]\n"
+               "usage: tfc_replay LOG [--t0 SECONDS] [--first-frame N] [--startup-grace N] [--vote-us US] [--policy manual|auto] [--verbose] [--dump CSV]\n"
                "                      [--expect-latch NODE:FRAME|NODE:MIN-MAX]\n"
                "                      [--expect-no-latch NODE] [--expect-state NODE:STATE] [--expect-mode MODE]\n"
                "                      [--expect-min STAT:N]\n");
@@ -138,7 +138,9 @@ int main(int argc, char** argv) {
   }
   const std::string path = argv[1];
   bool verbose = false;
-  uint64_t t0_us = 0;
+  int64_t t0_us = 0;  // signed: a live log that starts mid-run is aligned to a frame boundary before its first line
+  bool have_first_frame = false;
+  uint32_t first_frame = 0U;
   uint64_t vote_us = kDefaultVoteUs;
   std::string dump_path;
   tfc::RedundancyConfig cfg;
@@ -149,7 +151,12 @@ int main(int argc, char** argv) {
     if (a == "--verbose") {
       verbose = true;
     } else if (a == "--t0" && has_val) {
-      t0_us = static_cast<uint64_t>(std::strtod(argv[++i], nullptr) * 1e6);
+      t0_us = static_cast<int64_t>(std::strtod(argv[++i], nullptr) * 1e6);
+    } else if (a == "--startup-grace" && has_val) {
+      cfg.startup_grace_frames = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+    } else if (a == "--first-frame" && has_val) {
+      first_frame = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+      have_first_frame = true;
     } else if (a == "--vote-us" && has_val) {
       vote_us = static_cast<uint64_t>(std::strtoull(argv[++i], nullptr, 10));
       if (vote_us == 0U || vote_us > kFrameUs) {
@@ -221,13 +228,15 @@ int main(int argc, char** argv) {
       continue;
     }
     Logged lg;
-    if (!parse_line(line, lg) || lg.t_us < t0_us) {
+    const bool parsed = parse_line(line, lg);
+    const int64_t rel = static_cast<int64_t>(lg.t_us) - t0_us + static_cast<int64_t>(kFrameUs - vote_us);
+    if (!parsed || rel < 0) {
       (void)std::fprintf(stderr, "tfc_replay: %s:%lu: cannot parse or before --t0: %s\n", path.c_str(), line_no,
                    line.c_str());
       return 2;
     }
     // Frame k = everything received between the previous vote and this one, as FC-A drains it.
-    const std::size_t k = static_cast<std::size_t>((lg.t_us - t0_us + (kFrameUs - vote_us)) / kFrameUs);
+    const std::size_t k = static_cast<std::size_t>(static_cast<uint64_t>(rel) / kFrameUs);
     if (k >= frames.size()) {
       frames.resize(k + 1U);
     }
@@ -259,7 +268,11 @@ int main(int argc, char** argv) {
   bool prev_safe_request = false;
   bool prev_bus_alarm = false;
   for (std::size_t k = 0; k < frames.size(); ++k) {
-    mgr.begin_frame();
+    if (have_first_frame) {
+      mgr.begin_frame(first_frame + static_cast<uint32_t>(k));  // a live log: the frame numbers on the bus, not the position in the log
+    } else {
+      mgr.begin_frame();
+    }
     for (const tfc::Frame& f : frames[k]) {
       mgr.on_frame(f);
     }

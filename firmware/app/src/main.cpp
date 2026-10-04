@@ -44,6 +44,19 @@ constexpr uint8_t kProgressRequired = 0x07U;
 constexpr uint32_t kStartupGraceFrames = 500;
 
 const struct device* const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
+// Bus state changes reported by the CAN controller (interrupt context: only atomic counters). A bus-off is recovered by the controller on
+// its own (TFC-FDIR-010); these make it visible on the console and in the log.
+atomic_t g_bus_off_events = ATOMIC_INIT(0);
+atomic_t g_error_passive_events = ATOMIC_INIT(0);
+
+void can_state_changed(const struct device*, enum can_state state, struct can_bus_err_cnt, void*) {
+  if (state == CAN_STATE_BUS_OFF) {
+    atomic_inc(&g_bus_off_events);
+  } else if (state == CAN_STATE_ERROR_PASSIVE) {
+    atomic_inc(&g_error_passive_events);
+  }
+}
+
 // Survives a reset (no-init RAM, kept intact because the record has no constructor): how often and why this node reset.
 tfc::ResetRecord g_reset_record __noinit;
 CAN_MSGQ_DEFINE(rx_msgq, 32);      // the three schedule slots (gyro, accel, command of every node)
@@ -103,6 +116,7 @@ bool bus_init() {
     printk("cannot add catch-all CAN rx filter\n");
     return false;
   }
+  can_set_state_change_callback(can_dev, can_state_changed, nullptr);
   const int rc = can_start(can_dev);
   if (rc != 0) {
     printk("can_start: %d\n", rc);
@@ -350,13 +364,14 @@ int main() {
     }
     if (k % kStatusEveryFrames == 0U) {
       const tfc::Counters& cn = mgr.counters();
-      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u\n",
+      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u\n",
              k, mode_text(rep.mode), node_state(rep, 0), node_state(rep, 1), node_state(rep, 2),
              static_cast<unsigned>(cn.crc_bad), static_cast<unsigned>(cn.seq_bad),
              static_cast<unsigned>(cn.missing), static_cast<unsigned>(cn.vote_disagreements),
              static_cast<unsigned>(cn.digest_flags), static_cast<unsigned>(cn.stuck_flags),
              static_cast<unsigned>(cn.out_of_schedule), tx_errors, static_cast<unsigned>(imu.errors()),
-             static_cast<unsigned>(imu.stale()), static_cast<unsigned>(progress.refusals()));
+             static_cast<unsigned>(imu.stale()), static_cast<unsigned>(progress.refusals()),
+             static_cast<unsigned>(atomic_get(&g_bus_off_events)), static_cast<unsigned>(atomic_get(&g_error_passive_events)));
     }
   }
 }

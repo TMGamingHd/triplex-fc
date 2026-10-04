@@ -115,6 +115,16 @@ Virtual time, no sleeping: 400 frames take milliseconds. Output is identical on 
 
 `record` never emits SYNC (the peers are not the sync master). Frame numbers start at 0.
 
+### `python3 -m tfc_peers log`: record the live bus into a log
+| Flag | Default | Meaning |
+|---|---|---|
+| `--iface NAME` | `vcan0` | Interface to record (`can0` for the USB-CAN adapter). |
+| `--out FILE` | (required) | Log to write, `candump -L` format, timestamps counted from 0. Overwritten if it exists. |
+| `--duration S` | until Ctrl+C | Stop after S seconds. |
+
+The same file that `record` writes, so `decode` prints it and `tfc_replay` judges it: the way to ask, offline and repeatably, what a flight computer
+*would* have decided about what really happened on the bus. `tools/bench/hil_run.sh` does this in one command.
+
 ### `python3 -m tfc_peers decode LOG`: read a log in plain English
 | Argument | Meaning |
 |---|---|
@@ -172,7 +182,9 @@ Feeds each 10 ms frame of the log to `tfc::RedundancyManager`, the same class th
 |---|---|
 | `LOG` | `candump -L` log. Frames are grouped into 10 ms frames by timestamp, so logs from `record` (which start at t=0) work as-is. |
 | `--verbose` | Print one line per latch event (`frame N: node X latched because: <reasons in words>`), plus `SAFE REQUEST raised`, `BUS ALARM raised/cleared`, ground commands and their outcomes, and probation / reintegration / disabling events. |
-| `--t0 SECONDS` | Subtract this from every timestamp before grouping (for logs that do not start at 0). |
+| `--t0 SECONDS` | Subtract this from every timestamp before grouping (for logs that do not start at 0). May be negative, so that frame 0 starts before the first line of a log that begins mid-run. |
+| `--startup-grace N` | Frames during which a peer that has never been seen is not judged (default 0, as in a `record` log, where every node is present from frame 0). A live log needs it: the peers join some frames after the flight computer starts (FC-A uses 500). |
+| `--first-frame N` | The frame number of the first 10 ms frame, for a log of a **live** bus that starts at a SYNC frame number other than 0 (the frames carry SYNC's number, ADR-018, and the phase check compares against it). Without it frames are numbered 0, 1, 2... as in a `record` log. `tools/bench/log_t0.py` prints the `--t0` and `--first-frame` that line a live log up. |
 | `--dump FILE` | Write one CSV row per 10 ms frame: mode, healthy count, masks (valid/latched/probation/disabled/held), Safe and bus-alarm flags, the nodes newly latched and newly on probation, the integrity mask, per-node reason bits, and all 8 voted outputs. Used by the fault campaign (`docs/FAULT_CAMPAIGN.md`) to check safety properties, e.g. that the output never follows a faulty node. |
 | `--vote-us MICROSECONDS` | Where in the 10 ms frame the flight computer votes (default 7000, as FC-A). A frame received after it belongs to the *next* frame, so a late frame is judged stale. |
 | `--policy manual\|auto` | Reintegration policy (default `manual`: only an operator command readmits a node). `auto` also readmits, after the dwell, a node whose first latch looked transient. See [Recovery](#recovery-latch-probation-readmission-and-disabling). |

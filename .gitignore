@@ -11,3 +11,6 @@ compile_commands.json
 /firmware/build/
 __pycache__/
 *.pyc
+
+# bench run logs (tools/bench/hil_run.sh)
+logs/
