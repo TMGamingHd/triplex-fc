@@ -20,10 +20,10 @@ checking. The parts sheet's own budget page reads 677.81 USD against a 600 USD c
 
 ## Next up (as of 4 Oct 2026, after the owner's decisions)
 
-1. **By 6 Oct: the order.** Add to it: a second Pico 2 and a TCXO clock module for the supervisor (SUP-Lite), 1 k to 10 k resistors for pull-ups and pull-downs, and the per-IMU power parts of ADR-020; confirm the total against the budget (the sheet is over its ceiling).
-2. **Merge the open PRs in order:** 17 (readiness plan, AI) then the decision records, and 18, 19, 20 (P0), then the CI trim.
-3. **P0 is built** (PRs 18 to 20): the driver logic, the firmware seams and overlay, the bench tools and procedures. `sudo apt install can-utils`; run `tools/bench/check_pc.sh`.
-4. **P1, the loop** (estimator, controller, vehicle simulator, actuator logic): the critical path to S2; see `docs/SOFTWARE_READINESS.md`.
+1. **The order (not placed yet; the owner will place it soon).** Add to it: a second Pico 2 and a TCXO clock module for the supervisor (SUP-Lite), 1 k to 10 k resistors for pull-ups and pull-downs, and the per-IMU power parts of ADR-020; confirm the total against the budget (the sheet is over its ceiling).
+2. **Done and merged:** the decision records, P0 (the driver logic, the firmware seams and overlay, the bench tools and procedures), the CI trim, and the first increment of P1 (the estimator, controller and consensus on the host).
+3. **P0 on this PC:** `can-utils` is installed; `tools/bench/check_pc.sh` should report nothing missing.
+4. **P1, the loop, continues:** wire it into the firmware's frame, the vehicle-simulator gateway, the actuator node, protocol v2: the critical path to S2; see `docs/SOFTWARE_READINESS.md`.
 5. **After the loop and before S3 (3 Nov):** the sensor and compute health split (ARCH-001), with TS-15 choosing its degradation rule.
 6. **On the simulator in parallel:** the `common_mode` campaign group (F63), the `noop` command (FDIR-043), TS-1 and TS-3 (TS-3 also decides whether the old release may take over automatically).
 7. **M1 hardware checks** when the parts arrive (P-M1-01), then S1 (P-S1-01); S2 to M4 as planned, with the supervisor (Lite) at S2b and the studies that need the rig after S3.
