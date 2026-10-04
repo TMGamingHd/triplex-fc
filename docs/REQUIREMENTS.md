@@ -105,6 +105,14 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-PHASE-003 | *(Deferred, with PHASE-001.)* Promotion of a WARM node to HOT shall use the probation criteria (FDIR-006, FDIR-020, FDIR-021); demotion shall follow the interlock tiers of FDIR-033 and shall be refused below the phase minimum. | T |
 | TFC-PHASE-004 | *(Deferred, with PHASE-001.)* The phase shall be changed only by an authenticated `phase` command (ADR-019); a flight computer shall never change the phase itself. | T |
 
+## Fault response (proposed; docs/FAULT_RESPONSE.md)
+| ID | Requirement | Verif. |
+|---|---|---|
+| TFC-RESP-001 | Every row of the fault matrix shall name a response class (R0 to R6 of `FAULT_RESPONSE.md`) and the behaviour of the vehicle's output, and the response shall be demonstrated by the test named in the row. | I |
+| TFC-RESP-002 | The phase rules of `FAULT_RESPONSE.md` section 5 shall decide what loss of redundancy means in each phase: the pad holds the launch below Triplex, ascent continues in Duplex with an alert, and an unattributable disagreement is frozen in every phase. | T |
+| TFC-RESP-003 | *(Deferred, with the actuator node.)* After any reset ACT shall start in Safe, not in nominal mode, and shall resume from its last output, kept in memory that survives a reset and protected by a check; if that memory is invalid it shall start from neutral. The output shall not step by more than the rate limit across a reset. | T, M |
+| TFC-RESP-004 | *(Deferred, with the supervisor.)* The supervisor shall not reset or power-cycle a flight computer on its own while that computer is the only one whose output agrees with the vote; only the operator's `hold` may. | T |
+
 ## Software quality
 | ID | Requirement | Verif. |
 |---|---|---|
