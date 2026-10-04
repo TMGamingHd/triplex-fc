@@ -20,8 +20,17 @@ ID_ACCEL_BASE = 0x110
 ID_CMD_BASE = 0x200
 ID_ACT_OUT = 0x300
 ID_HEARTBEAT = 0x400
-ID_SIM = 0x500
+ID_STATE = 0x410          # + node: strike counts and the last accepted command counter
+ID_SIM = 0x500            # the simulator's range is 0x500 to 0x50F (ID_SIM_LAST)
+ID_SIM_RATES = 0x501
+ID_SIM_ACCEL = 0x502
+ID_SIM_STATE = 0x503
+ID_SIM_TELEMETRY = 0x504
+ID_SIM_FLAGS = 0x505
+ID_SIM_LAST = 0x50F
 ID_GROUND = 0x510
+
+PROTOCOL_VERSION = 2
 
 NODE_NAMES = "ABC"
 
@@ -269,9 +278,244 @@ def unpack_cmd(frame: Frame) -> CmdSample | None:
     )
 
 
+# ======================================================================================================================================
+# Protocol version 2 (docs/PROTOCOL.md): mirror of the second half of protocol.hpp. The golden bytes in tests/test_protocol.py are the same as the
+# ones pinned in tests/test_protocol_v2.cpp.
+# ======================================================================================================================================
+def _quantize_u16(v: float, lsb: float) -> int:
+    """Mirror of tfc::detail::quantize_u16: a non-negative quantity, float32 divide, round half up, saturate at 65535; NaN and negatives are 0."""
+    if math.isnan(v):
+        return 0
+    q = f32(f32(v) / lsb) if not math.isinf(v) else (math.inf if v > 0 else -math.inf)
+    if not q > 0.0:
+        return 0
+    if q >= 65535.0:
+        return 65535
+    return int(f32(q + 0.5))
+
+
+STATE_NAMES = ("Standby", "Nominal", "Safe-hold", "Safe-ramp", "Safe-neutral")
+CAUSE_NAMES = ("none", "lost-votes", "fc-request", "hardware-line", "reset")
+VOTE_STATUS_NAMES = ("Triplex", "Duplex", "DuplexMiscompare", "Simplex", "NoMajority", "NoData")
+SIM_FLAG_SAFED = 0x01
+SIM_FLAG_PLATFORM_SATURATED = 0x02
+SIM_FLAG_ENGINE_OUT = 0x04
+SIM_FLAG_COMMAND_HELD = 0x08
+SIM_FLAG_ABORTED = 0x10
+
+
+@dataclass
+class ActOut:
+    pitch_deg: float = 0.0
+    yaw_deg: float = 0.0
+    state: int = 0
+    held: bool = False
+    vote_status: int = 0
+    voted_nodes: int = 0
+    excluded_nodes: int = 0
+    cause: int = 0
+    seq: int = 0
+
+
+def pack_act_out(a: ActOut, seq: int) -> Frame:
+    buf = bytearray(6)
+    _put16(buf, 0, quantize(a.pitch_deg, CMD_LSB_DEG))
+    _put16(buf, 2, quantize(a.yaw_deg, CMD_LSB_DEG))
+    w = ((a.state & 7) | ((1 if a.held else 0) << 3) | ((a.vote_status & 7) << 4) | ((a.voted_nodes & 7) << 7)
+         | ((a.excluded_nodes & 7) << 10) | ((a.cause & 7) << 13))
+    buf[4:6] = struct.pack("<H", w)
+    return Frame(ID_ACT_OUT, seal(bytes(buf), seq))
+
+
+def unpack_act_out(frame: Frame) -> ActOut | None:
+    if frame.id != ID_ACT_OUT or not check(frame):
+        return None
+    w = struct.unpack_from("<H", frame.data, 4)[0]
+    return ActOut(f32(_get16(frame.data, 0) * CMD_LSB_DEG), f32(_get16(frame.data, 2) * CMD_LSB_DEG), w & 7, bool((w >> 3) & 1), (w >> 4) & 7,
+                  (w >> 7) & 7, (w >> 10) & 7, (w >> 13) & 7, frame.data[6])
+
+
+@dataclass
+class Heartbeat:
+    protocol_version: int = PROTOCOL_VERSION
+    mode: int = 0
+    safe_requested: bool = False
+    bus_alarm: bool = False
+    role: int = 0
+    quarantined: bool = False
+    node_state: tuple[int, int, int] = (0, 0, 0)
+    reset_count: int = 0
+    release_hash: int = 0
+    seq: int = 0
+
+
+def pack_heartbeat(node: int, h: Heartbeat, seq: int) -> Frame:
+    buf = bytearray(6)
+    buf[0] = h.protocol_version & 0xFF
+    buf[1] = ((h.mode & 3) | ((1 if h.safe_requested else 0) << 2) | ((1 if h.bus_alarm else 0) << 3) | ((h.role & 3) << 4)
+              | ((1 if h.quarantined else 0) << 6))
+    buf[2] = (h.node_state[0] & 3) | ((h.node_state[1] & 3) << 2) | ((h.node_state[2] & 3) << 4)
+    buf[3] = h.reset_count & 0xFF
+    buf[4:6] = struct.pack("<H", h.release_hash & 0xFFFF)
+    return Frame(ID_HEARTBEAT + node, seal(bytes(buf), seq))
+
+
+def unpack_heartbeat(frame: Frame) -> Heartbeat | None:
+    if not ID_HEARTBEAT <= frame.id < ID_HEARTBEAT + 3 or not check(frame):
+        return None
+    d = frame.data
+    return Heartbeat(d[0], d[1] & 3, bool((d[1] >> 2) & 1), bool((d[1] >> 3) & 1), (d[1] >> 4) & 3, bool((d[1] >> 6) & 1),
+                     (d[2] & 3, (d[2] >> 2) & 3, (d[2] >> 4) & 3), d[3], struct.unpack_from("<H", d, 4)[0], d[6])
+
+
+@dataclass
+class StateShare:
+    strikes: tuple[int, int, int] = (0, 0, 0)
+    command_counter: int = 0
+    seq: int = 0
+
+
+def pack_state_share(node: int, s: StateShare, seq: int) -> Frame:
+    buf = bytearray(6)
+    buf[0] = (s.strikes[0] & 15) | ((s.strikes[1] & 15) << 4)
+    buf[1] = s.strikes[2] & 15
+    buf[2] = s.command_counter & 0xFF
+    return Frame(ID_STATE + node, seal(bytes(buf), seq))
+
+
+def unpack_state_share(frame: Frame) -> StateShare | None:
+    if not ID_STATE <= frame.id < ID_STATE + 3 or not check(frame):
+        return None
+    d = frame.data
+    return StateShare((d[0] & 15, (d[0] >> 4) & 15, d[1] & 15), d[2], d[6])
+
+
+def pack_sim_rates(dps: tuple[float, float, float], seq: int) -> Frame:
+    return pack_vec3(ID_SIM_RATES, dps, GYRO_LSB_DPS, seq)
+
+
+def pack_sim_accel(g: tuple[float, float, float], seq: int) -> Frame:
+    return pack_vec3(ID_SIM_ACCEL, g, ACCEL_LSB_G, seq)
+
+
+@dataclass
+class SimState:
+    altitude_m: float = 0.0
+    speed_ms: float = 0.0
+    mass_kg: float = 0.0
+    seq: int = 0
+
+
+def pack_sim_state(s: SimState, seq: int) -> Frame:
+    buf = struct.pack("<HHH", _quantize_u16(s.altitude_m, 10.0), _quantize_u16(s.speed_ms, 1.0), _quantize_u16(s.mass_kg, 1.0))
+    return Frame(ID_SIM_STATE, seal(buf, seq))
+
+
+def unpack_sim_state(frame: Frame) -> SimState | None:
+    if frame.id != ID_SIM_STATE or not check(frame):
+        return None
+    a, v, m = struct.unpack_from("<HHH", frame.data, 0)
+    return SimState(float(a * 10), float(v), float(m), frame.data[6])
+
+
+@dataclass
+class SimTelemetry:
+    dynamic_pressure_pa: float = 0.0
+    pitch_error_deg: float = 0.0
+    yaw_error_deg: float = 0.0
+    seq: int = 0
+
+
+def pack_sim_telemetry(t: SimTelemetry, seq: int) -> Frame:
+    buf = bytearray(6)
+    buf[0:2] = struct.pack("<H", _quantize_u16(t.dynamic_pressure_pa, 10.0))
+    _put16(buf, 2, quantize(t.pitch_error_deg, CMD_LSB_DEG))
+    _put16(buf, 4, quantize(t.yaw_error_deg, CMD_LSB_DEG))
+    return Frame(ID_SIM_TELEMETRY, seal(bytes(buf), seq))
+
+
+def unpack_sim_telemetry(frame: Frame) -> SimTelemetry | None:
+    if frame.id != ID_SIM_TELEMETRY or not check(frame):
+        return None
+    q = struct.unpack_from("<H", frame.data, 0)[0]
+    return SimTelemetry(float(q * 10), f32(_get16(frame.data, 2) * CMD_LSB_DEG), f32(_get16(frame.data, 4) * CMD_LSB_DEG), frame.data[6])
+
+
+@dataclass
+class SimFlags:
+    flags: int = 0
+    engines_on: int = 0
+    time_frames: int = 0
+    seq: int = 0
+
+
+def pack_sim_flags(s: SimFlags, seq: int) -> Frame:
+    buf = bytes([s.flags & 0xFF, s.engines_on & 0xFF]) + struct.pack("<I", s.time_frames & 0xFFFFFFFF)
+    return Frame(ID_SIM_FLAGS, seal(buf, seq))
+
+
+def unpack_sim_flags(frame: Frame) -> SimFlags | None:
+    if frame.id != ID_SIM_FLAGS or not check(frame):
+        return None
+    return SimFlags(frame.data[0], frame.data[1], struct.unpack_from("<I", frame.data, 2)[0], frame.data[6])
+
+
+def _describe_v2(frame: Frame) -> str | None:
+    i = frame.id
+    if i == ID_ACT_OUT:
+        a = unpack_act_out(frame)
+        if a is None:
+            return f"ACT   -  CRC-BAD  {frame.hex()}"
+        state = STATE_NAMES[a.state] if a.state < len(STATE_NAMES) else f"state{a.state}"
+        status = VOTE_STATUS_NAMES[a.vote_status] if a.vote_status < len(VOTE_STATUS_NAMES) else f"status{a.vote_status}"
+        cause = CAUSE_NAMES[a.cause] if a.cause < len(CAUSE_NAMES) else f"cause{a.cause}"
+        return (f"ACT   -  seq={a.seq:<3} pitch={a.pitch_deg:+8.3f} yaw={a.yaw_deg:+8.3f} deg  {state}{' HELD' if a.held else ''}  vote={status} "
+                f"nodes={a.voted_nodes:03b} excluded={a.excluded_nodes:03b} cause={cause}")
+    if ID_HEARTBEAT <= i < ID_HEARTBEAT + 3:
+        h = unpack_heartbeat(frame)
+        node = NODE_NAMES[i - ID_HEARTBEAT]
+        if h is None:
+            return f"HB    {node}  CRC-BAD  {frame.hex()}"
+        return (f"HB    {node}  seq={h.seq:<3} v{h.protocol_version} mode={h.mode} role={('hot', 'warm', 'cold', '?')[h.role]}"
+                f"{' SAFE-REQUESTED' if h.safe_requested else ''}{' BUS-ALARM' if h.bus_alarm else ''}{' QUARANTINED' if h.quarantined else ''} "
+                f"view={''.join('HLPD'[s] for s in h.node_state)} resets={h.reset_count} release={h.release_hash:#06x}")
+    if ID_STATE <= i < ID_STATE + 3:
+        s = unpack_state_share(frame)
+        node = NODE_NAMES[i - ID_STATE]
+        if s is None:
+            return f"STATE {node}  CRC-BAD  {frame.hex()}"
+        return f"STATE {node}  seq={s.seq:<3} strikes={s.strikes} command_counter={s.command_counter}"
+    if i == ID_SIM_RATES or i == ID_SIM_ACCEL:
+        lsb, unit, name = (GYRO_LSB_DPS, "dps", "SIMRT") if i == ID_SIM_RATES else (ACCEL_LSB_G, "g", "SIMAC")
+        v = unpack_vec3(frame, lsb)
+        if v is None:
+            return f"{name} -  CRC-BAD  {frame.hex()}"
+        x, y, z = v.values
+        return f"{name} -  seq={v.seq:<3} [{x:+9.3f} {y:+9.3f} {z:+9.3f}] {unit}"
+    if i == ID_SIM_STATE:
+        s = unpack_sim_state(frame)
+        return (f"SIMST -  seq={s.seq:<3} altitude={s.altitude_m:.0f} m speed={s.speed_ms:.0f} m/s mass={s.mass_kg:.0f} kg" if s
+                else f"SIMST -  CRC-BAD  {frame.hex()}")
+    if i == ID_SIM_TELEMETRY:
+        t = unpack_sim_telemetry(frame)
+        return (f"SIMTL -  seq={t.seq:<3} q={t.dynamic_pressure_pa:.0f} Pa error pitch={t.pitch_error_deg:+.3f} yaw={t.yaw_error_deg:+.3f} deg" if t
+                else f"SIMTL -  CRC-BAD  {frame.hex()}")
+    if i == ID_SIM_FLAGS:
+        f = unpack_sim_flags(frame)
+        if f is None:
+            return f"SIMFL -  CRC-BAD  {frame.hex()}"
+        names = [n for bit, n in ((SIM_FLAG_SAFED, "safed"), (SIM_FLAG_PLATFORM_SATURATED, "platform-saturated"), (SIM_FLAG_ENGINE_OUT, "engine-out"),
+                                  (SIM_FLAG_COMMAND_HELD, "command-held"), (SIM_FLAG_ABORTED, "aborted")) if f.flags & bit]
+        return f"SIMFL -  seq={f.seq:<3} t={f.time_frames * 0.01:.2f} s engines={f.engines_on} flags={','.join(names) or '-'}"
+    return None
+
+
 def describe(frame: Frame) -> str:
     """One-line human-readable decode of a bus frame (used by `listen` and `decode`)."""
     i = frame.id
+    v2 = _describe_v2(frame)
+    if v2 is not None:
+        return v2
     if i == ID_SYNC:
         sy = unpack_sync(frame)
         return f"SYNC  -  frame={sy.frame_no} seq={sy.seq}" if sy else f"SYNC  -  CRC-BAD  {frame.hex()}"

@@ -295,16 +295,17 @@ TFC_TEST(config_legitimate_special_values_are_accepted) {
 }
 
 // ============================== E14: known CAN ids ==============================
-TFC_TEST(unknown_ids_above_the_sim_id_count_as_out_of_schedule) {
+TFC_TEST(unknown_ids_above_the_simulator_range_count_as_out_of_schedule) {
   RedundancyManager m;
   m.begin_frame();
   Frame f;
   f.len = 8;
-  for (uint32_t idv : {0x501U, 0x50FU, 0x511U, 0x5FFU, 0x600U, 0x7FFU, 0x403U, 0x301U, 0x011U, 0x020U}) {
+  // the simulator's range is 0x500 to 0x50F and the ground command is 0x510 (protocol v2): everything above, and the gaps below, is out of schedule
+  for (uint32_t idv : {0x511U, 0x520U, 0x5FFU, 0x600U, 0x7FFU, 0x403U, 0x301U, 0x011U, 0x020U, 0x413U}) {
     f.id = idv;
     CHECK(!m.on_frame(f));
   }
-  for (uint32_t idv : {id::kSync, id::kActOut, id::kHeartbeat, id::kHeartbeat + 2U, id::kSim}) {
+  for (uint32_t idv : {id::kSync, id::kActOut, id::kHeartbeat, id::kHeartbeat + 2U, id::kSim, id::kSimRates, id::kSimLast, id::kState, id::kState + 2U}) {
     f.id = idv;
     CHECK(m.on_frame(f));
   }

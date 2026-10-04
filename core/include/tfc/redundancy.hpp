@@ -490,8 +490,8 @@ class RedundancyManager {
     unsigned stream = 0U;
     unsigned node = 0U;
     if (!classify(f.id, stream, node)) {
-      const bool known = f.id == id::kSync || f.id == id::kActOut || f.id == id::kSim ||
-                         (f.id >= id::kHeartbeat && f.id < id::kHeartbeat + kNodes);
+      const bool known = f.id == id::kSync || f.id == id::kActOut || (f.id >= id::kSim && f.id <= id::kSimLast) ||
+                         (f.id >= id::kHeartbeat && f.id < id::kHeartbeat + kNodes) || (f.id >= id::kState && f.id < id::kState + kNodes);
       if (!known) {
         ++counters_.out_of_schedule;
         ++oos_in_frame_;
