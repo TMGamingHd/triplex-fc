@@ -18,6 +18,18 @@ adds 18.08 USD. The relay channels, wire, headers and USB cables already in the 
 checking. The parts sheet's own budget page reads 677.81 USD against a 600 USD ceiling before this change. A second ACT (stretch,
 `docs/DEFERRED.md` 6.6) would add about 24 USD plus a selector chip and need not be bought now.
 
+## Next up (as of 4 Oct 2026)
+
+In order. The first three have dates; the rest can overlap.
+
+1. **By 5 Oct: the order.** Supervisor Lite or Full (TS-0 in `TRADE_STUDIES.md`), the clock module, the per-IMU power parts of ADR-020, and the budget cuts that make the total fit. The order closes 6 Oct.
+2. **Merge PR 15** (ADR-020 rework) and answer the open questions: `SAFE_MODE.md` section 10, `FAULT_RESPONSE.md` section 6, and the hold-and-ask rule of ADR-021.
+3. **M1 hardware checks** after the parts arrive (JP5, adapter voltage, relay at 3.3 V, servo at 3.3 V, mounting holes), plus two new ones: what the servo does with no signal, and the logic level and independent power of the IMU board.
+4. **On the simulator, in parallel:** the `common_mode` campaign group (F63) that shows the voter's weakness; the `noop` command (FDIR-043); the sensor and compute health split (ARCH-001) as its own PR; a three-process `native_sim` triplex on one `vcan0` for mixed releases.
+5. **Trade studies on the simulator:** TS-1, TS-3, TS-6 first, then TS-2 and TS-4.
+6. **Decide the CI cost** (cancel stale runs, skip the campaign for docs-only changes, fast subset on pull requests): about 17 minutes per push today.
+7. **M2 to M4** as planned, with the supervisor at S2b and the studies that need the rig (TS-5, TS-8, TS-9) after S3.
+
 Each stage ends with a tagged commit and a short log or video.
 
 Slack is intentionally in M4/M5. If M2 slips, cut stretch goals, not the fault campaign.
