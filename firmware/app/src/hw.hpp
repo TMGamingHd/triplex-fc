@@ -34,6 +34,7 @@ class SimImu {
  public:
   explicit SimImu(unsigned node) : noise_(0x1234U + node) {}
   bool init() { return true; }
+  void set_frame(uint32_t) {}
   void feed(const tfc::Frame&) {}
   bool sample(uint32_t frame, tfc::Vec3& gyro, tfc::Vec3& accel) {
     const fc::sim::Truth tr = fc::sim::truth(frame);
@@ -56,7 +57,13 @@ class BusImu {
  public:
   explicit BusImu(unsigned node) : noise_(0x1234U + node) {}
   bool init() { return true; }
+  // The simulator's frames carry the frame number (low byte) they are for; a frame of another cycle is stale and is not used.
+  void set_frame(uint32_t k) { expect_ = static_cast<uint8_t>(k); }
   void feed(const tfc::Frame& f) {
+    if (f.data[6] != expect_) {
+      ++stale_frames_;
+      return;
+    }
     if (f.id == tfc::id::kSimRates) {
       const tfc::DecodedVec3 d = tfc::unpack_vec3(f, tfc::kGyroLsbDps);
       have_rates_ = d.ok;
@@ -81,11 +88,13 @@ class BusImu {
     have_accel_ = false;
     return ok;
   }
-  [[nodiscard]] uint32_t stale() const { return 0U; }
+  [[nodiscard]] uint32_t stale() const { return stale_frames_; }
   [[nodiscard]] uint32_t errors() const { return missing_; }
 
  private:
   fc::sim::Noise noise_;
+  uint8_t expect_ = 0U;
+  uint32_t stale_frames_ = 0U;
   tfc::Vec3 rates_{};
   tfc::Vec3 accel_{};
   bool have_rates_ = false;
@@ -146,6 +155,7 @@ class Ism330Imu {
     tfc::ism::convert(raw, chip_.config(), gyro, accel);
     return true;
   }
+  void set_frame(uint32_t) {}
   void feed(const tfc::Frame&) {}
   [[nodiscard]] uint32_t stale() const { return stale_; }
   [[nodiscard]] uint32_t errors() const { return errors_; }

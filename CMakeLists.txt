@@ -34,7 +34,8 @@ add_executable(tfc_tests
   tests/test_vehicle.cpp
   tests/test_flight.cpp
   tests/test_sync_clock.cpp
-  tests/test_act_ground.cpp)
+  tests/test_act_ground.cpp
+  tests/test_runner.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
 target_include_directories(tfc_tests PRIVATE tests tools/vehicle sim/vehicle firmware/app/src)
 target_compile_options(tfc_tests PRIVATE
@@ -61,6 +62,12 @@ add_executable(tfc_gen_tables tools/vehicle/gen_tables.cpp)
 target_link_libraries(tfc_gen_tables PRIVATE tfc_core)
 target_include_directories(tfc_gen_tables PRIVATE sim/vehicle)
 target_compile_options(tfc_gen_tables PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
+
+# The vehicle simulator on a SocketCAN bus (tools/sim/tfc_simd.cpp): it follows SYNC, publishes the sensor inputs, and flies the vehicle with ACT's output.
+add_executable(tfc_simd tools/sim/tfc_simd.cpp)
+target_link_libraries(tfc_simd PRIVATE tfc_core)
+target_include_directories(tfc_simd PRIVATE sim/vehicle)
+target_compile_options(tfc_simd PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
 
 # Flight-code gate (docs/CODING_STANDARD.md): the strictest warning set, as errors, over the whole core, and every header
 # compiled on its own so none depends on include order. Part of the default build, so CI fails on a regression.

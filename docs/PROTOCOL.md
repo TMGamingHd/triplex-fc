@@ -42,7 +42,7 @@ to rebuild its strike record and close the counter gap (FDIR-041). Example: stri
 **Simulator frames.** `0x501` and `0x502` are the vehicle's sensor inputs for the frame, in the same scales as the gyro and accel frames (each node's simulated IMU adds its own noise and faults).
 `0x503`: altitude (10 m per count), speed (1 m/s per count), mass (1 kg per count), each a 16-bit unsigned number that saturates. `0x504`: dynamic pressure (10 Pa per count, unsigned),
 then the attitude error of the pitch and yaw planes (0.001 degree, signed). `0x505`: a flags byte (1 safed, 2 platform saturated, 4 engine out, 8 command held, 16 aborted), the engines on, and the
-simulation time in 10 ms frames (32 bits). Their timing and use: `VEHICLE_SIM.md` section 6 (note: its table lists `0x501` to `0x504`; the flags frame is `0x505`).
+simulation time in 10 ms frames (32 bits). Their timing and use: `VEHICLE_SIM.md` section 6 .
 
 ## Rules
 - A decoder checks the CRC and the id range, never trusts a field wider than its bits (a wider value is masked, not spilled into the next field: tested), and a node number outside 0 to 2 is not a node.
@@ -51,4 +51,4 @@ simulation time in 10 ms frames (32 bits). Their timing and use: `VEHICLE_SIM.md
 
 ## Not yet
 The `noop` and `phase` ground opcodes (FDIR-043, PHASE-004), which touch the fault manager; the state share (`0x410+n`) and the release hash in the heartbeat (the flight computers send heartbeats since P1-4c,
-with the release hash zero); the simulator's frames from the runner (P1-4d).
+with the release hash zero).
