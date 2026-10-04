@@ -45,6 +45,9 @@ writing. The rest runs alongside the hardware work (section 5).
 | 4 Oct 2026 | SW-16 (logic), SW-19 (logic) | `ism330dhcx.hpp` (identity, reset, configuration with read-back, burst read, self-test mechanism with fail-closed limits; register facts from ST's own driver), `progress.hpp` and `resetlog.hpp`, host-tested against a model of the chip with a bus failure at every call (PR 18) |
 | 4 Oct 2026 | SW-02, SW-16, SW-17, SW-19 (wiring) | The seams (IMU, lines, watchdog, reset record) in `firmware/app/src/hw.hpp`, the Nucleo overlay with every pin from ST's connector map, the board build verified (51.7 KB flash); native_sim and its 10 live tests unchanged (PR 19) |
 | 4 Oct 2026 | SW-18 (partly), SW-22, SW-23 | CAN bus-state counters and receive timestamps enabled; bench tools, a live-bus logger, the golden-run and jitter checks, procedures P-M1-01 and P-S1-01 (PR 20). Not run on hardware |
+| 4 Oct 2026 | **P1, first increment** (SW-04, SW-05 on the host) | Sensor consensus, attitude estimator, controller and guidance in `core/`, closed around a host vehicle model with three replicas: nominal 0.17 deg RMS, bit-identical replicas, a wild, biased or frozen IMU masked (`docs/CONTROL_LOOP.md`). **Not yet wired into the firmware**, no vehicle-simulator gateway, no actuator node |
+| 4 Oct 2026 | SW-24 (CI) | Done: docs-only changes skip the build, pull requests run a sample of the campaign, `main` runs all of it (PR 22) |
+| 4 Oct 2026 | **State of the repository** | PRs 17 to 23 are merged and the remote branches deleted; CI on `main` passes; `can-utils` installed on the bench PC. The parts order is not placed yet (it still needs the supervisor's second Pico 2, clock module and resistors) |
 
 ## 3. What is missing, by area
 
