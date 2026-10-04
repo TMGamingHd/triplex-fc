@@ -185,7 +185,8 @@ def _validate(kind: str, params: dict[str, Value], spec: str) -> None:
         lo = int(params["id"])
         if not 0 <= lo <= 0x7F0:
             raise FaultSpecError(f"in {spec!r}: babble needs 0 <= id <= 0x7F0 (an 11-bit CAN id, 16 ids from `id`)")
-        scheduled = {P.ID_SYNC, P.ID_ACT_OUT, P.ID_SIM, P.ID_GROUND} | {b + n for b in (P.ID_GYRO_BASE, P.ID_ACCEL_BASE, P.ID_CMD_BASE, P.ID_HEARTBEAT) for n in range(3)}
+        scheduled = ({P.ID_SYNC, P.ID_ACT_OUT, P.ID_GROUND} | set(range(P.ID_SIM, P.ID_SIM_LAST + 1))
+                     | {b + n for b in (P.ID_GYRO_BASE, P.ID_ACCEL_BASE, P.ID_CMD_BASE, P.ID_HEARTBEAT, P.ID_STATE) for n in range(3)})
         if scheduled & set(range(lo, lo + 16)):
             raise FaultSpecError(f"in {spec!r}: babble ids {lo:#x}-{lo + 15:#x} overlap the flight-bus schedule; "
                                  "babble is out-of-schedule traffic (forging a scheduled frame is not what this fault models)")

@@ -57,7 +57,7 @@ Time-triggered rather than event-driven so behavior is predictable and jitter is
 | 3.0 - 5.0 | Consensus, estimator, controller, digest | - |
 | 5.0 - 6.5 | Each FC sends its command + estimator digest | `0x200+n` |
 | 6.5 - 7.0 | ACT votes, publishes voted output and vote status | `0x300` |
-| 7.0 - 10.0 | Heartbeats, sim traffic, slack (**target: at least 25% slack**) | `0x400+n`, `0x500+` (ground commands `0x510`) |
+| 7.0 - 10.0 | Heartbeats, sim traffic, slack (**target: at least 25% slack**) | `0x400+n`, `0x410+n`, `0x500` to `0x50F` (the simulator), `0x510` (ground commands `0x510`) |
 
 Bus load **target**: about 14 frames per 10 ms, roughly 20% of a 1 Mbit/s classic CAN bus in the worst bit-stuffing case, leaving room for sim traffic.
 

@@ -180,7 +180,7 @@ def babble() -> list[Scenario]:
         out.append(_sc("babble", [f"{N[n]}:babble:start=100,n={k}"], "ignore", frames=FRAMES,
                        tag=dict(node=N[n], n=k, alarm_expected=k >= 3)))
     # ids above the simulator id and between the schedule's ids are out-of-schedule too (E14): counted, alarm at 3 or more per frame
-    for n, bid, k in itertools.product(range(3), (0x301, 0x403, 0x4F0, 0x511, 0x520, 0x6F0, 0x7F0), (2, 5)):
+    for n, bid, k in itertools.product(range(3), (0x301, 0x420, 0x4F0, 0x511, 0x520, 0x6F0, 0x7F0), (2, 5)):
         out.append(_sc("babble", [f"{N[n]}:babble:start=100,n={k},id={bid}"], "ignore", frames=FRAMES,
                        tag=dict(node=N[n], n=k, id=bid, alarm_expected=k >= 3)))
     return out

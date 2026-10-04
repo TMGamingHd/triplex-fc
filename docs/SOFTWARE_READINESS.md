@@ -49,6 +49,7 @@ writing. The rest runs alongside the hardware work (section 5).
 | 4 Oct 2026 | SW-24 (CI) | Done: docs-only changes skip the build, pull requests run a sample of the campaign, `main` runs all of it (PR 22) |
 | 4 Oct 2026 | **State of the repository** | PRs 17 to 23 are merged and the remote branches deleted; CI on `main` passes; `can-utils` installed on the bench PC. The parts order is not placed yet (it still needs the supervisor's second Pico 2, clock module and resistors) |
 | 4 Oct 2026 | **SW-08 (ACT logic)** | `core/include/tfc/act.hpp`: the vote, node exclusion, the slew-bounded output, Safe (freeze, hold, ramp, neutral, no automatic exit), the reset behaviour; 19 tests including a 20,000-frame fuzz (`docs/ACT_LOGIC.md`). Not yet the app or the bus I/O |
+| 4 Oct 2026 | **SW-01 (protocol v2)** | ACT out, heartbeat, state share and the simulator's frames in C++ and Python with the same golden bytes pinned in both; the manager knows the simulator's range; `docs/PROTOCOL.md`. Not yet: the `noop` and `phase` opcodes, and the firmware producing the heartbeat |
 
 ## 3. What is missing, by area
 
