@@ -380,6 +380,7 @@ int main() {
     // ---- t = 0.5 ms: latch the IMU sample ----
     sleep_until_us(base, kSampleUs);
     if (kSimBusImu) {
+      imu.set_frame(k);
       can_frame sim_cf;
       while (k_msgq_get(&rx_sim_msgq, &sim_cf, K_NO_WAIT) == 0) {  // the simulator's inputs for this frame (sent just after SYNC)
         tfc::Frame f;

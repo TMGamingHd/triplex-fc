@@ -1,0 +1,209 @@
+// SPDX-License-Identifier: MIT
+// The vehicle simulator on a SocketCAN bus (docs/VEHICLE_SIM.md, docs/PROTOCOL.md). It follows SYNC, publishes the sensor inputs for the next frame as soon as ACT's
+// output for this one arrives (sim/vehicle/runner.hpp explains why one frame ahead), and steps the 6-DOF vehicle with the gimbal command in ACT's frame. Its time is the
+// frame number: a SYNC that skips numbers (a sync-master takeover) steps the world over the skipped frames with the last command held, so sim time never drifts from the
+// flight computers' frame count. A run starts at the first SYNC heard and starts over if the frame number goes backwards (the sync master was reset).
+//   tfc_simd [--iface vcan0] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
+#include <poll.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <linux/can.h>
+#include <linux/can/raw.h>
+
+#include <csignal>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+
+#include "design.hpp"
+#include "runner.hpp"
+#include "tfc/protocol.hpp"
+
+namespace {
+
+volatile std::sig_atomic_t g_stop = 0;
+void on_signal(int) { g_stop = 1; }
+
+int open_can(const std::string& iface) {
+  const int s = ::socket(PF_CAN, SOCK_RAW, CAN_RAW);
+  if (s < 0) {
+    std::perror("socket");
+    return -1;
+  }
+  ifreq ifr{};
+  std::strncpy(ifr.ifr_name, iface.c_str(), IFNAMSIZ - 1);
+  if (::ioctl(s, SIOCGIFINDEX, &ifr) < 0) {
+    std::fprintf(stderr, "no CAN interface %s (sim/scripts/setup_vcan.sh)\n", iface.c_str());
+    ::close(s);
+    return -1;
+  }
+  sockaddr_can addr{};
+  addr.can_family = AF_CAN;
+  addr.can_ifindex = ifr.ifr_ifindex;
+  if (::bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof addr) < 0) {
+    std::perror("bind");
+    ::close(s);
+    return -1;
+  }
+  can_filter filters[2] = {{tfc::id::kSync, CAN_SFF_MASK}, {tfc::id::kActOut, CAN_SFF_MASK}};
+  ::setsockopt(s, SOL_CAN_RAW, CAN_RAW_FILTER, filters, sizeof filters);
+  return s;
+}
+
+bool send_frame(int s, const tfc::Frame& f) {
+  can_frame cf{};
+  cf.can_id = f.id;
+  cf.can_dlc = 8;
+  std::memcpy(cf.data, f.data.data(), 8);
+  return ::write(s, &cf, sizeof cf) == static_cast<ssize_t>(sizeof cf);
+}
+
+void send_all(int s, const sim::SimFrames& fr, unsigned& errors) {
+  for (unsigned i = 0; i < fr.n; ++i) {
+    if (!send_frame(s, fr.f[i])) {
+      ++errors;
+    }
+  }
+}
+
+bool split(const std::string& arg, double* out, int n) {
+  std::size_t pos = 0;
+  for (int i = 0; i < n; ++i) {
+    const std::size_t comma = arg.find(',', pos);
+    const std::string part = arg.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+    if (part.empty()) {
+      return i >= 1;  // the later ones are optional
+    }
+    out[i] = std::atof(part.c_str());
+    if (comma == std::string::npos) {
+      return true;
+    }
+    pos = comma + 1U;
+  }
+  return true;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  std::string iface = "vcan0";
+  sim::RunnerConfig cfg;
+  uint32_t max_frames = 0U;
+  bool quiet = false;
+  for (int i = 1; i < argc; ++i) {
+    const std::string a = argv[i];
+    auto next = [&]() -> std::string {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "%s needs a value\n", a.c_str());
+        std::exit(2);
+      }
+      return argv[++i];
+    };
+    double v[3] = {0.0, 0.0, 0.0};
+    if (a == "--iface") {
+      iface = next();
+    } else if (a == "--vehicle-true") {
+      cfg.vehicle_true = true;
+    } else if (a == "--wind-scale") {
+      cfg.scenario.wind_scale = std::atof(next().c_str());
+    } else if (a == "--gust" && split(next(), v, 3)) {
+      sim::Gust g;
+      g.t0 = v[0];
+      g.duration = v[1];
+      g.peak = sim::V3{0.0, 0.0, v[2]};
+      cfg.scenario.gusts.push_back(g);
+    } else if (a == "--engine-out" && split(next(), v, 2)) {
+      cfg.scenario.engine_out_time = v[0];
+      cfg.scenario.engine_out_index = v[1] > 0.0 ? static_cast<int>(v[1]) : 1;
+    } else if (a == "--cg-shift") {
+      cfg.scenario.dry_cg_shift = std::atof(next().c_str());
+    } else if (a == "--frames") {
+      max_frames = static_cast<uint32_t>(std::strtoul(next().c_str(), nullptr, 10));
+    } else if (a == "--quiet") {
+      quiet = true;
+    } else {
+      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
+      return 2;
+    }
+  }
+  const int sock = open_can(iface);
+  if (sock < 0) {
+    return 1;
+  }
+  std::signal(SIGINT, on_signal);
+  std::signal(SIGTERM, on_signal);
+
+  sim::SimRunner runner(cfg);
+  bool started = false;
+  uint32_t acted = 0xFFFFFFFFU;  // the frame whose ACT output has been applied
+  unsigned tx_errors = 0U;
+  uint32_t first_frame = 0U;
+  uint8_t last_act_state = 0U;
+  std::fprintf(stderr, "tfc_simd on %s: waiting for SYNC\n", iface.c_str());
+
+  while (g_stop == 0) {
+    pollfd pfd{sock, POLLIN, 0};
+    if (::poll(&pfd, 1, 200) <= 0) {
+      continue;
+    }
+    can_frame cf{};
+    if (::read(sock, &cf, sizeof cf) != static_cast<ssize_t>(sizeof cf)) {
+      continue;
+    }
+    tfc::Frame f;
+    f.id = cf.can_id & CAN_SFF_MASK;
+    f.len = cf.can_dlc;
+    std::memcpy(f.data.data(), cf.data, 8);
+    if (f.id == tfc::id::kSync) {
+      const tfc::DecodedSync d = tfc::unpack_sync(f);
+      if (!d.ok) {
+        continue;
+      }
+      const uint32_t k = d.frame_no;
+      if (!started || k < runner.frame()) {  // the first SYNC, or the frame number went backwards: a new run
+        if (started && !quiet) {
+          std::fprintf(stderr, "frame number went back (%u to %u): a new run\n", static_cast<unsigned>(runner.frame()), static_cast<unsigned>(k));
+        }
+        send_all(sock, runner.start(k), tx_errors);
+        started = true;
+        first_frame = k;
+        acted = 0xFFFFFFFFU;
+        continue;
+      }
+      // frames the world has not been stepped over (ACT's frame did not come, or SYNC skipped numbers): step them with the last command held
+      while (runner.frame() < k) {
+        const uint32_t m = runner.frame();
+        send_all(sock, runner.end_of_frame(m, nullptr), tx_errors);
+      }
+      continue;
+    }
+    if (f.id == tfc::id::kActOut && started) {
+      const tfc::DecodedAct d = tfc::unpack_act_out(f);
+      const uint32_t k = runner.frame();
+      if (!d.ok || d.seq != static_cast<uint8_t>(k) || acted == k) {
+        continue;  // damaged, for another frame, or a repeat
+      }
+      acted = k;
+      last_act_state = d.act.state;
+      send_all(sock, runner.end_of_frame(k, &d.act), tx_errors);
+      if (!quiet && runner.frame() % 100U == 0U) {
+        const sim::Tilts t = runner.vehicle().tilts();
+        std::fprintf(stderr, "t=%6.2f s  alt %8.0f m  speed %7.1f m/s  tilt pitch %7.3f yaw %7.3f deg  gimbal %6.2f %6.2f  ACT state %u  tx_err %u\n",
+                     static_cast<double>(runner.frame()) * 0.01, runner.vehicle().altitude(), runner.vehicle().speed(), t.y_deg, t.x_deg,
+                     runner.vehicle().gimbal_pitch_deg(), runner.vehicle().gimbal_yaw_deg(), static_cast<unsigned>(last_act_state), tx_errors);
+      }
+      if (max_frames != 0U && runner.frame() - first_frame >= max_frames) {
+        break;
+      }
+    }
+  }
+  ::close(sock);
+  std::fprintf(stderr, "tfc_simd: stopped at frame %u (t = %.2f s), altitude %.0f m\n", static_cast<unsigned>(runner.frame()), static_cast<double>(runner.frame()) * 0.01,
+               runner.vehicle().altitude());
+  return 0;
+}

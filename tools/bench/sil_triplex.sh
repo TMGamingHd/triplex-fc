@@ -4,6 +4,7 @@
 #   tools/bench/sil_triplex.sh --build [--flight] [--sim-imu]   build the three flight computers into build/native_sim, native_sim_n1, native_sim_n2,
 #                                                               and the actuator node into build/act_native
 #   tools/bench/sil_triplex.sh --test                           run the live test (sim/tests/test_live_triplex.py) against them
+#   tools/bench/sil_triplex.sh --closed-loop [seconds]          the closed loop: the loop_* images, ACT and the vehicle simulator (build/host/tfc_simd) on vcan0
 #   tools/bench/sil_triplex.sh --run [seconds]                  run the four for a while and print each node's console (default 10 s)
 # By default the command is the scripted function of the frame number that the Python virtual peers reproduce: the digests then do not depend on the inputs, so
 # the test of SYNC takeover is not disturbed by a late frame. --flight: the command comes from the flight function (CONFIG_TFC_FLIGHT_FUNCTION: consensus,
@@ -20,7 +21,7 @@ secs=10
 for a in "$@"; do
   case "$a" in
     --flight) flight=y; prefix=flight ;;
-    --sim-imu) simimu=y ;;
+    --sim-imu) simimu=y; prefix=loop ;;
     [0-9]*) secs="$a" ;;
     *) echo "unknown option $a" >&2; exit 2 ;;
   esac
@@ -36,7 +37,20 @@ case "$mode" in
     done
     west build -p auto -b native_sim/native/64 firmware/act -d build/act_native ;;
   --test)
-    (cd sim && python3 -m unittest tests.test_live_triplex -v) ;;
+    (cd sim && python3 -m unittest tests.test_live_triplex tests.test_live_closed_loop -v) ;;
+  --closed-loop)
+    tmp="$(mktemp -d)"
+    trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
+    for n in a b c; do build/loop_$n/zephyr/zephyr.exe >"$tmp/$n.log" 2>&1 & done
+    build/act_native/zephyr/zephyr.exe >"$tmp/act.log" 2>&1 &
+    sleep 0.5
+    build/host/tfc_simd --iface vcan0 >"$tmp/sim.log" 2>&1 &
+    sleep "${1:-${secs}}"
+    kill $(jobs -p) 2>/dev/null || true
+    wait 2>/dev/null || true
+    echo "=== simulator"; cat "$tmp/sim.log"
+    for f in a act; do echo "=== node ${f^^}"; grep -v '^\[frame [0-9]*00\] ' "$tmp/$f.log" || true; done
+    rm -rf "$tmp" ;;
   --run)
     tmp="$(mktemp -d)"
     trap 'kill $(jobs -p) 2>/dev/null || true' EXIT

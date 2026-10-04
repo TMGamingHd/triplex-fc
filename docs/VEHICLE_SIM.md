@@ -54,20 +54,29 @@ platform saturates and the simulator marks the run (PLAT-004). The first 80 to 1
 | **Vehicle-true** (software only) | the vehicle's body rates | the vehicle's **specific force** (thrust and aerodynamics over mass, no gravity), several g along the axis in boost | tests the estimator's accelerometer gate: gravity is not observable under thrust, so the filter coasts on the gyro and keeps the bias it learned on the pad |
 
 ## 6. The simulator on the bus
-Triggered by ACT, not by the PC's clock, so that its timing does not depend on the PC's jitter (SIM-004): when ACT's output frame for frame `k` arrives (about 6.5 to 7 ms
-into the frame) the simulator advances the vehicle by one frame with that command, and publishes the sensor inputs for frame `k+1`. The nodes latch
-the latest of them at 0.5 ms into the next frame. If ACT's frame does not arrive within 8 ms of the SYNC, the simulator advances with the last command held (and counts it).
-The sensors therefore see the world one frame late, which is also true of the rig (command to platform to sensor).
+**Built** (`sim/vehicle/runner.hpp`, the library; `tools/sim/tfc_simd.cpp`, the SocketCAN executable). Triggered by ACT, not by the PC's clock, so that its timing does not depend on the PC's jitter
+(SIM-004): when ACT's output frame for frame `k` arrives the simulator advances the vehicle over frame `k` with that command and **at once** publishes the sensor inputs for the start of frame `k+1`, long
+before that frame's IMU latch (0.5 ms after its SYNC), so they are waiting in every node's queue. (A first version published after SYNC; the host's CAN driver polls its socket every millisecond, so a node
+would have missed the sample.) The sensor frames carry the number of the frame they are for, and a node ignores a frame of another cycle. If ACT's frame does not arrive, the next SYNC steps the world with the
+last command held (the `command held` flag); a SYNC that skips numbers (a sync-master takeover) steps over the skipped frames the same way, so sim time is always the frame number. A run starts at the first SYNC
+heard (the world is brought to that frame with the gimbal neutral) and starts over if the frame number goes backwards. The sensors see the world one frame late, which is also true of the rig (command to platform to sensor).
 
 | CAN id | Content | Rate |
 |---|---|---|
 | `0x300` | ACT: the voted gimbal command (pitch plane, yaw plane, 0.001 degree), mode and Safe flags (protocol v2) | every frame |
 | `0x501` | Simulator: sensor-frame body rates, 0.125 dps per count (the same scale as the gyro frames) | every frame |
 | `0x502` | Simulator: sensor-frame accelerometer input, 1/2048 g per count | every frame |
-| `0x503` | Simulator telemetry: altitude, speed, mass, dynamic pressure, flags (safed, platform saturated, engine out) | every 10 frames |
-| `0x504` | Simulator telemetry: attitude error and the commanded gimbal | every 10 frames |
-USB, to the Pico, at 100 Hz: the platform angles (pitch plane, yaw plane) and a sequence number; the Pico returns its own status (position, saturation, watchdog state).
-Each node's simulated IMU takes `0x501` and `0x502`, adds its own noise, bias and faults, and sends its own gyro and accelerometer frames as before.
+| `0x503` | Simulator state: altitude, speed, mass | every 10 frames |
+| `0x504` | Simulator telemetry: dynamic pressure, attitude error in the two planes (against the pitch program) | every 10 frames |
+| `0x505` | Simulator flags (safed, platform saturated, engine out, command held, aborted), engines on, time in frames | every 10 frames |
+USB, to the Pico, at 100 Hz: the platform angles (pitch plane, yaw plane) and a sequence number; the Pico returns its own status (position, saturation, watchdog state). Not built yet (P1-5).
+Each node's simulated IMU (`CONFIG_TFC_SIM_BUS_IMU`) takes `0x501` and `0x502`, adds its own noise, and sends its own gyro and accelerometer frames as before.
+
+**Results.** On the host with no sockets (`tests/test_runner.cpp`: the runner, three `FlightFunction`s, the real `ActLogic`, every frame through pack and unpack): the nominal 100 s ascent holds the attitude with an RMS error of
+0.079 degree (worst 0.34), a 15 m/s gust at 60 s and an engine-out at max-Q stay under 2 degrees, a sensor fault on one computer is masked, a computer lost at 30 s is excluded by ACT and the flight is unchanged, and 0.2 s without
+ACT's frame is held through. **Live, on vcan0** (`sim/tests/test_live_closed_loop.py`: three firmware flight computers, the ACT app and `tfc_simd`, six processes with Python as a monitor): 16 s of the ascent stay within 1 degree of the
+program with the digests of the three replicas equal throughout, and a flight computer killed at 6 s is excluded and the vehicle flies on (a documented skip if the machine is too loaded or if the two remaining estimators diverge: TS-16).
+Run it: `tools/bench/sil_triplex.sh --build --flight --sim-imu`, then `tools/bench/sil_triplex.sh --closed-loop 25`.
 
 ## 7. Control for a changing plant
 The plant's parameters change by a large factor through the ascent (thrust, mass, inertia, dynamic pressure), so fixed gains cannot serve. The simulator's nominal
