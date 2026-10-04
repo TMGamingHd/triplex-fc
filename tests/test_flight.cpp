@@ -160,3 +160,21 @@ TFC_TEST(the_tables_can_be_read_back_point_by_point) {
   CHECK(s.frame_at(1U) == 500U && s.gains_at(1U).kp == 1.6F);
   CHECK(s.frame_at(2U) == 0U && s.gains_at(2U).kp == tfc::ControllerGains{}.kp);
 }
+
+TFC_TEST(flight_function_uses_only_the_frames_of_the_current_cycle) {
+  tfc::FlightFunction ff(gains(), guidance());
+  std::array<Lcg, 3> noise{Lcg{1U}, Lcg{2U}, Lcg{3U}};
+  const std::array<tfc::Frame, 6> old_cycle = frames(7U, noise);
+  const std::array<tfc::Frame, 6> this_cycle = frames(8U, noise);
+  ff.begin_frame(8U, 0x07U);
+  for (const tfc::Frame& f : old_cycle) {
+    CHECK(!ff.on_frame(f));  // late frames of cycle 7 are stale
+  }
+  CHECK(ff.consensus().gyro_nodes == 0U && ff.consensus().accel_nodes == 0U);
+  for (const tfc::Frame& f : this_cycle) {
+    CHECK(ff.on_frame(f));
+  }
+  CHECK(ff.consensus().gyro_nodes == 0x07U && ff.consensus().accel_nodes == 0x07U);
+  ff.begin_frame(264U, 0x07U);  // 264 = 256 + 8: the number is the low byte, so a frame of cycle 8 passes for cycle 264 (the manager's phase check, with its 32-cycle history, is what tells them apart)
+  CHECK(ff.on_frame(this_cycle[0]));
+}

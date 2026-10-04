@@ -324,13 +324,13 @@ int main() {
           break;
         }
       }
-      if (!heard) {
-        base = k_uptime_ticks();  // nothing came: the frame starts now (a node that takes over starts its own clock here)
-      }
     }
     const tfc::SyncTick tick = sync_clock.cycle(heard, heard_number);
     const uint32_t k = tick.frame;
-    nominal = base + period;
+    if (tick.took_over) {
+      base = k_uptime_ticks();  // the new master's frame starts now, at the end of its wait; its SYNC tells the others
+    }
+    nominal = base + period;  // (for a frame without SYNC, `base` is still the nominal start, so the cadence does not drift)
     if (tick.took_over) {
       printk("[frame %u] SYNC lost for %u frames: this node takes over as sync master\n", k, static_cast<unsigned>(tick.missed));
     }
@@ -349,6 +349,13 @@ int main() {
       if (cycle % kStatusEveryFrames == 0U) {
         printk("[cycle %u] waiting for SYNC (listening: nothing is sent until a master is heard or this node claims the bus)\n", cycle);
       }
+      continue;
+    }
+    if (!tick.master && !tick.locked) {
+      // SYNC did not come in this frame and this node is not taking over: the frame is skipped, by every follower alike. Running it on the node's own
+      // clock would put each follower's frame at a different time (their windows differ), so two nodes could receive different mixes of the same frames,
+      // compute different inputs and drift apart for good (docs/DECISIONS.md ADR-025). The number still counts, so it stays continuous.
+      wdt.feed();
       continue;
     }
     lines.kick(false);

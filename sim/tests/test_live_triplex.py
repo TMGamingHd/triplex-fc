@@ -2,8 +2,8 @@
 """Live: three instances of the real firmware (Zephyr native_sim, real time) on vcan0, with nothing from Python but a bus monitor.
 
 A claims SYNC after listening, B and C follow it. Killing A must leave B as the sync master with the frame number continuous (no skipped or repeated
-number on the bus), C following B, and a Duplex vote on the two that remain. Skipped unless the three images are built (TFC_FC_BIN for A, TFC_FC_BIN_B,
-TFC_FC_BIN_C, or build/native_sim, build/native_sim_n1, build/native_sim_n2; see tools/bench/sil_triplex.sh) and vcan0 exists.
+number on the bus), C following B, and a Duplex vote on the two that remain. Skipped unless the three images are built (TFC_TRIPLEX_BIN_A, _B, _C and TFC_ACT_BIN, or
+build/triplex_a, _b, _c and build/act_native; see tools/bench/sil_triplex.sh --build) and vcan0 exists.
 """
 import os
 import re
@@ -26,8 +26,8 @@ def _bin(env, default):
     return None
 
 
-BINS = [_bin("TFC_FC_BIN", "build/native_sim/zephyr/zephyr.exe"), _bin("TFC_FC_BIN_B", "build/native_sim_n1/zephyr/zephyr.exe"),
-        _bin("TFC_FC_BIN_C", "build/native_sim_n2/zephyr/zephyr.exe")]
+BINS = [_bin("TFC_TRIPLEX_BIN_A", "build/triplex_a/zephyr/zephyr.exe"), _bin("TFC_TRIPLEX_BIN_B", "build/triplex_b/zephyr/zephyr.exe"),
+        _bin("TFC_TRIPLEX_BIN_C", "build/triplex_c/zephyr/zephyr.exe")]
 HAVE_VCAN = Path("/sys/class/net/vcan0").exists()
 STATUS = re.compile(r"\[frame (\d+)\] (\w+)\s+A(.) B(.) C(.)\s+\| crc=(\d+) seq=(\d+) missing=(\d+) vote=(\d+) digest=(\d+)")
 

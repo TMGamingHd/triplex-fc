@@ -162,5 +162,5 @@ TFC_TEST(sync_a_master_that_hears_another_sync_yields_and_takes_its_number) {
 TFC_TEST(sync_windows_grow_with_the_node_number_so_the_lowest_takeover_is_heard_first) {
   CHECK(tfc::sync_window_us(0U) < tfc::sync_window_us(1U) && tfc::sync_window_us(1U) < tfc::sync_window_us(2U));
   CHECK(tfc::sync_window_us(1U) - tfc::sync_window_us(0U) >= 500);  // enough for a SYNC frame (about 0.1 ms) to cross the bus and be heard
-  CHECK(tfc::sync_window_us(2U, 1500) == 4000 && tfc::sync_window_us(0U, 1500) == 1000);  // a longer stagger for the host
+  CHECK(tfc::sync_window_us(2U, 2500) == 6000 && tfc::sync_window_us(0U, 2500) == 1000);  // a longer stagger for the host
 }

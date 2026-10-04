@@ -12,7 +12,7 @@ config TFC_NODE_ID
 config TFC_SYNC_STAGGER_US
 	int "Stagger of the SYNC wait windows between nodes (microseconds)"
 	default 500
-	range 200 2000
+	range 200 3000
 	help
 	  The wait for SYNC lasts 1.0 ms plus this much for each node after A, so the lowest node's takeover SYNC is heard by the others before their own
 	  windows end (ADR-025). It must exceed the receive latency of a frame. The host's native_sim CAN driver polls its socket every millisecond, so

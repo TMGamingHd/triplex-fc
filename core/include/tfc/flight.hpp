@@ -28,8 +28,10 @@ class FlightFunction {
     consensus_.begin_frame(usable_nodes);
   }
 
-  // Offer any frame heard in this frame; only gyro and accelerometer frames of the three nodes are used. True if one was.
-  bool on_frame(const Frame& f) noexcept { return consensus_.on_frame(f); }
+  // Offer any frame heard in this frame; only gyro and accelerometer frames of the three nodes that carry THIS frame's number (the low byte, ADR-018) are used.
+  // A late frame of an earlier cycle is stale: if it were used, two nodes that happened to receive a different mix of frames would compute different inputs and
+  // their estimators would drift apart. True if a frame was used.
+  bool on_frame(const Frame& f) noexcept { return f.data[6] == static_cast<uint8_t>(frame_ & 0xFFU) && consensus_.on_frame(f); }
 
   // At the command slot: update the estimator, run the controller with this frame's gains and reference, and return the command with the digest.
   [[nodiscard]] Command step() noexcept {

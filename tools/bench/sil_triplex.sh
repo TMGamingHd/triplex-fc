@@ -4,18 +4,18 @@
 #   tools/bench/sil_triplex.sh --build [--flight] [--sim-imu]   build the three images into build/native_sim, native_sim_n1, native_sim_n2
 #   tools/bench/sil_triplex.sh --test                           run the live test (sim/tests/test_live_triplex.py) against them
 #   tools/bench/sil_triplex.sh --run [seconds]                  run the three for a while and print each node's console (default 10 s)
-# --flight : the command comes from the flight function (CONFIG_TFC_FLIGHT_FUNCTION); --sim-imu : the sensors come from the simulator's frames on the bus
-# (CONFIG_TFC_SIM_BUS_IMU). Needs vcan0 (sim/scripts/setup_vcan.sh) and the Zephyr environment (firmware/env.sh).
+# By default the command comes from the flight function (CONFIG_TFC_FLIGHT_FUNCTION: consensus, estimator, controller); --scripted gives the scripted
+# command that the Python virtual peers reproduce. --sim-imu : the sensors come from the simulator's frames on the bus (CONFIG_TFC_SIM_BUS_IMU). Needs vcan0 (sim/scripts/setup_vcan.sh) and the Zephyr environment (firmware/env.sh).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 mode="${1:-}"; shift || true
-flight=n
+flight=y
 simimu=n
 secs=10
 for a in "$@"; do
   case "$a" in
-    --flight) flight=y ;;
+    --scripted) flight=n ;;
     --sim-imu) simimu=y ;;
     [0-9]*) secs="$a" ;;
     *) echo "unknown option $a" >&2; exit 2 ;;
@@ -26,7 +26,8 @@ case "$mode" in
     # shellcheck disable=SC1091
     . firmware/env.sh
     for n in 0 1 2; do
-      dir=build/native_sim; [ "$n" != 0 ] && dir="build/native_sim_n$n"
+      letters=(a b c)
+      dir="build/triplex_${letters[$n]}"
       west build -p auto -b native_sim/native/64 firmware/app -d "$dir" -- -DCONFIG_TFC_NODE_ID="$n" -DCONFIG_TFC_FLIGHT_FUNCTION="$flight" -DCONFIG_TFC_SIM_BUS_IMU="$simimu"
     done ;;
   --test)
@@ -34,9 +35,9 @@ case "$mode" in
   --run)
     tmp="$(mktemp -d)"
     trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
-    build/native_sim/zephyr/zephyr.exe >"$tmp/a.log" 2>&1 &
-    build/native_sim_n1/zephyr/zephyr.exe >"$tmp/b.log" 2>&1 &
-    build/native_sim_n2/zephyr/zephyr.exe >"$tmp/c.log" 2>&1 &
+    build/triplex_a/zephyr/zephyr.exe >"$tmp/a.log" 2>&1 &
+    build/triplex_b/zephyr/zephyr.exe >"$tmp/b.log" 2>&1 &
+    build/triplex_c/zephyr/zephyr.exe >"$tmp/c.log" 2>&1 &
     sleep "$secs"
     kill $(jobs -p) 2>/dev/null || true
     wait 2>/dev/null || true

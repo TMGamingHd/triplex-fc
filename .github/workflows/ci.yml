@@ -119,8 +119,11 @@ jobs:
         run: |
           . firmware/env.sh
           west build -p always -b native_sim/native/64 firmware/app -d build/native_sim
-          west build -p always -b native_sim/native/64 firmware/app -d build/native_sim_n1 -- -DCONFIG_TFC_NODE_ID=1
-          west build -p always -b native_sim/native/64 firmware/app -d build/native_sim_n2 -- -DCONFIG_TFC_NODE_ID=2
+          # the software triplex: three flight computers with the real flight function (the scripted command is only for the Python peers)
+          letters=(a b c)
+          for n in 0 1 2; do
+            west build -p always -b native_sim/native/64 firmware/app -d "build/triplex_${letters[$n]}" -- -DCONFIG_TFC_NODE_ID=$n -DCONFIG_TFC_FLIGHT_FUNCTION=y
+          done
       - name: Live FC-A against virtual peers (needs vcan; tests skip if the runner has none)
         run: |
           # The runner's Azure kernel ships vcan in linux-modules-extra.
