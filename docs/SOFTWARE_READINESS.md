@@ -65,14 +65,14 @@ IDs are for tracking. "Blocks" says which stage cannot start without it. "Done w
 |---|---|---|---|---|
 | SW-04 | **Estimator** in `core/`: attitude from gyro and accelerometer, deterministic, no heap, bit-identical on host and target, with the quantised digest | L | S2 | Unit tests; a golden-run comparison; the digests of three replicas match |
 | SW-05 | **Controller**: thrust-vector command from the attitude error, with saturation and rate limits | M | S2 | Unit tests; closed loop in SW-06 |
-| SW-06 | **Vehicle simulator**: ascent dynamics (planar first, then 6-DOF), engine-out, wind, a platform model with rate and travel limits (the platform is bandwidth-limited), deterministic scenarios | L | S2 | A scenario runs end to end with the controller |
+| SW-06 | **Vehicle simulator** (owner's choice 4 Oct 2026: a full 6-DOF ascent, a C++ library plus a SocketCAN runner; `docs/VEHICLE_SIM.md`): variable mass properties, thrust with altitude, TVC, atmosphere, wind, engine-out, validation tests, a trajectory table and gain schedule | L | S2 | The validation tests of section 9 pass; the nominal ascent and the closed loop run on the host |
 | SW-07 | **Gateway**: the simulator feeds the computers' IMU source (replacing the toy `truth()` of `sim_imu.hpp`) and takes ACT's output back; on the rig the same data go to the table driver | M | S2 | The software-only loop of G1 |
 
 ### Actuator node and safety
 | ID | Item | Size | Blocks | Done when |
 |---|---|---|---|---|
 | SW-08 | **ACT logic** in `core/`: command vote, output latch, step bound, loss-of-votes detection, the Safe sequence (freeze, then null; `SAFE_MODE.md`), start in Safe after a reset with the stored last output (RESP-003); oracle S5 for the step bound | M | S2 | Host tests; mutation-tested |
-| SW-09 | **ACT app** (Zephyr): CAN, servo PWM (a stub that publishes the output on `native_sim`), watchdog, `SAFE` input, `KICK` | M | S2 | Builds for both targets; runs in G1 |
+| SW-09 | **ACT app** (Zephyr): CAN, the voted command on the bus (there is no PWM: the servos are the platform's), watchdog, `SAFE` input, `KICK` | M | S2 | Builds for both targets; runs in G1 |
 | SW-10 | **Software triplex harness**: A, B, C and ACT as `native_sim` processes on one `vcan`, a software fault injector in place of the Pico, scripted scenarios, a CI subset | M | S3 | `F01` to `F18` run in software |
 | SW-11 | **Mixed releases**: a build from a tag as the golden node, the `common_mode` campaign group (F63), the compatibility-gate script (ARCH-006) | M | S4 | The measured weakness (F63) reproduces, then the hold-and-ask rule passes |
 
@@ -114,6 +114,19 @@ The parts order closes 6 Oct; delivery time is not known here. If they arrive du
 
 **Honest expectation:** P0 is realistic before the parts arrive; P1 is a stretch; P2 and P3 run in parallel with the hardware, in simulation first.
 Do not start P3 before P0 and the protocol freeze of SW-01 are done.
+
+## 4a. P1 plan (after the owner's answers, 4 Oct 2026)
+
+Independent pull requests wherever possible, each from `main`, so none waits on another:
+
+| PR | Content | Depends on |
+|---|---|---|
+| P1-0 | This design: the ACT and servo role corrected, `VEHICLE_SIM.md`, ADR-024, requirements | none |
+| P1-1 | Protocol v2: ACT output `0x300`, simulator frames `0x501` to `0x504`, heartbeat, `noop`; C++ and Python together | none |
+| P1-2 | The 6-DOF vehicle library with its validation tests, the nominal trajectory, the gain schedule, and the closed loop with the real estimator and controller | none (the loop pieces are merged) |
+| P1-3 | ACT logic in `core/`: the vote, the latch, the step bound, the Safe sequence, loss of votes (SW-08) | none |
+| P1-4 | The simulator runner on the bus, the firmware wiring (consensus, estimator, controller in the frame, the sim-fed IMU), the ACT app, a software triplex on one `vcan0` | P1-1, P1-2, P1-3 |
+| P1-5 | The Pico platform driver and its PC client, with the platform's own safety (SW-20) | P1-1 |
 
 ## 5. Things to do on this PC now (no code)
 
