@@ -1,7 +1,7 @@
 # Supervisor ("lizard brain"): proposal
 
-> Status: **proposed** (ADR-022). Nothing here is built. Every number is a proposal to be confirmed on the rig.
-> Parts decisions are due before the parts order closes (M0, 6 Oct 2026); see section 9.
+> Status: **accepted 4 Oct 2026 as SUP-Lite** (ADR-022); SUP-Full stays an upgrade. Nothing here is built. Every number is a proposal to be confirmed on the rig.
+> The order must include a second Pico 2, a TCXO clock module and resistors before it closes (M0, 6 Oct 2026); see section 9.
 
 ## 1. What it is and why
 

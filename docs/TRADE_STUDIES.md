@@ -46,12 +46,15 @@ campaign; HIL needs the rig.
 | TS-11 | Duplex attribution | How should a Duplex disagreement be attributed (continuity, analytical redundancy, none)? | SIL, estimator | 2 | large |
 | TS-12 | Autonomy against ground command | Which responses are autonomous and which need the operator? | analysis | 2 | small |
 | TS-13 | Toolchain and RTOS | C++17 subset against C or Rust; Zephyr against bare metal | analysis (partly decided in ADR-001, ADR-002) | 2 | small |
+| TS-15 | Sensor and compute health split: the degradation rule | Once a sensor channel is excluded, how should the computer degrade, and what does the split buy? | SIL (campaign groups, after the split) | 3 | medium, **before S3** |
 | TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `DEFERRED.md` section 7 |
 
 Recommended order, by value and by when the data exist: **TS-0** now; **TS-1, TS-2, TS-3, TS-4** on the simulator in October and
 November, while the hardware is built; **TS-5, TS-8, TS-9** on the rig after S3; the others as short write-ups.
 
-## 3. TS-0: supervisor, Lite or Full (decide by 5 Oct)
+## 3. TS-0: supervisor, Lite or Full (**decided 4 Oct 2026: Lite**)
+
+> **Outcome.** The owner chose Lite, as recommended. The study stays as the record of why, and of what would change the choice: wanting per-stream arrival-time telemetry from outside the computers.
 
 **Question.** One more Pico 2 and a clock module (Lite, discrete lines only) or a Nucleo, a CAN Pal and a clock module (Full, adds a
 listen-only bus tap)? `SUPERVISOR.md` section 3 has the build. The parts order closes on 6 Oct.
@@ -221,11 +224,37 @@ cannot be met; a second bus is chosen only to remove the bus as a single point o
 | TS-13 Toolchain and RTOS | Language subset, RTOS, build and static-analysis tools. Determinism, certification evidence, ecosystem | A short write-up; decided in ADR-001 and ADR-002, add the rejected options with reasons |
 | TS-14 Learned against deterministic detection | A learned detector (for example residual-based) against the persistence filters; detection time, false-alarm rate, training data needed, verification effort, determinism | The campaign scenarios as labelled data, held-out fault kinds as the test; shadow mode only; a table and one plot; the result may well be that the deterministic design wins, and that is a finding |
 
+## 9a. TS-15: how a computer degrades when its sensing does (decides ARCH-001's rule)
+
+**Question.** The owner chose to separate sensor health from compute health (ADR-020, case 1). What exactly should the manager do when one sensor channel is excluded and the computer is healthy, and when a second channel goes? The study chooses the **degradation rule** before it is written into the manager, and measures what the split buys.
+
+**Options.**
+| | Rule | In words |
+|---|---|---|
+| A | Today | A computer is one unit: a sensor fault latches the whole computer |
+| B | Split | The sensor channel is excluded; the computer stays a command voter at its usual tolerance |
+| C | Split, stricter | As B, but while only two sensor channels remain, that computer's command is judged against a tighter tolerance (it now computes from two sensors, and a median of two cannot arbitrate) |
+| D | Split, demote | As B, but when sensing falls below two channels the computer is demoted to WARM (shadow-voted, not voting) until a channel returns |
+Variants for what the consensus is with two channels left: the mean, or the continuity rule of ADR-017 (follow the channel that agrees with the motion).
+
+**Criteria and weights (proposed; fix them before the data).** Command-voter availability, in computer-frames in the vote under a fault mix (weight 3); false isolation of a healthy computer or channel (weight 3: S1 must hold); Safe requests caused by two sensor channels that cannot be told apart (weight 2); wrong-output exposure, measured as frames with the output beyond tolerance (weight 3); complexity, in lines changed in the manager, new states, mutants needed and the effect on the coverage gate (weight 1).
+
+**Method.** Build the split behind a configuration switch (A is today's behaviour, so the baseline is exact) and run the campaign on three new groups: sensor-only faults on one and on two channels, computer-only faults, and IMU-plus-computer double faults (F73), each at several start frames, in Triplex and in Duplex, plus ten-minute runs. Metrics come from the per-frame dump (`tfc_replay --dump`). A small Markov model with the measured coverage turns the per-fault results into availability over a mission, so the gain is stated in the same units as TS-2.
+
+**Output.** One table: option against fault class, with the availability of command voters, false isolations (expected zero), Safe requests and output exposure; one plot of availability against the share of sensor faults in the fault mix.
+
+**Decision rule.** The option with the highest command-voter availability that adds **no** false isolation and violates no oracle; on a tie, the simpler. The expected finding, to be shown or refuted: B gives nearly all of the gain for a single sensor fault, and C or D matter only for two sensor faults at once.
+
+**Dependencies and timing.** Needs the estimator's channel interface (P1) and the campaign groups; run **after the loop and before S3 (3 Nov)**, in the same window as the split itself. The ring re-homing of ADR-020 is TS-7's question, not this one.
+
+**Talking point.** "I measured what splitting sensor health from computer health buys, and which rule for the degraded case was worth its complexity."
+
 ## 10. Schedule
 
 | When | Study | Why then |
 |---|---|---|
-| By 5 Oct | TS-0 | The order closes 6 Oct |
+| Done 4 Oct | TS-0 | Decided: Lite |
+| Late October, with the split (before S3, 3 Nov) | TS-15 | Chooses the degradation rule that the split implements |
 | October, on the simulator | TS-1, TS-3, TS-6 | Everything they need exists or is a small campaign group; hardware is on order |
 | October to November | TS-2, TS-4 | The model and the toy vehicle are independent of the hardware; TS-4 is re-run on the 6-DOF simulator at M3 |
 | After S3 (Nov) | TS-5, TS-8, TS-9 | Need the rig |

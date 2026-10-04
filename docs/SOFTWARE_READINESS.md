@@ -38,6 +38,14 @@ writing. The rest runs alongside the hardware work (section 5).
 | Tools on this PC | `west` and the Zephyr SDK 1.0.1 present; `openocd` present; `picotool` and `dfu-util` not; `vcan0` does not exist now (it does not survive a reboot) |
 | CI | Host build with sanitizers, tests, clang-tidy, cppcheck, coding standard, coverage gate, the campaign; Zephyr build for `native_sim` and `nucleo_g474re`, live test against the peers, ELF check |
 
+## 2a. Progress
+
+| Date | Item | State |
+|---|---|---|
+| 4 Oct 2026 | SW-16 (logic), SW-19 (logic) | `ism330dhcx.hpp` (identity, reset, configuration with read-back, burst read, self-test mechanism with fail-closed limits; register facts from ST's own driver), `progress.hpp` and `resetlog.hpp`, host-tested against a model of the chip with a bus failure at every call (PR 18) |
+| 4 Oct 2026 | SW-02, SW-16, SW-17, SW-19 (wiring) | The seams (IMU, lines, watchdog, reset record) in `firmware/app/src/hw.hpp`, the Nucleo overlay with every pin from ST's connector map, the board build verified (51.7 KB flash); native_sim and its 10 live tests unchanged (PR 19) |
+| 4 Oct 2026 | SW-18 (partly), SW-22, SW-23 | CAN bus-state counters and receive timestamps enabled; bench tools, a live-bus logger, the golden-run and jitter checks, procedures P-M1-01 and P-S1-01 (PR 20). Not run on hardware |
+
 ## 3. What is missing, by area
 
 IDs are for tracking. "Blocks" says which stage cannot start without it. "Done when" is the check.
@@ -117,10 +125,10 @@ Do not start P3 before P0 and the protocol freeze of SW-01 are done.
 
 Timing numbers (jitter, execution time, bus load), what the D85MG servo does with no signal, the relay at 3.3 V drive, the IMU board's logic level, the adapter's voltage, and every real bus effect. For each, the script or procedure should be ready (SW-22, SW-23) so that the measurement takes minutes.
 
-## 7. Decisions the software is waiting for
+## 7. Decisions (owner, 4 Oct 2026)
 
-1. Supervisor Lite or Full (SW-21, the lines in SW-17 to 19).
-2. The release rule of ADR-021 (SW-11, the heartbeat fields of SW-01).
-3. The Safe action's open questions (`SAFE_MODE.md` section 10) (SW-08).
-4. Whether SW-12 should come before the hardware (it is its own PR).
-5. The CI limit (SW-24).
+1. **Supervisor:** SUP-Lite (SW-21 and the lines of SW-17 to 19 are Lite).
+2. **Release rule (ADR-021):** hold, request Safe, operator picks. Automatic takeover by the old release is decided after the TS-3 data.
+3. **Safe mode:** the answers of `SAFE_MODE.md` section 10 and `FAULT_RESPONSE.md` section 6 (SW-08).
+4. **Sensor and compute split (SW-12):** after the loop (P1) and before S3 (3 Nov); TS-15 chooses the degradation rule first.
+5. **CI cost (SW-24):** trim (see `.github/workflows/ci.yml`).
