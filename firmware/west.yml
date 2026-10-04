@@ -18,6 +18,7 @@ manifest:
           - cmsis_6
           - hal_stm32
           - hal_st
+          - hal_rpi_pico
           - picolibc
   self:
     path: firmware

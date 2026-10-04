@@ -48,6 +48,7 @@ campaign; HIL needs the rig.
 | TS-13 | Toolchain and RTOS | C++17 subset against C or Rust; Zephyr against bare metal | analysis (partly decided in ADR-001, ADR-002) | 2 | small |
 | TS-15 | Sensor and compute health split: the degradation rule | Once a sensor channel is excluded, how should the computer degrade, and what does the split buy? | SIL (campaign groups, after the split) | 3 | medium, **before S3** |
 | TS-16 | Keeping replicated estimators together on a lossy bus | When two nodes receive different sets of sensor frames in one frame their estimators diverge for good: agree on inputs, resynchronise state, or tolerate the digest mismatch? | SIL, live triplex | 3 | medium, **before the closed loop is relied on** |
+| TS-17 | Hardware overrides: how many switches, which, and what can go wrong | When every program is down or wrong, which manual hardware overrides are worth their cost and their own failure modes? | paper FMEA, then HIL on the rig | 3 | medium, **before the override parts are ordered** |
 | TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `DEFERRED.md` section 7 |
 
 Recommended order, by value and by when the data exist: **TS-0** now; **TS-1, TS-2, TS-3, TS-4** on the simulator in October and
@@ -273,6 +274,60 @@ Variants for what the consensus is with two channels left: the mean, or the cont
 
 **Talking point.** "I found that replicated estimators diverge permanently on a single lost frame, measured it, and compared four ways of keeping them together."
 
+## 9c. TS-17: hardware overrides, how many and which (docs/HARDWARE_OVERRIDE.md)
+
+**Question.** The software has three layers (flight software, the supervisor, and nothing); the owner asked for a layer of hardware switches that works when every
+program is down or wrong. How many overrides does the rig need, which functions should they have, and what can go wrong with each? More switches cover more
+failures, and every switch is itself a part that can fail to act (a latent loss of protection) or act when it should not (a lost run, a mechanical shock).
+
+**Scenarios (the software-down cases, SD).**
+| | Scenario | Why it is hard for software |
+|---|---|---|
+| SD1 | The PC or simulator hangs | Nothing commands the platform; the Pico's own timeout (PLAT-002) is software |
+| SD2 | The Pico platform driver hangs or runs away | Its PWM is stuck or wrong; the Pico's watchdog is software too |
+| SD3 | ACT hangs or votes wrong | The simulator holds the last command; the vehicle flies on and the platform follows it to its stops |
+| SD4 | All flight computers are wrong the same way (a common software bug) | ACT's vote agrees with them; no software layer sees a fault |
+| SD5 | The supervisor hangs or resets a healthy node again and again | The layer meant to help is the fault |
+| SD6 | The injector's relay stays on (a crashed Pico, a failed driver) | A node is cut and looks faulty |
+| SD7 | A node babbles on the bus or hangs it | The bus is the only way the others can see it |
+| SD8 | A servo stalls or runs to its stop (mechanical) | Current rises; software may be the cause or the victim |
+| SD9 | The node rail droops (relay coils, a failing adapter) | Every node resets together |
+
+**Options (cumulative; H-numbers as in `HARDWARE_OVERRIDE.md` section 3).**
+| | Set | Count | What it adds |
+|---|---|---|---|
+| O0 | None; the supervisor alone | 0 | The baseline: layers 2 and 3 only |
+| O1 | The parts list: E-stop (H1) and the free manual controls (Nucleo reset buttons, unpluggable CAN stubs, adapter plugs) | 1 | Platform stop; manual node reset and bus isolation |
+| O2 | O1 + FORCE-SAFE (H2) + PLATFORM-LEVEL (H3) | 3 | A command to ACT, and a platform that goes level with the servos still holding |
+| O3 | O2 + INJECTOR-DISARM (H4) + SUPERVISOR-DISARM (H5) | 5 | The two layers that can cut power get a switch that makes them unable to |
+| O4 | O3 + four per-node POWER-KILL (H6) + MASTER-POWER (H7) | 11 | A manual node loss that needs neither the Pico nor the supervisor |
+
+**Criteria and weights (proposed; fix them before the data).**
+- **Coverage:** for each scenario SD1 to SD9, is there an override that needs no program, and how long does it take to reach the safe state (weight 3).
+- **Harm done by the override itself:** a mechanical shock (G1, G2), a lost run, a node cut for no reason, rated per override from the failure table (G1 to G12) (weight 3).
+- **Latent failure:** the chance that the override is dead when needed, and what it takes to test it (weight 3; testability matters more than cost here).
+- **Independence:** does the override share a supply, a ground or a part with what it overrides (weight 2; G10).
+- **Cost and panel space** against a budget that is over its ceiling (weight 1).
+- **Demonstration value:** an override a viewer can see work (weight 1; stated, not hidden).
+
+**Method.**
+1. *Paper first.* Complete the failure analysis of every candidate (the G table), a coverage matrix (scenario by override: covers, partly, does not), and a simple model of the
+   probability that the safe state is reached given a failure probability per demand for each override and for each program; the result is a table and a sensitivity plot (how
+   the answer changes if overrides are ten times less reliable than assumed).
+2. *Then the rig.* With the platform and the injector built: for each scenario cause it (a killed process, a held GPIO, an overloaded rail) and time the override with the logic analyzer: from
+   the action to the platform at rest, to a node powered, to ACT in Safe. Each override is operated 20 times for its own failure rate (does it always act).
+3. *Failure of the override.* Break each wire in turn (open a lead, lift a ground) and record the resulting state against the one designed in section 4.
+
+**Output.** One table (option against scenario: time to safe state, or "none"), the G table with measured effects, one coverage figure, one line on cost per scenario covered.
+
+**Decision rule.** The smallest option in which every scenario has at least one override that needs no program, with no override whose own harm (a spurious activation, a snap, a cut) is worse than the failure it covers; on a tie, the cheaper and the easier to test.
+Expected finding, to be shown or refuted: **O2 + H4** covers every scenario that a person can reach at the bench, and the per-node kill switches of O4 add demonstration and a way to cause F01 without the Pico, but cover no scenario that
+the Nucleo reset buttons, the pluggable stubs and H4 do not already cover; and **testing** the overrides is a larger part of their value than counting them.
+
+**Dependencies and timing.** The paper part needs only `HARDWARE_OVERRIDE.md` and can be done now; it decides the parts to order. The measured part needs the platform, the injector (P1-5) and the supervisor (S2b). Before the override parts are bought.
+
+**Talking point.** "I asked what the system does when all the software is wrong, listed the ways the safety switches could themselves fail, and chose how many to build from that."
+
 ## 10. Schedule
 
 | When | Study | Why then |
@@ -281,6 +336,7 @@ Variants for what the consensus is with two channels left: the mean, or the cont
 | Late October, with the split (before S3, 3 Nov) | TS-15 | Chooses the degradation rule that the split implements |
 | October, on the simulator | TS-1, TS-3, TS-6 | Everything they need exists or is a small campaign group; hardware is on order |
 | October to November | TS-2, TS-4 | The model and the toy vehicle are independent of the hardware; TS-4 is re-run on the 6-DOF simulator at M3 |
+| Now (paper), then with the injector and supervisor | TS-17 | The paper part decides which override parts to order; the measured part needs P1-5 and S2b |
 | After S3 (Nov) | TS-5, TS-8, TS-9 | Need the rig |
 | As time allows | TS-7, TS-10 to TS-13 | Short write-ups |
 
