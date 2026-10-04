@@ -64,6 +64,8 @@ Per flight computer (A, B, C) and for ACT:
 | `NRST` | SUP -> node | Open-drain on the board's reset pin; pulled low to reset the node |
 | `PWR` | SUP -> relay channel | A relay in series with the node's 5 V feed, in addition to the fault injector's own relay. De-energised means powered |
 
+For each IMU, in the stretch of ADR-020 (ring re-homing, after S4): one `ADOPT` line (SUP -> the IMU's bus switch and its backup host). Not built in v1; the pins are reserved.
+
 For ACT, two more: `SAFE` (SUP -> ACT, a hardware "enter Safe now") and, only if a second ACT is built (ADR-023), `SEL` (SUP -> the
 output selector). To the PC: one USB serial port (the hardware commands, section 6, and telemetry).
 
@@ -91,7 +93,7 @@ will try its resets and power-cycles, and will give up after the limit in sectio
 
 ## 6. Hardware commands (USB serial, executed without any flight computer)
 
-`reset X`, `cycle X`, `hold X`, `release X` (X is A, B, C or ACT), `safe-now` (asserts the `SAFE` line), `sel 1|2` (only with a second ACT),
+`reset X`, `cycle X`, `hold X`, `release X` (X is A, B, C or ACT), `safe-now` (asserts the `SAFE` line), `sel 1|2` (only with a second ACT), `adopt X` / `unadopt X` (only with the ring re-homing: hold the computer that hosts IMU X in reset, then assert or release its `ADOPT` line),
 `status`. Each is answered and logged with the supervisor's time. There is no authentication: the supervisor's USB port is a physical
 port on the bench, and the PC is a trusted peer (ADR-019's key protects the bus, not this). This is the rig's equivalent of the hardware
 commands in the lecture that bypass flight software.
