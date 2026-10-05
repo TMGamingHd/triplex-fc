@@ -133,6 +133,10 @@ struct Result {
   tfc::SafeCause safe_cause = tfc::SafeCause::None;  // why, the first time
   double spread_at_safe_deg = 0.0;        // the command spread of the frame ACT went to Safe
   uint32_t frames_over_tol = 0U;          // frames in which the commands differed by more than ACT's agreement tolerance
+  uint32_t resyncs_adopted = 0U;          // state resynchronisations a computer adopted (counted per computer)
+  uint32_t resyncs_skipped = 0U;          // ... that a computer could not do (too few complete states, or no agreement)
+  uint32_t corrections_changed = 0U;      // adoptions that changed a computer's own state in any bit
+  uint32_t corrections_large = 0U;        // adoptions that found a computer's own state far from the vote
 };
 
 struct Loop {
@@ -148,6 +152,9 @@ struct Loop {
   bool sensor_fault_b = false;               // node B's gyro reads 15 dps too much
   float frame_loss_prob = 0.0F;              // the chance that a receiver does not get a given sensor frame of another computer in a frame (a late or lost frame): TS-16
   uint32_t loss_seed = 77U;
+  uint32_t resync_period = 0U;               // the replicas exchange their state in the last frame of every period and adopt the vote (TS-16 option C); 0: never
+  tfc::resync::Config resync;
+  uint32_t corrupt_b_at = 0xFFFFFFFFU;       // at this frame (after its step) node B's attitude state is corrupted by about 2 degrees: a real estimator fault
 };
 
 inline Result run(const Loop& lp) {
@@ -238,6 +245,51 @@ inline Result run(const Loop& lp) {
       }
       r.max_command_spread_deg = std::fmax(r.max_command_spread_deg, frame_spread);
       r.frames_over_tol += frame_spread > static_cast<double>(tfc::ActConfig{}.tol_deg) ? 1U : 0U;
+    }
+    if (lp.corrupt_b_at == k) {
+      tfc::resync::SharedState bad = ff[1].shared_state();
+      bad.w[tfc::resync::kQuatFirst + 1U] = static_cast<int16_t>(bad.w[tfc::resync::kQuatFirst + 1U] + 600);
+      (void)ff[1].adopt_state(bad);
+    }
+    if (lp.resync_period != 0U && tfc::resync::due(k, lp.resync_period)) {
+      uint8_t healthy = 0U;
+      std::array<std::array<tfc::Frame, tfc::kResyncChunks>, 3> tx{};
+      for (uint8_t n = 0; n < 3U; ++n) {
+        if (alive[n]) {
+          healthy = static_cast<uint8_t>(healthy | (1U << n));
+          tx[n] = tfc::resync::pack_state(n, ff[n].shared_state(), seq);
+        }
+      }
+      std::array<tfc::resync::Outcome, 3> votes{};
+      for (unsigned n = 0; n < 3U; ++n) {
+        if (!alive[n]) {
+          continue;
+        }
+        tfc::resync::Collector col;
+        col.begin(k);
+        for (unsigned m = 0; m < 3U; ++m) {
+          for (unsigned c = 0; c < tfc::kResyncChunks && alive[m]; ++c) {
+            if (m != n && lp.frame_loss_prob > 0.0F && ((loss.uniform() + 1.0F) * 0.5F) < lp.frame_loss_prob) {
+              ++r.lost_frames;
+              continue;
+            }
+            (void)col.on_frame(tx[m][c]);
+          }
+        }
+        votes[n] = tfc::resync::vote(col, healthy, lp.resync);
+      }
+      for (unsigned n = 0; n < 3U; ++n) {  // adopt after every vote was taken: the shares are those of the end of this frame
+        if (!alive[n]) {
+          continue;
+        }
+        if (votes[n].adopted && ff[n].adopt_state(votes[n].state)) {
+          ++r.resyncs_adopted;
+          r.corrections_changed += ((votes[n].changed >> n) & 1U) != 0U ? 1U : 0U;
+          r.corrections_large += ((votes[n].large >> n) & 1U) != 0U ? 1U : 0U;
+        } else {
+          ++r.resyncs_skipped;
+        }
+      }
     }
     act.safe_request(false);
     if (pad_now && r.ready_at == 0U && ff[0].sensors_ok() && ff[1].sensors_ok() && ff[2].sensors_ok() && cal[0].ready() && cal[1].ready() && cal[2].ready()) {

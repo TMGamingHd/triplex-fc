@@ -11,6 +11,7 @@
 #include "tfc/controller.hpp"
 #include "tfc/estimator.hpp"
 #include "tfc/protocol.hpp"
+#include "tfc/resync.hpp"
 
 namespace tfc {
 
@@ -58,6 +59,19 @@ class FlightFunction {
     Command c = controller_.step(estimator_.attitude(), guidance_.at(idx), kFramePeriodS);
     c.state_digest = static_cast<uint16_t>(estimator_.digest() ^ controller_.digest());
     return c;
+  }
+
+  // The state resynchronisation (docs/RESYNC.md): this computer's state in the form the replicas exchange, and the adoption of the voted one. False if the voted state is not usable.
+  [[nodiscard]] resync::SharedState shared_state() const noexcept { return resync::make_shared(estimator_.state(), controller_.state()); }
+  bool adopt_state(const resync::SharedState& s) noexcept {
+    AttitudeEstimator::State e = estimator_.state();
+    Controller::State c = controller_.state();
+    if (!resync::make_state(s, estimator_.steps(), e, c)) {
+      return false;
+    }
+    estimator_.set_state(e);
+    controller_.set_state(c);
+    return true;
   }
 
   [[nodiscard]] const AttitudeEstimator& estimator() const noexcept { return estimator_; }

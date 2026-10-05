@@ -20,6 +20,7 @@ constexpr uint32_t kCmdBase = 0x200;    // + node: per-node control command
 constexpr uint32_t kActOut = 0x300;     // voted output + vote status from ACT
 constexpr uint32_t kHeartbeat = 0x400;  // + node: health / mode flags (protocol v2: see Heartbeat)
 constexpr uint32_t kState = 0x410;      // + node: strike counts and the last accepted command counter (FDIR-041)
+constexpr uint32_t kResync = 0x420;     // + 4 * node + chunk: the replicas' estimator and controller state, in 4 frames of 3 words, once per resync period (docs/RESYNC.md)
 constexpr uint32_t kSim = 0x500;        // simulator <-> flight bus gateway: the range 0x500 to 0x50F (kSimLast)
 constexpr uint32_t kSimRates = 0x501;      // simulator: sensor-frame body rates, as a gyro frame
 constexpr uint32_t kSimAccel = 0x502;      // simulator: sensor-frame accelerometer input, as an accel frame
@@ -516,6 +517,45 @@ inline DecodedStateShare unpack_state_share(const Frame& f) noexcept {
   }
   d.share.strikes = {static_cast<uint8_t>(f.data[0] & 0xFU), static_cast<uint8_t>((f.data[0] >> 4U) & 0xFU), static_cast<uint8_t>(f.data[1] & 0xFU)};
   d.share.command_counter = f.data[2];
+  d.seq = f.data[6];
+  d.ok = true;
+  return d;
+}
+
+// ---- State resynchronisation (0x420 + 4 * node + chunk): one quarter of a node's shared state per frame (docs/RESYNC.md) ----
+// Three signed 16-bit words per frame (bytes 0 to 5); the sequence byte is the low byte of the frame number the state belongs to, like the sensor frames, so a late chunk of an earlier cycle is not mixed in.
+constexpr unsigned kResyncChunks = 4U;
+constexpr uint32_t kResyncIds = 3U * kResyncChunks;
+
+struct DecodedResync {
+  uint8_t node = 0U;
+  uint8_t chunk = 0U;
+  std::array<int16_t, 3> words{};
+  uint8_t seq = 0U;
+  bool ok = false;
+};
+
+inline Frame pack_resync(uint8_t node, uint8_t chunk, const std::array<int16_t, 3>& words, uint8_t seq) noexcept {
+  Frame f;
+  f.id = id::kResync + (kResyncChunks * node) + chunk;
+  for (unsigned i = 0; i < 3U; ++i) {
+    detail::put16(f, 2U * i, words[i]);
+  }
+  detail::seal(f, seq);
+  return f;
+}
+
+inline DecodedResync unpack_resync(const Frame& f) noexcept {
+  DecodedResync d;
+  if (f.id < id::kResync || f.id >= id::kResync + kResyncIds || !detail::check(f)) {
+    return d;
+  }
+  const uint32_t k = f.id - id::kResync;
+  d.node = static_cast<uint8_t>(k / kResyncChunks);
+  d.chunk = static_cast<uint8_t>(k % kResyncChunks);
+  for (unsigned i = 0; i < 3U; ++i) {
+    d.words[i] = detail::get16(f, 2U * i);
+  }
   d.seq = f.data[6];
   d.ok = true;
   return d;

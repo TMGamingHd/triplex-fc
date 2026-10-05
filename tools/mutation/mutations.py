@@ -65,7 +65,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "phase_duplicates_accepted": ("protocol.hpp", "    if ((seen_ & bit) != 0U) {\n      return FrameTiming::Bad;", "    if (false) {\n      return FrameTiming::Bad;"),
     "phase_future_numbers_look_late": ("protocol.hpp", "static_cast<uint8_t>(static_cast<uint8_t>(frame_no & 0xFFU) - seq);", "static_cast<uint8_t>(seq - static_cast<uint8_t>(frame_no & 0xFFU));"),
     "phase_damaged_frame_leaves_its_slot_empty": ("redundancy.hpp", "      phase_[node][stream].note_damaged();\n", ""),
-    "phase_frame_counter_not_advanced": ("redundancy.hpp", "    ++frame_no_;\n    return rep;", "    return rep;"),
+    "phase_frame_counter_not_advanced": ("redundancy.hpp", "    ++frame_no_;\n    resync_large_ = 0U;", "    resync_large_ = 0U;"),
     "phase_begin_frame_ignores_the_number": ("redundancy.hpp", "    frame_no_ = frame_no;\n    begin_frame();", "    begin_frame();"),
     # ---- ground commands (ADR-019) ----
     "ground_tag_not_checked": ("redundancy.hpp", "if (!ground_authentic(f, cfg_.ground_key)) {", "if (false) {"),
@@ -91,7 +91,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     # ---- configuration and self protection (ADR-015) ----
     "config_not_sanitised": ("redundancy.hpp", "  errors = validate_config(in);", "  errors = 0U;"),
     "tolerance_not_validated": ("redundancy.hpp", "    if (!detail::finite_positive(c.tol[i])) {\n      e |= cfgerr::kTolerance;", "    if (false) {\n      e |= cfgerr::kTolerance;"),
-    "persistence_not_validated": ("redundancy.hpp", "if (c.persist_m < 1U || c.persist_m > c.persist_n || c.persist_n > 32U) {", "if (false) {"),
+    "persistence_not_validated": ("redundancy.hpp", "if (c.persist_m < 1U || c.persist_m > c.persist_n || c.persist_n > 32U || c.digest_persist_frames < 1U) {", "if (false) {"),
     "scrub_ignores_node_state": ("redundancy.hpp", "      if (!state_valid(n)) {\n        set_state(n, NodeState::Latched);", "      if (false) {\n        set_state(n, NodeState::Latched);"),
     "scrub_ignores_safe_flag": ("redundancy.hpp", "if (!safe_.intact() || safe_.get() > 1U) {", "if (false) {"),
     "scrub_ignores_config": ("redundancy.hpp", "    if (!repair_config()) {", "    if (false && !repair_config()) {"),
@@ -192,13 +192,43 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "sup_watch_behind_not_detected": ("sup/mission_clock.hpp", "if (got + allow < expect) {", "if (false) {"),
     "sup_watch_ignores_the_recovery_slack": ("sup/mission_clock.hpp", " + clock_slack(clock);", ";"),
     "sup_watch_run_survives_a_clock_reset": ("sup/mission_clock.hpp", "      bad_run_ = 0U;\n      return Verdict::NotLaunched;", "      return Verdict::NotLaunched;"),
+    # ---- state resynchronisation (docs/RESYNC.md, TS-16 option C): names start with "rs_" ----
+    "rs_median_returns_the_first": ("resync.hpp", "return c < lo ? lo : (c > hi ? hi : c);", "return a;"),
+    "rs_pair_mean_uses_the_first": ("resync.hpp", "(static_cast<int32_t>(s[0].w[wd]) + static_cast<int32_t>(s[1].w[wd])) / 2", "static_cast<int32_t>(s[0].w[wd])"),
+    "rs_quorum_not_required": ("resync.hpp", "if (voters != (healthy & 0x07U)) {", "if (false) {"),
+    "rs_adopt_ignores_the_healthy_mask": ("resync.hpp", "col.complete() & healthy & 0x07U", "col.complete() & 0x07U"),
+    "rs_pair_tolerance_ignored": ("resync.hpp", "(wd == kMeta && d != 0) || (wd != kMeta && d > static_cast<int32_t>(pair_tol(cfg, wd)))", "(wd == kMeta && d != 0)"),
+    "rs_pair_meta_unchecked": ("resync.hpp", "(wd == kMeta && d != 0) || ", ""),
+    "rs_pair_limit_exclusive": ("resync.hpp", "d > static_cast<int32_t>(pair_tol(cfg, wd))", "d >= static_cast<int32_t>(pair_tol(cfg, wd))"),
+    "rs_large_limit_inclusive": ("resync.hpp", "d > static_cast<int32_t>(large_tol(cfg, wd))", "d >= static_cast<int32_t>(large_tol(cfg, wd))"),
+    "rs_large_includes_the_meta_word": ("resync.hpp", "(wd != kMeta && d > static_cast<int32_t>(large_tol(cfg, wd)))", "d > static_cast<int32_t>(large_tol(cfg, wd))"),
+    "rs_changed_never_reported": ("resync.hpp", "changed = changed || d != 0;", "changed = false;"),
+    "rs_stale_chunks_accepted": ("resync.hpp", "if (!d.ok || d.seq != frame_low_) {", "if (!d.ok) {"),
+    "rs_incomplete_state_counts_as_whole": ("resync.hpp", "seen_[n] == 0x0FU", "seen_[n] != 0U"),
+    "rs_quaternion_sign_not_normalised": ("resync.hpp", "const float sign = e.q[0] < 0.0F ? -1.0F : 1.0F;", "const float sign = 1.0F;"),
+    "rs_quaternion_not_renormalised": ("resync.hpp", "e.q[i] = q[i] * inv;", "e.q[i] = q[i];"),
+    "rs_unusable_quaternion_accepted": ("resync.hpp", "if (!(n2 > 0.5F) || !(n2 < 2.0F)) {", "if (false) {"),
+    "rs_step_count_high_bits_lost": ("resync.hpp", "e.steps = (steps_now & 0xFFFFFF00U) | (meta & 0xFFU);", "e.steps = (meta & 0xFFU);"),
+    "rs_schedule_off_by_one": ("resync.hpp", "(frame % period) == period - 1U", "(frame % period) == 0U"),
+    "rs_not_a_number_shared_as_full_scale": ("resync.hpp", "return q > 0.0F ? int16_t{32767} : int16_t{0};", "return int16_t{32767};"),
+    "rs_digest_persistence_ignored": ("redundancy.hpp", "if (digest_run_ < cfg_.digest_persist_frames) {", "if (false) {"),
+    "rs_digest_persistence_off_by_one": ("redundancy.hpp", "if (digest_run_ < cfg_.digest_persist_frames) {", "if (digest_run_ <= cfg_.digest_persist_frames) {"),
+    "rs_digest_run_not_reset": ("redundancy.hpp", ": uint16_t{0};\n    if (digest_run_", ": digest_run_;\n    if (digest_run_"),
+    "rs_correction_not_a_reason": ("redundancy.hpp", "if (((resync_large_ >> n) & 1U) != 0U) {\n        add_reason(rep, n, reason::kResync);", "if (false) {\n        add_reason(rep, n, reason::kResync);"),
+    "rs_correction_sticky": ("redundancy.hpp", "    resync_large_ = 0U;\n    return rep;", "    return rep;"),
+    "rs_correction_not_counted": ("redundancy.hpp", "    counters_.state_corrections += popcount32(large_mask & 0x07U);\n", ""),
+    "rs_resync_frames_out_of_schedule": ("redundancy.hpp", "f.id < id::kResync + kResyncIds);", "f.id < id::kResync + 3U);"),
+    "rs_digest_persistence_not_validated": ("redundancy.hpp", " || c.digest_persist_frames < 1U) {", ") {"),
+    "rs_digest_persistence_not_in_the_config_digest": ("redundancy.hpp", "  mix(c.digest_persist_frames);\n", ""),
+    "rs_adopt_ignores_an_unusable_state": ("flight.hpp", "if (!resync::make_state(s, estimator_.steps(), e, c)) {", "if (false) {"),
+    "rs_chunk_ids_swapped": ("protocol.hpp", "f.id = id::kResync + (kResyncChunks * node) + chunk;", "f.id = id::kResync + (kResyncChunks * chunk) + node;"),
 }
 
 # Mutants that only the C++ unit tests can see, with the reason: the campaign's peers cannot produce the input that
 # distinguishes them from the real code.
 CAMPAIGN_SKIP = {
     # the supervisor's code is not in the campaign's reach (the campaign drives the flight bus)
-    *(n for n in MUTATIONS if n.startswith("sup_")),
+    *(n for n in MUTATIONS if n.startswith(("sup_", "rs_"))),  # the resynchronisation is not in the campaign's reach (its peers do not run the flight function)
     # the launch sequence is not in the campaign's reach (its peers send no mission frame and no launch command)
     "mission_follower_ignores_sync_before_t_zero", "mission_flying_follower_adopts_sync", "mission_disagreement_not_reported", "mission_not_counted_through_a_gap", "mission_count_wraps_at_the_largest_value", "launch_by_a_follower", "launch_twice", "scrub_after_t_zero", "scrub_by_a_follower", "mission_countdown_boundary", "mission_flight_frames_off_by_one", "gate_accepts_two_healthy_nodes", "gate_accepts_a_node_not_ready", "gate_ignores_the_safe_request", "gate_ignores_act", "launch_needs_no_arm", "heartbeat_ready_not_packed",
     # the pad phase is not in the campaign's reach (its peers do not run the flight function)

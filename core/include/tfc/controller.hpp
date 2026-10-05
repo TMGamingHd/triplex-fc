@@ -174,6 +174,17 @@ class Controller {
     return c;
   }
 
+  // What the controller carries from one step to the next (the gains come from the schedule): exchanged between the replicas for the state resynchronisation (docs/RESYNC.md).
+  struct State {
+    std::array<float, 2> out{0.0F, 0.0F};
+    std::array<float, 2> integ{0.0F, 0.0F};
+  };
+  [[nodiscard]] State state() const noexcept { return State{out_, integ_}; }
+  void set_state(const State& s) noexcept {
+    out_ = s.out;
+    integ_ = s.integ;
+  }
+
   // A 16-bit fingerprint of the quantised outputs and integrators, to be combined with the estimator's digest.
   [[nodiscard]] uint16_t digest() const noexcept {
     uint32_t h = 2166136261U;
