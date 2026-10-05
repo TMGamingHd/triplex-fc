@@ -483,7 +483,7 @@ int main() {
       const tfc::Frame a = tfc::pack_accel(kNodeId, accel, seq);
       mgr.on_frame(g);
       mgr.on_frame(a);
-      if (kFlightFunction) {
+      if (kFlightFunction && !drop_peers) {  // (the test aid also withholds this computer's own sensor frames, so that its estimator holds its rates)
         (void)g_flight.on_frame(g);
         (void)g_flight.on_frame(a);
       }

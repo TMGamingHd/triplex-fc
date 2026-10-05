@@ -70,12 +70,12 @@ config TFC_RESYNC_GROUP
 	  golden release) is left out with 0x03 so that the resync does not erase the differences it exists to show (docs/RESYNC.md section 6).
 
 config TFC_TEST_DROP_PEERS_FIRST
-	int "Test knob: first frame in which this computer withholds its peers' sensor frames from the flight function"
+	int "Test knob: first frame in which this computer withholds every sensor frame from its flight function"
 	default 0
 	help
 	  A test aid, off at 0 together with the next one. From the frame with this SYNC number, for TFC_TEST_DROP_PEERS_FRAMES frames, this computer does not give
-	  the sensor frames of the other computers to its flight function (the manager still sees them), so its estimator integrates on its own sensor only and the
-	  replicas diverge deterministically. Used by the live resynchronisation test (sim/tests/test_live_resync.py); never set in a flight build.
+	  any sensor frame, its peers' or its own, to its flight function (the manager still sees them), so its consensus has no trustworthy gyro, its estimator holds its
+	  rates and the replicas diverge deterministically. Used by the live resynchronisation test (sim/tests/test_live_resync.py); never set in a flight build.
 
 config TFC_TEST_DROP_PEERS_FRAMES
 	int "Test knob: how many frames the peers' sensor frames are withheld"

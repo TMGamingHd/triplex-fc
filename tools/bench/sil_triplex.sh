@@ -3,8 +3,9 @@
 # The software triplex on one vcan0: three instances of the real firmware (native_sim), nodes A, B and C, with nothing from Python but a monitor.
 #   tools/bench/sil_triplex.sh --build [--flight] [--sim-imu] [--launch]   build the three flight computers into build/native_sim, native_sim_n1, native_sim_n2,
 #                                                               and the actuator node into build/act_native
-#   tools/bench/sil_triplex.sh --build-drop                     one more flight image, build/flight_b_drop: node B withholds its peers' sensor frames from its flight function in
+#   tools/bench/sil_triplex.sh --build-drop                     one more flight image, build/flight_b_drop: node B withholds every sensor frame from its flight function in
 #                                                               frames 370 to 398, so the replicas diverge deterministically (the live resync test)
+#   tools/bench/sil_triplex.sh --build-bias                     one more flight image, build/flight_b_bias: node B's gyro reads 3 dps too much (the live sensor-split test)
 #   tools/bench/sil_triplex.sh --test                           run the live test (sim/tests/test_live_triplex.py) against them
 #   tools/bench/sil_triplex.sh --closed-loop [seconds]          the closed loop: the loop_* images, ACT and the vehicle simulator (build/host/tfc_simd) on vcan0
 #   tools/bench/sil_triplex.sh --run [seconds]                  run the four for a while and print each node's console (default 10 s)
@@ -44,8 +45,12 @@ case "$mode" in
     # shellcheck disable=SC1091
     . firmware/env.sh
     west build -p auto -b native_sim/native/64 firmware/app -d build/flight_b_drop -- -DCONFIG_TFC_NODE_ID=1 -DCONFIG_TFC_FLIGHT_FUNCTION=y -DCONFIG_TFC_TEST_DROP_PEERS_FIRST=370 -DCONFIG_TFC_TEST_DROP_PEERS_FRAMES=29 ;;
+  --build-bias)
+    # shellcheck disable=SC1091
+    . firmware/env.sh
+    west build -p auto -b native_sim/native/64 firmware/app -d build/flight_b_bias -- -DCONFIG_TFC_NODE_ID=1 -DCONFIG_TFC_FLIGHT_FUNCTION=y -DCONFIG_TFC_TEST_GYRO_BIAS_MDPS=3000 ;;
   --test)
-    (cd sim && python3 -m unittest tests.test_live_triplex tests.test_live_closed_loop tests.test_live_resync -v) ;;
+    (cd sim && python3 -m unittest tests.test_live_triplex tests.test_live_closed_loop tests.test_live_resync tests.test_live_split -v) ;;
   --closed-loop)
     tmp="$(mktemp -d)"
     trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
