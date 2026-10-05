@@ -50,6 +50,7 @@ constexpr bool kResync = kFlightFunction && kResyncPeriod != 0U && ((kResyncGrou
 
 constexpr uint32_t kDropFirst = CONFIG_TFC_TEST_DROP_PEERS_FIRST;    // test aid (docs/RESYNC.md): withhold the peers' sensor frames from the flight function
 constexpr uint32_t kDropFrames = CONFIG_TFC_TEST_DROP_PEERS_FRAMES;
+constexpr uint32_t kTestT0At = CONFIG_TFC_TEST_T0_AT_FRAMES_TO_ZERO;
 constexpr uint32_t kTestHangAt = CONFIG_TFC_TEST_HANG_AT_FRAME;      // bench aids, all off by default (docs/procedures/P-S2-03, P-S3-01)
 constexpr int kTestCmdOffsetMdeg = CONFIG_TFC_TEST_CMD_OFFSET_MDEG;
 constexpr int kTestGyroBiasMdps = CONFIG_TFC_TEST_GYRO_BIAS_MDPS;
@@ -604,6 +605,13 @@ int main() {
             printk("[frame %u] SCRUB REFUSED: not in the countdown\n", k);
           }
         }
+      }
+      const bool t0_level = lines.t0() || (kTestT0At != 0U && tfc::mission::in_countdown(tick.mission) && tfc::mission::frames_to_zero(tick.mission) <= kTestT0At);
+      const tfc::SyncClock::T0 t0_edge = sync_clock.t0_line(t0_level);  // the supervisor's T-zero: the sync master starts the T-zero frame with the next SYNC
+      if (t0_edge == tfc::SyncClock::T0::Latched) {
+        printk("[frame %u] T0 LINE: the supervisor's T-zero; the next frame is T-zero\n", k);
+      } else if (t0_edge == tfc::SyncClock::T0::TooEarly) {
+        printk("[frame %u] T0 LINE REFUSED: %u frames before the countdown ends\n", k, static_cast<unsigned>(tfc::mission::frames_to_zero(tick.mission)));
       }
       if (tick.master && tfc::mission::in_countdown(tick.mission) && nogo_mask != 0U && sync_clock.scrub()) {
         printk("[frame %u] COUNTDOWN SCRUBBED, no-go: %s\n", k, tfc::nogo_text(nogo_mask));

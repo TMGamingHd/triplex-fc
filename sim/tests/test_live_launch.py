@@ -30,9 +30,7 @@ ACT_BIN = _bin("TFC_ACT_BIN", "build/act_native/zephyr/zephyr.exe")
 SIM_BIN = _bin("TFC_SIMD_BIN", "build/host/tfc_simd")
 
 
-@unittest.skipIf(None in FC_BINS or ACT_BIN is None or SIM_BIN is None, "the launch images or tfc_simd are not built (tools/bench/sil_triplex.sh --build --launch)")
-@unittest.skipIf(not Path("/sys/class/net/vcan0").exists(), "vcan0 not present (run sim/scripts/setup_vcan.sh)")
-class LiveLaunch(unittest.TestCase):
+class LaunchRig(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.procs = {}
@@ -107,6 +105,11 @@ class LiveLaunch(unittest.TestCase):
                 if m.group(1) not in allowed:
                     self.skipTest(f"the machine was too loaded: node {m.group(1)} was latched out ({m.group(2)})")
 
+
+
+@unittest.skipIf(None in FC_BINS or ACT_BIN is None or SIM_BIN is None, "the launch images or tfc_simd are not built (tools/bench/sil_triplex.sh --build --launch)")
+@unittest.skipIf(not Path("/sys/class/net/vcan0").exists(), "vcan0 not present (run sim/scripts/setup_vcan.sh)")
+class LiveLaunch(LaunchRig):
     def test_a_launch_before_the_calibration_is_ready_is_refused_and_the_vehicle_stays_on_the_pad(self):
         self.start_all()
         self.pump(4.0)  # the computers are up, the calibration has not had its 10 s
@@ -192,3 +195,41 @@ class LiveLaunch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+T0_BINS = [_bin(f"TFC_LAUNCH_T0_BIN_{n.upper()}", f"build/launch_t0_{n}/zephyr/zephyr.exe") for n in "abc"]
+
+
+@unittest.skipIf(None in T0_BINS or ACT_BIN is None or SIM_BIN is None, "the T0 images or tfc_simd are not built (tools/bench/sil_triplex.sh --build-t0, and --build for the actuator)")
+@unittest.skipIf(not Path("/sys/class/net/vcan0").exists(), "vcan0 not present (run sim/scripts/setup_vcan.sh)")
+class LiveLaunchT0Line(LaunchRig):
+    """The supervisor's T0 line (simulated by a build knob: it rises 40 frames before the end of the countdown): the sync master takes it as T-zero, all three agree."""
+
+    def start_all(self):
+        self.start("sim", [SIM_BIN, "--iface", "vcan0", "--hold", "--quiet"])
+        time.sleep(0.4)
+        for n, b in zip("abc", T0_BINS):
+            self.start(n, [b])
+        self.start("act", [ACT_BIN])
+
+    def test_the_t0_edge_ends_the_countdown_in_the_last_second_and_every_computer_agrees_on_the_frame(self):
+        self.start_all()
+        self.assertTrue(self.wait_go(40.0), f"never go: {self.obs.verdict(time.monotonic())}")
+        self.send_launch()
+        t_start = time.monotonic()
+        while time.monotonic() - t_start < 14.0 and not P.mission_in_flight(self.obs.mission):
+            self.pump(0.1)
+        self.assertTrue(P.mission_in_flight(self.obs.mission), self.log("a")[-400:])
+        self.pump(1.0)
+        self.skip_if_starved()
+        self.assertIn("T0 LINE: the supervisor's T-zero", self.log("a"), self.log("a")[-600:])
+        spans = []
+        for n in "abc":
+            text = self.log(n)
+            start = re.search(r"\[frame (\d+)\] COUNTDOWN", text)
+            zero = re.search(r"\[frame (\d+)\] T-ZERO", text)
+            self.assertTrue(start and zero, text[-600:])
+            spans.append((int(start.group(1)), int(zero.group(1))))
+        self.assertEqual(len({s for s in spans}), 1, f"the computers disagree on the frames of the countdown and T-zero: {spans}")
+        length = spans[0][1] - spans[0][0]
+        self.assertTrue(955 <= length <= 965, f"the countdown was {length} frames: the T0 edge should have ended it about 40 frames early")

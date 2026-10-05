@@ -107,6 +107,26 @@ class SyncClock {
     return true;
   }
 
+  // The supervisor's T0 line (docs/LAUNCH_SEQUENCE.md section 2): call once per frame with the level of the line. Only the sync master acts. During the last `kT0Window` frames of the
+  // countdown a rising edge (its second high sample in a row, after the line has been seen low; a line that stays high gives one edge, not one per frame) is T-zero: the next frame is the T-zero frame. An edge earlier than that is refused, and a line
+  // that is high from the start (stuck, or a supervisor that fired early) is never an edge, so a fault on the line cannot shorten the countdown to less than its last second; the
+  // countdown itself is the fallback when no edge comes.
+  enum class T0 : uint8_t { None = 0, Latched, TooEarly };
+  static constexpr uint16_t kT0Window = 100U;
+  [[nodiscard]] T0 t0_line(bool level) noexcept {
+    t0_high_run_ = level ? (t0_high_run_ < 3U ? static_cast<uint8_t>(t0_high_run_ + 1U) : t0_high_run_) : 0U;
+    const bool rising = t0_high_run_ == 2U && t0_low_seen_;  // exactly the second high sample: one edge, however long the line stays high
+    t0_low_seen_ = t0_low_seen_ || !level;
+    if (!master_ || !mission::in_countdown(mission_) || !rising) {
+      return T0::None;
+    }
+    if (mission::frames_to_zero(mission_) > kT0Window) {
+      return T0::TooEarly;
+    }
+    mission_ = static_cast<uint16_t>(mission::kCountdownFrames + 1U);
+    return T0::Latched;
+  }
+
   // The mission frame the next frame will carry.
   [[nodiscard]] uint16_t mission_frame() const noexcept { return mission_; }
 
@@ -122,6 +142,8 @@ class SyncClock {
   uint8_t missed_ = 0U;
   uint32_t next_ = 0U;
   uint16_t mission_ = 0U;
+  uint8_t t0_high_run_ = 0U;  // consecutive high samples of the T0 line (saturates at 3)
+  bool t0_low_seen_ = false;  // the line has been low since this node started
 };
 
 }  // namespace tfc

@@ -322,6 +322,16 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "rel_set_release_unbounded": ("redundancy.hpp", "    if (node < kNodes) {\n      release_[node] = id;", "    if (true) {\n      release_[node] = id;"),
     "rel_version_factor_below_one_allowed": ("redundancy.hpp", "if (!(c.version_tol_factor >= 1.0F) ||", "if (!(c.version_tol_factor >= 0.0F) ||"),
     "rel_config_digest_ignores_the_factor": ("redundancy.hpp", "  mix(bits(c.version_tol_factor));\n", ""),
+    "t0_one_sample_is_an_edge": ("sync_clock.hpp", "t0_high_run_ == 2U && t0_low_seen_", "t0_high_run_ >= 1U && t0_low_seen_"),
+    "t0_edge_repeats_while_high": ("sync_clock.hpp", "(t0_high_run_ < 3U ?", "(t0_high_run_ < 2U ?"),
+    "t0_not_armed_by_a_low_level": ("sync_clock.hpp", "t0_high_run_ == 2U && t0_low_seen_", "t0_high_run_ == 2U"),
+    "t0_low_never_remembered": ("sync_clock.hpp", "t0_low_seen_ = t0_low_seen_ || !level;", "t0_low_seen_ = t0_low_seen_;"),
+    "t0_a_follower_acts": ("sync_clock.hpp", "if (!master_ || !mission::in_countdown(mission_) || !rising) {", "if (!mission::in_countdown(mission_) || !rising) {"),
+    "t0_acts_outside_a_countdown": ("sync_clock.hpp", "if (!master_ || !mission::in_countdown(mission_) || !rising) {", "if (!master_ || !rising) {"),
+    "t0_window_not_enforced": ("sync_clock.hpp", "if (mission::frames_to_zero(mission_) > kT0Window) {", "if (false) {"),
+    "t0_window_one_frame_short": ("sync_clock.hpp", "if (mission::frames_to_zero(mission_) > kT0Window) {", "if (mission::frames_to_zero(mission_) >= kT0Window) {"),
+    "t0_one_frame_early": ("sync_clock.hpp", "mission_ = static_cast<uint16_t>(mission::kCountdownFrames + 1U);\n    return T0::Latched;", "mission_ = static_cast<uint16_t>(mission::kCountdownFrames);\n    return T0::Latched;"),
+    "t0_early_edge_not_reported": ("sync_clock.hpp", "return T0::TooEarly;", "return T0::None;"),
     "su_rtc_century_leap_rule": ("sup/rtc.hpp", "return (y % 4U == 0U && y % 100U != 0U) || y % 400U == 0U;", "return y % 4U == 0U;"),
     "su_rtc_oscillator_stop_ignored": ("sup/rtc.hpp", "if ((status & 0x80U) != 0U) {", "if (false) {"),
     "su_rtc_twelve_hour_mode_accepted": ("sup/rtc.hpp", "if ((r[2] & 0x40U) != 0U) {", "if (false) {"),
@@ -335,7 +345,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
 # distinguishes them from the real code.
 CAMPAIGN_SKIP = {
     # the supervisor's code is not in the campaign's reach (the campaign drives the flight bus)
-    *(n for n in MUTATIONS if n.startswith(("sup_", "rs_", "sh_", "split_", "su_", "rel_"))),  # the supervisor, the resynchronisation and the sensor split are not in the campaign's reach (it runs the manager with the split off)
+    *(n for n in MUTATIONS if n.startswith(("sup_", "rs_", "sh_", "split_", "su_", "rel_", "t0_"))),  # the supervisor, the resynchronisation and the sensor split are not in the campaign's reach (it runs the manager with the split off)
     # the launch sequence is not in the campaign's reach (its peers send no mission frame and no launch command)
     "mission_follower_ignores_sync_before_t_zero", "mission_flying_follower_adopts_sync", "mission_disagreement_not_reported", "mission_not_counted_through_a_gap", "mission_count_wraps_at_the_largest_value", "launch_by_a_follower", "launch_twice", "scrub_after_t_zero", "scrub_by_a_follower", "mission_countdown_boundary", "mission_flight_frames_off_by_one", "gate_accepts_two_healthy_nodes", "gate_accepts_a_node_not_ready", "gate_ignores_the_safe_request", "gate_ignores_act", "launch_needs_no_arm", "heartbeat_ready_not_packed",
     # the pad phase is not in the campaign's reach (its peers do not run the flight function)

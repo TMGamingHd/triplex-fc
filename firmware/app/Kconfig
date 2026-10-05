@@ -96,6 +96,13 @@ config TFC_TEST_HANG_AT_FRAME
 	  A bench aid for the supervisor's procedure (P-S2-03): from the frame with this SYNC number the node no longer raises its KICK line, while everything else
 	  (frames, heartbeat, watchdog) goes on, so the supervisor has to be the one that acts. Never set in a flight build.
 
+config TFC_TEST_T0_AT_FRAMES_TO_ZERO
+	int "Test knob: the T0 line rises when this many frames remain to T-zero (0: off)"
+	default 0
+	help
+	  A bench aid for the launch procedure on a board without the supervisor: the line is read as high from the frame in the countdown that has this many frames left, which stands in
+	  for the supervisor's edge (the sync master accepts it only in the last second, `SyncClock::kT0Window`). Never set in a flight build.
+
 config TFC_TEST_CMD_OFFSET_MDEG
 	int "Test knob: milli-degrees added to this computer's pitch command (0: off)"
 	default 0

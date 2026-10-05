@@ -185,12 +185,21 @@ class Lines {
     configure(frame_, GPIO_OUTPUT_INACTIVE);
     configure(kick_, GPIO_OUTPUT_INACTIVE);
     configure(adopt_, GPIO_INPUT);
+#if DT_NODE_HAS_PROP(DT_NODELABEL(tfc_lines), t0_gpios)
+    configure(t0_, GPIO_INPUT);
+#endif
     configure(id0_, GPIO_INPUT);
     configure(id1_, GPIO_INPUT);
   }
   void frame(bool on) { set(frame_, on); }
   void kick(bool on) { set(kick_, on); }
   [[nodiscard]] bool adopt() const { return gpio_pin_get_dt(&adopt_) > 0; }
+  // The supervisor's T0 line (docs/LAUNCH_SEQUENCE.md section 2): high from the supervisor's T-zero on. A board without the pin reads it as low for ever.
+#if DT_NODE_HAS_PROP(DT_NODELABEL(tfc_lines), t0_gpios)
+  [[nodiscard]] bool t0() const { return gpio_pin_get_dt(&t0_) > 0; }
+#else
+  [[nodiscard]] bool t0() const { return false; }
+#endif
   // The node id on the two straps (a strap tied to ground reads as 1), or -1 if a pin cannot be read.
   [[nodiscard]] int node_id() const {
     const int b0 = gpio_pin_get_dt(&id0_);
@@ -209,6 +218,9 @@ class Lines {
   gpio_dt_spec frame_ = GPIO_DT_SPEC_GET(DT_NODELABEL(tfc_lines), frame_gpios);
   gpio_dt_spec kick_ = GPIO_DT_SPEC_GET(DT_NODELABEL(tfc_lines), kick_gpios);
   gpio_dt_spec adopt_ = GPIO_DT_SPEC_GET(DT_NODELABEL(tfc_lines), adopt_gpios);
+#if DT_NODE_HAS_PROP(DT_NODELABEL(tfc_lines), t0_gpios)
+  gpio_dt_spec t0_ = GPIO_DT_SPEC_GET(DT_NODELABEL(tfc_lines), t0_gpios);
+#endif
   gpio_dt_spec id0_ = GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(tfc_lines), id_gpios, 0);
   gpio_dt_spec id1_ = GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(tfc_lines), id_gpios, 1);
 };
@@ -221,6 +233,7 @@ class Lines {
   void frame(bool) {}
   void kick(bool) {}
   [[nodiscard]] bool adopt() const { return false; }
+  [[nodiscard]] bool t0() const { return false; }
   [[nodiscard]] int node_id() const { return -1; }
 };
 
