@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Live: tfc_simd streams the vehicle's tilts to the Pico's serial port (docs/PICO.md). The port here is a pseudo-terminal that Python reads, so no board is needed; SYNC and
+"""Live: tfc_simd streams the vehicle's tilts to the Pico's serial port (docs/design/PICO.md). The port here is a pseudo-terminal that Python reads, so no board is needed; SYNC and
 ACT frames are sent on vcan0 by Python in place of the flight computers. Skipped unless build/host/tfc_simd exists and vcan0 does.
 """
 import os
@@ -71,7 +71,7 @@ class PicoStream(unittest.TestCase):
     def test_a_pitch_command_tilts_the_platform_the_way_the_gimbal_convention_says(self):
         platform, _ = self.run_stream(5.0)
         _, x, y = platform[-1]
-        self.assertGreater(y, 0.3, "a positive pitch command raises the tilt about Y (docs/VEHICLE_SIM.md)")
+        self.assertGreater(y, 0.3, "a positive pitch command raises the tilt about Y (docs/design/VEHICLE_SIM.md)")
         self.assertLess(abs(x), 0.2)
 
 

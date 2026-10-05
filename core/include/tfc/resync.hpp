@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// State resynchronisation (TS-16 option C, docs/RESYNC.md). The replicas' estimators and controllers are stateful: two computers that were given a different set of sensor
+// State resynchronisation (TS-16 option C, docs/design/RESYNC.md). The replicas' estimators and controllers are stateful: two computers that were given a different set of sensor
 // frames in one frame (one lost or late) compute different states, and the difference does not heal by itself. Every `period` frames each computer therefore broadcasts its state
 // (quantised, 12 words, in four frames) and every computer adopts the mid-value of the states it received, component by component. After an adoption all computers that got the same
 // shares hold the same bits.

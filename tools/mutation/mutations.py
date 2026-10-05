@@ -97,7 +97,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "scrub_ignores_config": ("redundancy.hpp", "    if (!repair_config()) {", "    if (false && !repair_config()) {"),
     "config_not_restored": ("redundancy.hpp", "      cfg_ = cfg_backup_;\n      cfg_digest_ = cfg_digest_backup_;", "      cfg_digest_ = cfg_digest_backup_;"),
     "queue_length_unchecked": ("redundancy.hpp", "if (!ensure(npending_ <= kMaxCommandsPerFrame, counters_.invariant_violations)) {", "if (false) {"),
-    # ---- the Pico: platform driver, injector, link, frame loop (docs/PICO_TESTS.md A5) ----
+    # ---- the Pico: platform driver, injector, link, frame loop (docs/verification/PICO_TESTS.md A5) ----
     "pico_travel_not_limited": ("platform_driver.hpp", "return v > cfg_.limit_deg ? cfg_.limit_deg : (v < -cfg_.limit_deg ? -cfg_.limit_deg : v);", "return v;"),
     "pico_travel_asymmetric": ("platform_driver.hpp", "(v < -cfg_.limit_deg ? -cfg_.limit_deg : v)", "(v < -cfg_.limit_deg - 5.0F ? -cfg_.limit_deg : v)"),
     "pico_rate_not_limited": ("platform_driver.hpp", "return d > step ? cur + step : (d < -step ? cur - step : goal);", "return goal;"),
@@ -138,7 +138,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     #  would be equivalent: the rejection itself is tested directly on the driver)
     "pico_app_y_servo_gets_x_map": ("pico_app.hpp", "hal_.set_servo_us(1U, cfg_.servo_y.pulse_us(platform_.output().y_deg));", "hal_.set_servo_us(1U, cfg_.servo_x.pulse_us(platform_.output().y_deg));"),
     "pico_app_status_flags_missing_link_lost": ("pico_app.hpp", "f = static_cast<uint8_t>(f | (link_lost_ ? pico::statusflag::kLinkLost : 0U));", "f = f;"),
-    # ---- the pad phase: per-IMU calibration and the mission state (docs/LAUNCH_SEQUENCE.md) ----
+    # ---- the pad phase: per-IMU calibration and the mission state (docs/design/LAUNCH_SEQUENCE.md) ----
     "cal_bias_not_frozen": ("imu_calibration.hpp", "      bias_ = mean_;  // frozen at the final mean\n", "\n"),
     "cal_applies_from_the_first_sample": ("imu_calibration.hpp", "if (n_ >= cfg_.apply_after) {", "if (true) {"),
     "cal_ready_ignores_spread": ("imu_calibration.hpp", "if (!(var <= cfg_.max_std_dps * cfg_.max_std_dps) || !(std::fabs(mean_.v[i]) <= cfg_.max_bias_dps)) {", "if (!(std::fabs(mean_.v[i]) <= cfg_.max_bias_dps)) {"),
@@ -151,7 +151,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "mission_schedules_ignore_the_flight_frame": ("flight.hpp", "const uint32_t idx = !mission_set_ ? frame_ : (pad_ ? 0U : flight_frame_);", "const uint32_t idx = frame_;"),
     "mission_schedules_run_on_the_pad": ("flight.hpp", "(pad_ ? 0U : flight_frame_)", "flight_frame_"),
     "mission_sensors_ok_ignores_the_attitude": ("flight.hpp", "return c.gyro_ok && c.accel_ok && estimator_.attitude().valid;", "return c.gyro_ok && c.accel_ok;"),
-    # ---- launch: mission time in SYNC, the launch commands, the gate (docs/LAUNCH_SEQUENCE.md) ----
+    # ---- launch: mission time in SYNC, the launch commands, the gate (docs/design/LAUNCH_SEQUENCE.md) ----
     "mission_follower_ignores_sync_before_t_zero": ("sync_clock.hpp", "if (!mission::in_flight(mission_)) {", "if (false) {"),
     "mission_flying_follower_adopts_sync": ("sync_clock.hpp", "} else if (mission_ != heard_mission) {\n        t.mission_disagrees = true;", "} else if (mission_ != heard_mission) {\n        mission_ = heard_mission;\n        t.mission_disagrees = true;"),
     "mission_disagreement_not_reported": ("sync_clock.hpp", "        t.mission_disagrees = true;\n      }", "      }"),
@@ -192,7 +192,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "sup_watch_behind_not_detected": ("sup/mission_clock.hpp", "if (got + allow < expect) {", "if (false) {"),
     "sup_watch_ignores_the_recovery_slack": ("sup/mission_clock.hpp", " + clock_slack(clock);", ";"),
     "sup_watch_run_survives_a_clock_reset": ("sup/mission_clock.hpp", "      bad_run_ = 0U;\n      return Verdict::NotLaunched;", "      return Verdict::NotLaunched;"),
-    # ---- state resynchronisation (docs/RESYNC.md, TS-16 option C): names start with "rs_" ----
+    # ---- state resynchronisation (docs/design/RESYNC.md, TS-16 option C): names start with "rs_" ----
     "rs_median_returns_the_first": ("resync.hpp", "return c < lo ? lo : (c > hi ? hi : c);", "return a;"),
     "rs_pair_mean_uses_the_first": ("resync.hpp", "(static_cast<int32_t>(s[0].w[wd]) + static_cast<int32_t>(s[1].w[wd])) / 2", "static_cast<int32_t>(s[0].w[wd])"),
     "rs_quorum_not_required": ("resync.hpp", "if (voters != (healthy & 0x07U)) {", "if (false) {"),
@@ -405,6 +405,22 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "su_ov_status_hides_them": ("sup/supervisor.hpp", "    if (ov_.fitted() != 0U) {\n      put(out, cap, n, \"overrides engaged=\");", "    if (false) {\n      put(out, cap, n, \"overrides engaged=\");"),
     "su_ov_debounce_in_wrong_unit": ("sup/supervisor.hpp", "cfg.override_debounce_ms) * cfg.tick_hz / 1000U", "cfg.override_debounce_ms) * cfg.tick_hz / 100U"),
     "su_ov_command_wants_a_unit": ("sup/commands.hpp", "{\"override-ok\", Kind::OverrideOk, false}", "{\"override-ok\", Kind::OverrideOk, true}"),
+    "su_time_command_unknown": ("sup/commands.hpp", "{\"time\", Kind::Time, false}, ", ""),
+    "su_time_ticks_not_reported": ("sup/supervisor.hpp", "    put_uint(out, cap, n, in.ticks);\n    put(out, cap, n, \" rtc=\");", "    put(out, cap, n, \" rtc=\");"),
+    "su_time_rtc_not_reported": ("sup/supervisor.hpp", "    put_uint(out, cap, n, in.rtc_s);\n    put(out, cap, n, \" met_us=\");", "    put(out, cap, n, \" met_us=\");"),
+    "su_time_met_before_t_zero": ("sup/supervisor.hpp", "    if (clock_.launched()) {\n      put_uint(out, cap, n, clock_.met_us(in.ticks));", "    if (true) {\n      put_uint(out, cap, n, clock_.met_us(in.ticks));"),
+    "su_time_met_never": ("sup/supervisor.hpp", "    if (clock_.launched()) {\n      put_uint(out, cap, n, clock_.met_us(in.ticks));", "    if (false) {\n      put_uint(out, cap, n, clock_.met_us(in.ticks));"),
+    "act_pad_ignored": ("act.hpp", "    if (on_pad_) {  // nothing to freeze for on the pad: neutral at once", "    if (false) {  // nothing to freeze for on the pad: neutral at once"),
+    "act_pad_flag_inverted": ("act.hpp", "void set_on_pad(bool on_pad) noexcept { on_pad_ = on_pad; }", "void set_on_pad(bool on_pad) noexcept { on_pad_ = !on_pad; }"),
+    "act_pad_keeps_the_pitch": ("act.hpp", "      out_.pitch_deg = 0.0F;\n      out_.yaw_deg = 0.0F;\n      out_.phase = SafePhase::Neutral;\n    }\n    out_.cause = cause;", "      out_.yaw_deg = 0.0F;\n      out_.phase = SafePhase::Neutral;\n    }\n    out_.cause = cause;"),
+    "act_pad_keeps_the_yaw": ("act.hpp", "      out_.yaw_deg = 0.0F;\n      out_.phase = SafePhase::Neutral;\n    }\n    out_.cause = cause;", "      out_.phase = SafePhase::Neutral;\n    }\n    out_.cause = cause;"),
+    "act_pad_ramps_instead_of_neutral": ("act.hpp", "      out_.yaw_deg = 0.0F;\n      out_.phase = SafePhase::Neutral;\n    }\n    out_.cause = cause;", "      out_.yaw_deg = 0.0F;\n      out_.phase = SafePhase::Ramp;\n    }\n    out_.cause = cause;"),
+    "act_pad_read_late": ("act.hpp", "  void safe() noexcept {\n    switch (out_.phase) {", "  void safe() noexcept {\n    if (on_pad_) {\n      out_.phase = SafePhase::Neutral;\n    }\n    switch (out_.phase) {"),
+    "act_frame_ramp_reads_as_hold": ("act.hpp", "    case SafePhase::Ramp:\n      return 3U;", "    case SafePhase::Ramp:\n      return 2U;"),
+    "act_frame_neutral_reads_as_ramp": ("act.hpp", "    case SafePhase::Neutral:\n      return 4U;", "    case SafePhase::Neutral:\n      return 3U;"),
+    "act_frame_hold_reads_as_nominal": ("act.hpp", "    default:\n      return 2U;", "    default:\n      return 1U;"),
+    "act_frame_mode_is_lost": ("act.hpp", "    return static_cast<uint8_t>(o.mode);\n  }\n  switch (o.phase) {", "    return 0U;\n  }\n  switch (o.phase) {"),
+    "act_frame_state_is_the_mode_only": ("act.hpp", "  a.state = act_frame_state(o);", "  a.state = static_cast<uint8_t>(o.mode);"),
     "su_rtc_century_leap_rule": ("sup/rtc.hpp", "return (y % 4U == 0U && y % 100U != 0U) || y % 400U == 0U;", "return y % 4U == 0U;"),
     "su_rtc_oscillator_stop_ignored": ("sup/rtc.hpp", "if ((status & 0x80U) != 0U) {", "if (false) {"),
     "su_rtc_twelve_hour_mode_accepted": ("sup/rtc.hpp", "if ((r[2] & 0x40U) != 0U) {", "if (false) {"),
@@ -418,7 +434,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
 # distinguishes them from the real code.
 CAMPAIGN_SKIP = {
     # the supervisor's code is not in the campaign's reach (the campaign drives the flight bus)
-    *(n for n in MUTATIONS if n.startswith(("sup_", "rs_", "sh_", "split_", "su_", "rel_", "t0_", "ph_", "ss_"))),  # the supervisor, the resynchronisation and the sensor split are not in the campaign's reach (it runs the manager with the split off)
+    *(n for n in MUTATIONS if n.startswith(("sup_", "rs_", "sh_", "split_", "su_", "rel_", "t0_", "ph_", "ss_", "act_pad_", "act_frame_"))),  # the supervisor, the resynchronisation and the sensor split are not in the campaign's reach (it runs the manager with the split off)
     # the launch sequence is not in the campaign's reach (its peers send no mission frame and no launch command)
     "mission_follower_ignores_sync_before_t_zero", "mission_flying_follower_adopts_sync", "mission_disagreement_not_reported", "mission_not_counted_through_a_gap", "mission_count_wraps_at_the_largest_value", "launch_by_a_follower", "launch_twice", "scrub_after_t_zero", "scrub_by_a_follower", "mission_countdown_boundary", "mission_flight_frames_off_by_one", "gate_accepts_two_healthy_nodes", "gate_accepts_a_node_not_ready", "gate_ignores_the_safe_request", "gate_ignores_act", "launch_needs_no_arm", "heartbeat_ready_not_packed",
     # the pad phase is not in the campaign's reach (its peers do not run the flight function)

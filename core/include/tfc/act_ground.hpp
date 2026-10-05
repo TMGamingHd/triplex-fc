@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The actuator node's ground-command path (ADR-019 applied to ACT, docs/ACT_LOGIC.md): the same frame, tag, counter window and ARM/EXECUTE rules as the
+// The actuator node's ground-command path (ADR-019 applied to ACT, docs/design/ACT_LOGIC.md): the same frame, tag, counter window and ARM/EXECUTE rules as the
 // flight computers' manager, kept in a small class of its own because ACT has no manager. ACT hears every ground frame, authenticates it, tracks the
 // counter of every authentic one (the operator's counter is shared by all nodes, so a command meant for B moves it too), and acts on two operations:
 //   clear-safe   always needs an ARM: lifts ACT's Safe (ActLogic::clear_safe(), which refuses unless the votes have been good); the node field is ignored,

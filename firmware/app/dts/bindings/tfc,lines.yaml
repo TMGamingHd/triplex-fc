@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 description: |
-  The discrete lines between a node and the supervisor (docs/SUPERVISOR.md), and the node-id strap pins.
+  The discrete lines between a node and the supervisor (docs/design/SUPERVISOR.md), and the node-id strap pins.
   FRAME: a pulse at the start of every frame. KICK: a pulse at the end of a completed frame, driven only from the
   end-of-frame path (TFC-FDIR-038). ADOPT: an input from the supervisor (the ring re-homing stretch, ADR-020). T0: an input from the supervisor, high from its T-zero on (ADR-028).
 

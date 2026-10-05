@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
-// The supervisor on the Pico 2 (SUP-Lite, docs/SUPERVISOR.md; ADR-022). The board's side of sup::Supervisor (supervisor/include/sup/supervisor.hpp, tested on the host with a simulation of the
+// The supervisor on the Pico 2 (SUP-Lite, docs/design/SUPERVISOR.md; ADR-022). The board's side of sup::Supervisor (supervisor/include/sup/supervisor.hpp, tested on the host with a simulation of the
 // units it watches). Every millisecond this loop
 //   - reads the cumulative FRAME and KICK edge counts and the tick of the latest edge of each of the four units (the edges are counted in the GPIO interrupts),
-//   - reads a command line if one has come in over USB serial (reset, cycle, hold, release, safe-now, safe-clear, launch, scrub, t0, status),
+//   - reads a command line if one has come in over USB serial (reset, cycle, hold, release, safe-now, safe-clear, launch, scrub, t0, override-ok, time, status),
 //   - gives both to the logic and applies the levels it returns: NRST (driven open-drain by hand), the power relays (active low, external pull-ups), SAFE and T0,
 //   - answers the command and reports what happened (a reset, a power-cycle, a unit declared DEAD, a period or phase out of limit, T-zero),
 //   - feeds the hardware watchdog.
 // At power-up every output is at its default before anything else can go wrong: no reset, no relay, SAFE and T0 low. The record of T-zero is kept in the last flash sector, so that after a
-// reset or a power cut the mission clock is resumed from the battery-backed RTC (docs/MISSION_CLOCK.md). It shares no code with core/ (TFC-SUP-001). None of this has been run on a board.
+// reset or a power cut the mission clock is resumed from the battery-backed RTC (docs/design/MISSION_CLOCK.md). It shares no code with core/ (TFC-SUP-001). None of this has been run on a board.
 //
 // Include the C++ standard library BEFORE Zephyr headers: Zephyr defines an `__unused` macro that breaks a glibc header.
 #include <array>
@@ -294,7 +294,11 @@ int main() {
     apply(out);
 
     if (have_cmd) {
-      if (resp == sup::Response::Done && cmd.kind == sup::Kind::Status) {
+      if (resp == sup::Response::Done && cmd.kind == sup::Kind::Time) {
+        std::array<char, 96> text{};
+        (void)supervisor.time_text(in, text.data(), text.size());
+        say(text.data());
+      } else if (resp == sup::Response::Done && cmd.kind == sup::Kind::Status) {
         std::array<char, 400> text{};
         (void)supervisor.status_text(text.data(), text.size());
         say(text.data());

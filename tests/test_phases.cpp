@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Mission phases and roles (ADR-023, docs/MISSION_PHASES.md): the phase table, the `phase` command, the interlock tiers that follow the phase, the WARM role (a computer that is
+// Mission phases and roles (ADR-023, docs/design/MISSION_PHASES.md): the phase table, the `phase` command, the interlock tiers that follow the phase, the WARM role (a computer that is
 // shadow-voted but does not vote, promoted by `reintegrate`), the `noop` command, and the alert below the phase minimum (never an automatic abort).
 #include <array>
 #include <cmath>

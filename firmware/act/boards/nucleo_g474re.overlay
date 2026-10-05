@@ -1,0 +1,10 @@
+/* The actuator node's discrete lines to the supervisor (docs/design/SUPERVISOR.md section 4). The same pins as the flight computers' harness (STAGED_BUILD rule 5): FRAME PC8 (CN10 2),
+ * KICK PC9 (CN10 1), SAFE PC6 (CN10 4, with an external pull-down: a floating line must read "not asserted"). Check them against ST's user manual (UM2505) before wiring. */
+/ {
+	tfc_act_lines: tfc-act-lines {
+		compatible = "tfc,act-lines";
+		frame-gpios = <&gpioc 8 GPIO_ACTIVE_HIGH>;
+		kick-gpios = <&gpioc 9 GPIO_ACTIVE_HIGH>;
+		safe-gpios = <&gpioc 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+	};
+};

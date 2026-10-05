@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The fault injector's relay logic (ADR-026, docs/PICO.md): four channels, one power cut each for flight computers A, B, C and the actuator node. A channel is
+// The fault injector's relay logic (ADR-026, docs/design/PICO.md): four channels, one power cut each for flight computers A, B, C and the actuator node. A channel is
 // energised (the node cut) only for a time the PC names, and ends by itself; so a PC that crashes, a link that drops, or a Pico that is reset leaves every node powered.
 //   cut(channel, ms)   energise the channel for `ms` (at most `max_cut_ms`); `ms` = 0 releases it; the PC's refresh restarts the time
 //   link_lost()        release everything (the caller says so when nothing has come from the PC for the link timeout)

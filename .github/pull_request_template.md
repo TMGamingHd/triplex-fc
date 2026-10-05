@@ -7,7 +7,7 @@
 ## Verification
 <!-- How do you know it works? Paste the command and result, or link the bench log. Say "not run" if not run. -->
 - [ ] `ctest` passes locally (or CI is green)
-- [ ] Hardware check logged in `docs/BENCH_CHECKS.md` (hardware PRs only)
+- [ ] Hardware check logged in `docs/hardware/BENCH_LOG.md` (hardware PRs only)
 
 ## Checklist
 - [ ] Branch is named `<type>/<short-name>` and is scoped to one concern

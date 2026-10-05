@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // RedundancyManager: one flight computer's per-frame consensus + FDIR step, driven with frames
 // built by the real pack_* functions. Detection-time numbers here match the SIL scenarios and
-// docs/REQUIREMENTS.md; the virtual-peers end-to-end tests check the same through the wire log.
+// docs/verification/REQUIREMENTS.md; the virtual-peers end-to-end tests check the same through the wire log.
 #include <array>
 #include <cmath>
 #include <cstring>

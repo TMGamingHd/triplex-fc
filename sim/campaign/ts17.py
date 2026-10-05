@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""TS-17, the paper part: which hardware overrides are worth building (docs/TRADE_STUDIES.md section 9c, docs/HARDWARE_OVERRIDE.md).
+"""TS-17, the paper part: which hardware overrides are worth building (docs/decisions/TRADE_STUDIES.md section 9c, docs/design/HARDWARE_OVERRIDE.md).
 
 Nine software-down scenarios (SD1 to SD9) against the candidate overrides, as a coverage matrix (does the override reach the safe state without any program: fully, partly, not at all); a
 model of the probability that the safe state is reached when each override acts, when demanded, with probability r (the chance that it is not dead from a latent fault and is operated

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+description: |
+  The discrete lines between the actuator node and the supervisor (docs/design/SUPERVISOR.md): FRAME and KICK out, SAFE in. FRAME is a pulse at the start of every frame; KICK a pulse at the
+  end of a completed frame, driven only from the end-of-frame path (TFC-FDIR-038); SAFE a hardware "enter Safe now" from the supervisor, or from the FORCE-SAFE override (high is Safe;
+  an external pull-down keeps a floating line at "not asserted", docs/design/HARDWARE_OVERRIDE.md section 4).
+
+compatible: "tfc,act-lines"
+
+properties:
+  frame-gpios:
+    type: phandle-array
+    required: true
+  kick-gpios:
+    type: phandle-array
+    required: true
+  safe-gpios:
+    type: phandle-array
+    required: true

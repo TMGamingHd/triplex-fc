@@ -104,7 +104,7 @@ def check_always(sc: Scenario, rows: list[dict], cmds: dict[str, set[int]]) -> l
         if r.get("newly_started", 0) and bin(r["probation"]).count("1") > 1 and r["latched"] != 0b111:
             out.append(("M8", f"frame {k}: probation mask {r['probation']:03b} has more than one node"))
         # (exempt the frame on which Safe is first requested: channels with a trusted vote that frame are frozen at their
-        #  fresh value, see docs/FAULT_CAMPAIGN.md edge case E2)
+        #  fresh value, see docs/verification/FAULT_CAMPAIGN.md edge case E2)
         if prev_row is not None and r["held"] and not (r["safe"] and not prev_row["safe"]):
             for ch in range(8):
                 if r["held"] & (1 << ch) and r[f"out{ch}"] != prev_row[f"out{ch}"]:

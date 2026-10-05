@@ -10,7 +10,7 @@ Record the bus for an hour or more with the three flight computers and ACT runni
 For every frame number carried by SYNC the tool says which scheduled frames arrived (gyro, accel and command of each computer, ACT's output, each heartbeat, and in the resync frames the twelve state frames),
 and how late after SYNC. It reports, per id and in all, the share of frames **missing at the capture point**, the arrival time against SYNC (mean, 99th percentile, maximum), and the share that came after the
 vote time. A capture point sees what was put on the bus; what each computer *received* is in its own console (`--console`: the last status line's `missing`, `crc` and `seq` counters against its frame count),
-and that is the figure that feeds the digest persistence and the command tolerance. The closing section says what the numbers mean for the settings in `docs/RESYNC.md` and `docs/TRADE_STUDIES.md` (TS-23).
+and that is the figure that feeds the digest persistence and the command tolerance. The closing section says what the numbers mean for the settings in `docs/design/RESYNC.md` and `docs/decisions/TRADE_STUDIES.md` (TS-23).
 Exit status 0; the tool reports and never judges.
 """
 from __future__ import annotations
@@ -117,14 +117,14 @@ def report(stats, n_frames, vote_us, consoles) -> str:
         per_node.append(r)
         out.append(f"- console {name}: frame {frames}, missing {missing}, crc {crc}, seq {seq}: **{100.0 * r:.4f} % of the slot frames it was owed**")
     worst = max(per_node) if per_node else rate
-    out.append("\n### What it means for the settings (docs/RESYNC.md, TS-23)")
+    out.append("\n### What it means for the settings (docs/design/RESYNC.md, TS-23)")
     out.append(f"The figure used below is the worst per-node loss if consoles were given, otherwise the capture-point loss: **{100.0 * worst:.4f} %**.")
     if worst <= 1e-4:
         out.append("- At or below 0.01 %: the defaults hold: resync every 100 frames, digest persistence 250, the 0.01 degree command tolerance. Consider a longer period (200 to 500) only if the burst of twelve frames costs frame budget.")
     elif worst <= 1e-3:
         out.append("- 0.01 % to 0.1 %: the defaults hold (TS-23: no run of three frames over the manager's tolerance with the resync, 0 of 16 flights); a persistence of 250 never false-flagged in 32 patterns at 0.1 %.")
     elif worst <= 1e-2:
-        out.append("- 0.1 % to 1 %: shorten the period to 20 to 50 frames so that the digest check stays usable (TS-23), and expect single frames over the 0.01 degree command tolerance; widen the manager's command tolerance toward ACT's 0.05 degree or move to agreement of inputs (docs/RESYNC.md section 6b).")
+        out.append("- 0.1 % to 1 %: shorten the period to 20 to 50 frames so that the digest check stays usable (TS-23), and expect single frames over the 0.01 degree command tolerance; widen the manager's command tolerance toward ACT's 0.05 degree or move to agreement of inputs (docs/design/RESYNC.md section 6b).")
     else:
         out.append("- Above 1 %: the bus is the problem, not the settings. Look at the wiring, the terminations and the transceiver before tuning (error counters: `bus_off`, `err_passive` in the status line).")
     return "\n".join(out)

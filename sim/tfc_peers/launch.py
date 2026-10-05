@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""The launch checklist, automated (docs/LAUNCH_SEQUENCE.md section 5 and docs/procedures/P-S2-02-launch-checklist.md).
+"""The launch checklist, automated (docs/design/LAUNCH_SEQUENCE.md section 5 and docs/procedures/P-S2-02-launch-checklist.md).
 
 `Observer` follows the bus (the flight computers' heartbeats, ACT's output, SYNC's mission frame) and says whether it is go or no-go and why. `run` waits for a go, sends the launch
 as an ARM and an EXECUTE, then watches the countdown on SYNC's mission frame until T-zero or a scrub. Everything the bus and the clock provide is passed in, so it is tested with scripted frames.

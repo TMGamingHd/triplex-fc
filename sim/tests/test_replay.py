@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """End to end: virtual peers -> candump log -> tfc_replay (the real C++ core/ code).
 
-Expectations come from docs/REQUIREMENTS.md and docs/FAULT_MATRIX.md. Skipped when the
+Expectations come from docs/verification/REQUIREMENTS.md and docs/verification/FAULT_MATRIX.md. Skipped when the
 tfc_replay binary is not built (set TFC_REPLAY_BIN, or build into build/host).
 """
 import os

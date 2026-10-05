@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The state share (TFC-FDIR-041, docs/PROTOCOL.md): each computer broadcasts its view of the strike counts and the last accepted command counter; a computer that restarts rebuilds them from what
+// The state share (TFC-FDIR-041, docs/design/PROTOCOL.md): each computer broadcasts its view of the strike counts and the last accepted command counter; a computer that restarts rebuilds them from what
 // the others say (the value both agree on, else the more conservative), never lowers anything, and cannot be made to disable a healthy computer by one faulty sender.
 #include <array>
 #include <cmath>

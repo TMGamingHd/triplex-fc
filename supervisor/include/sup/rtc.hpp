@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The supervisor's battery-backed real-time clock: seconds since 2000-01-01 00:00:00 from the seven time registers of a DS3231 (the TCXO RTC module, docs/MISSION_CLOCK.md section 3) and its
+// The supervisor's battery-backed real-time clock: seconds since 2000-01-01 00:00:00 from the seven time registers of a DS3231 (the TCXO RTC module, docs/design/MISSION_CLOCK.md section 3) and its
 // status register. A reading is valid only if every field is a legal BCD value of a real date and the oscillator-stop flag is clear (the flag says the time may have stopped: after a
 // total power loss of the module's battery too). Portable and integer-only; the I2C read itself is the hardware layer's.
 #pragma once

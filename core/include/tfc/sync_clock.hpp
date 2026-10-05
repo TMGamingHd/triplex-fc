@@ -53,7 +53,7 @@ class SyncClock {
       : policy_(policy), master_(start == SyncStart::Master), may_claim_(start == SyncStart::Master || start == SyncStart::Listen), observer_(start == SyncStart::Observer) {}
 
   // Call once per frame at the end of the wait for SYNC: `heard` is whether a SYNC arrived in the window, `number` its frame number and `heard_mission` its mission frame.
-  // Mission time (docs/LAUNCH_SEQUENCE.md): on the pad and in the countdown a follower takes the mission frame from SYNC (so a scrub reaches it); once in flight it counts for itself and
+  // Mission time (docs/design/LAUNCH_SEQUENCE.md): on the pad and in the countdown a follower takes the mission frame from SYNC (so a scrub reaches it); once in flight it counts for itself and
   // only verifies against SYNC, so a damaged or false SYNC cannot move the schedules of a flying computer; a node that is not in flight (a late joiner, a restart) adopts what it hears.
   [[nodiscard]] SyncTick cycle(bool heard, uint32_t number, uint16_t heard_mission = mission::kNotLaunched) noexcept {
     SyncTick t;
@@ -107,7 +107,7 @@ class SyncClock {
     return true;
   }
 
-  // The supervisor's T0 line (docs/LAUNCH_SEQUENCE.md section 2): call once per frame with the level of the line. Only the sync master acts. During the last `kT0Window` frames of the
+  // The supervisor's T0 line (docs/design/LAUNCH_SEQUENCE.md section 2): call once per frame with the level of the line. Only the sync master acts. During the last `kT0Window` frames of the
   // countdown a rising edge (its second high sample in a row, after the line has been seen low; a line that stays high gives one edge, not one per frame) is T-zero: the next frame is the T-zero frame. An edge earlier than that is refused, and a line
   // that is high from the start (stuck, or a supervisor that fired early) is never an edge, so a fault on the line cannot shorten the countdown to less than its last second; the
   // countdown itself is the fallback when no edge comes.

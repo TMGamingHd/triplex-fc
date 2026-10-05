@@ -223,3 +223,72 @@ class BusLossTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClockCorrTests(unittest.TestCase):
+    """tools/bench/clock_corr.py: the supervisor's `time` answers, stamped with UTC and fitted (TFC-SUP-011, SUP-012)."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / "tools" / "bench"))
+        import clock_corr
+
+        self.cc = clock_corr
+
+    def test_the_answer_of_the_supervisor_is_parsed_and_anything_else_is_not(self):
+        self.assertEqual(self.cc.parse_time_line("time ticks=123456789 rtc=1234567 met_us=-"), (123456789, 1234567, None))
+        self.assertEqual(self.cc.parse_time_line("time ticks=5 rtc=0 met_us=2500000\r"), (5, 0, 2500000))
+        for line in ("status", "ok", "time ticks=abc rtc=1 met_us=-", ""):
+            self.assertIsNone(self.cc.parse_time_line(line))
+
+    def _run(self, ppm, hours, latency_us=0.0, interval=10.0):
+        """A fake supervisor whose oscillator is `ppm` fast, sampled every `interval` seconds for `hours`."""
+        state = {"utc": 1.7e15}
+        step = {"n": 0}
+        out = []
+
+        def utc():
+            return state["utc"]
+
+        def write(_):
+            step["n"] += 1
+
+        def read_line(_timeout):
+            ticks = int((state["utc"] - 1.7e15) * (1 + ppm * 1e-6)) + 1000
+            state["utc"] += latency_us
+            return f"time ticks={ticks} rtc=1 met_us=-"
+
+        def sleep(s):
+            state["utc"] += s * 1e6
+
+        got = self.cc.sample(read_line, write, utc, sleep, interval, hours * 3600.0, lambda t, u: out.append((t, u)))
+        return got, out
+
+    def test_a_run_of_pairs_gives_the_oscillators_drift_and_a_bound(self):
+        got, pairs = self._run(ppm=20.0, hours=1.0)
+        self.assertGreater(got, 300)
+        c = self.cc.Correlator(self.cc.TICK_HZ)
+        for t, u in pairs:
+            c.add(t, u)
+        self.assertTrue(c.ok())
+        self.assertAlmostEqual(c.drift_ppm(), 20.0, delta=0.5)
+        text = self.cc.report(c)
+        self.assertIn("drift +", text)
+        self.assertIn("five years out", text)
+
+    def test_too_few_pairs_say_so_and_exit_with_one(self):
+        c = self.cc.Correlator(self.cc.TICK_HZ)
+        c.add(1000, 1.7e15)
+        self.assertIn("not enough pairs", self.cc.report(c))
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "pairs.csv"
+            f.write_text("# ticks, utc_us\n1000,1700000000000000\n")
+            self.assertEqual(self.cc.main(["--pairs", str(f)]), 1)
+
+    def test_a_recorded_run_is_fitted_from_its_csv_and_the_arguments_are_checked(self):
+        _got, pairs = self._run(ppm=-12.0, hours=0.5)
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "pairs.csv"
+            f.write_text("# ticks, utc_us\n" + "".join(f"{t},{u:.0f}\n" for t, u in pairs))
+            self.assertEqual(self.cc.main(["--pairs", str(f)]), 0)
+        self.assertEqual(self.cc.main([]), 2)
+        self.assertEqual(self.cc.main(["--port", "x", "--pairs", "y"]), 2)

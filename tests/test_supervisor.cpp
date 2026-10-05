@@ -838,3 +838,47 @@ TFC_TEST(overrides_the_command_is_parsed_and_takes_no_argument) {
   CHECK(cmd("override-ok").kind == Kind::OverrideOk && cmd("OVERRIDE-OK").parse == Parse::Ok);
   CHECK(cmd("override-ok A").parse == Parse::ExtraWords);
 }
+
+// ============================== `time`: the counter the PC correlates with UTC (TFC-SUP-011, SUP-012) ==============================
+TFC_TEST(time_the_command_is_parsed_and_answers_with_the_counter_the_rtc_and_no_mission_time_before_t_zero) {
+  CHECK(cmd("time").kind == Kind::Time && cmd("TIME").parse == Parse::Ok && cmd("time A").parse == Parse::ExtraWords);
+  World w;
+  w.run_ms(1234U);
+  w.ms("time");
+  CHECK(w.resp == Response::Done);
+  char text[96];
+  const std::size_t n = w.sup.time_text(w.in, text, sizeof text);
+  CHECK(n == std::strlen(text));
+  const std::string s(text);
+  CHECK(s == "time ticks=" + std::to_string(w.in.ticks) + " rtc=" + std::to_string(w.in.rtc_s) + " met_us=-\n");
+}
+
+TFC_TEST(time_after_t_zero_the_mission_elapsed_time_runs_on_the_supervisors_own_ticks) {
+  World w;
+  w.run_ms(300U);
+  w.ms("t0");
+  const uint64_t t_zero = w.in.ticks;
+  w.run_ms(2500U);
+  char text[96];
+  (void)w.sup.time_text(w.in, text, sizeof text);
+  const std::string s(text);
+  const std::size_t at = s.find("met_us=");
+  CHECK(at != std::string::npos);
+  const uint64_t met = std::stoull(s.substr(at + 7U));
+  CHECK(met == w.in.ticks - t_zero);  // 1 MHz ticks: microseconds
+  CHECK(met >= 2500U * kMs);
+}
+
+TFC_TEST(time_the_answer_is_bounded_and_always_terminated) {
+  World w;
+  w.run_ms(10U);
+  char big[96];
+  const std::size_t full = w.sup.time_text(w.in, big, sizeof big);
+  CHECK(full > 10U);
+  for (std::size_t cap = 0U; cap <= full + 1U; ++cap) {
+    char small[100];
+    std::memset(small, 'x', sizeof small);
+    const std::size_t n = w.sup.time_text(w.in, small, cap);
+    CHECK(cap == 0U ? (n == 0U && small[0] == 'x') : (n < cap && small[n] == '\0'));
+  }
+}

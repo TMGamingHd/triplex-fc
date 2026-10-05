@@ -21,7 +21,7 @@ ID_CMD_BASE = 0x200
 ID_ACT_OUT = 0x300
 ID_HEARTBEAT = 0x400
 ID_STATE = 0x410          # + node: strike counts and the last accepted command counter
-ID_RESYNC = 0x420         # + 4 * node + chunk: a quarter of a node's estimator and controller state (docs/RESYNC.md)
+ID_RESYNC = 0x420         # + 4 * node + chunk: a quarter of a node's estimator and controller state (docs/design/RESYNC.md)
 RESYNC_CHUNKS = 4
 ID_SIM = 0x500            # the simulator's range is 0x500 to 0x50F (ID_SIM_LAST)
 ID_SIM_RATES = 0x501
@@ -136,7 +136,7 @@ def pack_cmd(node: int, pitch_deg: float, yaw_deg: float, digest: int, seq: int)
 
 GROUND_OPS = {"reintegrate": 1, "disable": 2, "clear-disabled": 3, "clear-safe": 4, "launch": 5, "scrub": 6, "phase": 7, "noop": 8, "warm": 9}
 NODELESS_OPS = ("clear-safe", "launch", "scrub", "noop")  # the node field is ignored
-PHASE_OPS = ("phase",)  # the node field is a phase number 0..7 (docs/MISSION_PHASES.md), not a computer
+PHASE_OPS = ("phase",)  # the node field is a phase number 0..7 (docs/design/MISSION_PHASES.md), not a computer
 PHASE_NAMES = ("off", "power-up", "pre-launch", "ascent", "coast", "pre-burn", "burn", "safed")
 GROUND_OP_NAMES = {v: k for k, v in GROUND_OPS.items()}
 ARM_FLAG = 0x80
@@ -217,7 +217,7 @@ def pack_ground(op: int, node: int, counter: int, key: bytes | None = None, arm:
     return Frame(ID_GROUND, seal(bytes([op_byte, node & 0xFF]) + tag.to_bytes(4, "little"), counter))
 
 
-# Mission frame carried in SYNC (docs/LAUNCH_SEQUENCE.md): 0 not launched, 1..1000 the countdown, 1001 T-zero, then frames of flight; 65535 the largest.
+# Mission frame carried in SYNC (docs/design/LAUNCH_SEQUENCE.md): 0 not launched, 1..1000 the countdown, 1001 T-zero, then frames of flight; 65535 the largest.
 MISSION_NOT_LAUNCHED = 0
 MISSION_COUNTDOWN_FRAMES = 1000
 MISSION_MAX = 0xFFFF
@@ -307,7 +307,7 @@ def unpack_cmd(frame: Frame) -> CmdSample | None:
 
 
 # ======================================================================================================================================
-# Protocol version 2 (docs/PROTOCOL.md): mirror of the second half of protocol.hpp. The golden bytes in tests/test_protocol.py are the same as the
+# Protocol version 2 (docs/design/PROTOCOL.md): mirror of the second half of protocol.hpp. The golden bytes in tests/test_protocol.py are the same as the
 # ones pinned in tests/test_protocol_v2.cpp.
 # ======================================================================================================================================
 def _quantize_u16(v: float, lsb: float) -> int:

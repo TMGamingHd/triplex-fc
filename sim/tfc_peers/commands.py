@@ -45,7 +45,7 @@ class GroundCommand:
 
 
 def parse_phase(text: str) -> int:
-    """A mission phase (docs/MISSION_PHASES.md): its number 0..7, `pN`, or its name (power-up, pre-launch, ascent, coast, pre-burn, burn, safed, off)."""
+    """A mission phase (docs/design/MISSION_PHASES.md): its number 0..7, `pN`, or its name (power-up, pre-launch, ascent, coast, pre-burn, burn, safed, off)."""
     t = text.strip().lower()
     if t in P.PHASE_NAMES:
         return P.PHASE_NAMES.index(t)

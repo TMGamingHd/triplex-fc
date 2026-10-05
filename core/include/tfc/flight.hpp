@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // The flight function of one flight computer: the sensor frames it hears (its own and its peers') go through the sensor consensus, the attitude
 // estimator and the scheduled controller to this node's command and state digest. This is the whole of what a node computes between the SYNC and
-// the command slot, kept in `core/` so that the firmware, the host tests and the simulator's closed loop run the same code (docs/CONTROL_LOOP.md).
+// the command slot, kept in `core/` so that the firmware, the host tests and the simulator's closed loop run the same code (docs/design/CONTROL_LOOP.md).
 // Every replica fed the same frames produces the same bits (the estimator and controller use only + - * / and sqrt).
 // No heap, no exceptions, no RTTI. Deterministic.
 #pragma once
@@ -36,7 +36,7 @@ class FlightFunction {
   // their estimators would drift apart. True if a frame was used.
   bool on_frame(const Frame& f) noexcept { return f.data[6] == static_cast<uint8_t>(frame_ & 0xFFU) && consensus_.on_frame(f); }
 
-  // The mission state for this frame (docs/LAUNCH_SEQUENCE.md). On the pad the schedules sit at their first point; in flight they follow `flight_frame`, the frames since T-zero.
+  // The mission state for this frame (docs/design/LAUNCH_SEQUENCE.md). On the pad the schedules sit at their first point; in flight they follow `flight_frame`, the frames since T-zero.
   // Never called: the schedules follow the SYNC frame number, as before.
   void set_mission(bool pad, uint32_t flight_frame) noexcept {
     mission_set_ = true;
@@ -61,7 +61,7 @@ class FlightFunction {
     return c;
   }
 
-  // The state resynchronisation (docs/RESYNC.md): this computer's state in the form the replicas exchange, and the adoption of the voted one. False if the voted state is not usable.
+  // The state resynchronisation (docs/design/RESYNC.md): this computer's state in the form the replicas exchange, and the adoption of the voted one. False if the voted state is not usable.
   [[nodiscard]] resync::SharedState shared_state() const noexcept { return resync::make_shared(estimator_.state(), controller_.state()); }
   bool adopt_state(const resync::SharedState& s) noexcept {
     AttitudeEstimator::State e = estimator_.state();

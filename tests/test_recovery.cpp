@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Findings of the fault campaign (docs/FAULT_CAMPAIGN.md), each pinned by a regression test:
+// Findings of the fault campaign (docs/verification/FAULT_CAMPAIGN.md), each pinned by a regression test:
 //   E1  the dwell after clear-disabled counted the frame of the command (readmission one frame early)
 //   E12 total loss: with every node latched there was no reference to judge a probation against, so no
 //       node could ever be readmitted without a reset (now: cohort probation)

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Stationary gyro calibration of one IMU channel (docs/LAUNCH_SEQUENCE.md). On the pad, before lift-off, the platform is at rest, so the gyro's mean over a few seconds is its bias.
+// Stationary gyro calibration of one IMU channel (docs/design/LAUNCH_SEQUENCE.md). On the pad, before lift-off, the platform is at rest, so the gyro's mean over a few seconds is its bias.
 // Each flight computer calibrates its OWN IMU and subtracts the bias from its samples before it sends them, so the consensus sees corrected values: IMUs differ from one another by more
 // than the consensus tolerance (1 dps) long before any of them is faulty, and the consensus must keep detecting a real fault. (This is the per-channel calibration that STAGED_BUILD
 // rule 11 puts in every computer's configuration.)

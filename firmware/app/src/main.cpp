@@ -6,7 +6,7 @@
 //   t = 5.0 ms  broadcasts its command + estimator digest
 //   t = 7.0 ms  hands everything received to tfc::RedundancyManager, which votes, cross-checks
 //               and runs FDIR; latch events and a once-a-second status line go to the console
-// (schedule: docs/ARCHITECTURE.md section 3). On native_sim the bus is the host's vcan0 and the other nodes are either the virtual peers (sim/) or more
+// (schedule: docs/design/ARCHITECTURE.md section 3). On native_sim the bus is the host's vcan0 and the other nodes are either the virtual peers (sim/) or more
 // instances of this image; on the Nucleo it is FDCAN1.
 // With CONFIG_TFC_FLIGHT_FUNCTION the command comes from tfc::FlightFunction (consensus, estimator, controller) instead of a scripted function of the frame
 // number; with CONFIG_TFC_SIM_BUS_IMU the sensor input is the simulator's 0x501/0x502 frames instead of the scripted motion.
@@ -44,11 +44,11 @@ constexpr bool kFlightFunction = IS_ENABLED(CONFIG_TFC_FLIGHT_FUNCTION);
 constexpr bool kSimBusImu = IS_ENABLED(CONFIG_TFC_SIM_BUS_IMU);
 constexpr bool kLaunch = IS_ENABLED(CONFIG_TFC_LAUNCH_SEQUENCE);
 constexpr uint16_t kReleaseId = static_cast<uint16_t>(CONFIG_TFC_RELEASE_ID != 0 ? CONFIG_TFC_RELEASE_ID : TFC_RELEASE_HASH_AUTO);  // what this image reports in its heartbeat
-constexpr uint32_t kResyncPeriod = CONFIG_TFC_RESYNC_PERIOD;  // frames between state resynchronisations (docs/RESYNC.md)
+constexpr uint32_t kResyncPeriod = CONFIG_TFC_RESYNC_PERIOD;  // frames between state resynchronisations (docs/design/RESYNC.md)
 constexpr uint8_t kResyncGroup = static_cast<uint8_t>(CONFIG_TFC_RESYNC_GROUP & 0x07U);
 constexpr bool kResync = kFlightFunction && kResyncPeriod != 0U && ((kResyncGroup >> CONFIG_TFC_NODE_ID) & 1U) != 0U;  // this computer takes part
 
-constexpr uint32_t kDropFirst = CONFIG_TFC_TEST_DROP_PEERS_FIRST;    // test aid (docs/RESYNC.md): withhold the peers' sensor frames from the flight function
+constexpr uint32_t kDropFirst = CONFIG_TFC_TEST_DROP_PEERS_FIRST;    // test aid (docs/design/RESYNC.md): withhold the peers' sensor frames from the flight function
 constexpr uint32_t kDropFrames = CONFIG_TFC_TEST_DROP_PEERS_FRAMES;
 constexpr uint32_t kShareEveryFrames = 10U;  // the state share (FDIR-041): each computer broadcasts its strike counts and command counter this often, staggered by node
 constexpr uint32_t kRestoreAtCycle = 30U;     // a computer that has restarted takes them from the others once, this many frames after it came up
@@ -97,7 +97,7 @@ CAN_MSGQ_DEFINE(rx_resync_msgq, 16);  // the peers' state in a resync frame (0x4
 
 // Statics, not locals: the flight function holds the tables and the filter state, about a kilobyte.
 tfc::FlightFunction g_flight;
-tfc::ImuCalibrator g_cal;  // this computer's own IMU, calibrated on the pad (docs/LAUNCH_SEQUENCE.md)
+tfc::ImuCalibrator g_cal;  // this computer's own IMU, calibrated on the pad (docs/design/LAUNCH_SEQUENCE.md)
 tfc::resync::Collector g_resync;  // the states received in the current resync frame
 
 void sleep_until_us(int64_t base_ticks, int64_t offset_us) {
@@ -418,7 +418,7 @@ int main() {
     if (!tick.master && !tick.locked) {
       // SYNC did not come in this frame and this node is not taking over: the frame is skipped, by every follower alike. Running it on the node's own
       // clock would put each follower's frame at a different time (their windows differ), so two nodes could receive different mixes of the same frames,
-      // compute different inputs and drift apart for good (docs/DECISIONS.md ADR-025). The number still counts, so it stays continuous.
+      // compute different inputs and drift apart for good (docs/decisions/DECISIONS.md ADR-025). The number still counts, so it stays continuous.
       wdt.feed();
       continue;
     }

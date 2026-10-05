@@ -194,7 +194,7 @@ class Lines {
   void frame(bool on) { set(frame_, on); }
   void kick(bool on) { set(kick_, on); }
   [[nodiscard]] bool adopt() const { return gpio_pin_get_dt(&adopt_) > 0; }
-  // The supervisor's T0 line (docs/LAUNCH_SEQUENCE.md section 2): high from the supervisor's T-zero on. A board without the pin reads it as low for ever.
+  // The supervisor's T0 line (docs/design/LAUNCH_SEQUENCE.md section 2): high from the supervisor's T-zero on. A board without the pin reads it as low for ever.
 #if DT_NODE_HAS_PROP(DT_NODELABEL(tfc_lines), t0_gpios)
   [[nodiscard]] bool t0() const { return gpio_pin_get_dt(&t0_) > 0; }
 #else

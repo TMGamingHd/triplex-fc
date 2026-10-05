@@ -23,7 +23,7 @@ config TFC_OVERRIDE_LINES_FITTED
 	default 0x0
 	range 0 0x3F
 	help
-	  The overrides' parts are ordered separately (docs/HARDWARE_OVERRIDE.md section 8). A line that is not wired is ignored; with none wired the feature is inert. A wired line that is engaged
+	  The overrides' parts are ordered separately (docs/design/HARDWARE_OVERRIDE.md section 8). A line that is not wired is ignored; with none wired the feature is inert. A wired line that is engaged
 	  blocks `launch` and `t0` until the operator types `override-ok`; the sense lines never change what the supervisor does to a unit (TFC-HWO-005).
 
 source "Kconfig.zephyr"

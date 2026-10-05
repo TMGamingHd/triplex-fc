@@ -3,7 +3,7 @@
 // protocol decoders, the voter and the RedundancyManager; after EVERY frame a set of invariants must hold. Run under
 // ASan + UBSan in CI, so any out-of-bounds access, overflow or undefined behaviour on hostile input fails the build.
 //
-// Invariants checked every frame (the list is in docs/FAULT_CAMPAIGN.md section "Properties"):
+// Invariants checked every frame (the list is in docs/verification/FAULT_CAMPAIGN.md section "Properties"):
 //   I1  every output finite and bounded                   I5  one node on probation at most
 //   I2  mode == Safe if a Safe request, else healthy count  I6  legal node-state transitions
 //   I3  a node out of the vote last frame does not vote     I7  Safe request is sticky until a clear-safe command

@@ -29,6 +29,6 @@ properties:
   override-gpios:
     type: phandle-array
     description: |
-      The hardware overrides' read-only sense inputs (docs/HARDWARE_OVERRIDE.md, TFC-HWO-005), six of them in the order of supervisor/include/sup/overrides.hpp: H1 E-stop, H2 FORCE-SAFE, H3
+      The hardware overrides' read-only sense inputs (docs/design/HARDWARE_OVERRIDE.md, TFC-HWO-005), six of them in the order of supervisor/include/sup/overrides.hpp: H1 E-stop, H2 FORCE-SAFE, H3
       PLATFORM-LEVEL, H4 INJECTOR-DISARM, H5 SUPERVISOR-DISARM, H6/H7 any node power-kill. High means engaged. Each needs an external pull-down of 8.2 kOhm or less (RP2350 erratum E9).
       Optional; which of them exist is CONFIG_TFC_OVERRIDE_LINES_FITTED.

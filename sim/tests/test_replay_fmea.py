@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 """The fault kinds added by the FMEA gap analysis (FAULT_MATRIX F27-F45) and the campaign findings (F46-F51), through the
-real core: peers -> candump log -> tfc_replay. Latch frames are the measured ones (docs/FAULT_CAMPAIGN.md) with a small margin."""
+real core: peers -> candump log -> tfc_replay. Latch frames are the measured ones (docs/verification/FAULT_CAMPAIGN.md) with a small margin."""
 import unittest
 
 from tests.test_replay import REPLAY, ReplayBase
@@ -77,7 +77,7 @@ class NewFaultKindsThroughTheCore(ReplayBase):
 
     def test_F43_early_inside_the_acceptance_window_is_still_invisible_until_arrival_times_are_checked(self):
         # Up to about 4.5 ms early the frame still arrives in the right window, with the right number: only a check of the arrival
-        # time against the slot (docs/DEFERRED.md, E11 option B) can see it.
+        # time against the slot (docs/design/FUTURE_WORK.md, E11 option B) can see it.
         self.replay(["B:early:start=100,us=4500"], "--expect-no-latch", "B", "--expect-mode", "triplex")
         self.replay(["B:early:start=100,us=1000"], "--expect-no-latch", "B", "--expect-mode", "triplex")
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Actuator node logic (ADR-023, ADR-024): the vote on the three flight computers' commands, the latch of the output with a bound on how fast it may
 // move, and the Safe sequence. ACT has no servo behind it: its output is the voted gimbal command on the bus, and its Safe action is the value of that
-// command (docs/SAFE_MODE.md, docs/VEHICLE_SIM.md section 2). It does not trust the flight computers' own judgements: it votes what it receives and
+// command (docs/design/SAFE_MODE.md, docs/design/VEHICLE_SIM.md section 2). It does not trust the flight computers' own judgements: it votes what it receives and
 // flags on its own.
 //
 // Modes.
@@ -10,7 +10,8 @@
 //   Nominal  the output follows the voted command, no faster than `normal_slew` degrees a frame. A frame without a trustworthy vote holds the last
 //            output; `lost_votes` such frames in a row, a Safe request from the flight computers, or the SAFE line enters Safe.
 //   Safe     freeze at once (no step), hold for `hold_frames` (the transient may clear and the operator may act), then ramp to neutral at
-//            `ramp_deg_per_frame`, then hold neutral. Nothing leaves Safe by itself: clear_safe() accepts only when the votes have been trustworthy,
+//            `ramp_deg_per_frame`, then hold neutral. **On the pad** (the caller says so, from the SYNC mission frame: not launched, or in the countdown) there is nothing to freeze
+//            for: Safe goes to neutral at once and stays (the owner's "depower on the pad": ACT has no power output, so a neutral command is the actuator at rest). Nothing leaves Safe by itself: clear_safe() accepts only when the votes have been trustworthy,
 //            from at least two nodes, for `exit_frames` in a row since Safe was entered, and no Safe request or SAFE line is active (the caller passes the operator's
 //            authenticated, ARMed clear-safe only; authentication belongs to the ground-command path, not here).
 // After a reset that is not a power-on ACT starts in Safe, holding the output it had stored before the reset (the caller keeps `ActRecord` in memory
@@ -59,11 +60,28 @@ struct ActOutput {
 };
 
 // ACT's output as the frame it broadcasts (protocol.hpp, ActFrame): the voted command and the status field that tells everyone what ACT is doing.
+// The state field of the ACT output frame (docs/design/PROTOCOL.md): 0 Standby, 1 Nominal, and in Safe the sequence's stage, 2 hold, 3 ramp, 4 neutral.
+[[nodiscard]] constexpr uint8_t act_frame_state(const ActOutput& o) noexcept {
+  if (o.mode != ActMode::Safe) {
+    return static_cast<uint8_t>(o.mode);
+  }
+  switch (o.phase) {
+    case SafePhase::Ramp:
+      return 3U;
+    case SafePhase::Neutral:
+      return 4U;
+    case SafePhase::None:
+    case SafePhase::Hold:
+    default:
+      return 2U;
+  }
+}
+
 [[nodiscard]] constexpr ActFrame to_act_frame(const ActOutput& o) noexcept {
   ActFrame a;
   a.pitch_deg = o.pitch_deg;
   a.yaw_deg = o.yaw_deg;
-  a.state = static_cast<uint8_t>(o.mode);
+  a.state = act_frame_state(o);
   a.held = o.held;
   a.vote_status = o.vote_status;
   a.voted_nodes = o.voted_nodes;
@@ -150,6 +168,8 @@ class ActLogic {
   // The flight computers' sticky Safe request (from their heartbeat) and the hardware SAFE line from the supervisor or the operator.
   void safe_request(bool on) noexcept { fc_request_ = on; }
   void hardware_safe(bool on) noexcept { hw_safe_ = on; }
+  // Where the vehicle is, read at the moment Safe is entered (docs/design/SAFE_MODE.md section 5): on the pad, Safe goes straight to neutral; in flight (the default) it freezes, holds and ramps.
+  void set_on_pad(bool on_pad) noexcept { on_pad_ = on_pad; }
 
   // The operator's authenticated, ARMed clear-safe. True if accepted. Refused unless the votes have been good for `exit_frames`, from at least two
   // nodes, and no request is active.
@@ -295,6 +315,11 @@ class ActLogic {
   void enter_safe(SafeCause cause) noexcept {
     out_.mode = ActMode::Safe;
     out_.phase = SafePhase::Hold;
+    if (on_pad_) {  // nothing to freeze for on the pad: neutral at once
+      out_.pitch_deg = 0.0F;
+      out_.yaw_deg = 0.0F;
+      out_.phase = SafePhase::Neutral;
+    }
     out_.cause = cause;
     hold_count_ = 0U;
     good_run_ = 0U;  // the exit conditions are counted from here: at least `exit_frames` of good votes *in* Safe
@@ -334,6 +359,7 @@ class ActLogic {
   std::array<ChannelMonitor, kChannels> mon_;
   bool fc_request_ = false;
   bool hw_safe_ = false;
+  bool on_pad_ = false;
   uint16_t lost_ = 0U;
   uint16_t hold_count_ = 0U;
   uint32_t good_run_ = 0U;

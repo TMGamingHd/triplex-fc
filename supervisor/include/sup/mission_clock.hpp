@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The supervisor's clock of record (docs/MISSION_CLOCK.md, ADR-029, TFC-SUP-009, TFC-SUP-011): mission elapsed time (MET) since T-zero on the
+// The supervisor's clock of record (docs/design/MISSION_CLOCK.md, ADR-029, TFC-SUP-009, TFC-SUP-011): mission elapsed time (MET) since T-zero on the
 // supervisor's own oscillator, kept across a reset by a battery-backed real-time clock, and the plausibility check of a flight computer's mission time
 // against it. Portable and integer-only (the supervisor's small processor has no double-precision unit), and by TFC-SUP-001 it shares no code with
 // `core/`: nothing here includes `tfc/`. The few protocol facts it needs (the frame period, the mission-frame encoding of SYNC) are restated below and

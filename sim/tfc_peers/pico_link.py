@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""The PC side of the Pico link (core/include/tfc/pico_link.hpp, docs/PICO.md).
+"""The PC side of the Pico link (core/include/tfc/pico_link.hpp, docs/design/PICO.md).
 
 Frame: 0xA5 | type | length | payload (0..12 bytes) | CRC-8 over type, length, payload (SAE J1850, as on the flight bus). The golden frames in
 sim/tests/test_pico_link.py are the ones pinned in tests/test_pico.cpp. `PicoClient` talks to the board over a serial port (pyserial, imported only when a real port is

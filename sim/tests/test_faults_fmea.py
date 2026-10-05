@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""The fault kinds added by the FMEA gap analysis (docs/FMEA.md, FAULT_MATRIX F27-F45): what each one puts on the
+"""The fault kinds added by the FMEA gap analysis (docs/verification/FMEA.md, FAULT_MATRIX F27-F45): what each one puts on the
 wire, parameter validation, and a regression check that the older kinds' traffic did not change."""
 import hashlib
 import math

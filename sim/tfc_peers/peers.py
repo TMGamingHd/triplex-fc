@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
 """Virtual flight computers: generate the bus traffic a real FC-A/B/C would send.
 
-Each 10 ms major frame a healthy node sends (offsets follow docs/ARCHITECTURE.md section 3):
+Each 10 ms major frame a healthy node sends (offsets follow docs/design/ARCHITECTURE.md section 3):
   gyro  (0x100+n)  ~1.5 ms      accel (0x110+n)  ~2.3 ms      cmd (0x200+n)  ~5.0 ms
 Everything is a pure function of (seed, frame index), so runs are exactly repeatable and the
 same scenario can be recorded offline or played in real time.
 
-Fault application order inside one frame (docs/FMEA.md): sensor sample (stuck, repeat, bias, drift, spike, scale,
+Fault application order inside one frame (docs/verification/FMEA.md): sensor sample (stuck, repeat, bias, drift, spike, scale,
 invert, swap, clip, oscillate, noise, saturate, zero) -> quantised counts (bitflip, stuckbit) -> command (stuck, offset,
 invert) -> digest -> frame level (dropout, reboot, sequence, partial) -> corruption on the wire -> timing (late, early,
 jitter, clock drift) -> duplicates and replays. The kinds added after the first release draw from their own random

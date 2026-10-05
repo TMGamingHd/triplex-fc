@@ -1,4 +1,4 @@
-/* Nucleo-G474RE: the flight computer's wiring (docs/SUPERVISOR.md, docs/STAGED_BUILD.md rules 10 and 11).
+/* Nucleo-G474RE: the flight computer's wiring (docs/design/SUPERVISOR.md, docs/hardware/STAGED_BUILD.md rules 10 and 11).
  *
  * Every pin below was looked up in the morpho-connector map that Zephyr takes from ST's data
  * (boards/st/nucleo_g474re/st_morpho_connector.dtsi); the connector pin is in each comment. Check each against the

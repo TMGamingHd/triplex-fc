@@ -349,7 +349,7 @@ class RedundancyManager {
   }
   [[nodiscard]] uint16_t release_of(unsigned node) const noexcept { return node < kNodes ? release_[node] : 0U; }
 
-  // ---- the state share (FDIR-041, docs/PROTOCOL.md): what a restarted computer needs from the others ----
+  // ---- the state share (FDIR-041, docs/design/PROTOCOL.md): what a restarted computer needs from the others ----
   // This manager's own view, to be broadcast every few frames: the strike count of each computer (saturating at 15, what four bits carry) and the last accepted ground-command counter
   // (0: none yet).
   [[nodiscard]] StateShare state_share() const noexcept {
@@ -500,7 +500,7 @@ class RedundancyManager {
     return rep;
   }
 
-  // The state resynchronisation found these computers' states far from the vote (bit n = node n; docs/RESYNC.md): called before end_frame() of the frame the resync was in. It is a
+  // The state resynchronisation found these computers' states far from the vote (bit n = node n; docs/design/RESYNC.md): called before end_frame() of the frame the resync was in. It is a
   // bad frame for each, through the same detectors as any other reason, so one large correction is not a latch and a computer that keeps needing them is one.
   void report_state_correction(uint8_t large_mask) noexcept {
     resync_large_ = static_cast<uint8_t>(resync_large_ | (large_mask & 0x07U));
@@ -872,7 +872,7 @@ class RedundancyManager {
         n.arm = healthy <= 2U;       // Triplex -> Duplex is plain; Duplex -> Simplex and Simplex -> nothing are not
         n.critical = healthy <= 1U;  // the last voter
         if (!sensor && (cfg_.phases || op == GroundOp::Warm)) {
-          // The tiers of the phase (docs/MISSION_PHASES.md section 4): plain while the nominal number stays, an ARM below it, refused below the minimum. Without phases a WARM
+          // The tiers of the phase (docs/design/MISSION_PHASES.md section 4): plain while the nominal number stays, an ARM below it, refused below the minimum. Without phases a WARM
           // rest keeps the tiers of ADR-019 and never takes the last voter.
           const phases::Rule rule = cfg_.phases ? phases::kRules[phase_checked()] : phases::Rule{2U, 1U};
           n.arm = healthy - 1U < rule.nominal;

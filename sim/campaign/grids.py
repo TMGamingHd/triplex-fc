@@ -179,8 +179,9 @@ def babble() -> list[Scenario]:
     for n, k in itertools.product(range(3), (0, 1, 2, 3, 4, 8, 20, 60)):
         out.append(_sc("babble", [f"{N[n]}:babble:start=100,n={k}"], "ignore", frames=FRAMES,
                        tag=dict(node=N[n], n=k, alarm_expected=k >= 3)))
-    # ids above the simulator id and between the schedule's ids are out-of-schedule too (E14): counted, alarm at 3 or more per frame
-    for n, bid, k in itertools.product(range(3), (0x301, 0x420, 0x4F0, 0x511, 0x520, 0x6F0, 0x7F0), (2, 5)):
+    # ids above the simulator id and between the schedule's ids are out-of-schedule too (E14): counted, alarm at 3 or more per frame. 0x413 is the first id after the state share (0x410 to 0x412)
+    # and 0x42C the first after the resync frames (0x420 to 0x42B); the ids inside those ranges are in the schedule and raise no alarm
+    for n, bid, k in itertools.product(range(3), (0x301, 0x413, 0x42C, 0x4F0, 0x511, 0x520, 0x6F0, 0x7F0), (2, 5)):
         out.append(_sc("babble", [f"{N[n]}:babble:start=100,n={k},id={bid}"], "ignore", frames=FRAMES,
                        tag=dict(node=N[n], n=k, id=bid, alarm_expected=k >= 3)))
     return out
@@ -435,7 +436,7 @@ def contexts() -> list[Scenario]:
     return out
 
 
-# ------------------------------------------------------------------ kinds added by the FMEA gap analysis (docs/FMEA.md)
+# ------------------------------------------------------------------ kinds added by the FMEA gap analysis (docs/verification/FMEA.md)
 GYRO_AMP = (10.0, 6.0, 3.0)  # peak truth rate per axis, dps (peers.truth)
 ACCEL_AMP = (0.05, 0.03, 0.0)  # peak variation per axis, g (axis 2 is constant gravity 1.0 g)
 GYRO_RATE = tuple(a * 2 * math.pi * f for a, f in zip(GYRO_AMP, (0.8, 0.5, 0.3)))  # dps per second at the steepest point
@@ -552,7 +553,7 @@ def new_timing_faults() -> list[Scenario]:
         for us in sorted({100, 500, 1000, 2000, 3000, 4000, thr - 1, thr, thr + 1, 6000, 8000, 9000}):
             # Past `thr` the gyro/accel frames land in the previous frame's window carrying the NEXT frame's number: detected since ADR-018
             # (E11). Below it the frame still arrives in the right window with the right number: invisible until arrival times are
-            # checked (docs/DEFERRED.md).
+            # checked (docs/design/FUTURE_WORK.md).
             exp = "gray" if abs(us - thr) <= 1 else ("detect" if us > thr else "ignore")
             for ctx in _ctxs(n):
                 out.append(_sc("early", [f"{N[n]}:early:start=100,us={us}"], exp, 6, context=ctx, frames=FRAMES,

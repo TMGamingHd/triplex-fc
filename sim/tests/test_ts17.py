@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""TS-17, the paper part (campaign/ts17.py): the arithmetic of the coverage model and the claims that docs/TRADE_STUDIES.md section 9c makes from it."""
+"""TS-17, the paper part (campaign/ts17.py): the arithmetic of the coverage model and the claims that docs/decisions/TRADE_STUDIES.md section 9c makes from it."""
 import unittest
 
 from campaign import ts17

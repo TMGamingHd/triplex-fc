@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The supervisor's clock of record (supervisor/include/sup/mission_clock.hpp, docs/MISSION_CLOCK.md): MET across years and resets, the battery-backed
+// The supervisor's clock of record (supervisor/include/sup/mission_clock.hpp, docs/design/MISSION_CLOCK.md): MET across years and resets, the battery-backed
 // record, and the plausibility check of a flight computer's mission time. The header shares no code with core/; this file is the one place that includes both,
 // to pin the few protocol facts the supervisor restates.
 #include <cmath>

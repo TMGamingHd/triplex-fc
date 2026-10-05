@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Frame timing from logic-analyser edges (TFC-SYS-001: p99 frame-start jitter no greater than 100 us).
 
-Capture the FRAME line of a node (docs/SUPERVISOR.md: it rises at the start of every frame) with the logic analyser, export the edge
+Capture the FRAME line of a node (docs/design/SUPERVISOR.md: it rises at the start of every frame) with the logic analyser, export the edge
 times, and run:
 
     python3 tools/bench/frame_jitter.py edges.csv [--unit s|ms|us|ns] [--period-us 10000] [--p99-us 100]

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The USB serial link between the PC and the Pico that drives the platform and injects power faults (docs/PICO.md). A frame is
+// The USB serial link between the PC and the Pico that drives the platform and injects power faults (docs/design/PICO.md). A frame is
 //   0xA5 | type | length | payload (0 to 12 bytes) | CRC-8 over type, length and payload
 // with the same CRC as the flight bus (crc8.hpp). A byte-at-a-time parser finds frames in a stream, drops what does not check and
 // resynchronises on the next 0xA5, so garbage or a half frame never costs more than the frame it damages.

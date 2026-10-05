@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
-// The actuator node (ADR-023, ADR-024, docs/ACT_LOGIC.md). It has no servo behind it: the platform is driven by the Pico, and ACT's job is the vote.
+// The actuator node (ADR-023, ADR-024, docs/design/ACT_LOGIC.md). It has no servo behind it: the platform is driven by the Pico, and ACT's job is the vote.
 // Every 10 ms frame it
 //   t = 0.0 ms  hears SYNC from the sync master and locks its frame to it (it only follows: it is never the master)
 //   t = 6.5 ms  takes the three flight computers' commands, votes, judges the nodes, runs its mode (Standby, Nominal, Safe) and sends the voted
-//               output and its status on 0x300 (docs/PROTOCOL.md)
+//               output and its status on 0x300 (docs/design/PROTOCOL.md)
 // From the flight computers' heartbeats it reads their Safe request; ground commands (authenticated, ARMed) lift its Safe and readmit nodes it excluded.
 // After a reset that is not a power-on it starts in Safe, holding the output it had, from a record kept in no-init RAM.
-// Not here yet: the hardware SAFE line from the supervisor (docs/SUPERVISOR.md), which waits for the supervisor.
+// The supervisor's lines (docs/design/SUPERVISOR.md): FRAME rises at the start of every frame, KICK at the end of a completed frame (only after the vote ran, TFC-FDIR-038, and the watchdog is
+// serviced at the same place), and the SAFE input is a hardware "enter Safe now" (the supervisor, or the FORCE-SAFE switch).
 //
 // Include core/ (and so the C++ standard library) BEFORE Zephyr headers: Zephyr defines an `__unused` macro that breaks a glibc header.
 #include <array>
@@ -15,6 +16,7 @@
 
 #include "tfc/act.hpp"
 #include "tfc/act_ground.hpp"
+#include "tfc/progress.hpp"
 #include "tfc/protocol.hpp"
 #include "tfc/resetlog.hpp"
 #include "tfc/sync_clock.hpp"
@@ -30,6 +32,9 @@ constexpr unsigned kActNode = 3U;  // ACT's place after A, B and C
 constexpr int64_t kPeriodUs = 10000;
 constexpr int64_t kVoteUs = CONFIG_TFC_ACT_VOTE_US;
 constexpr uint32_t kStatusEveryFrames = 100U;
+constexpr bool kLaunch = IS_ENABLED(CONFIG_TFC_LAUNCH_SEQUENCE);  // the mission frame in SYNC says pad or flight
+constexpr unsigned kTaskVote = 0U;  // ACT's one monitored task: the vote
+constexpr uint32_t kTestSafeAt = CONFIG_TFC_TEST_SAFE_LINE_AT_FRAME;  // bench aid, 0 = off: the SAFE line reads as asserted from this SYNC frame on
 
 const struct device* const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
 
@@ -171,6 +176,9 @@ int main() {
   tfc::HeartbeatMonitor heartbeats;
 
   fc::hw::Watchdog wdt;
+  fc::hw::ActLines lines;
+  lines.init();
+  tfc::ProgressMonitor progress(1U << kTaskVote);
   tfc::ResetPolicy reset_policy;
   reset_policy.short_boot_frames = static_cast<uint32_t>(CONFIG_TFC_SHORT_BOOT_S) * 100U;
   reset_policy.loop_boots = static_cast<uint32_t>(CONFIG_TFC_RESET_LOOP_BOOTS);
@@ -196,6 +204,7 @@ int main() {
     // ---- the start of the frame: wait for SYNC, up to this node's window ----
     bool heard = false;
     uint32_t heard_number = 0U;
+    uint16_t heard_mission = tfc::mission::kNotLaunched;
     int64_t base = nominal;
     can_frame sf;
     while (k_msgq_get(&rx_sync_msgq, &sf, K_TIMEOUT_ABS_TICKS(nominal + window)) == 0) {
@@ -203,6 +212,7 @@ int main() {
       if (d.ok) {
         heard = true;
         heard_number = d.frame_no;
+        heard_mission = d.mission;
         base = k_uptime_ticks();
         break;
       }
@@ -210,8 +220,10 @@ int main() {
     if (!heard) {
       base = k_uptime_ticks();
     }
-    const tfc::SyncTick tick = sync_clock.cycle(heard, heard_number);
+    const tfc::SyncTick tick = sync_clock.cycle(heard, heard_number, heard_mission);
     const uint32_t k = tick.frame;
+    lines.kick(false);  // KICK falls at the start of the frame; it rises again only from the end-of-frame path
+    lines.frame(true);
     nominal = base + period;
     if (cycle == 0U && !wdt.start(static_cast<uint32_t>(CONFIG_TFC_WATCHDOG_TIMEOUT_MS)) && DT_HAS_ALIAS(watchdog0)) {
       printk("WATCHDOG: could not be started\n");
@@ -228,6 +240,9 @@ int main() {
     }
     const uint8_t seq = static_cast<uint8_t>(k);
     act.begin_frame();
+    if (kLaunch) {
+      act.set_on_pad(!tfc::mission::in_flight(tick.mission));  // read when Safe is entered: on the pad it goes straight to neutral
+    }
     heartbeats.begin_frame();
     ground.tick();
     if (cycle == 0U) {
@@ -257,11 +272,16 @@ int main() {
       }
     }
     act.safe_request(heartbeats.safe_requested(act.output().excluded_nodes));
-    act.hardware_safe(false);  // the supervisor's SAFE line is not wired yet
+    lines.frame(false);
+    act.hardware_safe(lines.safe() || (kTestSafeAt != 0U && k >= kTestSafeAt));
     const tfc::ActOutput& out = act.end_frame();
     tx_errors += send(tfc::pack_act_out(tfc::to_act_frame(out), seq)) ? 0U : 1U;
     g_act_record = act.record();
-    wdt.feed();
+    progress.report(kTaskVote);
+    if (progress.end_of_frame(true)) {  // the one place the watchdog is serviced, and the one place KICK is raised
+      wdt.feed();
+      lines.kick(true);
+    }
 
     if (out.mode != last_mode || out.phase != last_phase) {
       printk("[frame %u] ACT %s -> %s (%s), cause: %s\n", k, mode_text(last_mode), mode_text(out.mode), phase_text(out.phase), cause_text(out.cause));

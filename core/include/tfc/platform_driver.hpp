@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The platform driver's safety logic (TFC-PLAT-001, 002, 004; docs/PICO.md). The PC commands the platform's two tilts at 100 Hz; this decides what the servos are
+// The platform driver's safety logic (TFC-PLAT-001, 002, 004; docs/design/PICO.md). The PC commands the platform's two tilts at 100 Hz; this decides what the servos are
 // told, whatever the PC says:
 //   limit     a tilt beyond the travel is clamped to it (and the command reported as saturated, PLAT-004)
 //   rate      the output moves toward the target by at most `rate_limit_dps` (PLAT-001), so a step in the command is a ramp

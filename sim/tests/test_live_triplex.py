@@ -116,7 +116,7 @@ class LiveTriplex(unittest.TestCase):
         for i in (1, 2):
             last = [m for m in map(STATUS.match, self.log(i).splitlines()) if m][-1]
             if self.TS16 and last.group(2) == "SAFE":
-                self.skipTest("the two remaining estimators disagreed after the takeover and the system went to Safe: the open hole of TS-16 (docs/TRADE_STUDIES.md)")
+                self.skipTest("the two remaining estimators disagreed after the takeover and the system went to Safe: the open hole of TS-16 (docs/decisions/TRADE_STUDIES.md)")
             self.assertEqual(last.group(2), "DUPLEX", self.log(i))
             self.assertEqual(last.group(3), "X", self.log(i))
             self.assertEqual((last.group(4), last.group(5)), ("+", "+"), self.log(i))

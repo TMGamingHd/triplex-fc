@@ -160,7 +160,7 @@ struct RedundancyConfig {
   uint8_t persist_m = 3;            // latch when M of the last N frames are bad
   uint8_t persist_n = 5;
   // A digest disagreement counts (as a bad frame for the node it blames, or as an unresolved disagreement) only once it has lasted this many frames in a row. 1: at once, as before.
-  // With the state resynchronisation (docs/RESYNC.md) a lost frame leaves the digests different for up to one resync period, and the resync heals it: set this to a little more than the
+  // With the state resynchronisation (docs/design/RESYNC.md) a lost frame leaves the digests different for up to one resync period, and the resync heals it: set this to a little more than the
   // period, so that a mismatch which the resync did not heal is what counts.
   uint16_t digest_persist_frames = 1;
   uint16_t stuck_limit = 20;         // identical sensor frames before "stuck"
@@ -222,14 +222,14 @@ struct RedundancyConfig {
   // frames **isolates nobody**: the outputs are held and a Safe request is raised, because nothing in the data says which release is right (the operator names the side to trust).
   bool release_aware = true;
   float version_tol_factor = 1.5F;
-  // ---- mission phases (ADR-023, docs/MISSION_PHASES.md) ----
+  // ---- mission phases (ADR-023, docs/design/MISSION_PHASES.md) ----
   // Off: the manager knows no phase and the interlock tiers of ADR-019 apply (disable: plain while two or more voters are left). On: the manager keeps the phase, set only by the authenticated
   // `phase` command; a phase change or a demotion that would leave fewer voters than the phase's minimum is refused, one that leaves fewer than its nominal number needs an ARM, and being below
   // the minimum is reported (an alert, never an automatic abort: "Simplex in ascent alerts only").
   bool phases = false;
 };
 
-// The phases of the rig scenario and what each wants (docs/MISSION_PHASES.md section 3): the nominal number of voting computers and the minimum.
+// The phases of the rig scenario and what each wants (docs/design/MISSION_PHASES.md section 3): the nominal number of voting computers and the minimum.
 namespace phases {
 constexpr uint8_t kOff = 0U;
 constexpr uint8_t kPowerUp = 1U;

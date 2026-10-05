@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""TS-15: how a computer degrades when its sensing does (docs/TRADE_STUDIES.md section 9a). Runs the same fault scenarios with the manager as it was (option A: a
+"""TS-15: how a computer degrades when its sensing does (docs/decisions/TRADE_STUDIES.md section 9a). Runs the same fault scenarios with the manager as it was (option A: a
 computer is one unit) and with the sensor split (option B), and tabulates, per class of fault: command-voter availability (computer-frames that took part in the
 command vote, as a share of the possible ones after the fault starts), false isolations (computers latched that have no fault of their own), Safe requests, and the
 frames with a non-held output beyond the vote tolerance.

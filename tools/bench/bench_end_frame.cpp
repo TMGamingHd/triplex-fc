@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Cost of one 10 ms frame of the redundancy manager on the host: on_frame x 9 + end_frame, healthy triplex and under
 // fault. Host numbers are a sanity check on algorithmic cost (no heap, no loops over unbounded data), NOT the flight
-// WCET: that must be measured on the target (docs/CODING_STANDARD.md section 6). Build target: tfc_bench.
+// WCET: that must be measured on the target (docs/verification/CODING_STANDARD.md section 6). Build target: tfc_bench.
 #include <algorithm>
 #include <array>
 #include <chrono>

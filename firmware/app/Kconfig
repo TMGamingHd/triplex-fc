@@ -41,14 +41,14 @@ config TFC_LAUNCH_SEQUENCE
 	help
 	  On: each computer calibrates its own gyro on the pad (10 s at rest) and subtracts the bias before it sends; the mission frame rides in SYNC (the sync master
 	  starts it on an authenticated `launch` that passes the go/no-go, and scrubs on a failure during the 10 s countdown); the schedules follow the frames since T-zero
-	  and sit at their first point on the pad; the heartbeat carries a ready bit (docs/LAUNCH_SEQUENCE.md). Off: the schedules follow the SYNC frame number, as before.
+	  and sit at their first point on the pad; the heartbeat carries a ready bit (docs/design/LAUNCH_SEQUENCE.md). Off: the schedules follow the SYNC frame number, as before.
 
 config TFC_PHASES
 	bool "Keep the mission phase and the WARM role (ADR-023)"
 	default n
 	help
 	  On: the manager starts in the power-up phase; the authenticated `phase` command changes it (refused when fewer computers vote than the new phase's minimum), `warm` rests
-	  a computer (judged by the shadow vote, not voting; `reintegrate` promotes it) and the `disable` tiers follow the phase (docs/MISSION_PHASES.md). Below the minimum is reported,
+	  a computer (judged by the shadow vote, not voting; `reintegrate` promotes it) and the `disable` tiers follow the phase (docs/design/MISSION_PHASES.md). Below the minimum is reported,
 	  never acted on. Off: the interlock tiers of ADR-019 apply, as before.
 
 config TFC_SENSOR_SPLIT
@@ -65,7 +65,7 @@ config TFC_RESYNC_PERIOD
 	range 0 10000
 	help
 	  With the flight function on, every this many frames the computers exchange their estimator and controller state (four frames each, 0x420 to 0x42B) and
-	  each adopts the mid-value of the healthy computers' states, if it has all of them (docs/RESYNC.md, ADR-030, TS-23). 100 is the proposed default (TS-23).
+	  each adopts the mid-value of the healthy computers' states, if it has all of them (docs/design/RESYNC.md, ADR-030, TS-23). 100 is the proposed default (TS-23).
 	  The manager's digest persistence is then set to twice this plus 50 frames, so that a mismatch the resync would heal is not counted. Ignored without the
 	  flight function.
 
@@ -75,7 +75,7 @@ config TFC_RESYNC_GROUP
 	range 0 0x07
 	help
 	  The same value on every computer. A computer outside the group neither sends its state nor adopts the vote: the diverse computer of ADR-021 (the
-	  golden release) is left out with 0x03 so that the resync does not erase the differences it exists to show (docs/RESYNC.md section 6).
+	  golden release) is left out with 0x03 so that the resync does not erase the differences it exists to show (docs/design/RESYNC.md section 6).
 
 config TFC_TEST_DROP_PEERS_FIRST
 	int "Test knob: first frame in which this computer withholds every sensor frame from its flight function"
@@ -94,7 +94,7 @@ config TFC_RELEASE_ID
 	default 0x0
 	range 0 0xFFFF
 	help
-	  Computers on different releases are compared with the version tolerance and not blamed for differing from each other (ADR-021, docs/RESYNC.md section 6). The default
+	  Computers on different releases are compared with the version tolerance and not blamed for differing from each other (ADR-021, docs/design/RESYNC.md section 6). The default
 	  makes every image built from a different commit a different release. Set it by hand to build two releases from one tree (the live mixed-release test does).
 
 config TFC_TEST_HANG_AT_FRAME
@@ -151,15 +151,15 @@ config TFC_AUTO_REINTEGRATE
 	  command, and only after it has passed probation (the Space Shuttle / airliner practice).
 	  On: after the minimum dwell, a node whose FIRST latch had a transient-looking cause (missing or
 	  damaged frames, one vote episode) goes on probation by itself. A stuck sensor, a digest
-	  mismatch and a repeat offender are never readmitted automatically. See docs/DECISIONS.md ADR-010.
+	  mismatch and a repeat offender are never readmitted automatically. See docs/decisions/DECISIONS.md ADR-010.
 
 config TFC_GROUND_KEY
 	string "Ground-command authentication key (32 hex digits = 128 bits)"
 	default "000102030405060708090a0b0c0d0e0f"
 	help
-	  The shared key for the SipHash-2-4 tag on ground commands (docs/DECISIONS.md ADR-019). The default is the PUBLIC
+	  The shared key for the SipHash-2-4 tag on ground commands (docs/decisions/DECISIONS.md ADR-019). The default is the PUBLIC
 	  bench key that the host tools and the tests also use, so the bench works out of the box. It protects nothing:
-	  provision your own before any real use (docs/DEFERRED.md). The value ends up in the binary and in the build
+	  provision your own before any real use (docs/design/FUTURE_WORK.md). The value ends up in the binary and in the build
 	  directory: it is a bench secret at best, not a flight key store.
 
 source "Kconfig.zephyr"

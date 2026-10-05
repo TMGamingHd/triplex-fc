@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Protocol version 2 (docs/PROTOCOL.md): ACT's output, the heartbeat, the state share and the simulator's frames. The golden bytes below are pinned in
+// Protocol version 2 (docs/design/PROTOCOL.md): ACT's output, the heartbeat, the state share and the simulator's frames. The golden bytes below are pinned in
 // the Python mirror too (sim/tests/test_protocol.py): if one side changes, both tests fail until both agree.
 #include <array>
 #include <cmath>

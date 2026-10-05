@@ -10,7 +10,7 @@
 // Each 10 ms frame of the log is fed to tfc::RedundancyManager, the same class the firmware
 // runs: it decodes gyro/accel/command frames, checks CRC and sequence, votes every channel,
 // cross-checks the state digest, runs the stuck detector, and feeds one 3-of-5 ChannelMonitor
-// per node (docs/ARCHITECTURE.md sections 4-5). This tool only reads the log and reports.
+// per node (docs/design/ARCHITECTURE.md sections 4-5). This tool only reads the log and reports.
 //              [--sensor-split]   judge each IMU's gyro and accelerometer pair apart from its computer (ADR-020 case 1); the summary and the dump then also carry the IMU channels' verdicts
 //              [--phases]         the manager keeps the mission phase and the WARM role (ADR-023): `phase`, `warm` and the interlock tiers of the phase apply; the summary then carries `phase` and `warm`
 //              [--release A=ID,B=ID,C=ID]   the release each computer reports (ADR-021): two that share one and a third that does not make the lone computer's commands subject to the version tolerance
@@ -31,7 +31,7 @@
 namespace {
 
 constexpr uint64_t kFrameUs = 10000U;
-constexpr uint64_t kDefaultVoteUs = 7000U;  // FC-A votes 7.0 ms into the frame (docs/ARCHITECTURE.md section 3)
+constexpr uint64_t kDefaultVoteUs = 7000U;  // FC-A votes 7.0 ms into the frame (docs/design/ARCHITECTURE.md section 3)
 
 struct Logged {
   uint64_t t_us = 0;

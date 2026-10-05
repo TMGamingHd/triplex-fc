@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// How often should the replicas resynchronise their state (docs/RESYNC.md, TS-23)? For each resync period and each frame-loss rate, fly the closed loop (sim/vehicle/closed_loop.hpp:
+// How often should the replicas resynchronise their state (docs/design/RESYNC.md, TS-23)? For each resync period and each frame-loss rate, fly the closed loop (sim/vehicle/closed_loop.hpp:
 // three flight functions, the real ACT logic, the simulated vehicle) over several random loss patterns and report what the period buys and what it costs.
 //   tfc_resync [--frames N] [--seeds N] [--periods a,b,c] [--loss p,q,r]
 // Output: a markdown table per loss rate. A flight is LOST if ACT enters Safe or the attitude strays more than 5 degrees from the program after the first 3 s.

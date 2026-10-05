@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The hardware overrides' read-only sense lines (docs/HARDWARE_OVERRIDE.md sections 5 and 7, TFC-HWO-005 and HWO-007): which override switches are engaged, which have been seen to work this session,
+// The hardware overrides' read-only sense lines (docs/design/HARDWARE_OVERRIDE.md sections 5 and 7, TFC-HWO-005 and HWO-007): which override switches are engaged, which have been seen to work this session,
 // and the operator's acknowledgement that a run may start with one engaged. A sense line is **never** an input to a control decision about the units: the one thing it does is to refuse a launch
 // while an override is engaged that the operator has not acknowledged (the guard against mode confusion, G5).
 //

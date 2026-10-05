@@ -1,4 +1,4 @@
-/* The supervisor on a Pico 2 (docs/SUPERVISOR.md section 4, SUP-Lite; ADR-022).
+/* The supervisor on a Pico 2 (docs/design/SUPERVISOR.md section 4, SUP-Lite; ADR-022).
  *
  * Pins (GP numbers): FRAME in GP2 to GP5 (A, B, C, ACT), KICK in GP6 to GP9, NRST out GP10 to GP13, power relay out GP14 to GP17 (active low, external pull-ups to 3.3 V), SAFE out GP18, T0 out GP19,
  * I2C0 to the real-time clock on GP20 (SDA) and GP21 (SCL), the six override sense inputs on GP22, GP26, GP27, GP28, GP0 and GP1 (H1 to H5 and H6/H7). All 26 pins. Every input needs an external pull-down of 8.2 kOhm or less (the RP2350 E9 erratum); the unit boards' own

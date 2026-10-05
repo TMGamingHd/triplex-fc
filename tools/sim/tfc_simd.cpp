@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-// The vehicle simulator on a SocketCAN bus (docs/VEHICLE_SIM.md, docs/PROTOCOL.md). It follows SYNC, publishes the sensor inputs for the next frame as soon as ACT's
+// The vehicle simulator on a SocketCAN bus (docs/design/VEHICLE_SIM.md, docs/design/PROTOCOL.md). It follows SYNC, publishes the sensor inputs for the next frame as soon as ACT's
 // output for this one arrives (sim/vehicle/runner.hpp explains why one frame ahead), and steps the 6-DOF vehicle with the gimbal command in ACT's frame. Its time is the
 // frame number: a SYNC that skips numbers (a sync-master takeover) steps the world over the skipped frames with the last command held, so sim time never drifts from the
 // flight computers' frame count. A run starts at the first SYNC heard and starts over if the frame number goes backwards (the sync master was reset).
-// With --pico PORT it also streams the vehicle's tilts to the Pico that drives the platform (docs/PICO.md): one platform frame per simulated frame, so 100 Hz.
-// With --hold the vehicle stands clamped on the pad until the mission frame in SYNC passes T-zero (docs/LAUNCH_SEQUENCE.md), then flies; a simulator that starts after T-zero joins the flight in progress.
+// With --pico PORT it also streams the vehicle's tilts to the Pico that drives the platform (docs/design/PICO.md): one platform frame per simulated frame, so 100 Hz.
+// With --hold the vehicle stands clamped on the pad until the mission frame in SYNC passes T-zero (docs/design/LAUNCH_SEQUENCE.md), then flies; a simulator that starts after T-zero joins the flight in progress.
 //   tfc_simd [--iface vcan0] [--hold] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
 #include <fcntl.h>
 #include <poll.h>

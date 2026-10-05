@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Live: the state resynchronisation (docs/RESYNC.md) between three instances of the real firmware on vcan0.
+"""Live: the state resynchronisation (docs/design/RESYNC.md) between three instances of the real firmware on vcan0.
 
 Computers A and C are the flight-function images; B is the same with a test knob (tools/bench/sil_triplex.sh --build-drop) that withholds every sensor frame from
 its flight function in frames 370 to 398, so its estimator holds its rates while the other two follow the vote: B's state is degrees away at frame 399, the last frame of

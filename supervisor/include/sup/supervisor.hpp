@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The supervisor's decision logic (docs/SUPERVISOR.md, ADR-022; the SUP-Lite build): what it watches, what it does, and what it never does. Pure logic over counters and ticks: the
+// The supervisor's decision logic (docs/design/SUPERVISOR.md, ADR-022; the SUP-Lite build): what it watches, what it does, and what it never does. Pure logic over counters and ticks: the
 // hardware layer hands it, once per loop, the cumulative counts and the latest rising-edge tick of each unit's FRAME and KICK lines and the RTC's seconds, and it returns the levels
 // of its output lines and a list of what happened. Integer-only and portable; by TFC-SUP-001 it shares no code with `core/`.
 //
@@ -181,6 +181,28 @@ class Supervisor {
     return n;
   }
 
+  // The answer to `time`: the supervisor's own tick counter (what the PC stamps with UTC), the RTC's seconds (0 if it could not be read) and the mission elapsed time in microseconds ("-" before T-zero),
+  // e.g. "time ticks=123456789 rtc=1234567 met_us=-\n". Truncated to `cap` (NUL-terminated); returns the length.
+  std::size_t time_text(const Inputs& in, char* out, std::size_t cap) const noexcept {
+    if (cap == 0U) {
+      return 0U;
+    }
+    std::size_t n = 0U;
+    put(out, cap, n, "time ticks=");
+    put_uint(out, cap, n, in.ticks);
+    put(out, cap, n, " rtc=");
+    put_uint(out, cap, n, in.rtc_s);
+    put(out, cap, n, " met_us=");
+    if (clock_.launched()) {
+      put_uint(out, cap, n, clock_.met_us(in.ticks));
+    } else {
+      put(out, cap, n, "-");
+    }
+    put(out, cap, n, "\n");
+    out[n] = '\0';
+    return n;
+  }
+
   [[nodiscard]] UnitState state(Unit u) const noexcept { return state_[idx(u)]; }
   [[nodiscard]] bool dead(Unit u) const noexcept { return dead_[idx(u)]; }
   [[nodiscard]] uint32_t resets(Unit u) const noexcept { return resets_[idx(u)]; }
@@ -325,6 +347,8 @@ class Supervisor {
         }
         counting_ = false;
         fire_t0(in, ev);
+        return Response::Done;
+      case Kind::Time:  // the answer is time_text()
         return Response::Done;
       case Kind::OverrideOk:
         ov_.acknowledge();

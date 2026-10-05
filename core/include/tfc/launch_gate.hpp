@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Go or no-go for launch (docs/LAUNCH_SEQUENCE.md section 5): the list of conditions the sync master checks before it accepts a `launch`, and keeps checking during the countdown (a failure scrubs).
+// Go or no-go for launch (docs/design/LAUNCH_SEQUENCE.md section 5): the list of conditions the sync master checks before it accepts a `launch`, and keeps checking during the countdown (a failure scrubs).
 // It only decides; the caller supplies the facts and acts on the answer.
 //   three healthy flight computers (Triplex), none latched or on probation
 //   no Safe request

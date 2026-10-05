@@ -174,7 +174,7 @@ class Controller {
     return c;
   }
 
-  // What the controller carries from one step to the next (the gains come from the schedule): exchanged between the replicas for the state resynchronisation (docs/RESYNC.md).
+  // What the controller carries from one step to the next (the gains come from the schedule): exchanged between the replicas for the state resynchronisation (docs/design/RESYNC.md).
   struct State {
     std::array<float, 2> out{0.0F, 0.0F};
     std::array<float, 2> integ{0.0F, 0.0F};

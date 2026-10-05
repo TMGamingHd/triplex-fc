@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# Fails if the flight binary contains anything the coding standard forbids (docs/CODING_STANDARD.md):
+# Fails if the flight binary contains anything the coding standard forbids (docs/verification/CODING_STANDARD.md):
 # dynamic memory, C++ exceptions, RTTI or virtual dispatch. Usage: tools/check_elf.sh ELF [NM]
 set -euo pipefail
 elf="${1:?usage: check_elf.sh ELF [NM]}"

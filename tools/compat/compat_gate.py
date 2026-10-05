@@ -8,7 +8,7 @@
 Builds `tools/compat/tfc_compat.cpp` against the current `core/include` and against the golden release's, flies the fixed set of scenarios through both (three flight functions with their IMU
 models over the 6-DOF vehicle, their commands voted by a mid-value), and requires the two releases' voted commands to agree in every frame within the **version tolerance**: `factor` times the
 manager's command vote tolerance (default 1.5 x 0.01 degree). A release that fails is not to be fielded against that golden release (the golden computer would be the odd one out, and the manager
-would hold and ask, `docs/RESYNC.md` section 6). With `--golden REF` the golden include directory is taken from a temporary `git worktree` of REF. A golden release whose interface the harness
+would hold and ask, `docs/design/RESYNC.md` section 6). With `--golden REF` the golden include directory is taken from a temporary `git worktree` of REF. A golden release whose interface the harness
 cannot build against is reported as incomparable (exit 3), which is itself a finding: the bus and API are supposed to be frozen for it (TFC-ARCH-004).
 Exit status: 0 compatible, 1 a command differs by more than the tolerance, 2 usage or build error of the current release, 3 the golden release does not build against the harness.
 """
