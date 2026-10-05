@@ -24,6 +24,7 @@ struct RunnerConfig {
   Scenario scenario;
   bool vehicle_true = false;       // the sensors feel the vehicle itself (rates and specific force) instead of the platform's tilt and gravity
   uint32_t status_every = 10U;     // frames between the state, telemetry and flags frames (10 = 10 Hz)
+  bool start_held = false;         // the vehicle stands on the pad (held, at rest) until release(); false: it is released at the first frame, as before
 };
 
 struct SimFrames {
@@ -45,12 +46,24 @@ class SimRunner {
     held_pitch_ = 0.0;
     held_yaw_ = 0.0;
     flags_ = 0U;
-    for (uint32_t k = 0; k < k0; ++k) {
-      advance(0.0, 0.0);
+    clamped_ = cfg_.start_held;
+    t0_ = 0U;
+    if (!clamped_) {
+      for (uint32_t k = 0; k < k0; ++k) {
+        advance(0.0, 0.0);
+      }
     }
     frame_ = k0;
     return publish(k0);
   }
+
+  // T-zero: the clamps open and the vehicle flies from the next step. The guidance and gain schedules start here (flight frame 0).
+  void release() {
+    clamped_ = false;
+    t0_ = frame_;
+  }
+  [[nodiscard]] bool clamped() const { return clamped_; }
+  [[nodiscard]] uint32_t flight_frame() const { return clamped_ ? 0U : frame_ - t0_; }
 
   // Frame `k` has ended: apply ACT's command for it (`act` is null if ACT's frame did not come, and then the last command is held), advance the world over the
   // frame, and return the frames for frame k+1.
@@ -63,7 +76,9 @@ class SimRunner {
       }
     }
     held_ = act == nullptr;
-    advance(held_pitch_, held_yaw_);
+    if (!clamped_) {  // on the pad nothing moves, whatever ACT says
+      advance(held_pitch_, held_yaw_);
+    }
     frame_ = k + 1U;
     return publish(frame_);
   }
@@ -85,7 +100,10 @@ class SimRunner {
     SimFrames out;
     V3 g;
     V3 a;
-    if (cfg_.vehicle_true) {
+    if (clamped_) {  // standing on the pad: no rotation, and the pad's reaction is the 1 g the sensors read on their long axis (the same in both modes)
+      g = V3{};
+      a = V3{0.0, 0.0, 1.0};
+    } else if (cfg_.vehicle_true) {
       vehicle_.vehicle_true_imu(g, a);
     } else {
       platform_.imu_truth(g, a);
@@ -105,7 +123,7 @@ class SimRunner {
       out.add(tfc::pack_sim_state(st, seq));
       const Loads l = vehicle_.current_loads();
       const Tilts t = vehicle_.tilts();
-      const tfc::Reference ref = tables_.guidance.at(k);
+      const tfc::Reference ref = tables_.guidance.at(flight_frame());
       tfc::SimTelemetry tm;
       tm.dynamic_pressure_pa = static_cast<float>(l.dynamic_pressure);
       tm.pitch_error_deg = static_cast<float>(t.y_deg) - ref.tilt_y_deg;
@@ -123,7 +141,7 @@ class SimRunner {
         fl.flags = static_cast<uint8_t>(fl.flags | tfc::simflag::kCommandHeld);
       }
       fl.engines_on = static_cast<uint8_t>(vehicle_.engines_on());
-      fl.time_frames = k;
+      fl.time_frames = flight_frame();
       out.add(tfc::pack_sim_flags(fl, seq));
     }
     return out;
@@ -138,6 +156,8 @@ class SimRunner {
   uint8_t flags_ = 0U;
   bool held_ = false;
   uint32_t frame_ = 0U;
+  uint32_t t0_ = 0U;  // the frame of T-zero
+  bool clamped_ = false;
 };
 
 }  // namespace sim

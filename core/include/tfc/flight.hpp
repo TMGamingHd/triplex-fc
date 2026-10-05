@@ -35,11 +35,27 @@ class FlightFunction {
   // their estimators would drift apart. True if a frame was used.
   bool on_frame(const Frame& f) noexcept { return f.data[6] == static_cast<uint8_t>(frame_ & 0xFFU) && consensus_.on_frame(f); }
 
+  // The mission state for this frame (docs/LAUNCH_SEQUENCE.md). On the pad the schedules sit at their first point; in flight they follow `flight_frame`, the frames since T-zero.
+  // Never called: the schedules follow the SYNC frame number, as before.
+  void set_mission(bool pad, uint32_t flight_frame) noexcept {
+    mission_set_ = true;
+    pad_ = pad;
+    flight_frame_ = flight_frame;
+  }
+
+  // This computer's view of its inputs: the sensors give a trustworthy consensus and the attitude is valid. (A computer is ready for launch when this holds and its own IMU's
+  // calibration is ready, `ImuCalibrator::ready()`.)
+  [[nodiscard]] bool sensors_ok() const noexcept {
+    const ConsensusInput c = consensus_.consensus();
+    return c.gyro_ok && c.accel_ok && estimator_.attitude().valid;
+  }
+
   // At the command slot: update the estimator, run the controller with this frame's gains and reference, and return the command with the digest.
   [[nodiscard]] Command step() noexcept {
     estimator_.update(consensus_.consensus(), kFramePeriodS);
-    controller_.set_gains(gains_.at(frame_));
-    Command c = controller_.step(estimator_.attitude(), guidance_.at(frame_), kFramePeriodS);
+    const uint32_t idx = !mission_set_ ? frame_ : (pad_ ? 0U : flight_frame_);
+    controller_.set_gains(gains_.at(idx));
+    Command c = controller_.step(estimator_.attitude(), guidance_.at(idx), kFramePeriodS);
     c.state_digest = static_cast<uint16_t>(estimator_.digest() ^ controller_.digest());
     return c;
   }
@@ -56,6 +72,9 @@ class FlightFunction {
   AttitudeEstimator estimator_{};
   Controller controller_{};
   uint32_t frame_ = 0U;
+  uint32_t flight_frame_ = 0U;
+  bool mission_set_ = false;
+  bool pad_ = false;
 };
 
 }  // namespace tfc
