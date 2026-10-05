@@ -14,136 +14,15 @@
 #include "tfc/protocol.hpp"
 #include "tfc_test.hpp"
 
+#include "closed_loop.hpp"
 #include "design.hpp"
 #include "runner.hpp"
 
 namespace {
 
-class Lcg {
- public:
-  explicit Lcg(uint32_t s) : s_(s) {}
-  float uniform() {
-    s_ = (s_ * 1664525U) + 1013904223U;
-    return (static_cast<float>(s_ >> 8) / 8388608.0F) - 1.0F;
-  }
-
- private:
-  uint32_t s_;
-};
-
-struct Result {
-  double rms_deg = 0.0;
-  double max_deg = 0.0;
-  double final_altitude = 0.0;
-  double final_tilt_deg = 0.0;
-  uint32_t nominal_from = 0U;       // the frame ACT reached Nominal
-  uint32_t safe_frames = 0U;
-  uint32_t held_frames = 0U;        // frames in which the runner did not get ACT's frame
-  uint32_t platform_saturated = 0U;
-  bool finite = true;
-  tfc::ActMode final_mode = tfc::ActMode::Standby;
-  uint8_t final_excluded = 0U;
-  uint8_t flags = 0U;
-};
-
-struct Loop {
-  sim::RunnerConfig cfg;
-  uint32_t frames = 10000U;
-  uint32_t node_b_dead_from = 0xFFFFFFFFU;   // node B stops sending (all its frames) from this frame
-  uint32_t act_lost_from = 0xFFFFFFFFU;      // ACT's frames stop reaching the runner for `act_lost_for` frames from here
-  uint32_t act_lost_for = 0U;
-  bool sensor_fault_b = false;               // node B's gyro reads 15 dps too much
-};
-
-Result run(const Loop& lp) {
-  using namespace sim;
-  SimRunner runner(lp.cfg);
-  const FlightTables tables = flight_tables(lp.cfg.params);
-  std::array<tfc::FlightFunction, 3> ff{tfc::FlightFunction(tables.gains, tables.guidance), tfc::FlightFunction(tables.gains, tables.guidance),
-                                        tfc::FlightFunction(tables.gains, tables.guidance)};
-  std::array<Lcg, 3> noise{Lcg(0x1234U), Lcg(0x1235U), Lcg(0x1236U)};  // the firmware's seeds: 0x1234 + node
-  tfc::ActLogic act;
-  tfc::ActRecord none{};
-  act.boot(tfc::ResetCause::PowerOn, none);
-  Result r;
-  SimFrames pending = runner.start(0U);
-  double sum_sq = 0.0;
-  bool reached_nominal = false;
-  for (uint32_t k = 0; k < lp.frames; ++k) {
-    // each node latches the simulator's inputs for this frame and adds its own noise
-    tfc::Vec3 rates;
-    tfc::Vec3 accel;
-    const tfc::DecodedVec3 dr = tfc::unpack_vec3(pending.f[0], tfc::kGyroLsbDps);
-    const tfc::DecodedVec3 da = tfc::unpack_vec3(pending.f[1], tfc::kAccelLsbG);
-    CHECK(dr.ok && da.ok && pending.f[0].id == tfc::id::kSimRates && pending.f[1].id == tfc::id::kSimAccel);
-    rates = dr.x;
-    accel = da.x;
-    const uint8_t seq = static_cast<uint8_t>(k);
-    std::array<tfc::Frame, 6> sensor{};
-    std::array<bool, 3> alive{true, true, true};
-    alive[1] = k < lp.node_b_dead_from;
-    for (uint8_t n = 0; n < 3U; ++n) {
-      tfc::Vec3 g;
-      tfc::Vec3 a;
-      for (unsigned i = 0; i < 3U; ++i) {
-        g.v[i] = rates.v[i] + (0.17F * noise[n].uniform());
-        a.v[i] = accel.v[i] + (0.0035F * noise[n].uniform());
-      }
-      if (lp.sensor_fault_b && n == 1U) {
-        g.v[0] += 15.0F;
-        g.v[1] += 15.0F;
-      }
-      sensor[n] = tfc::pack_gyro(n, g, seq);
-      sensor[3U + n] = tfc::pack_accel(n, a, seq);
-    }
-    std::array<tfc::Command, 3> cmd{};
-    act.begin_frame();
-    for (unsigned n = 0; n < 3U; ++n) {
-      if (!alive[n]) {
-        continue;
-      }
-      ff[n].begin_frame(k, alive[1] ? 0x07U : 0x05U);
-      for (unsigned m = 0; m < 3U; ++m) {
-        if (!alive[m]) {
-          continue;
-        }
-        (void)ff[n].on_frame(sensor[m]);
-        (void)ff[n].on_frame(sensor[3U + m]);
-      }
-      cmd[n] = ff[n].step();
-      (void)act.on_frame(tfc::pack_cmd(static_cast<uint8_t>(n), cmd[n], seq));
-    }
-    act.safe_request(false);
-    const tfc::ActOutput& out = act.end_frame();
-    if (out.mode == tfc::ActMode::Nominal && !reached_nominal) {
-      reached_nominal = true;
-      r.nominal_from = k;
-    }
-    r.safe_frames += out.mode == tfc::ActMode::Safe ? 1U : 0U;
-    // ACT's frame goes over the wire and back to the runner (or is lost)
-    const tfc::DecodedAct wire = tfc::unpack_act_out(tfc::pack_act_out(tfc::to_act_frame(out), seq));
-    CHECK(wire.ok);
-    const bool lost = k >= lp.act_lost_from && k < lp.act_lost_from + lp.act_lost_for;
-    r.held_frames += lost ? 1U : 0U;
-    pending = runner.end_of_frame(k, lost ? nullptr : &wire.act);
-    const sim::Tilts t = runner.vehicle().tilts();
-    const tfc::Reference ref = tables.guidance.at(k + 1U);
-    const double ep = t.y_deg - static_cast<double>(ref.tilt_y_deg);
-    const double ey = t.x_deg - static_cast<double>(ref.tilt_x_deg);
-    r.max_deg = std::fmax(r.max_deg, std::fmax(std::fabs(ep), std::fabs(ey)));
-    sum_sq += (ep * ep) + (ey * ey);
-    r.platform_saturated += runner.platform().saturated() ? 1U : 0U;
-    r.finite = r.finite && std::isfinite(t.x_deg) && std::isfinite(t.y_deg) && std::isfinite(static_cast<double>(out.pitch_deg));
-    r.final_mode = out.mode;
-    r.final_excluded = out.excluded_nodes;
-  }
-  r.rms_deg = std::sqrt(sum_sq / (2.0 * lp.frames));
-  r.final_altitude = runner.vehicle().altitude();
-  r.final_tilt_deg = runner.vehicle().tilts().y_deg;
-  const tfc::DecodedSimFlags fl = tfc::unpack_sim_flags(pending.f[4]);  // frame 10000 is a multiple of ten: the flags are in the batch
-  r.flags = fl.ok ? fl.s.flags : 0xFFU;
-  return r;
-}
+using sim::Loop;
+using sim::Result;
+using sim::run;
 
 void report(const char* name, const Result& r) {
   if (std::getenv("TFC_LOOP_VERBOSE") != nullptr) {

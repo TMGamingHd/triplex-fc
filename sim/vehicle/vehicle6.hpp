@@ -49,6 +49,13 @@ struct Params {
   double gravity_scale = 1.0;
   // the largest integration substep, s (tests lower it to check that the answer has converged)
   double max_substep = 0.002;
+  // Dispersions: what real vehicles have that the nominal design does not. All neutral by default, so the nominal flight is unchanged.
+  double gimbal_lag_s = 0.0;           // the gimbal actuator's first-order lag (a real TVC servo has a bandwidth of a few to tens of Hz), applied before its rate limit
+  double thrust_misalign_pitch_deg = 0.0;  // a constant offset of the thrust direction from the commanded gimbal, pitch plane (an engine mounted a little off)
+  double thrust_misalign_yaw_deg = 0.0;    // and in the yaw plane
+  double thrust_scale = 1.0;           // every engine's thrust and mass flow times this (a dispersion of the engines' performance)
+  double cd_scale = 1.0;               // the axial force coefficient times this
+  double cn_scale = 1.0;               // the normal-force slope times this (aerodynamic uncertainty)
 };
 
 struct Gust {  // a 1-cosine gust of peak velocity `peak` (m/s, inertial frame) lasting `duration` seconds from `t0`
@@ -169,27 +176,27 @@ class Vehicle6 {
     if (v_abs > 1.0 && vrel.x > 0.0) {
       const double lat = std::hypot(vrel.y, vrel.z);
       l.alpha = std::atan2(lat, vrel.x);
-      l.f_aero.x = -l.dynamic_pressure * area * axial_coefficient(l.mach);
+      l.f_aero.x = -l.dynamic_pressure * area * p_.cd_scale * axial_coefficient(l.mach);
       if (lat > 1e-9) {
-        const double fn = -l.dynamic_pressure * area * p_.c_n_alpha * l.alpha;
+        const double fn = -l.dynamic_pressure * area * p_.c_n_alpha * p_.cn_scale * l.alpha;
         l.f_aero.y = fn * vrel.y / lat;
         l.f_aero.z = fn * vrel.z / lat;
       }
       l.m_aero = cross(V3{p_.x_cp - mp.x_cg, 0.0, 0.0}, V3{0.0, l.f_aero.y, l.f_aero.z});
     }
     if (burning()) {
-      const double dp = gimbal_p_ * kDeg2Rad;
-      const double dy = gimbal_y_ * kDeg2Rad;
+      const double dp = (gimbal_p_ + p_.thrust_misalign_pitch_deg) * kDeg2Rad;
+      const double dy = (gimbal_y_ + p_.thrust_misalign_yaw_deg) * kDeg2Rad;
       const V3 dir{std::cos(dp) * std::cos(dy), -std::sin(dp) * std::cos(dy), std::sin(dy)};
       for (std::size_t i = 0; i < engine_on_.size(); ++i) {
         if (!engine_on_[i]) {
           continue;
         }
-        const double ti = std::max(0.0, p_.thrust_vac_each - (air.pressure * p_.exit_area_each));
+        const double ti = std::max(0.0, (p_.thrust_scale * p_.thrust_vac_each) - (air.pressure * p_.exit_area_each));
         const V3 f = dir * ti;
         l.f_thrust = l.f_thrust + f;
         l.m_thrust = l.m_thrust + cross(V3{-mp.x_cg, engine_y(i), engine_z(i)}, f);
-        l.mdot += p_.thrust_vac_each / (p_.isp_vac * kG0);
+        l.mdot += p_.thrust_scale * p_.thrust_vac_each / (p_.isp_vac * kG0);
         l.thrust += ti;
       }
     }
@@ -260,7 +267,8 @@ class Vehicle6 {
 
   [[nodiscard]] double slew(double cur, double cmd, double h) const {
     const double target = std::clamp(cmd, -p_.gimbal_limit_deg, p_.gimbal_limit_deg);
-    const double d = std::clamp(target - cur, -p_.gimbal_rate_dps * h, p_.gimbal_rate_dps * h);
+    const double want = p_.gimbal_lag_s > 0.0 ? (target - cur) * (h / (p_.gimbal_lag_s + h)) : (target - cur);  // a first-order lag, then the rate limit
+    const double d = std::clamp(want, -p_.gimbal_rate_dps * h, p_.gimbal_rate_dps * h);
     return cur + d;
   }
 

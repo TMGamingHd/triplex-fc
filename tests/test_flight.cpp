@@ -178,3 +178,25 @@ TFC_TEST(flight_function_uses_only_the_frames_of_the_current_cycle) {
   ff.begin_frame(264U, 0x07U);  // 264 = 256 + 8: the number is the low byte, so a frame of cycle 8 passes for cycle 264 (the manager's phase check, with its 32-cycle history, is what tells them apart)
   CHECK(ff.on_frame(this_cycle[0]));
 }
+
+TFC_TEST(estimator_with_the_accelerometer_switched_off_is_the_gyros_integral_and_ignores_thrust_that_looks_like_gravity) {
+  tfc::EstimatorConfig off;
+  off.use_accel = false;
+  tfc::FlightFunction with_accel(gains(), guidance());
+  tfc::FlightFunction without(gains(), guidance(), off);
+  tfc::Vec3 gyro;  // no rotation
+  tfc::Vec3 accel;
+  accel.v = {-0.5F, 0.0F, 0.866F};  // a 1 g reading that says the platform is tilted 30 degrees about Y (or a thrust that is 1 g along a tilted axis)
+  for (uint32_t k = 0; k < 300U; ++k) {
+    for (tfc::FlightFunction* f : {&with_accel, &without}) {
+      f->begin_frame(k, 0x07U);
+      for (uint8_t n = 0; n < 3U; ++n) {
+        (void)f->on_frame(tfc::pack_gyro(n, gyro, static_cast<uint8_t>(k)));
+        (void)f->on_frame(tfc::pack_accel(n, accel, static_cast<uint8_t>(k)));
+      }
+      (void)f->step();
+    }
+  }
+  CHECK(std::fabs(with_accel.estimator().attitude().tilt_y_deg - 30.0F) < 1.0F);  // the default believes the accelerometer
+  CHECK(std::fabs(without.estimator().attitude().tilt_y_deg) < 0.01F);            // switched off, nothing moves the estimate
+}

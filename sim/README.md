@@ -4,7 +4,9 @@
 |---|---|
 | `tfc_peers/`: **virtual peers**, fake flight computers that put real, fault-injectable traffic on the flight bus | Done |
 | `../tools/replay`: `tfc_replay`, runs recorded traffic through the real `core/` redundancy code | Done |
-| Vehicle simulator (6-DOF ascent, platform-rate limiter, SocketCAN gateway, fault-campaign runner) | Not started (milestone M3) |
+| Vehicle simulator (6-DOF ascent, platform model, SocketCAN gateway) | **Done**: `../sim/vehicle` (the C++ model, the runner, the closed loop), `../tools/sim/tfc_simd` (on SocketCAN, with `--pico`), `../tools/sim/tfc_sens` (sensitivity). See `../docs/VEHICLE_SIM.md` and `../docs/SIM_FIDELITY.md` |
+| Pico client (`tfc_peers pico`, `pico_link.py`) | Done, not run on a board (`../docs/PICO.md`) |
+| Fault-campaign runner (`campaign/`) | Done |
 
 Contents: [What the virtual peers are](#what-the-virtual-peers-are) ·
 [Which command do I want?](#which-command-do-i-want) ·

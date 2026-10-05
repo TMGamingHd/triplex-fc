@@ -108,6 +108,8 @@ that the code solves the stated equations correctly, and that is what these test
 Still unverified against any outside data: the aerodynamic and engine numbers, the mean wind profile, and the real behaviour of the servo platform (that waits for the rig).
 
 ## 10. What it does not model, and the caveats
+**The full account is `docs/SIM_FIDELITY.md`** (model by model, how far each departure can go before the flight is lost, what the audit found, what to do next). In short: dispersions of the vehicle and errors of the IMU are now options, swept by `tfc_sens`; the biggest gaps are the missing pad phase and launch command, an estimator that cannot tell thrust from gravity on a real vehicle, a pessimistic and uncalibrated IMU noise model, and no turbulence.
+
 Earth rotation and the shape of the geoid; propellant slosh; structural flexibility; roll control (it is idealised: see section 3); separation and a second stage; real atmospheric turbulence (gusts are scripted); the rig's accelerations (the platform does not
 accelerate, which is why the vehicle-true mode exists). The model is a believable vehicle, not a flight-qualified one: say so in the write-up.
 

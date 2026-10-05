@@ -25,18 +25,19 @@ writing. The rest runs alongside the hardware work (section 5).
 | G5 | The S1 and S2 exit tests are written as procedures (`VERIFICATION_PROCEDURE_TEMPLATE.md`) | files in `docs/procedures/` |
 | G6 | CI builds and tests all of it within a cost the owner accepts | CI time under the agreed limit |
 
-## 2. What exists (checked on 4 Oct 2026)
+## 2. What exists (checked on 4 Oct 2026, after the audit)
 
 | Area | State |
 |---|---|
-| `core/` | 7 headers, about 2,200 lines: CRC-8, protocol (frames, SYNC, ground command), voter (`vote3`), `RedundancyManager` (1,445 lines: vote, FDIR, probation, strikes, Safe request, authentication, ARM and interlock, self-protection), fault monitor, integrity. **No estimator, controller, actuator logic, frame scheduler, telemetry, parameters, phases.** |
-| Tests | `ctest` passes here: `tfc_tests` (15 s) and `peers_e2e` (70 s). The campaign (about 17 min) and the mutation job run in CI |
-| Virtual peers | Python `tfc_peers`: B and C traffic, 32 fault kinds, commands, record, listen, decode, run with SYNC following |
+| `core/` | 21 headers, about 4,700 lines, header-only, no heap or exceptions: CRC-8, the protocol (v2: ACT, heartbeat, state share, simulator frames), the voter, `RedundancyManager` (1,445 lines), the fault monitor, integrity; the ISM330DHCX driver logic, progress and reset records; sensor consensus, the attitude estimator, the scheduled controller and guidance, **`FlightFunction`**; the ACT logic, its ground-command path and the heartbeat monitor; `SyncClock`; the Pico's link, platform driver, injector and frame loop |
+| Firmware | Four Zephyr apps: **`firmware/app`** (flight computer A, B or C: SYNC following and takeover, the flight function and a simulator-fed IMU as options), **`firmware/act`** (the actuator node), **`firmware/pico`** (platform driver and fault injector), `firmware/common`. All build for their boards (`nucleo_g474re`: about 52 kB and 39 kB of 512 kB; `rpi_pico2`: 59 kB of 4 MB) and pass the ELF check. **None has run on a board.** A Nucleo overlay has every pin from ST's connector map |
+| Simulator | `sim/vehicle`: the 6-DOF vehicle (verified against a second implementation), the platform model, the runner, the closed loop with IMU error models; `tools/sim/tfc_simd` on SocketCAN; `tools/sim/tfc_sens` (sensitivity). `docs/SIM_FIDELITY.md` says where it is and is not like real life |
+| Tests | 365 C++ tests under ASan and UBSan (coverage 100% of lines, 98.5% of branches over `core/include/tfc`), 224 Python tests, live tests with real firmware instances on `vcan0`, the full fault campaign (11,263 scenarios, no anomaly), mutation testing (112 mutants) |
+| Virtual peers | Python `tfc_peers`: B and C traffic, 32 fault kinds, commands, record, listen, decode, run with SYNC following, the Pico client |
 | Replay and campaign | `tfc_replay`, the campaign runner with oracles M1 to M8 and S1 to S4, mutation testing |
-| Firmware | `firmware/app/src/main.cpp` (304 lines): **node A only** (`BUILD_ASSERT(kNodeId == 0)`), the sync master, runs the frame loop against the virtual peers on `vcan0`. A simulated IMU. **Builds for `nucleo_g474re`** (checked now: 46.5 KB of 512 KB flash, 8.9%; 6.4 KB of 128 KB RAM, 4.9%), has not run on hardware |
-| Not present | A board overlay for the Nucleo (the app takes the board file's FDCAN1 and nothing else), an ISM330DHCX driver, any SPI configuration, a watchdog, GPIO lines, an ACT app, B and C firmware, the Pico firmware, the vehicle simulator, the platform driver, a logger |
-| Tools on this PC | `west` and the Zephyr SDK 1.0.1 present; `openocd` present; `picotool` and `dfu-util` not; `vcan0` does not exist now (it does not survive a reboot) |
-| CI | Host build with sanitizers, tests, clang-tidy, cppcheck, coding standard, coverage gate, the campaign; Zephyr build for `native_sim` and `nucleo_g474re`, live test against the peers, ELF check |
+| Not present | The supervisor's firmware and parts, the hardware overrides (proposed), a launch sequence (the `phase` command), a calibrated IMU model, the heartbeat-driven Safe request's live test, any hardware run |
+| Tools on this PC | `west` and the Zephyr SDK 1.0.1; `openocd`; `can-utils`; `vcan0` (does not survive a reboot) |
+| CI | Host build with sanitizers, tests, clang-tidy, cppcheck, coding standard, coverage gate, the campaign (a sample on pull requests); Zephyr builds for `native_sim` (A, the three-computer triplex, ACT), `nucleo_g474re` (both apps) and `rpi_pico2`, the live tests, the ELF check |
 
 ## 2a. Progress
 
@@ -58,6 +59,7 @@ writing. The rest runs alongside the hardware work (section 5).
 | 4 Oct 2026 | **SW-20 (Pico: platform driver and injector)** | `core/include/tfc/{pico_link,platform_driver,injector}.hpp` with host tests (golden frames pinned in C++ and Python; travel, rate, hold and level timeouts; relays that release by themselves); `firmware/pico` (Zephyr, builds to a UF2 of 117 kB with 59 kB of flash, no heap or vtables); `python3 -m tfc_peers pico`; `docs/PICO.md`. Not run on a board; the list of what to check is in PICO.md section 7 |
 | 4 Oct 2026 | **Parts decisions; Pico test options** | The second Pico 2, the TCXO module and a third relay module are added; the resistors are owned; the CAN adapter is reported to support FD. `docs/HARDWARE_PARTS.md` is the full bill of parts. `docs/PICO_TESTS.md` lists every option for testing the Pico (host, desk, relay modules, nodes, servos, whole chain) with a recommended order; the next step needing no hardware is the real main loop under test with a fake board |
 | 4 Oct 2026 | **Pico tests, first group (A3 to A5)** | The Pico's loop is now `tfc::PicoApp<Hal>` in `core/` and `main.cpp` is the glue; 15 loop tests against a fake board, fuzz and property tests (2 million bytes, 300,000 steps, eight properties against an independent relay model), 40 mutants (36 killed at first, three real gaps closed, one equivalent). Fixed a stale mutant of the manager. Trade studies TS-18 (testing without hardware), TS-19 (cut semantics), TS-20 (what the platform does when commands stop) |
+| 4 Oct 2026 | **Audit of everything to date** | A clean build and all tests under sanitizers (365 C++, 224 Python), the full fault campaign (11,263 scenarios, no anomaly), all 112 mutants killed, clang-tidy, cppcheck, coding standard, coverage 100% lines, every live test on freshly built images, an 85 s live closed loop through max-Q (worst error 0.36 degree, replicas' digests equal). Added: vehicle dispersions, an IMU error model, `tools/sim/tfc_sens`, edge-case tests (past burnout, total loss, runner and `tfc_simd` with a corrupt, backward or far-forward frame number: **`tfc_simd` could hang on a corrupt SYNC; fixed**), `EstimatorConfig::use_accel`. Findings: no pad phase; the estimator mistakes thrust for gravity at a thrust-to-weight near 1 (`docs/SIM_FIDELITY.md`). Refreshed the stale status sections |
 
 ## 3. What is missing, by area
 
