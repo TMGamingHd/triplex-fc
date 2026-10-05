@@ -129,6 +129,10 @@ struct Result {
   uint32_t longest_mismatch_run = 0U;     // the longest run of such frames
   uint32_t lost_frames = 0U;              // sensor frames a receiver did not get
   double max_command_spread_deg = 0.0;    // the largest difference between two computers' commands in a frame
+  uint32_t first_safe_frame = 0U;         // the first frame (counted from the start, pad included) ACT was in Safe (0: never)
+  tfc::SafeCause safe_cause = tfc::SafeCause::None;  // why, the first time
+  double spread_at_safe_deg = 0.0;        // the command spread of the frame ACT went to Safe
+  uint32_t frames_over_tol = 0U;          // frames in which the commands differed by more than ACT's agreement tolerance
 };
 
 struct Loop {
@@ -220,6 +224,7 @@ inline Result run(const Loop& lp) {
       cmds[n] = ff[n].step();
       (void)act.on_frame(tfc::pack_cmd(static_cast<uint8_t>(n), cmds[n], seq));
     }
+    double frame_spread = 0.0;
     if (alive[0] && alive[1] && alive[2]) {
       const bool same = cmds[0].state_digest == cmds[1].state_digest && cmds[1].state_digest == cmds[2].state_digest;
       mismatch_run = same ? 0U : mismatch_run + 1U;
@@ -227,10 +232,12 @@ inline Result run(const Loop& lp) {
       r.longest_mismatch_run = mismatch_run > r.longest_mismatch_run ? mismatch_run : r.longest_mismatch_run;
       for (unsigned a = 0; a < 3U; ++a) {
         for (unsigned b = a + 1U; b < 3U; ++b) {
-          r.max_command_spread_deg = std::fmax(r.max_command_spread_deg, std::fmax(std::fabs(static_cast<double>(cmds[a].pitch_deg - cmds[b].pitch_deg)),
-                                                                                  std::fabs(static_cast<double>(cmds[a].yaw_deg - cmds[b].yaw_deg))));
+          frame_spread = std::fmax(frame_spread, std::fmax(std::fabs(static_cast<double>(cmds[a].pitch_deg - cmds[b].pitch_deg)),
+                                                           std::fabs(static_cast<double>(cmds[a].yaw_deg - cmds[b].yaw_deg))));
         }
       }
+      r.max_command_spread_deg = std::fmax(r.max_command_spread_deg, frame_spread);
+      r.frames_over_tol += frame_spread > static_cast<double>(tfc::ActConfig{}.tol_deg) ? 1U : 0U;
     }
     act.safe_request(false);
     if (pad_now && r.ready_at == 0U && ff[0].sensors_ok() && ff[1].sensors_ok() && ff[2].sensors_ok() && cal[0].ready() && cal[1].ready() && cal[2].ready()) {
@@ -242,6 +249,11 @@ inline Result run(const Loop& lp) {
       r.nominal_from = k;
     }
     r.safe_frames += out.mode == tfc::ActMode::Safe ? 1U : 0U;
+    if (out.mode == tfc::ActMode::Safe && r.first_safe_frame == 0U) {
+      r.first_safe_frame = k + 1U;
+      r.safe_cause = out.cause;
+      r.spread_at_safe_deg = frame_spread;
+    }
     const tfc::DecodedAct wire = tfc::unpack_act_out(tfc::pack_act_out(tfc::to_act_frame(out), seq));
     const bool lost = k >= lp.act_lost_from && k < lp.act_lost_from + lp.act_lost_for;
     r.held_frames += lost ? 1U : 0U;
