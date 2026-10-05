@@ -53,6 +53,7 @@ campaign; HIL needs the rig.
 | TS-19 | The injector's cut semantics | A cut that ends by itself (today), a latched cut with an explicit restore, or a cut that needs a heartbeat: which is safest when the PC dies and still allows the long outages the supervisor's tests need? | HIL scenarios | 2 | small, before the supervisor tests |
 | TS-20 | The platform's behaviour when commands stop | Hold then level (today), hold for ever, level at once, stop the pulse and go limp, hold then stop: which has the smallest mechanical shock and the least confusing view for the IMUs and the flight computers? | rig measurements | 2 | medium, after E1 to E6 of `PICO_TESTS.md` |
 | TS-21 | Where the mission clock lives | The supervisor as the continuous source, the supervisor deciding T-zero with the flight computers as the clock (hybrid), mission time in SYNC from the sync master alone, or each computer counting for itself: which survives a failure of the supervisor, of the sync master and of a node's link, and keeps every computer on the same schedule? | SIL with fault injection, live triplex | 3 | medium, before the mission time goes into SYNC |
+| TS-22 | The independent time reference | A TCXO RTC, an oven crystal, a GPS-disciplined oscillator, a chip-scale atomic clock, with or without correlation against the PC's UTC: what error does each leave over a run, what does it cost, and what happens when it fails? | bench measurement (Allan variance, drift against NTP and GPS) | 3 | small to medium, after the parts arrive |
 | TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `DEFERRED.md` section 7 |
 
 Recommended order, by value and by when the data exist: **TS-0** now; **TS-1, TS-2, TS-3, TS-4** on the simulator in October and
@@ -408,6 +409,26 @@ a restarted computer rejoins on the right schedule (weight 2); independence: an 
 **Dependencies and timing.** Needs the mission time in SYNC (the next step of the launch sequence); the supervisor part waits for its parts.
 
 **Talking point.** "I put the authority for launch in an independent computer and the clock in the replicated ones, and tested what each choice does when each part fails."
+
+## 9h. TS-22: the independent time reference (docs/MISSION_CLOCK.md)
+
+**Question.** The clock of record must be independent of the flight computers and good enough for the mission length. The five-year drift is 316 s for a TCXO class part, 16 s for an oven crystal and milliseconds for an atomic clock (datasheet-class figures, not checked).
+Which reference gives an error the project can state and defend at an acceptable cost, and does time correlation against the PC's UTC (the way a spacecraft's clock is correlated against ground time) make the cheap one enough?
+
+**Options.** A: the TCXO RTC module (chosen for the parts list), alone. B: A with correlation against the PC's NTP-disciplined UTC. C: B with a GPS receiver's pulse per second as an extra reference (needs a sky view). D: an oven-controlled oscillator with B. E: a chip-scale atomic clock (not priced; expected to be out of budget).
+
+**Criteria and weights.** The time error after 24 h, 30 days and an extrapolated five years, stated with its uncertainty (weight 3); behaviour through a power cut and a reset (weight 2); cost and parts (weight 2); how the error shows up when the reference fails (weight 2); complexity of the correlation software (weight 1).
+
+**Method.** On the bench, with the supervisor and its clock module: log the oscillator's counter against the PC's UTC and against a GPS pulse for several days; compute the drift, the Allan deviation and the aging; fit the correlation (offset and drift) and measure the residual after prediction over 1 h, 1 day and a week; power-cut the rig and compare the RTC's time after.
+The time-error budget is then extrapolated to five years with the measured aging, and compared with the table of section 2 of the mission-clock page.
+
+**Output.** A table: option against error at 24 h, 30 days and five years (extrapolated), with the uncertainty; one plot of the correlation residual against the prediction interval; one line on what each extra cost buys.
+
+**Decision rule.** The cheapest option whose stated error over the mission length stays inside the requirement, where the requirement is set by what the time is used for (time-tagging to a second is easier than coordinating an event to a millisecond). Expected: B is enough for a desk demonstration and for a five-year claim *with* correlation; a real five-year, uncorrelated mission needs D or E.
+
+**Dependencies and timing.** The supervisor's firmware and parts (the TCXO module, the second Pico). The correlation software is host-side and can be written first.
+
+**Talking point.** "I asked what keeps the time of a mission that outlasts any one computer, measured what an oscillator drifts, and designed the correlation a spacecraft uses against ground time."
 
 ## 10. Schedule
 

@@ -73,8 +73,8 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "ground_replay_window_off_by_one": ("redundancy.hpp", "if (ahead == 0U || ahead > cfg_.command_window) {", "if (ahead == 0U || ahead >= cfg_.command_window) {"),
     "ground_counter_not_remembered": ("redundancy.hpp", "      cmd_ctr_.set(d.counter);\n      cmd_have_.set(1U);", "      cmd_have_.set(1U);"),
     "ground_auth_off_by_default": ("redundancy.hpp", "bool ground_auth = true; ", "bool ground_auth = false;"),
-    "arm_clear_safe_needs_none": ("redundancy.hpp", "if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe) {", "if (op == GroundOp::ClearDisabled) {"),
-    "arm_clear_disabled_needs_none": ("redundancy.hpp", "if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe) {", "if (op == GroundOp::ClearSafe) {"),
+    "arm_clear_safe_needs_none": ("redundancy.hpp", "if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe || op == GroundOp::Launch) {", "if (op == GroundOp::ClearDisabled || op == GroundOp::Launch) {"),
+    "arm_clear_disabled_needs_none": ("redundancy.hpp", "if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe || op == GroundOp::Launch) {", "if (op == GroundOp::ClearSafe || op == GroundOp::Launch) {"),
     "interlock_off": ("redundancy.hpp", "n.arm = healthy <= 2U; ", "n.arm = false; "),
     "interlock_one_tier_late": ("redundancy.hpp", "n.arm = healthy <= 2U; ", "n.arm = healthy <= 1U; "),
     "interlock_last_voter_not_flagged": ("redundancy.hpp", "n.critical = healthy <= 1U;", "n.critical = false;"),
@@ -151,6 +151,24 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "mission_schedules_ignore_the_flight_frame": ("flight.hpp", "const uint32_t idx = !mission_set_ ? frame_ : (pad_ ? 0U : flight_frame_);", "const uint32_t idx = frame_;"),
     "mission_schedules_run_on_the_pad": ("flight.hpp", "(pad_ ? 0U : flight_frame_)", "flight_frame_"),
     "mission_sensors_ok_ignores_the_attitude": ("flight.hpp", "return c.gyro_ok && c.accel_ok && estimator_.attitude().valid;", "return c.gyro_ok && c.accel_ok;"),
+    # ---- launch: mission time in SYNC, the launch commands, the gate (docs/LAUNCH_SEQUENCE.md) ----
+    "mission_follower_ignores_sync_before_t_zero": ("sync_clock.hpp", "if (!mission::in_flight(mission_)) {", "if (false) {"),
+    "mission_flying_follower_adopts_sync": ("sync_clock.hpp", "} else if (mission_ != heard_mission) {\n        t.mission_disagrees = true;", "} else if (mission_ != heard_mission) {\n        mission_ = heard_mission;\n        t.mission_disagrees = true;"),
+    "mission_disagreement_not_reported": ("sync_clock.hpp", "        t.mission_disagrees = true;\n      }", "      }"),
+    "mission_not_counted_through_a_gap": ("sync_clock.hpp", "      ++mission_;\n    }\n    ++next_;", "    }\n    ++next_;"),
+    "mission_count_wraps_at_the_largest_value": ("sync_clock.hpp", "if (mission_ != mission::kNotLaunched && mission_ != mission::kMax) {", "if (mission_ != mission::kNotLaunched) {"),
+    "launch_by_a_follower": ("sync_clock.hpp", "if (!master_ || mission_ != mission::kNotLaunched) {", "if (mission_ != mission::kNotLaunched) {"),
+    "launch_twice": ("sync_clock.hpp", "if (!master_ || mission_ != mission::kNotLaunched) {", "if (!master_) {"),
+    "scrub_after_t_zero": ("sync_clock.hpp", "if (!master_ || !mission::in_countdown(mission_)) {", "if (!master_) {"),
+    "scrub_by_a_follower": ("sync_clock.hpp", "if (!master_ || !mission::in_countdown(mission_)) {", "if (!mission::in_countdown(mission_)) {"),
+    "mission_countdown_boundary": ("protocol.hpp", "return m != kNotLaunched && m <= kCountdownFrames; }", "return m != kNotLaunched && m < kCountdownFrames; }"),
+    "mission_flight_frames_off_by_one": ("protocol.hpp", "static_cast<uint32_t>(m) - kCountdownFrames - 1U : 0U; }", "static_cast<uint32_t>(m) - kCountdownFrames : 0U; }"),
+    "gate_accepts_two_healthy_nodes": ("launch_gate.hpp", "if ((f.healthy_nodes & 0x07U) != 0x07U) {", "if ((f.healthy_nodes & 0x07U) == 0U) {"),
+    "gate_accepts_a_node_not_ready": ("launch_gate.hpp", "if ((f.ready_nodes & 0x07U) != 0x07U) {", "if ((f.ready_nodes & 0x07U) == 0U) {"),
+    "gate_ignores_the_safe_request": ("launch_gate.hpp", "  if (f.safe_requested) {", "  if (false) {"),
+    "gate_ignores_act": ("launch_gate.hpp", "  if (!f.act_nominal) {", "  if (false) {"),
+    "launch_needs_no_arm": ("redundancy.hpp", "if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe || op == GroundOp::Launch) {", "if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe) {"),
+    "heartbeat_ready_not_packed": ("protocol.hpp", " | ((h.ready ? 1U : 0U) << 7U));", ");"),
     "estimator_ignores_use_accel": ("estimator.hpp", "const bool accel_usable = cfg_.use_accel && in.accel_ok;", "const bool accel_usable = in.accel_ok;"),
     "pico_app_status_relays_stale": ("pico_app.hpp", "st.relays = injector_.energised();", "st.relays = 0U;"),
 }
@@ -158,6 +176,8 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
 # Mutants that only the C++ unit tests can see, with the reason: the campaign's peers cannot produce the input that
 # distinguishes them from the real code.
 CAMPAIGN_SKIP = {
+    # the launch sequence is not in the campaign's reach (its peers send no mission frame and no launch command)
+    "mission_follower_ignores_sync_before_t_zero", "mission_flying_follower_adopts_sync", "mission_disagreement_not_reported", "mission_not_counted_through_a_gap", "mission_count_wraps_at_the_largest_value", "launch_by_a_follower", "launch_twice", "scrub_after_t_zero", "scrub_by_a_follower", "mission_countdown_boundary", "mission_flight_frames_off_by_one", "gate_accepts_two_healthy_nodes", "gate_accepts_a_node_not_ready", "gate_ignores_the_safe_request", "gate_ignores_act", "launch_needs_no_arm", "heartbeat_ready_not_packed",
     # the pad phase is not in the campaign's reach (its peers do not run the flight function)
     "cal_bias_not_frozen", "cal_applies_from_the_first_sample", "cal_ready_ignores_spread", "cal_ready_ignores_bias_limit", "cal_ready_with_too_few_samples", "cal_counts_non_numbers", "cal_pad_start_keeps_the_old_samples", "cal_subtracts_with_the_wrong_sign", "cal_never_stops_counting", "mission_schedules_ignore_the_flight_frame", "mission_schedules_run_on_the_pad", "mission_sensors_ok_ignores_the_attitude",
     "estimator_ignores_use_accel",  # the campaign's peers do not run the estimator

@@ -85,6 +85,10 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-SUP-008 | The supervisor shall have its own hardware watchdog and shall report its own reset count and the cause of its last reset. | M |
 | TFC-SUP-009 | The supervisor shall keep mission elapsed time on its own clock. *(Full.)* It shall flag a node whose SYNC frame number, multiplied by the frame period, departs from that time by more than a set bound (the plausibility check on a time seed). | T, M |
 | TFC-SUP-010 | The supervisor shall never decide whether a working node's data are good: its isolating actions are limited to a node that is silent, hung, looping through resets, or named by the operator. | I, T |
+| TFC-SUP-011 | *(Proposed, ADR-029.)* The supervisor shall keep mission elapsed time on an oscillator of its own, backed by a battery so that it survives a power cut of the rig, and shall report it, with the oscillator's measured drift, over USB (docs/MISSION_CLOCK.md). | T, M |
+| TFC-SUP-012 | *(Proposed, ADR-029.)* The supervisor shall record correlation pairs (its counter against the PC's UTC) and the fitted drift and offset, so that its time converts to UTC with a stated error. | T, M |
+| TFC-SUP-013 | *(Proposed, ADR-029.)* The supervisor shall distribute time to the flight computers and ACT by a pulse per second and a one-way serial message, not by the flight bus; a node that loses either shall flag the age of its time and carry on. | T, M |
+| TFC-SUP-014 | *(Proposed, ADR-029.)* No control decision of any node shall depend on the supervisor's time (TFC-SUP-007). | I |
 
 ## Safe mode (proposed, ADR-023; docs/SAFE_MODE.md)
 | ID | Requirement | Verif. |
@@ -157,6 +161,17 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-HWO-006 | No override shall back-feed a de-energised node through a signal line. | M |
 | TFC-HWO-007 | Each override shall be operated and its result logged in a pre-session check; an override not tested in a session shall be reported at the start of the next run. | D |
 | TFC-HWO-008 | An override whose spurious activation would cost a run shall be guarded or keyed and shall show its state. | I |
+
+## Launch sequence (proposed; docs/LAUNCH_SEQUENCE.md, ADR-028)
+| ID | Requirement | Verif. |
+|---|---|---|
+| TFC-LAUN-001 | *(Built on the host.)* Each flight computer shall calibrate the gyro bias of its own IMU over at least 10 s at rest before launch and subtract it before it sends its sample; the calibration shall be ready only if the platform was at rest and the bias is plausible, and shall be frozen at T-zero. | T |
+| TFC-LAUN-002 | *(Built on the host.)* The `launch` command shall pass the authentication, counter and ARM checks of ADR-019 and shall always need an ARM; `scrub` shall pass the authentication and counter checks. | T |
+| TFC-LAUN-003 | *(Built on the host.)* The sync master shall accept a launch only if the go/no-go holds (three healthy computers, no Safe request, every computer ready, ACT Nominal), shall check it throughout the countdown, and shall scrub on a failure. | T |
+| TFC-LAUN-004 | *(Built on the host.)* The countdown shall be 10 s; a scrub shall be possible only before T-zero. | T |
+| TFC-LAUN-005 | *(Built on the host.)* The mission frame shall be carried in SYNC; a follower shall take it from SYNC before T-zero and, once in flight, count for itself and report a SYNC that disagrees; a computer that joins or restarts in flight shall adopt it; it shall continue without a jump through a sync-master takeover. | T |
+| TFC-LAUN-006 | The guidance and gain schedules shall follow the frames since T-zero, not the SYNC frame number. | T |
+| TFC-LAUN-007 | The simulator shall hold the vehicle on the pad until T-zero and release it then. | T |
 
 ## Software quality
 | ID | Requirement | Verif. |

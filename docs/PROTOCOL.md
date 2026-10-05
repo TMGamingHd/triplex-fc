@@ -8,7 +8,7 @@
 ## Identifiers
 | Id | Name | From | Content | Version |
 |---|---|---|---|---|
-| `0x010` | SYNC | the sync master | 32-bit frame number | 1 |
+| `0x010` | SYNC | the sync master | 32-bit frame number and the 16-bit mission frame (0 = not launched, 1 to 1000 the countdown, 1001 T-zero, then flight; `docs/LAUNCH_SEQUENCE.md`) | 1, mission frame added (old senders put 0 there) |
 | `0x100+n` | GYRO | node n | three axes, 0.125 dps per count | 1 |
 | `0x110+n` | ACCEL | node n | three axes, 1/2048 g per count | 1 |
 | `0x200+n` | CMD | node n | pitch and yaw gimbal command, 0.001 degree; a 16-bit state digest | 1 |
@@ -32,7 +32,7 @@ bits 0-2 state (0 Standby, 1 Nominal, 2 Safe-hold, 3 Safe-ramp, 4 Safe-neutral);
 bits 7-9 the nodes whose command took part (bit n = node n); bits 10-12 the nodes ACT has excluded; bits 13-15 the cause of Safe (0 none, 1 lost votes, 2 the flight computers' request, 3 the hardware line, 4 reset).
 Example: pitch 1.234, yaw -5.678, Safe-ramp, held, Duplex, nodes A and C, B excluded, lost votes, seq 9: `d204d2e9ab2a092d`.
 
-**Heartbeat (`0x400+n`).** Byte 0: protocol version. Byte 1: bits 0-1 mode (`Mode`), bit 2 Safe requested, bit 3 bus alarm, bits 4-5 role (0 hot, 1 warm, 2 cold), bit 6 quarantined (a reset loop).
+**Heartbeat (`0x400+n`).** Byte 0: protocol version. Byte 1: bits 0-1 mode (`Mode`), bit 2 Safe requested, bit 3 bus alarm, bits 4-5 role (0 hot, 1 warm, 2 cold), bit 6 quarantined (a reset loop), bit 7 ready for launch.
 Byte 2: this node's view of A, B and C, two bits each (0 healthy, 1 latched, 2 probation, 3 disabled). Byte 3: the reset count since power-on, saturating. Bytes 4-5: the first 16 bits of the release's
 source hash, so that a node on the golden release (ADR-021) can be told from one on the current release. Example (node B): `02563407efbe0496`.
 
@@ -43,6 +43,8 @@ to rebuild its strike record and close the counter gap (FDIR-041). Example: stri
 `0x503`: altitude (10 m per count), speed (1 m/s per count), mass (1 kg per count), each a 16-bit unsigned number that saturates. `0x504`: dynamic pressure (10 Pa per count, unsigned),
 then the attitude error of the pitch and yaw planes (0.001 degree, signed). `0x505`: a flags byte (1 safed, 2 platform saturated, 4 engine out, 8 command held, 16 aborted), the engines on, and the
 simulation time in 10 ms frames (32 bits). Their timing and use: `VEHICLE_SIM.md` section 6 .
+
+**Ground commands** gained two operations: `launch` (5; always needs an ARM) and `scrub` (6; plain); the node field is ignored. Examples: SYNC frame 0x01020304, seq 9, mission 1001: `04030201e90309d2`; mission 65535, frame 0, seq 0: `00000000ffff0045`. Heartbeat B, mode 3, ready, resets 5, hash 0xBEEF, seq 4: `02830005efbe048c`.
 
 ## Rules
 - A decoder checks the CRC and the id range, never trusts a field wider than its bits (a wider value is masked, not spilled into the next field: tested), and a node number outside 0 to 2 is not a node.

@@ -132,7 +132,8 @@ def pack_cmd(node: int, pitch_deg: float, yaw_deg: float, digest: int, seq: int)
     return Frame(ID_CMD_BASE + node, seal(bytes(buf), seq))
 
 
-GROUND_OPS = {"reintegrate": 1, "disable": 2, "clear-disabled": 3, "clear-safe": 4}
+GROUND_OPS = {"reintegrate": 1, "disable": 2, "clear-disabled": 3, "clear-safe": 4, "launch": 5, "scrub": 6}
+NODELESS_OPS = ("clear-safe", "launch", "scrub")  # the node field is ignored
 GROUND_OP_NAMES = {v: k for k, v in GROUND_OPS.items()}
 ARM_FLAG = 0x80
 
@@ -212,9 +213,31 @@ def pack_ground(op: int, node: int, counter: int, key: bytes | None = None, arm:
     return Frame(ID_GROUND, seal(bytes([op_byte, node & 0xFF]) + tag.to_bytes(4, "little"), counter))
 
 
-def pack_sync(frame_no: int, seq: int) -> Frame:
-    """SYNC: 32-bit frame number (little endian) | 2 reserved bytes | seq | crc8."""
-    return Frame(ID_SYNC, seal(struct.pack("<I", frame_no & 0xFFFFFFFF) + b"\x00\x00", seq))
+# Mission frame carried in SYNC (docs/LAUNCH_SEQUENCE.md): 0 not launched, 1..1000 the countdown, 1001 T-zero, then frames of flight; 65535 the largest.
+MISSION_NOT_LAUNCHED = 0
+MISSION_COUNTDOWN_FRAMES = 1000
+MISSION_MAX = 0xFFFF
+
+
+def mission_in_countdown(m: int) -> bool:
+    return 0 < m <= MISSION_COUNTDOWN_FRAMES
+
+
+def mission_in_flight(m: int) -> bool:
+    return m > MISSION_COUNTDOWN_FRAMES
+
+
+def mission_flight_frames(m: int) -> int:
+    return m - MISSION_COUNTDOWN_FRAMES - 1 if m > MISSION_COUNTDOWN_FRAMES else 0
+
+
+def mission_frames_to_zero(m: int) -> int:
+    return MISSION_COUNTDOWN_FRAMES + 1 - m if mission_in_countdown(m) else 0
+
+
+def pack_sync(frame_no: int, seq: int, mission: int = MISSION_NOT_LAUNCHED) -> Frame:
+    """SYNC: 32-bit frame number (little endian) | 16-bit mission frame | seq | crc8."""
+    return Frame(ID_SYNC, seal(struct.pack("<IH", frame_no & 0xFFFFFFFF, mission & 0xFFFF), seq))
 
 
 # ---- Unpackers (return None when the CRC or length is bad, like `ok == false`) ----
@@ -243,12 +266,13 @@ def unpack_vec3(frame: Frame, lsb: float) -> Vec3Sample | None:
 class SyncSample:
     frame_no: int
     seq: int
+    mission: int = 0
 
 
 def unpack_sync(frame: Frame) -> SyncSample | None:
     if frame.id != ID_SYNC or not check(frame):
         return None
-    return SyncSample(struct.unpack_from("<I", frame.data, 0)[0], frame.data[6])
+    return SyncSample(struct.unpack_from("<I", frame.data, 0)[0], frame.data[6], struct.unpack_from("<H", frame.data, 4)[0])
 
 
 @dataclass
@@ -347,13 +371,14 @@ class Heartbeat:
     reset_count: int = 0
     release_hash: int = 0
     seq: int = 0
+    ready: bool = False  # ready for launch (byte 1, bit 7)
 
 
 def pack_heartbeat(node: int, h: Heartbeat, seq: int) -> Frame:
     buf = bytearray(6)
     buf[0] = h.protocol_version & 0xFF
     buf[1] = ((h.mode & 3) | ((1 if h.safe_requested else 0) << 2) | ((1 if h.bus_alarm else 0) << 3) | ((h.role & 3) << 4)
-              | ((1 if h.quarantined else 0) << 6))
+              | ((1 if h.quarantined else 0) << 6) | ((1 if h.ready else 0) << 7))
     buf[2] = (h.node_state[0] & 3) | ((h.node_state[1] & 3) << 2) | ((h.node_state[2] & 3) << 4)
     buf[3] = h.reset_count & 0xFF
     buf[4:6] = struct.pack("<H", h.release_hash & 0xFFFF)
@@ -365,7 +390,8 @@ def unpack_heartbeat(frame: Frame) -> Heartbeat | None:
         return None
     d = frame.data
     return Heartbeat(d[0], d[1] & 3, bool((d[1] >> 2) & 1), bool((d[1] >> 3) & 1), (d[1] >> 4) & 3, bool((d[1] >> 6) & 1),
-                     (d[2] & 3, (d[2] >> 2) & 3, (d[2] >> 4) & 3), d[3], struct.unpack_from("<H", d, 4)[0], d[6])
+                     (d[2] & 3, (d[2] >> 2) & 3, (d[2] >> 4) & 3), d[3], struct.unpack_from("<H", d, 4)[0], d[6],
+                     ready=bool((d[1] >> 7) & 1))
 
 
 @dataclass
@@ -477,7 +503,7 @@ def _describe_v2(frame: Frame) -> str | None:
         if h is None:
             return f"HB    {node}  CRC-BAD  {frame.hex()}"
         return (f"HB    {node}  seq={h.seq:<3} v{h.protocol_version} mode={h.mode} role={('hot', 'warm', 'cold', '?')[h.role]}"
-                f"{' SAFE-REQUESTED' if h.safe_requested else ''}{' BUS-ALARM' if h.bus_alarm else ''}{' QUARANTINED' if h.quarantined else ''} "
+                f"{' SAFE-REQUESTED' if h.safe_requested else ''}{' BUS-ALARM' if h.bus_alarm else ''}{' QUARANTINED' if h.quarantined else ''}{' READY' if h.ready else ''} "
                 f"view={''.join('HLPD'[s] for s in h.node_state)} resets={h.reset_count} release={h.release_hash:#06x}")
     if ID_STATE <= i < ID_STATE + 3:
         s = unpack_state_share(frame)
