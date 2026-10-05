@@ -497,13 +497,15 @@ The time-error budget is then extrapolated to five years with the measured aging
 - *The cost* is small everywhere; period 10 is the only one that adds more than 1 % average bus load.
 - *Drift detection* runs the other way: it prefers the long periods.
 
+*What no period fixes* (the fault manager's command tolerance, `docs/RESYNC.md` section 6b): frames in which two computers' commands differ by more than the manager's 0.01 degree are caused by the immediate effect of a lost frame, so they do not depend on the period (28 per flight at 0.1 % loss at period 10 and at 100, 284 and 281 at 1 %), but the resync is what keeps them from lasting: without it every flight at 0.1 % loss has a run of three such frames in a row, with it none of 16 does; at 1 % loss 7 to 8 of 16 flights still do, at any period. At that loss rate the tolerance, or option B, has to change.
+
 **Decision rule.** The *longest* period for which (a) no flight is lost at 1 % loss, (b) a digest persistence of 2P + 50 never false-flags at 0.1 % loss and (c) a lost frame is healed, and a restarted computer rejoins, within one probation (1 s). That is **period 100**: (a) holds up to period 1000, (b) holds up to 1000 at 0.1 % (0 of 32), (c) fails from 200 up. If the rig measures a loss rate near 1 % the digest check is only usable at period 20 or below and the rule's (b) should be re-run at that rate; the choice then trades 0.8 % of the bus for a usable digest.
 
 **Decision (5 Oct 2026, proposed): default period 100 frames and a digest persistence of 2P + 50 = 250 frames, both configurable in the firmware (`TFC_RESYNC_PERIOD`), to be revisited with the measured loss of the real bus.** What would change it: a measured loss above about 0.3 % (shorten to 20 to 50); a frame budget on the target that cannot take the burst every second (lengthen); a failing-state fault that drifts rather than jumps (needs a second rule, below).
 
 **Open question this exposed: slow drift.** Resynchronisation heals a drift below `large_limit / period` per second without a report. A cheap second rule would count how many resyncs *in a row* changed the same computer's state while the others' did not (on a bus with a loss of 0.1 % or less this is rare for a healthy computer, and a drifting one is changed every time), and report it as a bad frame. It was not built: the measured loss rate is needed to set its count. Recorded as a follow-up with the real-bus measurement.
 
-**What the owner's decision about the diverse node changes here.** The diverse node (ADR-021) is not part of the resync (its state is not the same variables), so it is compared by its commands alone and does not appear in these tables.
+**The diverse node.** It is left out of the resync by a switch (`CONFIG_TFC_RESYNC_GROUP`) and does not appear in these tables; the reasons, the measured command difference it then shows and the option of a slew-limited adoption are in `docs/RESYNC.md` section 6.
 
 **Talking point.** "I measured what the resync period buys: flight survival does not depend on it up to 1 % loss, the usefulness of the digest check depends on it strongly, and the cost is a 1.6 ms burst; the best value is the longest one that still heals within a probation."
 

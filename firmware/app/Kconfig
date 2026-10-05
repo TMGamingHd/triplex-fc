@@ -43,6 +43,36 @@ config TFC_LAUNCH_SEQUENCE
 	  starts it on an authenticated `launch` that passes the go/no-go, and scrubs on a failure during the 10 s countdown); the schedules follow the frames since T-zero
 	  and sit at their first point on the pad; the heartbeat carries a ready bit (docs/LAUNCH_SEQUENCE.md). Off: the schedules follow the SYNC frame number, as before.
 
+config TFC_RESYNC_PERIOD
+	int "State resynchronisation period in frames (0: off)"
+	default 100
+	range 0 10000
+	help
+	  With the flight function on, every this many frames the computers exchange their estimator and controller state (four frames each, 0x420 to 0x42B) and
+	  each adopts the mid-value of the healthy computers' states, if it has all of them (docs/RESYNC.md, ADR-030, TS-23). 100 is the proposed default (TS-23).
+	  The manager's digest persistence is then set to twice this plus 50 frames, so that a mismatch the resync would heal is not counted. Ignored without the
+	  flight function.
+
+config TFC_RESYNC_GROUP
+	hex "Computers that take part in the resynchronisation (bit n = node n)"
+	default 0x07
+	range 0 0x07
+	help
+	  The same value on every computer. A computer outside the group neither sends its state nor adopts the vote: the diverse computer of ADR-021 (the
+	  golden release) is left out with 0x03 so that the resync does not erase the differences it exists to show (docs/RESYNC.md section 6).
+
+config TFC_TEST_DROP_PEERS_FIRST
+	int "Test knob: first frame in which this computer withholds its peers' sensor frames from the flight function"
+	default 0
+	help
+	  A test aid, off at 0 together with the next one. From the frame with this SYNC number, for TFC_TEST_DROP_PEERS_FRAMES frames, this computer does not give
+	  the sensor frames of the other computers to its flight function (the manager still sees them), so its estimator integrates on its own sensor only and the
+	  replicas diverge deterministically. Used by the live resynchronisation test (sim/tests/test_live_resync.py); never set in a flight build.
+
+config TFC_TEST_DROP_PEERS_FRAMES
+	int "Test knob: how many frames the peers' sensor frames are withheld"
+	default 0
+
 config TFC_SIM_BUS_IMU
 	bool "Take the sensor input from the simulator's frames on the bus"
 	default n

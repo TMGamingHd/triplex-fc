@@ -30,6 +30,7 @@ GOLDEN = [
                                                     release_hash=0xBEEF), 4), 0x401, "02563407efbe0496"),
     ("heartbeat A defaults", P.pack_heartbeat(0, P.Heartbeat(), 0), 0x400, "02000000000000b0"),
     ("state share C", P.pack_state_share(2, P.StateShare((1, 15, 2), 200), 6), 0x412, "f102c800000006f7"),
+    ("state resync B chunk 2", P.pack_resync(1, 2, (0x0102, -2, 0x7FFF), 0x55), 0x426, "0201feffff7f55e4"),   # tests/test_resync.cpp pins the same bytes
     ("sim rates", P.pack_sim_rates((1.5, -2.0, 0.125), 3), 0x501, "0c00f0ff0100032c"),
     ("sim accel", P.pack_sim_accel((0.0, 0.5, 1.0), 255), 0x502, "000000040008ffda"),
     ("sim state", P.pack_sim_state(P.SimState(31963.0, 995.4, 14869.0), 17), 0x503, "7c0ce303153a118d"),
@@ -43,6 +44,17 @@ GOLDEN = [
 class ProtocolTests(unittest.TestCase):
     def test_crc8_check_value(self):
         self.assertEqual(P.crc8(b"123456789"), 0x4B)  # same value asserted in the C++ tests
+
+    def test_resync_frames_round_trip_and_reject_what_is_not_theirs(self):
+        for node in range(3):
+            for chunk in range(4):
+                f = P.pack_resync(node, chunk, (-32767, 0, 32767), 9)
+                self.assertEqual(f.id, 0x420 + 4 * node + chunk)
+                self.assertEqual(P.unpack_resync(f), (node, chunk, (-32767, 0, 32767), 9))
+        f = P.pack_resync(0, 0, (1, 2, 3), 0)
+        self.assertIsNone(P.unpack_resync(P.Frame(f.id, f.data[:7] + bytes([f.data[7] ^ 1]))))   # CRC
+        self.assertIsNone(P.unpack_resync(P.Frame(0x41F, f.data)))
+        self.assertIsNone(P.unpack_resync(P.Frame(0x42C, f.data)))                               # one past node C's chunks
 
     def test_golden_frames_match_cpp(self):
         for name, frame, can_id, hex_data in GOLDEN:

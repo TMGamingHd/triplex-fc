@@ -21,6 +21,8 @@ ID_CMD_BASE = 0x200
 ID_ACT_OUT = 0x300
 ID_HEARTBEAT = 0x400
 ID_STATE = 0x410          # + node: strike counts and the last accepted command counter
+ID_RESYNC = 0x420         # + 4 * node + chunk: a quarter of a node's estimator and controller state (docs/RESYNC.md)
+RESYNC_CHUNKS = 4
 ID_SIM = 0x500            # the simulator's range is 0x500 to 0x50F (ID_SIM_LAST)
 ID_SIM_RATES = 0x501
 ID_SIM_ACCEL = 0x502
@@ -414,6 +416,23 @@ def unpack_state_share(frame: Frame) -> StateShare | None:
         return None
     d = frame.data
     return StateShare((d[0] & 15, (d[0] >> 4) & 15, d[1] & 15), d[2], d[6])
+
+
+def pack_resync(node: int, chunk: int, words: tuple[int, int, int], seq: int) -> Frame:
+    """One of the four frames that carry a node's shared state: three signed 16-bit words, little-endian, then seq and CRC."""
+    buf = bytearray(6)
+    for i, w in enumerate(words):
+        _put16(buf, 2 * i, w)
+    return Frame(ID_RESYNC + RESYNC_CHUNKS * node + chunk, seal(bytes(buf), seq))
+
+
+def unpack_resync(frame: Frame) -> tuple[int, int, tuple[int, int, int], int] | None:
+    """(node, chunk, words, seq), or None if the frame is not a good resync frame."""
+    if not ID_RESYNC <= frame.id < ID_RESYNC + 3 * RESYNC_CHUNKS or not check(frame):
+        return None
+    k = frame.id - ID_RESYNC
+    d = frame.data
+    return k // RESYNC_CHUNKS, k % RESYNC_CHUNKS, (_get16(d, 0), _get16(d, 2), _get16(d, 4)), d[6]
 
 
 def pack_sim_rates(dps: tuple[float, float, float], seq: int) -> Frame:
