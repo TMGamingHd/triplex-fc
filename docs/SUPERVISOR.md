@@ -46,6 +46,7 @@ are marked as Full-only. The Pico 2 has no CAN controller, which is why Lite has
 parts sheet means every input line needs an external pull-down of 8.2 kOhm or less.
 
 ## 3a. Clock
+> Extended 4 Oct 2026 (ADR-029, `docs/MISSION_CLOCK.md`): the supervisor keeps the **clock of record**, mission elapsed time across resets and years, on a battery-backed oscillator, correlated against the PC's UTC, and gives time to the nodes by a pulse per second and a one-way serial line. The paragraph below is the original frame-clock check.
 
 The supervisor's reference needs to be better than the nodes' (the Nucleo's crystal is in the tens of ppm). A TCXO real-time-clock
 module such as a DS3231 (specified at about 2 ppm at room temperature, with a 32.768 kHz output; **price and exact figures not checked**,

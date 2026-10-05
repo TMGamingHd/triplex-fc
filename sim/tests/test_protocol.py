@@ -14,6 +14,8 @@ GOLDEN = [
     ("sync 0x01020304 seq9", P.pack_sync(0x01020304, 9), 0x010, "0403020100000915"),
     ("sync 0 seq0", P.pack_sync(0, 0), 0x010, "000000000000000a"),
     ("sync max seq255", P.pack_sync(0xFFFFFFFF, 255), 0x010, "ffffffff0000ff7b"),
+    ("sync mission 1001 (T-zero)", P.pack_sync(0x01020304, 9, 1001), 0x010, "04030201e90309d2"),
+    ("sync mission max", P.pack_sync(0, 0, 0xFFFF), 0x010, "00000000ffff0045"),
     # authenticated ground frames (SipHash-2-4 tag under the public bench key): the bytes were produced by core/ (pack_ground_auth)
     ("ground reintegrate B counter5", P.pack_ground(P.GROUND_OPS["reintegrate"], 1, 5), 0x510, "01015111f4fc05c0"),
     ("ground disable C counter0", P.pack_ground(P.GROUND_OPS["disable"], 2, 0), 0x510, "02027c782ce00045"),
@@ -228,3 +230,36 @@ class ProtocolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MissionFrame(unittest.TestCase):
+    def test_sync_carries_the_mission_frame_and_defaults_to_not_launched(self):
+        s = P.unpack_sync(P.pack_sync(123456, 77, 1500))
+        self.assertEqual((s.frame_no, s.seq, s.mission), (123456, 77, 1500))
+        self.assertEqual(P.unpack_sync(P.pack_sync(5, 1)).mission, P.MISSION_NOT_LAUNCHED)
+
+    def test_the_helpers_agree_on_the_boundaries(self):
+        self.assertFalse(P.mission_in_countdown(0))
+        self.assertTrue(P.mission_in_countdown(1) and P.mission_in_countdown(1000))
+        self.assertFalse(P.mission_in_countdown(1001))
+        self.assertTrue(P.mission_in_flight(1001) and not P.mission_in_flight(1000))
+        self.assertEqual((P.mission_flight_frames(1001), P.mission_flight_frames(1002), P.mission_flight_frames(500)), (0, 1, 0))
+        self.assertEqual((P.mission_frames_to_zero(1), P.mission_frames_to_zero(1000), P.mission_frames_to_zero(1001), P.mission_frames_to_zero(0)), (1000, 1, 0, 0))
+
+
+class LaunchOps(unittest.TestCase):
+    def test_the_heartbeat_ready_bit_matches_the_cpp_golden(self):
+        h = P.Heartbeat(mode=3, ready=True, reset_count=5, release_hash=0xBEEF)
+        f = P.pack_heartbeat(1, h, 4)
+        self.assertEqual(f.data.hex(), "02830005efbe048c")
+        back = P.unpack_heartbeat(f)
+        self.assertTrue(back.ready)
+        self.assertFalse(P.unpack_heartbeat(P.pack_heartbeat(1, P.Heartbeat(mode=3), 4)).ready)
+        self.assertIn("READY", P.describe(f))
+
+    def test_launch_and_scrub_are_ground_ops_without_a_node(self):
+        from tfc_peers.commands import parse_commands
+        self.assertEqual((P.GROUND_OPS["launch"], P.GROUND_OPS["scrub"]), (5, 6))
+        cmds = parse_commands("100:armed-launch")
+        self.assertEqual([(c.op, c.node, c.arm) for c in cmds], [("launch", 0, True), ("launch", 0, False)])
+        self.assertEqual(parse_commands("200:scrub")[0].node, 0)

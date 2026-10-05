@@ -33,7 +33,7 @@ class GroundCommand:
     def __str__(self) -> str:
         if self.replay:
             return f"{self.frame}:replay"
-        who = "" if self.op == "clear-safe" else f":{P.NODE_NAMES[self.node]}"
+        who = "" if self.op in P.NODELESS_OPS else f":{P.NODE_NAMES[self.node]}"
         prefix = ("arm-" if self.arm else "") + ("forged-" if self.forged else "")
         return f"{self.frame}:{prefix}{self.op}{who}"
 
@@ -67,7 +67,7 @@ def parse_commands(spec: str) -> list[GroundCommand]:
                 forged |= prefix == "forged-"
     if op not in P.GROUND_OPS:
         raise FaultSpecError(f"unknown command {op!r}; known: {', '.join(P.GROUND_OPS)} (optionally prefixed arm-, armed- or forged-)")
-    if op == "clear-safe":
+    if op in P.NODELESS_OPS:
         node = 0
     else:
         if len(parts) != 3:

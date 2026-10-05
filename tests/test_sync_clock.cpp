@@ -2,6 +2,8 @@
 // SYNC following and sync-master takeover (core/include/tfc/sync_clock.hpp): the frame number stays continuous through loss and takeover, a lone node
 // that merely lost a frame does not take over, B and C never claim an empty bus, a returning A follows, and two masters resolve to one.
 #include <array>
+#include <cstdio>
+#include <string>
 #include <cstdint>
 
 #include "tfc/sync_clock.hpp"
@@ -20,6 +22,7 @@ struct Net {
   std::array<bool, 3> drop{false, false, false};
   std::array<tfc::SyncTick, 3> last{};
   uint32_t sync_number = 0U;
+  uint16_t sync_mission = 0U;
   bool sync_sent = false;
   unsigned masters_this_frame = 0U;
 
@@ -38,11 +41,12 @@ struct Net {
           continue;
         }
         const bool heard = sync_sent && !drop[n];
-        last[n] = clk[n].cycle(heard, sync_number);
+        last[n] = clk[n].cycle(heard, sync_number, sync_mission);
         if (last[n].master) {
           ++masters_this_frame;
           sync_sent = true;
           sync_number = last[n].frame;
+          sync_mission = last[n].mission;
         }
       }
     }
@@ -176,4 +180,129 @@ TFC_TEST(sync_an_observer_follows_and_counts_but_never_becomes_the_master) {
   for (int i = 0; i < 50; ++i) {
     CHECK(!fresh.cycle(false, 0U).master);
   }
+}
+
+TFC_TEST(mission_the_sync_frame_carries_the_mission_frame_and_the_helpers_agree_on_the_boundaries) {
+  const tfc::Frame f = tfc::pack_sync(123456U, 9U, 0x1234U);
+  const tfc::DecodedSync d = tfc::unpack_sync(f);
+  CHECK(d.ok && d.frame_no == 123456U && d.mission == 0x1234U && d.seq == 9U);
+  CHECK(tfc::unpack_sync(tfc::pack_sync(7U, 1U)).mission == tfc::mission::kNotLaunched);  // a sender that knows nothing of the launch sequence says "not launched"
+  namespace m = tfc::mission;
+  CHECK(!m::counting(0U) && m::counting(1U) && m::in_countdown(1U) && m::in_countdown(1000U) && !m::in_countdown(1001U) && !m::in_countdown(0U));
+  CHECK(!m::in_flight(1000U) && m::in_flight(1001U) && m::flight_frames(1001U) == 0U && m::flight_frames(1002U) == 1U && m::flight_frames(500U) == 0U);
+  CHECK(m::frames_to_zero(1U) == 1000U && m::frames_to_zero(1000U) == 1U && m::frames_to_zero(1001U) == 0U && m::frames_to_zero(0U) == 0U);
+}
+
+TFC_TEST(mission_only_the_master_launches_once_and_followers_take_the_countdown_from_sync) {
+  Net net;
+  for (int i = 0; i < 5; ++i) {
+    net.frame();
+  }
+  CHECK(!net.clk[1].launch() && !net.clk[2].launch());  // followers cannot
+  CHECK(net.last[0].mission == 0U && net.last[1].mission == 0U);
+  CHECK(net.clk[0].launch() && !net.clk[0].launch());   // the master can, once
+  net.frame();
+  CHECK(net.last[0].mission == 1U && net.last[1].mission == 1U && net.last[2].mission == 1U);
+  for (int i = 0; i < 1000; ++i) {
+    net.frame();
+  }
+  CHECK(net.last[0].mission == 1001U && net.last[1].mission == 1001U && net.last[2].mission == 1001U);  // T-zero, on every computer in the same frame
+  CHECK(tfc::mission::flight_frames(net.last[2].mission) == 0U);
+  net.frame();
+  CHECK(tfc::mission::flight_frames(net.last[1].mission) == 1U && !net.last[1].mission_disagrees);
+}
+
+TFC_TEST(mission_a_scrub_returns_everyone_to_the_pad_and_only_before_t_zero) {
+  Net net;
+  net.frame();
+  CHECK(!net.clk[0].scrub());  // nothing to scrub
+  (void)net.clk[0].launch();
+  for (int i = 0; i < 300; ++i) {
+    net.frame();
+  }
+  CHECK(!net.clk[1].scrub());  // not the master
+  CHECK(net.clk[0].scrub());
+  net.frame();
+  CHECK(net.last[0].mission == 0U && net.last[1].mission == 0U && net.last[2].mission == 0U);
+  (void)net.clk[0].launch();  // and a new countdown can start
+  for (int i = 0; i < 1100; ++i) {
+    net.frame();
+  }
+  CHECK(tfc::mission::in_flight(net.last[1].mission) && !net.clk[0].scrub());  // too late: after T-zero there is no scrub
+}
+
+TFC_TEST(mission_a_flying_follower_counts_for_itself_and_reports_a_sync_that_disagrees) {
+  tfc::SyncClock f(SyncStart::FollowOnly);
+  (void)f.cycle(true, 10U, 1500U);  // hears a flight in progress: adopts it (it was not in flight)
+  tfc::SyncTick t = f.cycle(true, 11U, 1501U);
+  CHECK(t.mission == 1501U && !t.mission_disagrees);
+  t = f.cycle(true, 12U, 0U);  // a damaged or false SYNC says "not launched": ignored, reported
+  CHECK(t.mission == 1502U && t.mission_disagrees);
+  t = f.cycle(true, 13U, 9000U);  // or jumps ahead: ignored, reported
+  CHECK(t.mission == 1503U && t.mission_disagrees);
+  t = f.cycle(false, 0U);  // and a missed SYNC is counted through
+  CHECK(t.mission == 1504U && !t.mission_disagrees);
+  t = f.cycle(true, 15U, 1505U);
+  CHECK(t.mission == 1505U && !t.mission_disagrees);  // back in agreement
+}
+
+TFC_TEST(mission_a_late_joiner_adopts_the_flight_and_a_pad_node_follows_a_scrub_or_a_launch) {
+  tfc::SyncClock late(SyncStart::FollowOnly);
+  CHECK(late.cycle(true, 500U, 3000U).mission == 3000U);  // joins long after T-zero
+  tfc::SyncClock pad(SyncStart::FollowOnly);
+  CHECK(pad.cycle(true, 1U, 0U).mission == 0U);
+  CHECK(pad.cycle(true, 2U, 1U).mission == 1U);     // a launch it did not see the command for
+  CHECK(pad.cycle(true, 3U, 2U).mission == 2U);
+  CHECK(pad.cycle(true, 4U, 0U).mission == 0U);     // a scrub: still in the countdown, so it follows SYNC back to zero
+}
+
+TFC_TEST(mission_survives_a_sync_master_takeover_without_a_jump) {
+  Net net;
+  for (int i = 0; i < 3; ++i) {
+    net.frame();
+  }
+  (void)net.clk[0].launch();
+  for (int i = 0; i < 1500; ++i) {
+    net.frame();  // well into flight
+  }
+  const uint16_t before = net.last[1].mission;
+  net.down[0] = true;  // A dies
+  net.frame();
+  net.frame();  // B takes over on its second missed frame
+  CHECK(net.last[1].master && net.last[1].took_over);
+  CHECK(net.last[1].mission == before + 2U && net.last[2].mission == before + 2U);  // the count went on through the gap: no jump, no repeat
+  net.frame();
+  CHECK(net.last[1].mission == before + 3U && net.last[2].mission == before + 3U && !net.last[2].mission_disagrees);
+  net.down[0] = false;  // A returns, listening first, and adopts the flight
+  net.clk[0] = SyncClock(SyncStart::Listen);
+  for (int i = 0; i < 5; ++i) {
+    net.frame();
+  }
+  CHECK(net.last[0].mission == net.last[1].mission && !net.last[0].master);
+}
+
+TFC_TEST(mission_the_count_stops_at_its_largest_value) {
+  tfc::SyncClock m(SyncStart::Master);
+  (void)m.cycle(false, 0U);
+  CHECK(m.launch());
+  tfc::SyncTick t;
+  for (uint32_t i = 0; i < 70000U; ++i) {
+    t = m.cycle(false, 0U);
+  }
+  CHECK(t.mission == tfc::mission::kMax && m.mission_frame() == tfc::mission::kMax);
+}
+
+TFC_TEST(mission_golden_sync_frames_are_pinned_with_the_python_mirror) {
+  auto hex = [](const tfc::Frame& f) {
+    std::string s;
+    for (unsigned i = 0; i < 8U; ++i) {
+      std::array<char, 3> c{};
+      (void)std::snprintf(c.data(), c.size(), "%02x", f.data[i]);
+      s += c.data();
+    }
+    return s;
+  };
+  CHECK(hex(tfc::pack_sync(0x01020304U, 9U, 1001U)) == "04030201e90309d2");  // T-zero
+  CHECK(hex(tfc::pack_sync(0U, 0U, 0xFFFFU)) == "00000000ffff0045");
+  CHECK(hex(tfc::pack_sync(0x01020304U, 9U)) == "0403020100000915");  // no mission frame: the bytes of the old frame
 }

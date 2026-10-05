@@ -145,6 +145,8 @@ inline const char* op_text(uint8_t op) noexcept {
     case GroundOp::Disable: return "disable";
     case GroundOp::ClearDisabled: return "clear-disabled";
     case GroundOp::ClearSafe: return "clear-safe";
+    case GroundOp::Launch: return "launch";
+    case GroundOp::Scrub: return "scrub";
     default: break;
   }
   return "unknown-op";
@@ -551,6 +553,9 @@ class RedundancyManager {
         }
         clear_safe_request();
         break;
+      case GroundOp::Launch:  // the manager does not own the mission clock: the firmware acts on the reported event (the sync master, after the go/no-go)
+      case GroundOp::Scrub:
+        break;
       default:
         r = CommandResult::RefusedBadOp;
         break;
@@ -847,7 +852,7 @@ class RedundancyManager {
   };
   Needs needs_arm(GroundOp op, unsigned node) const noexcept {
     Needs n;
-    if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe) {
+    if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe || op == GroundOp::Launch) {
       n.arm = true;  // both undo a protective action
     } else if (op == GroundOp::Disable && state_of(node) == NodeState::Healthy) {
       const unsigned healthy = count_in_state(NodeState::Healthy);
@@ -858,12 +863,12 @@ class RedundancyManager {
   }
 
   CommandResult apply_ground(const DecodedGround& d, uint8_t& flags) noexcept {
-    if (d.op < static_cast<uint8_t>(GroundOp::Reintegrate) || d.op > static_cast<uint8_t>(GroundOp::ClearSafe)) {
+    if (d.op < static_cast<uint8_t>(GroundOp::Reintegrate) || d.op > static_cast<uint8_t>(GroundOp::Scrub)) {
       ++counters_.commands_refused;
       return CommandResult::RefusedBadOp;
     }
     const GroundOp op = static_cast<GroundOp>(d.op);
-    const unsigned node = op == GroundOp::ClearSafe ? 0U : d.node;
+    const unsigned node = (op == GroundOp::ClearSafe || op == GroundOp::Launch || op == GroundOp::Scrub) ? 0U : d.node;
     if (node >= kNodes) {
       ++counters_.commands_refused;
       return CommandResult::RefusedBadNode;

@@ -13,6 +13,8 @@
 #pragma once
 #include <cstdint>
 
+#include "tfc/protocol.hpp"
+
 namespace tfc {
 
 struct SyncPolicy {
@@ -41,6 +43,8 @@ struct SyncTick {
   bool took_over = false;   // this frame the node became the master after missing SYNC
   bool yielded = false;     // this frame a master heard another's SYNC and became a follower
   uint8_t missed = 0U;      // SYNC frames missed in a row (0 when SYNC was heard)
+  uint16_t mission = 0U;    // the mission frame of the frame that starts now (protocol.hpp, `mission::`); the master sends it in SYNC
+  bool mission_disagrees = false;  // in flight, SYNC's mission frame differs from this node's own count: kept, and reported
 };
 
 class SyncClock {
@@ -48,10 +52,17 @@ class SyncClock {
   explicit SyncClock(SyncStart start, SyncPolicy policy = SyncPolicy{}) noexcept
       : policy_(policy), master_(start == SyncStart::Master), may_claim_(start == SyncStart::Master || start == SyncStart::Listen), observer_(start == SyncStart::Observer) {}
 
-  // Call once per frame at the end of the wait for SYNC: `heard` is whether a SYNC arrived in the window and `number` its frame number.
-  [[nodiscard]] SyncTick cycle(bool heard, uint32_t number) noexcept {
+  // Call once per frame at the end of the wait for SYNC: `heard` is whether a SYNC arrived in the window, `number` its frame number and `heard_mission` its mission frame.
+  // Mission time (docs/LAUNCH_SEQUENCE.md): on the pad and in the countdown a follower takes the mission frame from SYNC (so a scrub reaches it); once in flight it counts for itself and
+  // only verifies against SYNC, so a damaged or false SYNC cannot move the schedules of a flying computer; a node that is not in flight (a late joiner, a restart) adopts what it hears.
+  [[nodiscard]] SyncTick cycle(bool heard, uint32_t number, uint16_t heard_mission = mission::kNotLaunched) noexcept {
     SyncTick t;
     if (heard) {
+      if (!mission::in_flight(mission_)) {
+        mission_ = heard_mission;
+      } else if (mission_ != heard_mission) {
+        t.mission_disagrees = true;
+      }
       t.yielded = master_;
       master_ = false;
       ever_locked_ = true;
@@ -70,9 +81,34 @@ class SyncClock {
     t.locked = heard;
     t.synced = master_ || ever_locked_;
     t.missed = missed_;
+    t.mission = mission_;
+    if (mission_ != mission::kNotLaunched && mission_ != mission::kMax) {
+      ++mission_;
+    }
     ++next_;
     return t;
   }
+
+  // The launch command (the sync master only): the countdown starts with the next frame. False if this node is not the master or the sequence has already begun.
+  bool launch() noexcept {
+    if (!master_ || mission_ != mission::kNotLaunched) {
+      return false;
+    }
+    mission_ = 1U;
+    return true;
+  }
+
+  // A scrub (the sync master only, and only before T-zero): back to the pad.
+  bool scrub() noexcept {
+    if (!master_ || !mission::in_countdown(mission_)) {
+      return false;
+    }
+    mission_ = mission::kNotLaunched;
+    return true;
+  }
+
+  // The mission frame the next frame will carry.
+  [[nodiscard]] uint16_t mission_frame() const noexcept { return mission_; }
 
   [[nodiscard]] bool master() const noexcept { return master_; }
   [[nodiscard]] uint32_t next_frame() const noexcept { return next_; }
@@ -85,6 +121,7 @@ class SyncClock {
   bool ever_locked_ = false;
   uint8_t missed_ = 0U;
   uint32_t next_ = 0U;
+  uint16_t mission_ = 0U;
 };
 
 }  // namespace tfc

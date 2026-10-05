@@ -159,18 +159,39 @@ inline DecodedCommand unpack_cmd(const Frame& f) noexcept {
 // Payload: 32-bit frame number (little endian) | 2 reserved bytes (0) | seq | crc8. Receivers
 // phase-lock their frame timer to its arrival; the frame number lets late joiners (and the
 // virtual peers) agree on which frame it is.
+// Mission time (docs/LAUNCH_SEQUENCE.md): the two bytes after the frame number carry the mission frame `m`, a 16-bit count that the sync master starts at the launch command.
+//   0                  not launched (this is also what a sender that knows nothing of the launch sequence puts there)
+//   1 .. 1000          the countdown: T minus (1001 - m) frames, so 10 s long
+//   1001               T-zero; `m - 1001` is the number of frames of flight
+//   65535              the largest value; the count stops there (655 s)
+namespace mission {
+constexpr uint16_t kNotLaunched = 0U;
+constexpr uint16_t kCountdownFrames = 1000U;
+constexpr uint16_t kMax = 0xFFFFU;
+constexpr bool counting(uint16_t m) noexcept { return m != kNotLaunched; }
+constexpr bool in_countdown(uint16_t m) noexcept { return m != kNotLaunched && m <= kCountdownFrames; }
+constexpr bool in_flight(uint16_t m) noexcept { return m > kCountdownFrames; }
+// Frames since T-zero (0 before it).
+constexpr uint32_t flight_frames(uint16_t m) noexcept { return m > kCountdownFrames ? static_cast<uint32_t>(m) - kCountdownFrames - 1U : 0U; }
+// Frames still to T-zero (0 once it has passed or if there is no countdown).
+constexpr uint32_t frames_to_zero(uint16_t m) noexcept { return in_countdown(m) ? static_cast<uint32_t>(kCountdownFrames) + 1U - m : 0U; }
+}  // namespace mission
+
 struct DecodedSync {
   uint32_t frame_no = 0;
+  uint16_t mission = 0;
   uint8_t seq = 0;
   bool ok = false;
 };
 
-inline Frame pack_sync(uint32_t frame_no, uint8_t seq) noexcept {
+inline Frame pack_sync(uint32_t frame_no, uint8_t seq, uint16_t mission_frame = mission::kNotLaunched) noexcept {
   Frame f;
   f.id = id::kSync;
   for (unsigned i = 0; i < 4U; ++i) {
     f.data[i] = static_cast<uint8_t>((frame_no >> (8U * i)) & 0xFFU);
   }
+  f.data[4] = static_cast<uint8_t>(mission_frame & 0xFFU);
+  f.data[5] = static_cast<uint8_t>((mission_frame >> 8U) & 0xFFU);
   detail::seal(f, seq);
   return f;
 }
@@ -183,6 +204,7 @@ inline DecodedSync unpack_sync(const Frame& f) noexcept {
   for (unsigned i = 0; i < 4U; ++i) {
     d.frame_no |= static_cast<uint32_t>(f.data[i]) << (8U * i);
   }
+  d.mission = static_cast<uint16_t>(static_cast<uint16_t>(f.data[4]) | (static_cast<uint16_t>(f.data[5]) << 8U));
   d.seq = f.data[6];
   d.ok = true;
   return d;
@@ -200,7 +222,9 @@ enum class GroundOp : uint8_t {
   Reintegrate = 1,    // start probation for a latched node (it must then prove itself by shadow vote)
   Disable = 2,        // exclude a node for the rest of the run (needs an arm if it would leave fewer than 2 healthy nodes)
   ClearDisabled = 3,  // maintenance: bring a disabled node back to "latched" with its strikes cleared (always needs an arm)
-  ClearSafe = 4       // lift a sticky Safe request (always needs an arm)
+  ClearSafe = 4,      // lift a sticky Safe request (always needs an arm)
+  Launch = 5,         // start the countdown (always needs an arm; the node field is ignored; the sync master acts, docs/LAUNCH_SEQUENCE.md)
+  Scrub = 6           // back to the pad, before T-zero (no arm; the node field is ignored)
 };
 constexpr uint8_t kArmFlag = 0x80U;
 
@@ -406,7 +430,7 @@ inline DecodedAct unpack_act_out(const Frame& f) noexcept {
 
 // ---- Heartbeat (0x400 + node): who is on which release, in what state ----
 // Byte 0: protocol version. Byte 1: bits 0-1 mode (tfc::Mode), bit 2 Safe requested, bit 3 bus alarm, bits 4-5 role (0 hot, 1 warm, 2 cold),
-// bit 6 quarantined (a reset loop). Byte 2: this node's view of the three nodes, 2 bits each (A in bits 0-1): 0 healthy, 1 latched,
+// bit 6 quarantined (a reset loop), bit 7 ready for launch (docs/LAUNCH_SEQUENCE.md). Byte 2: this node's view of the three nodes, 2 bits each (A in bits 0-1): 0 healthy, 1 latched,
 // 2 probation, 3 disabled. Byte 3: the reset count since power-on (saturating). Bytes 4-5: the first 16 bits of the release's source hash,
 // so that a node on the golden release (ADR-021) can be told from one on the current release.
 struct Heartbeat {
@@ -416,6 +440,7 @@ struct Heartbeat {
   bool bus_alarm = false;
   uint8_t role = 0U;
   bool quarantined = false;
+  bool ready = false;  // ready for launch: this computer's IMU calibration, sensors and attitude are good
   std::array<uint8_t, 3> node_state{};
   uint8_t reset_count = 0U;
   uint16_t release_hash = 0U;
@@ -432,7 +457,7 @@ inline Frame pack_heartbeat(uint8_t node, const Heartbeat& h, uint8_t seq) noexc
   f.id = id::kHeartbeat + node;
   f.data[0] = h.protocol_version;
   f.data[1] = static_cast<uint8_t>((h.mode & 0x3U) | ((h.safe_requested ? 1U : 0U) << 2U) | ((h.bus_alarm ? 1U : 0U) << 3U) |
-                                   ((h.role & 0x3U) << 4U) | ((h.quarantined ? 1U : 0U) << 6U));
+                                   ((h.role & 0x3U) << 4U) | ((h.quarantined ? 1U : 0U) << 6U) | ((h.ready ? 1U : 0U) << 7U));
   f.data[2] = static_cast<uint8_t>((h.node_state[0] & 0x3U) | ((h.node_state[1] & 0x3U) << 2U) | ((h.node_state[2] & 0x3U) << 4U));
   f.data[3] = h.reset_count;
   detail::put_u16(f, 4, h.release_hash);
@@ -451,6 +476,7 @@ inline DecodedHeartbeat unpack_heartbeat(const Frame& f) noexcept {
   d.hb.bus_alarm = ((f.data[1] >> 3U) & 1U) != 0U;
   d.hb.role = static_cast<uint8_t>((f.data[1] >> 4U) & 0x3U);
   d.hb.quarantined = ((f.data[1] >> 6U) & 1U) != 0U;
+  d.hb.ready = ((f.data[1] >> 7U) & 1U) != 0U;
   d.hb.node_state = {static_cast<uint8_t>(f.data[2] & 0x3U), static_cast<uint8_t>((f.data[2] >> 2U) & 0x3U),
                      static_cast<uint8_t>((f.data[2] >> 4U) & 0x3U)};
   d.hb.reset_count = f.data[3];
