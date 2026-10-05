@@ -1,7 +1,7 @@
 # P-S2-02: the launch checklist (pad, go/no-go, countdown, T-zero)
 
-Follows `docs/VERIFICATION_PROCEDURE_TEMPLATE.md`. The human checklist for a run of the closed loop, and the verification of the launch sequence on the virtual rig (`vcan0`) now and on the real rig later.
-Design: `docs/LAUNCH_SEQUENCE.md`. The automated half is `python3 -m tfc_peers launch`.
+Follows `docs/verification/VERIFICATION_PROCEDURE_TEMPLATE.md`. The human checklist for a run of the closed loop, and the verification of the launch sequence on the virtual rig (`vcan0`) now and on the real rig later.
+Design: `docs/design/LAUNCH_SEQUENCE.md`. The automated half is `python3 -m tfc_peers launch`.
 
 | Field | Entry |
 |---|---|

@@ -9,7 +9,7 @@
 // With the sensor's gravity vector v = [-sin(ty), cos(ty) sin(tx), cos(ty) cos(tx)], which is what an accelerometer at rest reads.
 // A rotation about the vertical is not a degree of freedom of the rig and is not estimated or controlled.
 // The accelerometer is used for the correction only while its magnitude is within a gate of 1 g: thrust and vibration would
-// corrupt the gravity reference (docs/DEFERRED.md, analytical redundancy), so the filter then coasts on the gyro.
+// corrupt the gravity reference (docs/design/FUTURE_WORK.md, analytical redundancy), so the filter then coasts on the gyro.
 // No heap, no exceptions, no RTTI. Deterministic.
 #pragma once
 #include <cmath>
@@ -57,7 +57,7 @@ struct EstimatorConfig {
   float bias_limit_dps = 5.0F;   // the estimated gyro bias is clamped to this
   float accel_gate_g = 0.3F;     // the accelerometer corrects only while |a| is within 1 g +- this
   // False: the accelerometer is not used at all (the attitude is the gyro's integral). For a vehicle under thrust, where the specific force is the thrust and not gravity: with a
-  // thrust-to-weight near 1 the gate above accepts thrust as gravity and pulls the estimated tilt to zero (docs/SIM_FIDELITY.md 3.2). The rig's platform is never under thrust.
+  // thrust-to-weight near 1 the gate above accepts thrust as gravity and pulls the estimated tilt to zero (docs/design/SIM_FIDELITY.md 3.2). The rig's platform is never under thrust.
   bool use_accel = true;
 };
 
@@ -144,7 +144,7 @@ class AttitudeEstimator {
   }
 
   // The whole of what the estimator carries from one step to the next (the sensor inputs of a step are not part of it: the next step replaces them). Exchanged between the
-  // replicas for the state resynchronisation (docs/RESYNC.md, TS-16 option C): `state()` copies it out, `set_state()` replaces it.
+  // replicas for the state resynchronisation (docs/design/RESYNC.md, TS-16 option C): `state()` copies it out, `set_state()` replaces it.
   struct State {
     std::array<float, 4> q{1.0F, 0.0F, 0.0F, 0.0F};
     std::array<float, 3> bias{};

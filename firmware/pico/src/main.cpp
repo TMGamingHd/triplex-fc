@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The platform driver and fault injector on the Pico 2 (docs/PICO.md; ADR-026): the board's side of tfc::PicoApp (core/include/tfc/pico_app.hpp, tested on the host with a fake
+// The platform driver and fault injector on the Pico 2 (docs/design/PICO.md; ADR-026): the board's side of tfc::PicoApp (core/include/tfc/pico_app.hpp, tested on the host with a fake
 // board). Every 10 ms the loop in the core:
 //   - the bytes from the PC (USB serial) go through the link parser: a platform command goes to the platform driver, a relay command to the injector, a ping asks for a
 //     status; a frame that does not check is dropped;

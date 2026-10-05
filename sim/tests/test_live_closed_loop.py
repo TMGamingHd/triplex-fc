@@ -119,7 +119,7 @@ class LiveClosedLoop(unittest.TestCase):
         for n in "ac":
             last = [m for m in map(STATUS.match, self.log(n).splitlines()) if m][-1]
             if last.group(2) == "SAFE":
-                self.skipTest("the two remaining estimators disagreed and the system went to Safe: the open hole of TS-16 (docs/TRADE_STUDIES.md)")
+                self.skipTest("the two remaining estimators disagreed and the system went to Safe: the open hole of TS-16 (docs/decisions/TRADE_STUDIES.md)")
             self.assertEqual((last.group(2), last.group(4)), ("DUPLEX", "X"), self.log(n))
 
 

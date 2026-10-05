@@ -467,3 +467,90 @@ TFC_TEST(heartbeat_monitor_a_stale_or_excluded_heartbeat_does_not_count_and_bad_
   }
   CHECK(!m.safe_requested(0U));
 }
+
+TFC_TEST(act_safe_on_the_pad_goes_to_neutral_at_once_and_stays_there_and_in_flight_it_freezes_as_before) {
+  Bench pad;
+  pad.nominal(6.0F, -4.0F);
+  pad.run_same(6.0F, -4.0F, 20U);
+  pad.act.set_on_pad(true);
+  pad.act.safe_request(true);
+  const ActOutput& entry = pad.same(6.0F, -4.0F);
+  CHECK(entry.mode == ActMode::Safe && entry.cause == SafeCause::FcRequest && entry.phase == SafePhase::Neutral);
+  CHECK(entry.pitch_deg == 0.0F && entry.yaw_deg == 0.0F);  // neutral in the frame of entry, no freeze and no ramp
+  for (int i = 0; i < 200; ++i) {
+    const ActOutput& o = pad.same(6.0F, -4.0F);
+    CHECK(o.mode == ActMode::Safe && o.phase == SafePhase::Neutral && o.pitch_deg == 0.0F && o.yaw_deg == 0.0F);
+  }
+  Bench flight;  // the default: in flight
+  flight.nominal(6.0F, -4.0F);
+  flight.run_same(6.0F, -4.0F, 20U);
+  flight.act.set_on_pad(false);
+  flight.act.hardware_safe(true);
+  const ActOutput& hold = flight.same(6.0F, -4.0F);
+  CHECK(hold.mode == ActMode::Safe && hold.cause == SafeCause::HardwareLine && hold.phase == SafePhase::Hold);
+  CHECK(near(hold.pitch_deg, 6.0F, 1e-5F) && near(hold.yaw_deg, -4.0F, 1e-5F));
+}
+
+TFC_TEST(act_the_pad_is_read_when_safe_is_entered_and_not_afterwards) {
+  Bench b;  // Safe entered in flight: a hold in progress is not cut short when the vehicle is then said to be on the pad
+  b.nominal(6.0F, -4.0F);
+  b.run_same(6.0F, -4.0F, 20U);
+  b.act.safe_request(true);
+  (void)b.same(6.0F, -4.0F);
+  b.act.set_on_pad(true);
+  const ActOutput& o = b.same(6.0F, -4.0F);
+  CHECK(o.phase == SafePhase::Hold && near(o.pitch_deg, 6.0F, 1e-5F));
+  Bench c;  // and Safe entered on the pad stays neutral when the flag falls
+  c.nominal(6.0F, -4.0F);
+  c.run_same(6.0F, -4.0F, 20U);
+  c.act.set_on_pad(true);
+  c.act.safe_request(true);
+  (void)c.same(6.0F, -4.0F);
+  c.act.set_on_pad(false);
+  const ActOutput& n = c.same(6.0F, -4.0F);
+  CHECK(n.phase == SafePhase::Neutral && n.pitch_deg == 0.0F);
+}
+
+TFC_TEST(act_a_loss_of_votes_on_the_pad_also_goes_to_neutral_at_once) {
+  Bench b;
+  b.nominal(6.0F, -4.0F);
+  b.run_same(6.0F, -4.0F, 20U);
+  b.act.set_on_pad(true);
+  const ActOutput* last = &b.act.output();
+  for (int i = 0; i < 6; ++i) {
+    b.act.begin_frame();
+    last = &b.act.end_frame();  // no commands at all
+  }
+  CHECK(last->mode == ActMode::Safe && last->cause == SafeCause::LostVotes && last->phase == SafePhase::Neutral && last->pitch_deg == 0.0F);
+}
+
+TFC_TEST(act_the_output_frame_names_the_stage_of_safe_as_the_protocol_says) {
+  ActOutput o;
+  o.mode = ActMode::Standby;
+  CHECK(act_frame_state(o) == 0U && to_act_frame(o).state == 0U);
+  o.mode = ActMode::Nominal;
+  CHECK(act_frame_state(o) == 1U);
+  o.mode = ActMode::Safe;
+  o.phase = SafePhase::Hold;
+  CHECK(act_frame_state(o) == 2U);
+  o.phase = SafePhase::Ramp;
+  CHECK(act_frame_state(o) == 3U && to_act_frame(o).state == 3U);
+  o.phase = SafePhase::Neutral;
+  CHECK(act_frame_state(o) == 4U && to_act_frame(o).state == 4U);
+  o.phase = SafePhase::None;  // (never the phase of Safe: read as the hold, the conservative stage)
+  CHECK(act_frame_state(o) == 2U);
+  // and along a real Safe sequence the state walks 1, 2 (hold), 3 (ramp), 4 (neutral)
+  Bench b;
+  b.nominal(1.0F, 0.0F);
+  b.run_same(1.0F, 0.0F, 20U);
+  CHECK(to_act_frame(b.act.output()).state == 1U);
+  b.act.safe_request(true);
+  std::array<bool, 5> seen{};
+  for (int i = 0; i < 300; ++i) {
+    const ActOutput& out = b.same(1.0F, 0.0F);
+    const uint8_t st = to_act_frame(out).state;
+    CHECK(st <= 4U);
+    seen[st] = true;
+  }
+  CHECK(!seen[0] && seen[1] == false && seen[2] && seen[3] && seen[4]);
+}

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
-"""Turn campaign results (JSON lines from `python3 -m campaign.run`) into the Markdown tables of docs/FAULT_CAMPAIGN.md.
+"""Turn campaign results (JSON lines from `python3 -m campaign.run`) into the Markdown tables of docs/verification/FAULT_CAMPAIGN.md.
 Usage: python3 -m campaign.report RESULTS.jsonl [GROUP ...] > tables.md      (tables, and a response curve per GROUP)
-       python3 -m campaign.report RESULTS.jsonl --update-doc docs/FAULT_CAMPAIGN.md   (rewrite the marked blocks in place)
+       python3 -m campaign.report RESULTS.jsonl --update-doc docs/verification/FAULT_CAMPAIGN.md   (rewrite the marked blocks in place)
 The numbers in the docs come from here, not from hand."""
 from __future__ import annotations
 

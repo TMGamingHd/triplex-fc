@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// State resynchronisation (core/include/tfc/resync.hpp, docs/RESYNC.md; TS-16 option C): the shared form of a computer's state, its frames, the vote, the adoption in the flight function,
+// State resynchronisation (core/include/tfc/resync.hpp, docs/design/RESYNC.md; TS-16 option C): the shared form of a computer's state, its frames, the vote, the adoption in the flight function,
 // the manager's persistence rule for digest mismatches and its handling of state corrections, and the closed loop on a lossy bus.
 #include <array>
 #include <cmath>

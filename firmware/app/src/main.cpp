@@ -6,13 +6,14 @@
 //   t = 5.0 ms  broadcasts its command + estimator digest
 //   t = 7.0 ms  hands everything received to tfc::RedundancyManager, which votes, cross-checks
 //               and runs FDIR; latch events and a once-a-second status line go to the console
-// (schedule: docs/ARCHITECTURE.md section 3). On native_sim the bus is the host's vcan0 and the other nodes are either the virtual peers (sim/) or more
+// (schedule: docs/design/ARCHITECTURE.md section 3). On native_sim the bus is the host's vcan0 and the other nodes are either the virtual peers (sim/) or more
 // instances of this image; on the Nucleo it is FDCAN1.
 // With CONFIG_TFC_FLIGHT_FUNCTION the command comes from tfc::FlightFunction (consensus, estimator, controller) instead of a scripted function of the frame
 // number; with CONFIG_TFC_SIM_BUS_IMU the sensor input is the simulator's 0x501/0x502 frames instead of the scripted motion.
 //
 // Include core/ (and so the C++ standard library) BEFORE Zephyr headers: Zephyr defines an
 // `__unused` macro that breaks a glibc header (struct_mutex.h) on the native_sim host build.
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -42,12 +43,21 @@ BUILD_ASSERT(kNodeId <= 2U, "the node id is 0 (A), 1 (B) or 2 (C)");
 constexpr bool kFlightFunction = IS_ENABLED(CONFIG_TFC_FLIGHT_FUNCTION);
 constexpr bool kSimBusImu = IS_ENABLED(CONFIG_TFC_SIM_BUS_IMU);
 constexpr bool kLaunch = IS_ENABLED(CONFIG_TFC_LAUNCH_SEQUENCE);
-constexpr uint32_t kResyncPeriod = CONFIG_TFC_RESYNC_PERIOD;  // frames between state resynchronisations (docs/RESYNC.md)
+constexpr uint16_t kReleaseId = static_cast<uint16_t>(CONFIG_TFC_RELEASE_ID != 0 ? CONFIG_TFC_RELEASE_ID : TFC_RELEASE_HASH_AUTO);  // what this image reports in its heartbeat
+constexpr uint32_t kResyncPeriod = CONFIG_TFC_RESYNC_PERIOD;  // frames between state resynchronisations (docs/design/RESYNC.md)
 constexpr uint8_t kResyncGroup = static_cast<uint8_t>(CONFIG_TFC_RESYNC_GROUP & 0x07U);
 constexpr bool kResync = kFlightFunction && kResyncPeriod != 0U && ((kResyncGroup >> CONFIG_TFC_NODE_ID) & 1U) != 0U;  // this computer takes part
 
-constexpr uint32_t kDropFirst = CONFIG_TFC_TEST_DROP_PEERS_FIRST;    // test aid (docs/RESYNC.md): withhold the peers' sensor frames from the flight function
+constexpr uint32_t kDropFirst = CONFIG_TFC_TEST_DROP_PEERS_FIRST;    // test aid (docs/design/RESYNC.md): withhold the peers' sensor frames from the flight function
 constexpr uint32_t kDropFrames = CONFIG_TFC_TEST_DROP_PEERS_FRAMES;
+constexpr uint32_t kShareEveryFrames = 10U;  // the state share (FDIR-041): each computer broadcasts its strike counts and command counter this often, staggered by node
+constexpr uint32_t kRestoreAtCycle = 30U;     // a computer that has restarted takes them from the others once, this many frames after it came up
+constexpr uint32_t kTestT0At = CONFIG_TFC_TEST_T0_AT_FRAMES_TO_ZERO;
+constexpr uint32_t kTestHangAt = CONFIG_TFC_TEST_HANG_AT_FRAME;      // bench aids, all off by default (docs/procedures/P-S2-03, P-S3-01)
+constexpr int kTestCmdOffsetMdeg = CONFIG_TFC_TEST_CMD_OFFSET_MDEG;
+constexpr int kTestGyroBiasMdps = CONFIG_TFC_TEST_GYRO_BIAS_MDPS;
+constexpr int kTestGyroDriftMdps = CONFIG_TFC_TEST_GYRO_DRIFT_MDPS_PER_FRAME;
+constexpr int kTestClockPpm = CONFIG_TFC_TEST_CLOCK_PPM;
 constexpr int64_t kSampleUs = 500;   // the IMU sample is latched here (ARCHITECTURE section 3) ...
 constexpr int64_t kGyroUs = 1500;     // ... and sent here
 constexpr int64_t kCmdUs = 5000;   // the command goes out here; the peers' sensor frames (sent by 3 ms) are drained just before
@@ -87,7 +97,7 @@ CAN_MSGQ_DEFINE(rx_resync_msgq, 16);  // the peers' state in a resync frame (0x4
 
 // Statics, not locals: the flight function holds the tables and the filter state, about a kilobyte.
 tfc::FlightFunction g_flight;
-tfc::ImuCalibrator g_cal;  // this computer's own IMU, calibrated on the pad (docs/LAUNCH_SEQUENCE.md)
+tfc::ImuCalibrator g_cal;  // this computer's own IMU, calibrated on the pad (docs/design/LAUNCH_SEQUENCE.md)
 tfc::resync::Collector g_resync;  // the states received in the current resync frame
 
 void sleep_until_us(int64_t base_ticks, int64_t offset_us) {
@@ -186,10 +196,13 @@ const char* mode_text(tfc::Mode m) {
 }
 
 // Per-node state letter for the status line: '+' voting, 'X' latched out, 'p' on probation,
-// 'D' disabled for the run, '?' no good data this frame.
+// 'w' resting as WARM (judged, not voting), 'D' disabled for the run, '?' no good data this frame.
 char node_state(const tfc::FrameReport& r, unsigned n) {
   if (((r.disabled_mask >> n) & 1U) != 0U) {
     return 'D';
+  }
+  if (((r.warm_mask >> n) & 1U) != 0U) {
+    return 'w';
   }
   if (((r.probation_mask >> n) & 1U) != 0U) {
     return 'p';
@@ -232,6 +245,8 @@ int main() {
   }
   tfc::RedundancyConfig cfg;
   cfg.startup_grace_frames = kStartupGraceFrames;
+  cfg.sensor_split = IS_ENABLED(CONFIG_TFC_SENSOR_SPLIT);
+  cfg.phases = IS_ENABLED(CONFIG_TFC_PHASES);
   if (kFlightFunction && kResyncPeriod != 0U) {
     cfg.digest_persist_frames = static_cast<uint16_t>((2U * kResyncPeriod) + 50U);  // a mismatch the resync would heal (even if one resync is skipped) is not counted (TS-23)
   }
@@ -241,6 +256,7 @@ int main() {
     printk("CONFIG ERROR: TFC_GROUND_KEY must be exactly 32 hex digits; using the PUBLIC bench key\n");
   }
   tfc::RedundancyManager mgr(cfg);
+  mgr.set_release(kNodeId, kReleaseId);  // (the peers' releases come from their heartbeats)
   if (mgr.config_errors() != 0U) {  // a bad configuration is replaced by defaults, never run silently
     printk("CONFIG ERROR: invalid fields (mask 0x%x) replaced by defaults\n", static_cast<unsigned>(mgr.config_errors()));
   }
@@ -263,7 +279,7 @@ int main() {
   const bool quarantined = IS_ENABLED(CONFIG_TFC_QUARANTINE_ON_RESET_LOOP) && resets.loop_detected();
   tfc::ProgressMonitor progress(kProgressRequired);
   constexpr int64_t kPeriodUs = fc::sim::kFrameUs;
-  const int64_t period = k_us_to_ticks_ceil64(kPeriodUs);
+  const int64_t period = k_us_to_ticks_ceil64(kPeriodUs + static_cast<int64_t>(kPeriodUs) * kTestClockPpm / 1000000);  // (the clock skew knob lengthens or shortens the master's frame)
   const int64_t window = k_us_to_ticks_ceil64(tfc::sync_window_us(kNodeId, CONFIG_TFC_SYNC_STAGGER_US));
   // Node A listens first, even after a power-up (it may be the one that was off while B took over: two masters would collide on one id), and
   // claims the bus if nobody is sending after a few frames; B and C only follow, and take over only after they have heard a master and lost it.
@@ -278,6 +294,10 @@ int main() {
   uint32_t resync_adopted = 0;
   uint32_t resync_skipped = 0;
   uint32_t resync_corrected = 0;  // computers found far from the vote, summed over the resyncs
+  uint32_t wcet_step_us = 0;      // the longest the flight function, the manager's frame and the whole frame have taken so far (the real margin of the 7 ms vote)
+  uint32_t wcet_vote_us = 0;
+  uint32_t wcet_frame_us = 0;
+  float test_gyro_drift_dps = 0.0F;
   // launch sequence state: what the peers and ACT last said, and the mission frame last seen
   std::array<uint32_t, 3> hb_seen{};
   std::array<bool, 3> hb_ready{};
@@ -294,10 +314,11 @@ int main() {
     g_flight = tfc::FlightFunction(gains, guidance);
   }
 
+  printk("release 0x%04x\n", static_cast<unsigned>(kReleaseId));
   printk("FC-%c (node %u): %s, 100 Hz frame loop%s%s.\n", 'A' + static_cast<char>(kNodeId), kNodeId,
          sync_start == tfc::SyncStart::Listen ? "listens for a master, then claims SYNC" : "following SYNC",
          kFlightFunction ? ", flight function on" : "", kSimBusImu ? ", sensors from the simulator" : "");
-  printk("status: '+' voting, 'X' latched out, 'p' on probation, 'D' disabled, '?' no good data this frame\n");
+  printk("status: '+' voting, 'X' latched out, 'p' on probation, 'w' resting as WARM, 'D' disabled, '?' no good data this frame\n");
 
   bool drop_peers = false;  // the test aid above is active in this frame
   // Hand every schedule-slot frame that has arrived to the manager (and the sensor frames to the flight function); our own frames are not repeated back.
@@ -397,12 +418,13 @@ int main() {
     if (!tick.master && !tick.locked) {
       // SYNC did not come in this frame and this node is not taking over: the frame is skipped, by every follower alike. Running it on the node's own
       // clock would put each follower's frame at a different time (their windows differ), so two nodes could receive different mixes of the same frames,
-      // compute different inputs and drift apart for good (docs/DECISIONS.md ADR-025). The number still counts, so it stays continuous.
+      // compute different inputs and drift apart for good (docs/decisions/DECISIONS.md ADR-025). The number still counts, so it stays continuous.
       wdt.feed();
       continue;
     }
     lines.kick(false);
     lines.frame(true);  // FRAME: a pulse at the start of every frame, cleared when the sample is latched
+    const uint32_t cycles_frame_start = k_cycle_get_32();
     if (cycle % kStatusEveryFrames == 0U) {
       resets.running(cycle);  // how long this boot has lasted, for the next boot's loop check
     }
@@ -457,6 +479,10 @@ int main() {
     if (have_sample && kLaunch) {
       gyro = g_cal.process(gyro);  // the bias is subtracted before the sample is sent, so the consensus sees corrected values
     }
+    if (have_sample && (kTestGyroBiasMdps != 0 || kTestGyroDriftMdps != 0)) {  // the bench aids: a known bias, a known drift
+      test_gyro_drift_dps += static_cast<float>(kTestGyroDriftMdps) * 0.001F;
+      gyro.v[0] += (static_cast<float>(kTestGyroBiasMdps) * 0.001F) + test_gyro_drift_dps;
+    }
     lines.frame(false);
     progress.report(kTaskSample);
 
@@ -467,7 +493,7 @@ int main() {
       const tfc::Frame a = tfc::pack_accel(kNodeId, accel, seq);
       mgr.on_frame(g);
       mgr.on_frame(a);
-      if (kFlightFunction) {
+      if (kFlightFunction && !drop_peers) {  // (the test aid also withholds this computer's own sensor frames, so that its estimator holds its rates)
         (void)g_flight.on_frame(g);
         (void)g_flight.on_frame(a);
       }
@@ -480,12 +506,17 @@ int main() {
     sleep_until_us(base, kCmdUs);
     drain_schedule_slots();  // the peers' sensor frames, which the flight function needs now
     tfc::Command cmd;
+    const uint32_t cycles_step = k_cycle_get_32();
     if (kFlightFunction) {
       cmd = g_flight.step();
     } else {
       // Without the flight function the command is a fixed function of the frame number, the same on every replica and on the PC, so the digest can be
       // checked against a golden run; it does not come from the IMU.
       cmd = fc::sim::command(fc::sim::truth(k), k);
+    }
+    wcet_step_us = std::max(wcet_step_us, k_cyc_to_us_floor32(k_cycle_get_32() - cycles_step));
+    if (kTestCmdOffsetMdeg != 0) {
+      cmd.pitch_deg += static_cast<float>(kTestCmdOffsetMdeg) * 0.001F;  // the bench aid: a computer whose commands are off by a known amount
     }
     const tfc::Frame c = tfc::pack_cmd(kNodeId, cmd, seq);
     mgr.on_frame(c);
@@ -528,8 +559,10 @@ int main() {
       }
       mgr.on_frame(f);  // counts it as out-of-schedule (or ignores SYNC/ACT/heartbeat/sim IDs)
     }
+    const uint32_t cycles_vote = k_cycle_get_32();
     const tfc::FrameReport& rep = mgr.end_frame();
-    usable_nodes = static_cast<uint8_t>(~rep.latched_mask & 0x07U);  // next frame's flight function uses only the nodes that are voting
+    wcet_vote_us = std::max(wcet_vote_us, k_cyc_to_us_floor32(k_cycle_get_32() - cycles_vote));
+    usable_nodes = static_cast<uint8_t>(~rep.sensor_latched_mask & 0x07U);  // next frame's flight function uses only the IMUs that are in the consensus (with the split, a computer that is out of the command vote still contributes its IMU)
     progress.report(kTaskVote);
     {  // the heartbeat: what ACT and the supervisor need to know (protocol v2): mode, Safe request, bus alarm, how this node sees the three
       tfc::Heartbeat hb;
@@ -541,9 +574,20 @@ int main() {
         hb.node_state[n] = (rep.disabled_mask & bit) != 0U ? 3U : ((rep.probation_mask & bit) != 0U ? 2U : ((rep.latched_mask & bit) != 0U ? 1U : 0U));
       }
       hb.reset_count = static_cast<uint8_t>(resets.boots() > 255U ? 255U : resets.boots());
+      hb.release_hash = kReleaseId;
       own_ready = kLaunch && kFlightFunction && g_flight.sensors_ok() && g_cal.ready() && !rep.safe_request;
       hb.ready = own_ready;
       tx_errors += send(tfc::pack_heartbeat(kNodeId, hb, seq)) ? 0U : 1U;
+    }
+    if (k % kShareEveryFrames == kNodeId) {
+      tx_errors += send(tfc::pack_state_share(kNodeId, mgr.state_share(), seq)) ? 0U : 1U;
+    }
+    if (cycle == kRestoreAtCycle) {  // (on a power-on all the shares are zero and nothing changes; after a reset the strike counts and the command counter come back)
+      const tfc::RedundancyManager::Restored restored = mgr.restore_from_peers(kNodeId);
+      if (restored.strikes_raised != 0U || restored.disabled != 0U || restored.counter) {
+        printk("[frame %u] STATE RESTORED from the others' shares: strikes raised 0x%x, disabled 0x%x, command counter %s\n", k, static_cast<unsigned>(restored.strikes_raised),
+               static_cast<unsigned>(restored.disabled), restored.counter ? "adopted" : "kept");
+      }
     }
     if (kLaunch) {  // the go/no-go: what this computer knows of the others (a heartbeat or ACT frame more than three frames old does not count)
       tfc::LaunchFacts facts;
@@ -578,6 +622,13 @@ int main() {
           }
         }
       }
+      const bool t0_level = lines.t0() || (kTestT0At != 0U && tfc::mission::in_countdown(tick.mission) && tfc::mission::frames_to_zero(tick.mission) <= kTestT0At);
+      const tfc::SyncClock::T0 t0_edge = sync_clock.t0_line(t0_level);  // the supervisor's T-zero: the sync master starts the T-zero frame with the next SYNC
+      if (t0_edge == tfc::SyncClock::T0::Latched) {
+        printk("[frame %u] T0 LINE: the supervisor's T-zero; the next frame is T-zero\n", k);
+      } else if (t0_edge == tfc::SyncClock::T0::TooEarly) {
+        printk("[frame %u] T0 LINE REFUSED: %u frames before the countdown ends\n", k, static_cast<unsigned>(tfc::mission::frames_to_zero(tick.mission)));
+      }
       if (tick.master && tfc::mission::in_countdown(tick.mission) && nogo_mask != 0U && sync_clock.scrub()) {
         printk("[frame %u] COUNTDOWN SCRUBBED, no-go: %s\n", k, tfc::nogo_text(nogo_mask));
       }
@@ -610,15 +661,25 @@ int main() {
         printk("[frame %u] RESYNC: nothing adopted (%s)\n", k, vote.why == tfc::resync::Why::Incomplete ? "a state did not arrive whole" : (vote.why == tfc::resync::Why::TooFew ? "fewer than two voters" : "the states disagree"));
       }
     }
+    wcet_frame_us = std::max(wcet_frame_us, k_cyc_to_us_floor32(k_cycle_get_32() - cycles_frame_start));
     if (progress.end_of_frame(true)) {  // the one place the watchdog is serviced, and the one place KICK is raised
       wdt.feed();
-      lines.kick(true);
+      if (kTestHangAt == 0U || k < kTestHangAt) {  // (the bench aid: from a chosen frame the KICK stops while everything else goes on)
+        lines.kick(true);
+      }
     }
 
     for (unsigned i = 0; i < rep.command_count; ++i) {
       const tfc::CommandEvent& ce = rep.commands[i];
-      printk("[frame %u] GROUND COMMAND %s%s %c: %s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "", tfc::op_text(ce.op),
-             'A' + static_cast<char>(ce.node), tfc::result_text(ce.result));
+      if (ce.op == static_cast<uint8_t>(tfc::GroundOp::Phase)) {  // its node field is a phase number
+        printk("[frame %u] GROUND COMMAND %s%s P%u: %s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "", tfc::op_text(ce.op), static_cast<unsigned>(ce.node),
+               tfc::result_text(ce.result));
+      } else if (ce.op == static_cast<uint8_t>(tfc::GroundOp::Noop)) {
+        printk("[frame %u] GROUND COMMAND %s%s: %s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "", tfc::op_text(ce.op), tfc::result_text(ce.result));
+      } else {
+        printk("[frame %u] GROUND COMMAND %s%s %c: %s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "", tfc::op_text(ce.op),
+               'A' + static_cast<char>(ce.node), tfc::result_text(ce.result));
+      }
       if ((ce.flags & tfc::cmdflag::kCritical) != 0U) {
         printk("[frame %u] !!! CRITICAL: the last voting node was removed by operator command !!!\n", k);
       }
@@ -642,6 +703,29 @@ int main() {
       if ((rep.newly_disabled & bit) != 0U) {
         printk("[frame %u] node %c DISABLED for the run (strikes: %u)\n", k, 'A' + static_cast<char>(n),
                static_cast<unsigned>(rep.strikes[n]));
+      }
+    }
+    if (cfg.sensor_split) {  // the IMU channels' own events
+      for (unsigned n = 0; n < tfc::kNodes; ++n) {
+        const unsigned bit = 1U << n;
+        const char c = static_cast<char>('A' + n);
+        if ((rep.sensor_newly_latched & bit) != 0U) {
+          std::array<char, 96> why{};
+          tfc::format_reasons(rep.sensor_reason[n], why.data(), why.size());
+          printk("[frame %u] IMU %c LATCHED OUT (computer %c stays in the command vote): %s\n", k, c, c, why.data());
+        }
+        if ((rep.sensor_probation_started & bit) != 0U) {
+          printk("[frame %u] IMU %c ON PROBATION\n", k, c);
+        }
+        if ((rep.sensor_probation_failed & bit) != 0U) {
+          printk("[frame %u] IMU %c FAILED PROBATION, back to latched\n", k, c);
+        }
+        if ((rep.sensor_newly_reintegrated & bit) != 0U) {
+          printk("[frame %u] IMU %c REINTEGRATED into the consensus\n", k, c);
+        }
+        if ((rep.sensor_newly_disabled & bit) != 0U) {
+          printk("[frame %u] IMU %c DISABLED for the run\n", k, c);
+        }
       }
     }
     for (unsigned n = 0; n < tfc::kNodes; ++n) {
@@ -674,7 +758,7 @@ int main() {
     }
     if (cycle % kStatusEveryFrames == 0U) {
       const tfc::Counters& cn = mgr.counters();
-      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u sync_missed=%u mission=%u ready=%u resync=%u/%u far=%u\n",
+      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u sync_missed=%u mission=%u ready=%u resync=%u/%u far=%u wcet_step=%u wcet_vote=%u wcet_frame=%u phase=%u warm=0x%x\n",
              k, mode_text(rep.mode), node_state(rep, 0), node_state(rep, 1), node_state(rep, 2),
              static_cast<unsigned>(cn.crc_bad), static_cast<unsigned>(cn.seq_bad),
              static_cast<unsigned>(cn.missing), static_cast<unsigned>(cn.vote_disagreements),
@@ -683,7 +767,8 @@ int main() {
              static_cast<unsigned>(imu.stale()), static_cast<unsigned>(progress.refusals()),
              static_cast<unsigned>(atomic_get(&g_bus_off_events)), static_cast<unsigned>(atomic_get(&g_error_passive_events)),
              static_cast<unsigned>(sync_missed_total), static_cast<unsigned>(tick.mission), own_ready ? 1U : 0U, static_cast<unsigned>(resync_adopted),
-             static_cast<unsigned>(resync_skipped), static_cast<unsigned>(resync_corrected));
+             static_cast<unsigned>(resync_skipped), static_cast<unsigned>(resync_corrected), static_cast<unsigned>(wcet_step_us), static_cast<unsigned>(wcet_vote_us),
+             static_cast<unsigned>(wcet_frame_us), static_cast<unsigned>(rep.phase), static_cast<unsigned>(rep.warm_mask));
     }
   }
 }

@@ -1,7 +1,7 @@
 name: mutation
 # Mutation testing is the check on the checks: deliberate bugs are injected into a copy of core/ and every one must be caught.
 # It takes a while (the unit suite rebuilds for each mutant, the campaign reruns for each), so it runs weekly and on demand,
-# not on every pull request. See docs/CODING_STANDARD.md section 3.
+# not on every pull request. See docs/verification/CODING_STANDARD.md section 3.
 on:
   schedule:
     - cron: "17 5 * * 1"

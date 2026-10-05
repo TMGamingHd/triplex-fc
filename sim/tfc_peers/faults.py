@@ -3,8 +3,8 @@
 
 A fault is written `NODE:KIND[:key=value,...]`, e.g. `B:bias:start=100,mag=3`.
 `start`/`end` are 10 ms frame indices (`end` is exclusive, default: forever). Each kind maps
-to a row of docs/FAULT_MATRIX.md so a campaign can be described the same way as the matrix.
-Kinds F27 onward come from the FMEA gap analysis (docs/FMEA.md); every parameter is validated here so a typo
+to a row of docs/verification/FAULT_MATRIX.md so a campaign can be described the same way as the matrix.
+Kinds F27 onward come from the FMEA gap analysis (docs/verification/FMEA.md); every parameter is validated here so a typo
 cannot silently become "no fault" or crash the generator half way through a run.
 """
 from __future__ import annotations
@@ -43,7 +43,7 @@ KINDS: dict[str, tuple[str, str, dict[str, Value]]] = {
                {"down": 50, "resync": 1}),
     "late": ("F25", "every scheduled frame arrives `us` microseconds late (after the 7 ms vote it is stale data)",
              {"us": 4000}),
-    # ---- kinds added by the FMEA gap analysis (docs/FMEA.md) ----
+    # ---- kinds added by the FMEA gap analysis (docs/verification/FMEA.md) ----
     "scale": ("F27", "scale-factor error: one axis multiplied by `factor`",
               {"sensor": "gyro", "axis": 0, "factor": 1.2}),
     "noise": ("F28", "noise grows to `mult` times the healthy sigma on all axes of one sensor",

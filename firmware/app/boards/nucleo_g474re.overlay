@@ -1,4 +1,4 @@
-/* Nucleo-G474RE: the flight computer's wiring (docs/SUPERVISOR.md, docs/STAGED_BUILD.md rules 10 and 11).
+/* Nucleo-G474RE: the flight computer's wiring (docs/design/SUPERVISOR.md, docs/hardware/STAGED_BUILD.md rules 10 and 11).
  *
  * Every pin below was looked up in the morpho-connector map that Zephyr takes from ST's data
  * (boards/st/nucleo_g474re/st_morpho_connector.dtsi); the connector pin is in each comment. Check each against the
@@ -37,10 +37,11 @@
 / {
 	tfc_lines: tfc-lines {
 		compatible = "tfc,lines";
-		/* FRAME PC8 (CN10 2), KICK PC9 (CN10 1), ADOPT PC6 (CN10 4); straps PC2 (CN7 35) and PC3 (CN7 37), to ground = 1 */
+		/* FRAME PC8 (CN10 2), KICK PC9 (CN10 1), ADOPT PC6 (CN10 4), T0 PC5 (CN10 6: check against UM2505 before wiring); straps PC2 (CN7 35) and PC3 (CN7 37), to ground = 1 */
 		frame-gpios = <&gpioc 8 GPIO_ACTIVE_HIGH>;
 		kick-gpios = <&gpioc 9 GPIO_ACTIVE_HIGH>;
 		adopt-gpios = <&gpioc 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+		t0-gpios = <&gpioc 5 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
 		id-gpios = <&gpioc 2 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>,
 			   <&gpioc 3 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 	};

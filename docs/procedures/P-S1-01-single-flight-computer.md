@@ -1,6 +1,6 @@
 # P-S1-01: stage S1, one flight computer on real hardware
 
-Follows `docs/VERIFICATION_PROCEDURE_TEMPLATE.md`. Exit test of stage S1 (`docs/STAGED_BUILD.md`): "10 min at 100 Hz, zero frame errors; WCET and jitter measured;
+Follows `docs/verification/VERIFICATION_PROCEDURE_TEMPLATE.md`. Exit test of stage S1 (`docs/hardware/STAGED_BUILD.md`): "10 min at 100 Hz, zero frame errors; WCET and jitter measured;
 digest matches the PC golden run".
 
 | Field | Entry |
@@ -43,7 +43,7 @@ P-M1-01 done and passed. `tools/bench/check_pc.sh` clean. Board wired per the pi
 Stop the logger and the capture; unplug the adapter last; leave the Nucleo powered down. Keep the log and both exports.
 
 ## 5. Records
-This file as run; `logs/s1.log`; `frame.csv` and the KICK export; the console text; the git hash; the fault-matrix rows F14 and F57 updated with the test id; `SYS-001` and `SYS-002` figures into `docs/REQUIREMENTS.md` if they differ from the proposal.
+This file as run; `logs/s1.log`; `frame.csv` and the KICK export; the console text; the git hash; the fault-matrix rows F14 and F57 updated with the test id; `SYS-001` and `SYS-002` figures into `docs/verification/REQUIREMENTS.md` if they differ from the proposal.
 
 ## 6. Not covered here
 WCET of the estimator and controller (they do not exist yet); the self-test of the IMU (limits not set); arrival-time margins (the CAN receive timestamps are enabled in the build, but nothing reads them yet).

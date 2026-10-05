@@ -179,8 +179,9 @@ def babble() -> list[Scenario]:
     for n, k in itertools.product(range(3), (0, 1, 2, 3, 4, 8, 20, 60)):
         out.append(_sc("babble", [f"{N[n]}:babble:start=100,n={k}"], "ignore", frames=FRAMES,
                        tag=dict(node=N[n], n=k, alarm_expected=k >= 3)))
-    # ids above the simulator id and between the schedule's ids are out-of-schedule too (E14): counted, alarm at 3 or more per frame
-    for n, bid, k in itertools.product(range(3), (0x301, 0x420, 0x4F0, 0x511, 0x520, 0x6F0, 0x7F0), (2, 5)):
+    # ids above the simulator id and between the schedule's ids are out-of-schedule too (E14): counted, alarm at 3 or more per frame. 0x413 is the first id after the state share (0x410 to 0x412)
+    # and 0x42C the first after the resync frames (0x420 to 0x42B); the ids inside those ranges are in the schedule and raise no alarm
+    for n, bid, k in itertools.product(range(3), (0x301, 0x413, 0x42C, 0x4F0, 0x511, 0x520, 0x6F0, 0x7F0), (2, 5)):
         out.append(_sc("babble", [f"{N[n]}:babble:start=100,n={k},id={bid}"], "ignore", frames=FRAMES,
                        tag=dict(node=N[n], n=k, id=bid, alarm_expected=k >= 3)))
     return out
@@ -435,7 +436,7 @@ def contexts() -> list[Scenario]:
     return out
 
 
-# ------------------------------------------------------------------ kinds added by the FMEA gap analysis (docs/FMEA.md)
+# ------------------------------------------------------------------ kinds added by the FMEA gap analysis (docs/verification/FMEA.md)
 GYRO_AMP = (10.0, 6.0, 3.0)  # peak truth rate per axis, dps (peers.truth)
 ACCEL_AMP = (0.05, 0.03, 0.0)  # peak variation per axis, g (axis 2 is constant gravity 1.0 g)
 GYRO_RATE = tuple(a * 2 * math.pi * f for a, f in zip(GYRO_AMP, (0.8, 0.5, 0.3)))  # dps per second at the steepest point
@@ -552,7 +553,7 @@ def new_timing_faults() -> list[Scenario]:
         for us in sorted({100, 500, 1000, 2000, 3000, 4000, thr - 1, thr, thr + 1, 6000, 8000, 9000}):
             # Past `thr` the gyro/accel frames land in the previous frame's window carrying the NEXT frame's number: detected since ADR-018
             # (E11). Below it the frame still arrives in the right window with the right number: invisible until arrival times are
-            # checked (docs/DEFERRED.md).
+            # checked (docs/design/FUTURE_WORK.md).
             exp = "gray" if abs(us - thr) <= 1 else ("detect" if us > thr else "ignore")
             for ctx in _ctxs(n):
                 out.append(_sc("early", [f"{N[n]}:early:start=100,us={us}"], exp, 6, context=ctx, frames=FRAMES,
@@ -741,6 +742,76 @@ def duplex_boundary() -> list[Scenario]:
     return out
 
 
+
+# ------------------------------------------------------------------ the sensor split (ADR-020 case 1, TS-15)
+SENSOR_KINDS = ("stuck", "bias", "drift", "spike", "saturate", "scale", "noise", "invert", "swap", "zero", "clip", "oscillate", "repeat", "bitflip", "stuckbit")
+COMMAND_KINDS = ("cmd_offset", "cmdstuck", "cmdinvert", "digest")
+SPLIT_STARTS = (30, 77, 100, 143, 190)
+
+
+def _split(group, faults, **kw) -> Scenario:
+    return _sc(group, faults, "any", split=True, **kw)
+
+
+def split_sensor() -> list[Scenario]:
+    """Every sensor-class fault kind on every computer's IMU, at five start instants: the IMU channel is isolated and the computer stays a voter, and the split
+    detects what the unsplit manager detected (within two frames)."""
+    out = []
+    for kind, n, s in itertools.product(SENSOR_KINDS, range(3), SPLIT_STARTS):
+        out.append(_split("split_sensor", [PHASE_KINDS[kind].format(n=N[n], s=s)], frames=s + 120, tag=dict(**{"class": "sensor"}, imu=N[n], kind=kind, start=s)))
+    return out
+
+
+def split_command() -> list[Scenario]:
+    """Every command-class fault on every computer: the computer is isolated and its IMU stays in the consensus."""
+    out = []
+    for kind, n, s in itertools.product(COMMAND_KINDS, range(3), SPLIT_STARTS):
+        out.append(_split("split_command", [PHASE_KINDS[kind].format(n=N[n], s=s)], frames=s + 120, tag=dict(**{"class": "command"}, cmd=N[n], kind=kind, start=s)))
+    return out
+
+
+def split_pairs() -> list[Scenario]:
+    """An IMU fault on one computer and a command fault on another (the double fault of ADR-020 case 2, without the ring): each unit is removed for its own fault
+    and the other computer's IMU and the first computer's commands keep working."""
+    out = []
+    imu = {"bias": "{n}:bias:start={s},mag=3.0", "stuck": "{n}:stuck:start={s}", "saturate": "{n}:saturate:start={s}", "zero": "{n}:zero:start={s}"}
+    cmd = {"cmd_offset": "{n}:cmd_offset:start={s},mag=1.0", "cmdinvert": "{n}:cmdinvert:start={s}"}
+    for (ik, it), (ck, ct), (a, b), (sa, sb) in itertools.product(imu.items(), cmd.items(), ((0, 1), (1, 2), (2, 0)), ((100, 100), (100, 130), (130, 100))):
+        out.append(_split("split_pairs", [it.format(n=N[a], s=sa), ct.format(n=N[b], s=sb)], frames=sa + sb + 120,
+                          tag=dict(**{"class": "pair"}, imu=N[a], cmd=N[b], kinds=f"{ik}+{ck}", sa=sa, sb=sb)))
+    return out
+
+
+def split_all() -> list[Scenario]:
+    """Every fault kind at several instants, in Triplex and Duplex, with the split on: only the always-true safety properties (M1 to M10, S1 to S3) are judged."""
+    out = []
+    for (kind, tmpl), s, ctx in itertools.product(PHASE_KINDS.items(), range(44, 200, 16), ("triplex", "duplex")):
+        node = (s // 4) % 3
+        c = "triplex" if ctx == "triplex" else f"duplex-{N[(node + 1) % 3]}"
+        out.append(_split("split_all", [tmpl.format(n=N[node], s=s)], context=c, frames=s + 80, tag=dict(kind=kind, start=s, node=N[node])))
+    return out
+
+
+# ------------------------------------------------------------------ computers of different releases (ADR-021, F63, F64)
+VERSION_TOL_DEG = 1.5 * CMD_TOL
+
+
+def common_mode() -> list[Scenario]:
+    """Two computers of one release and a third of another (`--release`). A command fault common to the pair (a regression they share), or a fault of the lone computer: beyond the version
+    tolerance nobody is isolated and Safe is requested; within it nothing happens. The same scenarios without `--release` are the weakness the rule is for (the healthy computer is latched)."""
+    out = []
+    for odd, mag, start, who in itertools.product(range(3), (0.005, 0.012, 0.02, 0.05, 1.0), (60, 100, 140), ("pair", "lone")):
+        rel = ",".join(f"{N[n]}={2 if n == odd else 1}" for n in range(3))
+        pair = [n for n in range(3) if n != odd]
+        victims = pair if who == "pair" else [odd]
+        faults = [f"{N[n]}:cmd_offset:start={start},mag={mag}" for n in victims]
+        exp = "conflict" if mag > VERSION_TOL_DEG else "none"
+        out.append(_sc("common_mode", faults, "any", release=rel, frames=start + 120, tag=dict(release_expect=exp, odd=N[odd], mag=mag, who=who, start=start)))
+    for odd, mag in itertools.product(range(3), (0.05, 1.0)):  # the weakness without the release information: the healthy computer is latched
+        faults = [f"{N[n]}:cmd_offset:start=100,mag={mag}" for n in range(3) if n != odd]
+        out.append(_sc("common_mode", faults, "any", frames=240, tag=dict(kind="unreported", odd=N[odd], mag=mag)))
+    return out
+
 def all_groups() -> dict:
     return {
         "dropout": dropout, "stuck": stuck, "bias_gyro": lambda: _bias("gyro"), "bias_accel": lambda: _bias("accel"),
@@ -751,4 +822,5 @@ def all_groups() -> dict:
         "contexts": contexts, "new_sensor": new_sensor_faults, "new_bits": new_bit_faults, "new_command": new_command_faults,
         "new_frame": new_frame_faults, "new_timing": new_timing_faults, "new_intermittent": new_intermittent, "new_pairs": new_pairs,
         "cascades": cascades, "ground_security": ground_security, "duplex_boundary": duplex_boundary, "total_loss": total_loss, "long_run": long_run, "phase_sweep": phase_sweep, "recovery_edges": recovery_edges,
+        "split_sensor": split_sensor, "split_command": split_command, "split_pairs": split_pairs, "split_all": split_all, "common_mode": common_mode,
     }

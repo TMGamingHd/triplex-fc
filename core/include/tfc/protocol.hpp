@@ -20,7 +20,7 @@ constexpr uint32_t kCmdBase = 0x200;    // + node: per-node control command
 constexpr uint32_t kActOut = 0x300;     // voted output + vote status from ACT
 constexpr uint32_t kHeartbeat = 0x400;  // + node: health / mode flags (protocol v2: see Heartbeat)
 constexpr uint32_t kState = 0x410;      // + node: strike counts and the last accepted command counter (FDIR-041)
-constexpr uint32_t kResync = 0x420;     // + 4 * node + chunk: the replicas' estimator and controller state, in 4 frames of 3 words, once per resync period (docs/RESYNC.md)
+constexpr uint32_t kResync = 0x420;     // + 4 * node + chunk: the replicas' estimator and controller state, in 4 frames of 3 words, once per resync period (docs/design/RESYNC.md)
 constexpr uint32_t kSim = 0x500;        // simulator <-> flight bus gateway: the range 0x500 to 0x50F (kSimLast)
 constexpr uint32_t kSimRates = 0x501;      // simulator: sensor-frame body rates, as a gyro frame
 constexpr uint32_t kSimAccel = 0x502;      // simulator: sensor-frame accelerometer input, as an accel frame
@@ -160,7 +160,7 @@ inline DecodedCommand unpack_cmd(const Frame& f) noexcept {
 // Payload: 32-bit frame number (little endian) | 2 reserved bytes (0) | seq | crc8. Receivers
 // phase-lock their frame timer to its arrival; the frame number lets late joiners (and the
 // virtual peers) agree on which frame it is.
-// Mission time (docs/LAUNCH_SEQUENCE.md): the two bytes after the frame number carry the mission frame `m`, a 16-bit count that the sync master starts at the launch command.
+// Mission time (docs/design/LAUNCH_SEQUENCE.md): the two bytes after the frame number carry the mission frame `m`, a 16-bit count that the sync master starts at the launch command.
 //   0                  not launched (this is also what a sender that knows nothing of the launch sequence puts there)
 //   1 .. 1000          the countdown: T minus (1001 - m) frames, so 10 s long
 //   1001               T-zero; `m - 1001` is the number of frames of flight
@@ -224,8 +224,11 @@ enum class GroundOp : uint8_t {
   Disable = 2,        // exclude a node for the rest of the run (needs an arm if it would leave fewer than 2 healthy nodes)
   ClearDisabled = 3,  // maintenance: bring a disabled node back to "latched" with its strikes cleared (always needs an arm)
   ClearSafe = 4,      // lift a sticky Safe request (always needs an arm)
-  Launch = 5,         // start the countdown (always needs an arm; the node field is ignored; the sync master acts, docs/LAUNCH_SEQUENCE.md)
-  Scrub = 6           // back to the pad, before T-zero (no arm; the node field is ignored)
+  Launch = 5,         // start the countdown (always needs an arm; the node field is ignored; the sync master acts, docs/design/LAUNCH_SEQUENCE.md)
+  Scrub = 6,          // back to the pad, before T-zero (no arm; the node field is ignored)
+  Phase = 7,          // change the mission phase (docs/design/MISSION_PHASES.md): the node field is the phase number 0..7; refused if fewer computers vote than the new phase needs
+  Noop = 8,           // changes nothing and needs no arm: it is answered like any command, so the operator can test the path end to end (TFC-FDIR-043); the node field is ignored
+  Warm = 9            // rest a voting computer as WARM: it is judged by the shadow vote but does not vote; `reintegrate` promotes it again (the interlock tiers of the phase apply)
 };
 constexpr uint8_t kArmFlag = 0x80U;
 
@@ -347,7 +350,7 @@ class PhaseTracker {
 
 
 // ======================================================================================================================================
-// Protocol version 2 (docs/PROTOCOL.md): ACT's output, the heartbeat, the state share, and the simulator's frames.
+// Protocol version 2 (docs/design/PROTOCOL.md): ACT's output, the heartbeat, the state share, and the simulator's frames.
 // Every payload is still 6 data bytes | seq | crc8. Multi-byte fields are little endian.
 // ======================================================================================================================================
 constexpr uint8_t kProtocolVersion = 2U;
@@ -431,7 +434,7 @@ inline DecodedAct unpack_act_out(const Frame& f) noexcept {
 
 // ---- Heartbeat (0x400 + node): who is on which release, in what state ----
 // Byte 0: protocol version. Byte 1: bits 0-1 mode (tfc::Mode), bit 2 Safe requested, bit 3 bus alarm, bits 4-5 role (0 hot, 1 warm, 2 cold),
-// bit 6 quarantined (a reset loop), bit 7 ready for launch (docs/LAUNCH_SEQUENCE.md). Byte 2: this node's view of the three nodes, 2 bits each (A in bits 0-1): 0 healthy, 1 latched,
+// bit 6 quarantined (a reset loop), bit 7 ready for launch (docs/design/LAUNCH_SEQUENCE.md). Byte 2: this node's view of the three nodes, 2 bits each (A in bits 0-1): 0 healthy, 1 latched,
 // 2 probation, 3 disabled. Byte 3: the reset count since power-on (saturating). Bytes 4-5: the first 16 bits of the release's source hash,
 // so that a node on the golden release (ADR-021) can be told from one on the current release.
 struct Heartbeat {
@@ -522,7 +525,7 @@ inline DecodedStateShare unpack_state_share(const Frame& f) noexcept {
   return d;
 }
 
-// ---- State resynchronisation (0x420 + 4 * node + chunk): one quarter of a node's shared state per frame (docs/RESYNC.md) ----
+// ---- State resynchronisation (0x420 + 4 * node + chunk): one quarter of a node's shared state per frame (docs/design/RESYNC.md) ----
 // Three signed 16-bit words per frame (bytes 0 to 5); the sequence byte is the low byte of the frame number the state belongs to, like the sensor frames, so a late chunk of an earlier cycle is not mixed in.
 constexpr unsigned kResyncChunks = 4U;
 constexpr uint32_t kResyncIds = 3U * kResyncChunks;
@@ -561,7 +564,7 @@ inline DecodedResync unpack_resync(const Frame& f) noexcept {
   return d;
 }
 
-// ---- Simulator frames (0x501 to 0x505): the world, as the vehicle simulator publishes it (docs/VEHICLE_SIM.md section 6) ----
+// ---- Simulator frames (0x501 to 0x505): the world, as the vehicle simulator publishes it (docs/design/VEHICLE_SIM.md section 6) ----
 // 0x501 and 0x502 carry the sensor inputs of the frame in the same scales as the gyro and accel frames; each node's simulated IMU adds its own noise and faults.
 inline Frame pack_sim_rates(const Vec3& dps, uint8_t seq) noexcept { return pack_vec3(id::kSimRates, dps, kGyroLsbDps, seq); }
 inline Frame pack_sim_accel(const Vec3& g, uint8_t seq) noexcept { return pack_vec3(id::kSimAccel, g, kAccelLsbG, seq); }

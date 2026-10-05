@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The launch commands and the go/no-go (docs/LAUNCH_SEQUENCE.md): `launch` needs an ARM, `scrub` does not, both pass the same tag, counter and window checks as every ground command and are reported to the
+// The launch commands and the go/no-go (docs/design/LAUNCH_SEQUENCE.md): `launch` needs an ARM, `scrub` does not, both pass the same tag, counter and window checks as every ground command and are reported to the
 // firmware as events; the heartbeat carries a ready bit; the launch gate lists what is not ready.
 #include <array>
 #include <cstdint>

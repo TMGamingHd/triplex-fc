@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Mechanical checks of the flight-code rules in docs/CODING_STANDARD.md that a compiler does not enforce.
+"""Mechanical checks of the flight-code rules in docs/verification/CODING_STANDARD.md that a compiler does not enforce.
 
     python3 tools/check_standard.py            # checks core/include and supervisor/include, exits 1 on a violation
 
@@ -69,7 +69,7 @@ def main() -> int:
                 print(f"{path.relative_to(ROOT)}:{line}: {rule}: {text}   [{why}]")
                 bad += 1
     if bad:
-        print(f"\n{bad} violation(s) of docs/CODING_STANDARD.md", file=sys.stderr)
+        print(f"\n{bad} violation(s) of docs/verification/CODING_STANDARD.md", file=sys.stderr)
         return 1
     print(f"ok: {len(headers)} flight-code headers satisfy the mechanical rules")
     return 0

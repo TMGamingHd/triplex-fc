@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The pad phase (docs/LAUNCH_SEQUENCE.md): the per-IMU stationary gyro calibration, the flight function's mission state (schedules by flight time, not by the SYNC frame number), the runner's
+// The pad phase (docs/design/LAUNCH_SEQUENCE.md): the per-IMU stationary gyro calibration, the flight function's mission state (schedules by flight time, not by the SYNC frame number), the runner's
 // clamp and release, and the closed loop with a pad: what it changes at lift-off and for a biased gyro.
 #include <array>
 #include <cmath>

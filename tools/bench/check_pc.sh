@@ -33,7 +33,7 @@ python3 -c "import serial" 2>/dev/null && ok "pyserial (Pico client)" || miss "p
 
 echo "Not checked here"
 note "logic-analyser software for the Kingst LA1010 (vendor program or sigrok): check before the device arrives"
-note "Pico: no tool needed to flash a UF2 (drag it onto the drive); Pico SDK needed to build Pico firmware (SW-20, SW-21)"
+note "Pico: no tool needed to flash a UF2 (drag it onto the drive); the Zephyr SDK builds the Pico firmware (firmware/README.md)"
 
 echo
 [ "$missing" -eq 0 ] && echo "Ready." || echo "$missing item(s) missing."

@@ -24,6 +24,7 @@ def load(name: str):
 jitter = load("frame_jitter")
 log_t0 = load("log_t0")
 golden = load("check_golden")
+bus_loss = load("bus_loss")
 
 from tfc_peers import peers as PE  # noqa: E402
 from tfc_peers import protocol as P  # noqa: E402
@@ -158,5 +159,136 @@ class GoldenRun(unittest.TestCase):
         self.assertEqual(golden.compare(stale, 0)["compared"], 0)
 
 
+class BusLossTests(unittest.TestCase):
+    """tools/bench/bus_loss.py on a synthetic capture with known losses."""
+
+    def capture(self, frames=400, drop=(), late=(), resync=0):
+        lines = []
+        t = 0
+        for k in range(frames):
+            lines.append((t, bus_loss.SYNC, k.to_bytes(4, "little") + b"\x00\x00\x00\x00"))
+            for cid in bus_loss.SCHEDULE:
+                if (k, cid) in drop:
+                    continue
+                delay = 9000 if (k, cid) in late else 1500
+                lines.append((t + delay, cid, b"\x00" * 8))
+            if resync and k % resync == resync - 1:
+                lines += [(t + 5500 + i * 130, 0x420 + i, b"\x00" * 8) for i in range(12)]
+            t += 10000
+        return lines
+
+    def test_a_clean_capture_has_no_loss(self):
+        stats, n = bus_loss.analyse(self.capture(), 0, 7000)
+        self.assertEqual(n, 398)
+        self.assertTrue(all(s["seen"] == s["expected"] for s in stats.values()))
+        self.assertEqual(stats[0x100]["expected"], 398)
+
+    def test_missing_and_late_frames_are_counted_per_id(self):
+        drop = {(50, 0x101), (51, 0x101), (200, 0x300)}
+        late = {(60, 0x200), (61, 0x200), (62, 0x200)}
+        stats, _ = bus_loss.analyse(self.capture(drop=drop, late=late), 0, 7000)
+        self.assertEqual(stats[0x101]["expected"] - stats[0x101]["seen"], 2)
+        self.assertEqual(stats[0x300]["expected"] - stats[0x300]["seen"], 1)
+        self.assertEqual(sum(1 for d in stats[0x200]["delays"] if d > 7000), 3)
+        self.assertEqual(stats[0x100]["expected"] - stats[0x100]["seen"], 0)
+
+    def test_resync_frames_are_expected_only_in_their_frames(self):
+        stats, n = bus_loss.analyse(self.capture(resync=100), 100, 7000)
+        self.assertEqual(stats[0x420]["expected"], 3)  # frames 99, 199, 299 of the 398 analysed
+        self.assertEqual(stats[0x42B]["expected"], stats[0x42B]["seen"])
+        stats2, _ = bus_loss.analyse(self.capture(resync=100), 0, 7000)
+        self.assertNotIn(0x420, stats2)
+
+    def test_the_report_and_the_console_figures(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "x.log"
+            log.write_text("\n".join(f"({t // 1000000}.{t % 1000000:06d}) can0 {cid:03X}#{data.hex().upper()}" for t, cid, data in self.capture(drop={(70, 0x110)})))
+            con = Path(d) / "a.txt"
+            con.write_text("[frame 300] TRIPLEX  A+ B+ C+  | crc=1 seq=0 missing=26 vote=0 digest=0 stuck=0\n")
+            rc = bus_loss.main([str(log), "--console", f"A={con}"])
+            self.assertEqual(rc, 0)
+            text = bus_loss.report(*bus_loss.analyse(bus_loss.read(log), 0, 7000), 7000, [("A", str(con))])
+            self.assertIn("accel A", text)
+            self.assertIn("1 missing of", text)
+            self.assertIn("console A: frame 300, missing 26, crc 1, seq 0", text)
+            self.assertIn("0.1 % to 1 %", text)  # 27 of 2700 slot frames is 1 %: at the top of that band
+
+
+    def test_an_empty_log_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "empty.log"
+            log.write_text("")
+            self.assertEqual(bus_loss.main([str(log)]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClockCorrTests(unittest.TestCase):
+    """tools/bench/clock_corr.py: the supervisor's `time` answers, stamped with UTC and fitted (TFC-SUP-011, SUP-012)."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / "tools" / "bench"))
+        import clock_corr
+
+        self.cc = clock_corr
+
+    def test_the_answer_of_the_supervisor_is_parsed_and_anything_else_is_not(self):
+        self.assertEqual(self.cc.parse_time_line("time ticks=123456789 rtc=1234567 met_us=-"), (123456789, 1234567, None))
+        self.assertEqual(self.cc.parse_time_line("time ticks=5 rtc=0 met_us=2500000\r"), (5, 0, 2500000))
+        for line in ("status", "ok", "time ticks=abc rtc=1 met_us=-", ""):
+            self.assertIsNone(self.cc.parse_time_line(line))
+
+    def _run(self, ppm, hours, latency_us=0.0, interval=10.0):
+        """A fake supervisor whose oscillator is `ppm` fast, sampled every `interval` seconds for `hours`."""
+        state = {"utc": 1.7e15}
+        step = {"n": 0}
+        out = []
+
+        def utc():
+            return state["utc"]
+
+        def write(_):
+            step["n"] += 1
+
+        def read_line(_timeout):
+            ticks = int((state["utc"] - 1.7e15) * (1 + ppm * 1e-6)) + 1000
+            state["utc"] += latency_us
+            return f"time ticks={ticks} rtc=1 met_us=-"
+
+        def sleep(s):
+            state["utc"] += s * 1e6
+
+        got = self.cc.sample(read_line, write, utc, sleep, interval, hours * 3600.0, lambda t, u: out.append((t, u)))
+        return got, out
+
+    def test_a_run_of_pairs_gives_the_oscillators_drift_and_a_bound(self):
+        got, pairs = self._run(ppm=20.0, hours=1.0)
+        self.assertGreater(got, 300)
+        c = self.cc.Correlator(self.cc.TICK_HZ)
+        for t, u in pairs:
+            c.add(t, u)
+        self.assertTrue(c.ok())
+        self.assertAlmostEqual(c.drift_ppm(), 20.0, delta=0.5)
+        text = self.cc.report(c)
+        self.assertIn("drift +", text)
+        self.assertIn("five years out", text)
+
+    def test_too_few_pairs_say_so_and_exit_with_one(self):
+        c = self.cc.Correlator(self.cc.TICK_HZ)
+        c.add(1000, 1.7e15)
+        self.assertIn("not enough pairs", self.cc.report(c))
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "pairs.csv"
+            f.write_text("# ticks, utc_us\n1000,1700000000000000\n")
+            self.assertEqual(self.cc.main(["--pairs", str(f)]), 1)
+
+    def test_a_recorded_run_is_fitted_from_its_csv_and_the_arguments_are_checked(self):
+        _got, pairs = self._run(ppm=-12.0, hours=0.5)
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "pairs.csv"
+            f.write_text("# ticks, utc_us\n" + "".join(f"{t},{u:.0f}\n" for t, u in pairs))
+            self.assertEqual(self.cc.main(["--pairs", str(f)]), 0)
+        self.assertEqual(self.cc.main([]), 2)
+        self.assertEqual(self.cc.main(["--port", "x", "--pairs", "y"]), 2)

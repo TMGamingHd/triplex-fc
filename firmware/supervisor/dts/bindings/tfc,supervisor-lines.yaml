@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: MIT
+description: The supervisor's lines to the three flight computers and the actuator node (A, B, C, ACT, in that order), and to ACT and the flight computers (SAFE, T0)
+compatible: "tfc,supervisor-lines"
+properties:
+  frame-gpios:
+    type: phandle-array
+    required: true
+    description: FRAME inputs, one per unit; a rising edge at the start of every frame. Each needs an external pull-down of 8.2 kOhm or less (RP2350 erratum E9)
+  kick-gpios:
+    type: phandle-array
+    required: true
+    description: KICK inputs, one per unit; a rising edge at the end of every completed frame (the watchdog line, TFC-FDIR-038)
+  nrst-gpios:
+    type: phandle-array
+    required: true
+    description: NRST outputs, one per unit, driven open-drain by hand (an output pulled low to reset, an input otherwise); active low
+  pwr-gpios:
+    type: phandle-array
+    required: true
+    description: Power relay inputs, one per unit; active low with external pull-ups so that a pin that is not driven means "powered"
+  safe-gpios:
+    type: phandle-array
+    required: true
+    description: SAFE output to ACT (high is Safe); default low
+  t0-gpios:
+    type: phandle-array
+    required: true
+    description: T0 output to every flight computer (a pulse at T-zero); default low
+  override-gpios:
+    type: phandle-array
+    description: |
+      The hardware overrides' read-only sense inputs (docs/design/HARDWARE_OVERRIDE.md, TFC-HWO-005), six of them in the order of supervisor/include/sup/overrides.hpp: H1 E-stop, H2 FORCE-SAFE, H3
+      PLATFORM-LEVEL, H4 INJECTOR-DISARM, H5 SUPERVISOR-DISARM, H6/H7 any node power-kill. High means engaged. Each needs an external pull-down of 8.2 kOhm or less (RP2350 erratum E9).
+      Optional; which of them exist is CONFIG_TFC_OVERRIDE_LINES_FITTED.

@@ -306,3 +306,150 @@ TFC_TEST(mission_golden_sync_frames_are_pinned_with_the_python_mirror) {
   CHECK(hex(tfc::pack_sync(0U, 0U, 0xFFFFU)) == "00000000ffff0045");
   CHECK(hex(tfc::pack_sync(0x01020304U, 9U)) == "0403020100000915");  // no mission frame: the bytes of the old frame
 }
+
+namespace {
+
+using T0 = tfc::SyncClock::T0;
+using namespace tfc;
+
+// A lone master that counts its own frames (nobody else on the bus) and is fed the T0 line one level per frame.
+struct Pad {
+  SyncClock c{SyncStart::Master};
+  uint32_t n = 0U;
+  uint16_t mission() const { return c.mission_frame(); }
+  // One frame: the line is sampled at the end of the frame, after the cycle.
+  T0 frame(bool line) {
+    (void)c.cycle(false, n++);
+    return c.t0_line(line);
+  }
+  void low(unsigned frames) {
+    for (unsigned i = 0; i < frames; ++i) {
+      (void)frame(false);
+    }
+  }
+};
+
+}  // namespace
+
+TFC_TEST(t0_line_an_edge_in_the_last_second_of_the_countdown_is_t_zero_and_the_next_frame_is_the_t_zero_frame) {
+  Pad p;
+  p.low(5U);
+  CHECK(p.c.launch());
+  p.low(850U);  // 5 ... 855: more than a second to go
+  CHECK(mission::frames_to_zero(p.mission()) > SyncClock::kT0Window);
+  while (mission::frames_to_zero(p.mission()) > SyncClock::kT0Window) {
+    (void)p.frame(false);
+  }
+  CHECK(p.frame(true) == T0::None);  // the first high sample is not yet an edge
+  CHECK(p.frame(true) == T0::Latched);
+  CHECK(p.mission() == mission::kCountdownFrames + 1U);
+  CHECK(mission::in_flight(p.mission()));
+  CHECK(p.frame(true) == T0::None && p.frame(false) == T0::None);  // the line may stay high or fall: nothing more happens
+}
+
+TFC_TEST(t0_line_without_an_edge_the_countdown_runs_out_on_its_own_and_t_zero_comes_when_it_always_did) {
+  Pad p;
+  p.low(3U);
+  CHECK(p.c.launch());
+  unsigned frames = 0U;
+  while (!mission::in_flight(p.mission())) {
+    (void)p.frame(false);
+    ++frames;
+    CHECK(frames < 1100U);
+  }
+  CHECK(frames == mission::kCountdownFrames);
+}
+
+TFC_TEST(t0_line_an_early_edge_is_refused_once_and_does_not_shorten_the_countdown) {
+  Pad p;
+  p.low(3U);
+  CHECK(p.c.launch());
+  CHECK(p.frame(false) == T0::None);
+  CHECK(p.frame(true) == T0::None);
+  CHECK(p.frame(true) == T0::TooEarly);  // 10 s before T-zero
+  for (unsigned i = 0; i < 20U; ++i) {
+    CHECK(p.frame(true) == T0::None);  // it stays high: it is not a new edge, and it never turns into T-zero when the window opens
+  }
+  CHECK(mission::in_countdown(p.mission()) && mission::frames_to_zero(p.mission()) > 900U);
+  while (mission::frames_to_zero(p.mission()) > SyncClock::kT0Window) {
+    CHECK(p.frame(true) == T0::None);
+  }
+  CHECK(p.frame(true) == T0::None && mission::in_countdown(p.mission()));
+}
+
+TFC_TEST(t0_line_stuck_high_since_the_start_is_never_an_edge) {
+  Pad p;
+  CHECK(p.frame(true) == T0::None && p.frame(true) == T0::None && p.frame(true) == T0::None);
+  CHECK(p.c.launch());
+  unsigned frames = 0U;
+  while (!mission::in_flight(p.mission())) {
+    CHECK(p.frame(true) == T0::None);
+    ++frames;
+    CHECK(frames < 1100U);
+  }
+  CHECK(frames == mission::kCountdownFrames);  // the countdown ran its full length
+}
+
+TFC_TEST(t0_line_a_node_that_first_looks_at_the_line_in_the_window_and_finds_it_high_does_not_take_it_for_an_edge) {
+  SyncClock c(SyncStart::Master);  // a master that took over late: it has never seen the line low
+  uint32_t n = 0U;
+  (void)c.cycle(false, n++);
+  CHECK(c.launch());
+  while (mission::frames_to_zero(c.mission_frame()) > SyncClock::kT0Window) {
+    (void)c.cycle(false, n++);
+  }
+  (void)c.cycle(false, n++);
+  CHECK(c.t0_line(true) == T0::None);
+  (void)c.cycle(false, n++);
+  CHECK(c.t0_line(true) == T0::None);  // the second high sample: no edge was seen, only a level
+  CHECK(mission::in_countdown(c.mission_frame()));
+  (void)c.cycle(false, n++);
+  CHECK(c.t0_line(false) == T0::None);
+  (void)c.cycle(false, n++);
+  CHECK(c.t0_line(true) == T0::None);
+  (void)c.cycle(false, n++);
+  CHECK(c.t0_line(true) == T0::Latched);  // after a low, an edge counts
+}
+
+TFC_TEST(t0_line_one_noisy_sample_is_not_an_edge_and_the_edge_must_be_two_samples_in_a_row) {
+  Pad p;
+  p.low(3U);
+  CHECK(p.c.launch());
+  while (mission::frames_to_zero(p.mission()) > SyncClock::kT0Window) {
+    (void)p.frame(false);
+  }
+  CHECK(p.frame(true) == T0::None);   // a spike of one frame
+  CHECK(p.frame(false) == T0::None);
+  CHECK(p.frame(true) == T0::None);   // another, not adjacent
+  CHECK(p.frame(false) == T0::None);
+  CHECK(mission::in_countdown(p.mission()));
+  CHECK(p.frame(true) == T0::None && p.frame(true) == T0::Latched);
+}
+
+TFC_TEST(t0_line_the_window_edge_is_exact) {
+  for (const unsigned to_go : std::array<unsigned, 2>{{SyncClock::kT0Window, SyncClock::kT0Window + 1U}}) {  // frames to T-zero at the moment of the decision
+    Pad p;
+    p.low(3U);
+    CHECK(p.c.launch());
+    while (mission::frames_to_zero(p.mission()) > to_go + 2U) {
+      (void)p.frame(false);
+    }
+    CHECK(p.frame(true) == T0::None);
+    const T0 r = p.frame(true);  // the cycle of this frame has counted the mission frame on: `to_go` frames remain
+    CHECK(r == (to_go <= SyncClock::kT0Window ? T0::Latched : T0::TooEarly));
+  }
+}
+
+TFC_TEST(t0_line_only_the_sync_master_acts_and_only_in_a_countdown) {
+  Pad master;
+  master.low(3U);
+  CHECK(master.frame(true) == T0::None && master.frame(true) == T0::None);  // not launched: a supervisor's T0 means nothing
+  CHECK(master.mission() == mission::kNotLaunched);
+  SyncClock follower(SyncStart::FollowOnly);
+  (void)follower.cycle(true, 0U, 500U);  // in a countdown that the master runs
+  CHECK(follower.t0_line(false) == T0::None);
+  for (unsigned i = 0; i < 4U; ++i) {
+    CHECK(follower.t0_line(true) == T0::None);
+  }
+  CHECK(follower.mission_frame() == 501U);  // it only counts on; T-zero reaches it in SYNC
+}

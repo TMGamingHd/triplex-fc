@@ -5,7 +5,7 @@ config TFC_GROUND_KEY
 	string "Ground-command authentication key (32 hex digits = 128 bits)"
 	default "000102030405060708090a0b0c0d0e0f"
 	help
-	  The shared key for the SipHash-2-4 tag on ground commands (docs/DECISIONS.md ADR-019). The default is the PUBLIC bench key that the
+	  The shared key for the SipHash-2-4 tag on ground commands (docs/decisions/DECISIONS.md ADR-019). The default is the PUBLIC bench key that the
 	  host tools, the tests and the flight computers also use. It protects nothing: provision your own before any real use.
 
 config TFC_SYNC_STAGGER_US
@@ -16,6 +16,19 @@ config TFC_SYNC_STAGGER_US
 	  The wait for SYNC lasts 1.0 ms plus this much for each node after A, so the lowest node's takeover SYNC is heard by the others before their own
 	  windows end (ADR-025). It must exceed the receive latency of a frame. The host's native_sim CAN driver polls its socket every millisecond, so
 	  the host board file lengthens it.
+
+config TFC_LAUNCH_SEQUENCE
+	bool "Take the vehicle's place (pad or flight) from SYNC's mission frame"
+	default n
+	help
+	  On: Safe entered while the mission frame says the vehicle is on the pad (not launched, or in the countdown) goes to neutral at once; in flight it freezes, holds and ramps (docs/design/SAFE_MODE.md
+	  section 5). Set it with the flight computers' CONFIG_TFC_LAUNCH_SEQUENCE: without that, SYNC carries mission frame 0 for ever and ACT would take the vehicle for being on the pad all the time.
+
+config TFC_TEST_SAFE_LINE_AT_FRAME
+	int "Test knob: the hardware SAFE line reads as asserted from this SYNC frame on (0: off)"
+	default 0
+	help
+	  A bench aid for the live test of the hardware Safe path on a board without the supervisor (the real input is `safe-gpios` of `tfc_act_lines`). Never set in a flight build.
 
 config TFC_ACT_VOTE_US
 	int "Time of ACT's vote within the frame (microseconds after SYNC)"

@@ -31,9 +31,13 @@ struct NullSpi {
 };
 }  // namespace
 
-int exercise(unsigned frames);  // declared here only to satisfy -Wmissing-declarations: nothing calls it
-int exercise(unsigned frames) {
-  tfc::RedundancyManager mgr;
+namespace {
+// The manager, with and without the sensor split. A function of its own each (not inlined), so that the stack bound of every function is judged on its own: the
+// manager is an object of about 1.6 KB.
+[[gnu::noinline]] int exercise_manager(unsigned frames, bool split) {
+  tfc::RedundancyConfig cfg;
+  cfg.sensor_split = split;
+  tfc::RedundancyManager mgr(cfg);
   unsigned acc = 0U;
   for (unsigned k = 0; k < frames; ++k) {
     mgr.begin_frame();
@@ -43,10 +47,17 @@ int exercise(unsigned frames) {
       (void)mgr.on_frame(tfc::pack_accel(n, tfc::Vec3{{0.0F, 0.0F, 1.0F}}, seq));
       (void)mgr.on_frame(tfc::pack_cmd(n, tfc::Command{0.5F, -0.5F, 0x1234U}, seq));
     }
-    (void)mgr.on_frame(tfc::pack_ground_auth(tfc::GroundOp::Reintegrate, 1U, seq, tfc::kBenchKey));
+    (void)mgr.on_frame(tfc::pack_ground_auth(tfc::GroundOp::Reintegrate, split ? 4U : 1U, seq, tfc::kBenchKey));
     acc += static_cast<unsigned>(mgr.end_frame().mode);
     acc += static_cast<unsigned>(mgr.command(tfc::GroundOp::ClearSafe, 0U));
   }
+  char text[64];
+  tfc::format_reasons(static_cast<uint8_t>(acc), text, sizeof text);
+  return static_cast<int>(acc) + static_cast<int>(tfc::validate_config(mgr.config())) + static_cast<int>(text[0]);
+}
+
+[[gnu::noinline]] int exercise_rest(unsigned frames) {
+  unsigned acc = 0U;
   NullSpi spi;
   tfc::ism::SpiRegisters<NullSpi> regs(spi);
   tfc::ism::Ism330<tfc::ism::SpiRegisters<NullSpi>> imu(regs, tfc::ism::Config{});
@@ -83,8 +94,10 @@ int exercise(unsigned frames) {
     (void)act.on_frame(tfc::pack_cmd(n, tfc::Command{1.0F, 2.0F, 3U}, 0U));
   }
   acc += static_cast<unsigned>(act.end_frame().mode) + (act.clear_safe() ? 1U : 0U) + static_cast<unsigned>(act.record().crc);
-  char text[64];
-  tfc::format_reasons(static_cast<uint8_t>(acc), text, sizeof text);
-  return static_cast<int>(acc) + static_cast<int>(tfc::validate_config(mgr.config())) + static_cast<int>(text[0]);
+  return static_cast<int>(acc);
 }
+}  // namespace
+
+int exercise(unsigned frames);  // declared here only to satisfy -Wmissing-declarations: nothing calls it
+int exercise(unsigned frames) { return exercise_manager(frames, false) + exercise_manager(frames, true) + exercise_rest(frames); }
 }  // namespace tfc_check

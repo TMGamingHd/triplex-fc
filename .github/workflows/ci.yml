@@ -30,7 +30,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Documentation check (every flag, fault kind and counter is documented)
-        run: cd sim && python3 -m unittest tests.test_docs
+        run: cd sim && python3 -m unittest tests.test_docs tests.test_docs_consistency
       - name: Did anything besides documentation change?
         id: filter
         run: |
@@ -73,7 +73,7 @@ jobs:
         run: clang-tidy -p build tests/*.cpp tools/replay/*.cpp
       - name: cppcheck
         run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr --language=c++ --std=c++17 -I core/include -I supervisor/include core/include/tfc/*.hpp supervisor/include/sup/*.hpp
-      - name: Coding standard (mechanical rules of docs/CODING_STANDARD.md)
+      - name: Coding standard (mechanical rules of docs/verification/CODING_STANDARD.md)
         run: python3 tools/check_standard.py
       - name: Structural coverage of core/ (gate may only be raised)
         run: python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98
@@ -143,8 +143,10 @@ jobs:
           west build -p always -b nucleo_g474re firmware/app -d build/nucleo_g474re
           west build -p always -b nucleo_g474re firmware/act -d build/act_nucleo
           west build -p always -b rpi_pico2/rp2350a/m33 firmware/pico -d build/pico
+          west build -p always -b rpi_pico2/rp2350a/m33 firmware/supervisor -d build/supervisor
       - name: No heap, exceptions, RTTI or vtables in the flight binary
         run: |
           tools/check_elf.sh build/nucleo_g474re/zephyr/zephyr.elf
           tools/check_elf.sh build/act_nucleo/zephyr/zephyr.elf
           tools/check_elf.sh build/pico/zephyr/zephyr.elf
+          tools/check_elf.sh build/supervisor/zephyr/zephyr.elf

@@ -1,10 +1,10 @@
-/* Platform driver and fault injector on the Pico 2 (docs/PICO.md, docs/PARTS_CHECK.md, ADR-026).
+/* Platform driver and fault injector on the Pico 2 (docs/design/PICO.md, docs/hardware/HARDWARE_PARTS.md, ADR-026).
  *
  * Servos: GP2 (PWM slice 1, channel A) tilt about X, GP3 (slice 1, channel B) tilt about Y. Both channels of a slice share a period, 20 ms here.
  * The slice clock is divided by 64 so that 20 ms is 46,875 counts (16 bits), a resolution of 0.43 us.
  * Relays: GP10 (node A), GP11 (B), GP12 (C), GP13 (ACT). The ELEGOO module's inputs are active low; each line needs an external pull-up to 3.3 V
  * (SUPERVISOR.md section 4) so that a pin that is not driven (reset, boot, a crashed program) leaves the relay off, which is a powered node
- * (normally-closed contacts). The module's VCC/JD-VCC jumper is removed (PARTS_CHECK.md item 7).
+ * (normally-closed contacts). The module's VCC/JD-VCC jumper is removed (docs/hardware/HARDWARE_PARTS.md section 7, item 7).
  */
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/pwm/pwm.h>

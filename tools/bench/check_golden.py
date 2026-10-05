@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Does a flight computer's command stream match the PC's golden run? (S1 exit test: "digest matches the PC golden run".)
 
-Until the estimator exists (docs/SOFTWARE_READINESS.md SW-04) every replica computes its command and digest as a fixed function of the
+Without the flight function (`CONFIG_TFC_FLIGHT_FUNCTION` off) every replica computes its command and digest as a fixed function of the
 frame number (firmware/app/src/sim_imu.hpp, mirrored in sim/tfc_peers/peers.py). This reads a bus log (`python3 -m tfc_peers log`), takes each
 command frame of the chosen node (CAN id 0x200 + node), recovers the frame number from the SYNC frame that opened its cycle and the frame's own
 sequence byte, regenerates the frame the PC would have produced, and compares the pitch, yaw and digest bytes.

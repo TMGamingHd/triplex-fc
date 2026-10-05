@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The Pico's frame loop (docs/PICO.md): everything `firmware/pico/src/main.cpp` does every period, with the hardware behind a small interface so that the same loop runs on the
+// The Pico's frame loop (docs/design/PICO.md): everything `firmware/pico/src/main.cpp` does every period, with the hardware behind a small interface so that the same loop runs on the
 // board and under a fake in the host tests. `Hal` provides (no virtual functions: the choice is made at compile time)
 //   bool read_byte(uint8_t&)                     the next byte from the PC, if there is one
 //   void write(const uint8_t*, std::size_t)      bytes to the PC

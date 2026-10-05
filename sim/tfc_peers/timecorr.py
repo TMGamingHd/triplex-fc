@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Time correlation for the clock of record (docs/MISSION_CLOCK.md section 2, TFC-SUP-012).
+"""Time correlation for the clock of record (docs/design/MISSION_CLOCK.md section 2, TFC-SUP-012).
 
 The supervisor reports its tick counter over USB; the PC stamps UTC on arrival. A pair is (counter ticks, UTC microseconds). Real spacecraft convert a clock count to UTC
 the same way: fit offset and drift over many pairs, then say how far the converted time can be trusted. `Correlator` does that, with floating point on the PC (the supervisor's small

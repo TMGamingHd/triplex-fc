@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import bus as B
 from . import protocol as P
-from .commands import GroundCommand, parse_commands
+from .commands import GroundCommand, parse_commands, parse_phase
 from .faults import KINDS, FaultSpecError, parse_fault, parse_node
 from .peers import Scenario
 from .protocol import describe
@@ -36,7 +36,7 @@ def _add_scenario_args(p: argparse.ArgumentParser) -> None:
                    help="NODE:KIND[:key=value,...], repeatable; see `faults` (e.g. B:bias:start=100,mag=3)")
     p.add_argument("--command", action="append", default=[], metavar="SPEC",
                    help="scripted operator command FRAME:OP[:NODE], repeatable; OP is reintegrate, disable, "
-                        "clear-disabled or clear-safe, optionally prefixed arm-, armed- or forged- (e.g. 450:reintegrate:B, "
+                        "clear-disabled, clear-safe, warm, phase (its NODE is a phase: 0..7 or a name) or noop, optionally prefixed arm-, armed- or forged- (e.g. 450:reintegrate:B, "
                         "600:armed-clear-safe), or FRAME:replay. Sent as an authenticated ground-command frame "
                         "in that frame number")
     p.add_argument("--seed", type=int, default=1,
@@ -166,8 +166,8 @@ def cmd_command(args: argparse.Namespace) -> int:
     if op not in P.GROUND_OPS:
         raise FaultSpecError(f"unknown command {op!r}; known: {', '.join(P.GROUND_OPS)}")
     if op not in P.NODELESS_OPS and args.node is None:
-        raise FaultSpecError(f"command {op!r} needs a node (A, B or C)")
-    node = parse_node(args.node) if args.node is not None else 0
+        raise FaultSpecError(f"command {op!r} needs a phase (0..7 or a name)" if op in P.PHASE_OPS else f"command {op!r} needs a node (A, B or C)")
+    node = (parse_phase(args.node) if op in P.PHASE_OPS else parse_node(args.node)) if args.node is not None else 0
     steps = [GroundCommand(0, op, node, arm=True), GroundCommand(0, op, node)] if args.arm else [GroundCommand(0, op, node)]
     counter = _next_counter(len(steps), args.counter)
     bus = B.SocketCanBus(args.iface)
@@ -177,7 +177,7 @@ def cmd_command(args: argparse.Namespace) -> int:
             time.sleep(0.05)  # five frames between the ARM and the EXECUTE
     finally:
         bus.close()
-    who = "" if op in P.NODELESS_OPS else f" {P.NODE_NAMES[node]}"
+    who = "" if op in P.NODELESS_OPS else (f" {P.PHASE_NAMES[node]}" if op in P.PHASE_OPS else f" {P.NODE_NAMES[node]}")
     print(f"sent ground command: {'ARM + ' if args.arm else ''}{op}{who} (counter {counter}"
           f"{'-' + str((counter + 1) & 0xFF) if args.arm else ''}) on {args.iface}; the flight computer prints the outcome "
           f"(accepted or why it was refused) on its console")
@@ -282,7 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_decode)
 
     p = sub.add_parser("command", help="send one operator command to the flight computers now (live)")
-    p.add_argument("op", help="reintegrate, disable, clear-disabled, clear-safe, launch or scrub")
+    p.add_argument("op", help="reintegrate, disable, clear-disabled, clear-safe, launch, scrub, warm, phase or noop")
     p.add_argument("node", nargs="?", help="A, B or C (not needed for clear-safe, launch or scrub)")
     p.add_argument("--iface", default="vcan0", help="SocketCAN interface to send on (default vcan0)")
     p.add_argument("--arm", action="store_true", help="send the ARM frame, then the EXECUTE frame 50 ms later (clear-safe, "

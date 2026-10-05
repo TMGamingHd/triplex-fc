@@ -126,7 +126,7 @@ TFC_TEST(alpha_count_trips_on_a_three_frame_burst_like_three_of_five) {
 }
 
 TFC_TEST(alpha_count_catches_the_intermittent_patterns_three_of_five_cannot_see) {
-  // The numbers the design was tuned on (docs/DECISIONS.md ADR-013): 3-of-5 never fires on any of these.
+  // The numbers the design was tuned on (docs/decisions/DECISIONS.md ADR-013): 3-of-5 never fires on any of these.
   CHECK(alpha_first_trip([](int k) { return k >= 10 && (k - 10) % 3 == 0; }) == 22);   // 1 bad in 3 (33%)
   CHECK(alpha_first_trip([](int k) { return k >= 10 && (k - 10) % 5 < 2; }) == 16);    // 2 bad in 5 (40%)
   CHECK(alpha_first_trip([](int k) { return k >= 10 && (k - 10) % 10 < 2; }) == 31);   // 2 bad in 10, paired
@@ -164,7 +164,7 @@ TFC_TEST(alpha_count_threshold_zero_disables_it_and_a_long_run_cannot_overflow) 
   CHECK(!a.update(false));
 }
 
-// ---- hardening found by static analysis and the coding-standard check (docs/FAULT_CAMPAIGN.md, E18) ----
+// ---- hardening found by static analysis and the coding-standard check (docs/verification/FAULT_CAMPAIGN.md, E18) ----
 TFC_TEST(popcount_matches_the_reference_for_every_bit_pattern_class) {
   CHECK(popcount32(0U) == 0U && popcount32(1U) == 1U && popcount32(0x80000000U) == 1U && popcount32(0xFFFFFFFFU) == 32U);
   CHECK(popcount32(0x55555555U) == 16U && popcount32(0xAAAAAAAAU) == 16U && popcount32(0x0000FFFFU) == 16U);

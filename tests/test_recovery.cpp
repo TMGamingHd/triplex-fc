@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Findings of the fault campaign (docs/FAULT_CAMPAIGN.md), each pinned by a regression test:
+// Findings of the fault campaign (docs/verification/FAULT_CAMPAIGN.md), each pinned by a regression test:
 //   E1  the dwell after clear-disabled counted the frame of the command (readmission one frame early)
 //   E12 total loss: with every node latched there was no reference to judge a probation against, so no
 //       node could ever be readmitted without a reset (now: cohort probation)
@@ -33,6 +33,11 @@ struct ManagerTestAccess {
   static void flip_cmd_counter(RedundancyManager& m) { m.cmd_ctr_.v_ = static_cast<uint8_t>(m.cmd_ctr_.v_ ^ 0x80U); }
   static void flip_cmd_have(RedundancyManager& m) { m.cmd_have_.n_ = static_cast<uint8_t>(m.cmd_have_.n_ ^ 0x01U); }
   static void set_failures(uint32_t& counter, uint32_t v) { counter = v; }
+  static void set_sensor_state_consistent(RedundancyManager& m, unsigned k, uint8_t raw) { m.sensors_.st_[k].v_ = raw; m.sensors_.st_[k].n_ = static_cast<uint8_t>(~raw); }
+  static void set_phase_primary(RedundancyManager& m, uint8_t raw) { m.mission_phase_.v_ = raw; }
+  static void set_phase_consistent(RedundancyManager& m, uint8_t raw) { m.mission_phase_.v_ = raw; m.mission_phase_.n_ = static_cast<uint8_t>(~raw); }
+  static void set_warm_bits(RedundancyManager& m, uint8_t mask) { m.warm_ = mask; }
+  static void set_sensor_state_primary(RedundancyManager& m, unsigned k, uint8_t raw) { m.sensors_.st_[k].v_ = raw; }
 };
 }  // namespace tfc
 
@@ -863,4 +868,59 @@ TFC_TEST(seu_an_upset_in_the_command_counter_forgets_the_history_and_is_reported
     (void)m.on_frame(tfct::gcmd(GroundOp::Reintegrate, 0, 10));
     CHECK(m.end_frame().command_count == 0U && m.counters().commands_replayed == 1U);  // and replay protection works again from there
   }
+}
+
+TFC_TEST(seu_an_upset_in_a_sensor_channel_state_excludes_the_channel_and_is_reported) {
+  RedundancyConfig cfg;
+  cfg.sensor_split = true;
+  RedundancyManager m(cfg);
+  for (int k = 0; k < 10; ++k) (void)step(m, k, kNone);
+  ManagerTestAccess::set_sensor_state_primary(m, 2U, static_cast<uint8_t>(NodeState::Healthy) ^ 1U);  // one bit flipped: its complement now disagrees
+  CHECK(m.sensor_state(2) == NodeState::Latched);  // read before the scrub: a damaged state reads as excluded
+  FrameReport r = step(m, 10, kNone);
+  CHECK((r.integrity_mask & 1U) != 0U && m.sensor_state(2) == NodeState::Latched && r.sensor_latched_mask == 0x04U && r.latched_mask == 0U);
+  ManagerTestAccess::set_sensor_state_consistent(m, 0U, 9U);  // a value that is no state at all
+  r = step(m, 11, kNone);
+  CHECK((r.integrity_mask & 1U) != 0U && m.sensor_state(0) == NodeState::Latched);
+  CHECK(m.sensor_state(3U) == NodeState::Disabled && m.sensor_strikes(3U) == 0U);  // out of range
+  RedundancyManager off;  // with the split off the sensor states are not looked at
+  for (int k = 0; k < 5; ++k) (void)step(off, k, kNone);
+  ManagerTestAccess::set_sensor_state_primary(off, 0U, 3U);
+  CHECK((step(off, 5, kNone).integrity_mask & 1U) == 0U);
+}
+
+TFC_TEST(seu_a_damaged_mission_phase_reads_as_the_safed_phase_and_is_repaired_and_reported) {
+  RedundancyConfig cfg;
+  cfg.phases = true;
+  RedundancyManager m(cfg);
+  for (int k = 0; k < 10; ++k) step(m, k, kNone);
+  for (const bool consistent : {false, true}) {
+    RedundancyManager q(cfg);
+    for (int k = 0; k < 10; ++k) step(q, k, kNone);
+    CHECK(q.mission_phase() == phases::kPowerUp);
+    if (consistent) {
+      ManagerTestAccess::set_phase_consistent(q, 9U);  // intact but not a phase
+    } else {
+      ManagerTestAccess::set_phase_primary(q, 3U);     // the complement no longer matches
+    }
+    CHECK(q.mission_phase() == phases::kSafed);  // between scrubs it is already read safely
+    const FrameReport& r = step(q, 10, kNone);
+    CHECK((r.integrity_mask & 32U) != 0U && q.counters().integrity_faults == 1U);
+    CHECK(q.mission_phase() == phases::kSafed && r.phase == phases::kSafed);
+    step(q, 11, kNone);
+    CHECK(q.counters().integrity_faults == 1U);  // repaired: counted once
+  }
+}
+
+TFC_TEST(seu_a_warm_bit_on_a_computer_that_is_not_resting_is_cleared_and_reported) {
+  RedundancyConfig cfg;
+  cfg.phases = true;
+  RedundancyManager m(cfg);
+  for (int k = 0; k < 10; ++k) step(m, k, kNone);
+  ManagerTestAccess::set_warm_bits(m, 0x02U);
+  CHECK(!m.warm(1U));  // read safely even before the scrub: the computer is a healthy voter
+  const FrameReport& r = step(m, 10, kNone);
+  CHECK((r.integrity_mask & 1U) != 0U && r.warm_mask == 0U && m.state(1) == NodeState::Healthy);
+  step(m, 11, kNone);
+  CHECK(m.counters().integrity_faults == 1U);
 }

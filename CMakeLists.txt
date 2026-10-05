@@ -43,7 +43,12 @@ add_executable(tfc_tests
   tests/test_pad.cpp
   tests/test_launch.cpp
   tests/test_supervisor_clock.cpp
-  tests/test_resync.cpp)
+  tests/test_resync.cpp
+  tests/test_sensor_split.cpp
+  tests/test_supervisor.cpp
+  tests/test_release.cpp
+  tests/test_phases.cpp
+  tests/test_state_share.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
 target_include_directories(tfc_tests PRIVATE tests tools/vehicle sim/vehicle firmware/app/src supervisor/include)
 target_compile_options(tfc_tests PRIVATE
@@ -90,7 +95,7 @@ target_link_libraries(tfc_resync PRIVATE tfc_core Threads::Threads)
 target_include_directories(tfc_resync PRIVATE sim/vehicle)
 target_compile_options(tfc_resync PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
 
-# Flight-code gate (docs/CODING_STANDARD.md): the strictest warning set, as errors, over the whole core, and every header
+# Flight-code gate (docs/verification/CODING_STANDARD.md): the strictest warning set, as errors, over the whole core, and every header
 # compiled on its own so none depends on include order. Part of the default build, so CI fails on a regression.
 set(TFC_STRICT_FLAGS -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wdouble-promotion -Wold-style-cast
     -Wcast-align -Wcast-qual -Wnull-dereference -Wformat=2 -Wundef -Wzero-as-null-pointer-constant -Wswitch-enum

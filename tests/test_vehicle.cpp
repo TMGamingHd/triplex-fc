@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // The 6-DOF vehicle simulator (sim/vehicle): its maths, atmosphere, mass properties and dynamics against conservation laws and known values, the
 // platform model, the trajectory and gain design, and finally the flight computers' loop (consensus, estimator, scheduled controller) flying the
-// vehicle through max-Q, a gust and an engine-out. See docs/VEHICLE_SIM.md section 9.
+// vehicle through max-Q, a gust and an engine-out. See docs/design/VEHICLE_SIM.md section 9.
 #include <array>
 #include <cmath>
 #include <cstdint>

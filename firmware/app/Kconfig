@@ -41,7 +41,23 @@ config TFC_LAUNCH_SEQUENCE
 	help
 	  On: each computer calibrates its own gyro on the pad (10 s at rest) and subtracts the bias before it sends; the mission frame rides in SYNC (the sync master
 	  starts it on an authenticated `launch` that passes the go/no-go, and scrubs on a failure during the 10 s countdown); the schedules follow the frames since T-zero
-	  and sit at their first point on the pad; the heartbeat carries a ready bit (docs/LAUNCH_SEQUENCE.md). Off: the schedules follow the SYNC frame number, as before.
+	  and sit at their first point on the pad; the heartbeat carries a ready bit (docs/design/LAUNCH_SEQUENCE.md). Off: the schedules follow the SYNC frame number, as before.
+
+config TFC_PHASES
+	bool "Keep the mission phase and the WARM role (ADR-023)"
+	default n
+	help
+	  On: the manager starts in the power-up phase; the authenticated `phase` command changes it (refused when fewer computers vote than the new phase's minimum), `warm` rests
+	  a computer (judged by the shadow vote, not voting; `reintegrate` promotes it) and the `disable` tiers follow the phase (docs/design/MISSION_PHASES.md). Below the minimum is reported,
+	  never acted on. Off: the interlock tiers of ADR-019 apply, as before.
+
+config TFC_SENSOR_SPLIT
+	bool "Judge each IMU apart from its computer (the sensor/compute split)"
+	default TFC_FLIGHT_FUNCTION
+	help
+	  On: a bad IMU is excluded from the sensor consensus and its computer stays a voter for commands for as long as its commands agree; a bad computer is
+	  excluded from the command vote and its IMU stays in the consensus (ADR-020 case 1, TS-15: option B). Off: a computer is one unit and a bad IMU latches the
+	  whole computer, which is what the scripted virtual peers' fault tests expect. On by default with the flight function, which is where the consensus exists.
 
 config TFC_RESYNC_PERIOD
 	int "State resynchronisation period in frames (0: off)"
@@ -49,7 +65,7 @@ config TFC_RESYNC_PERIOD
 	range 0 10000
 	help
 	  With the flight function on, every this many frames the computers exchange their estimator and controller state (four frames each, 0x420 to 0x42B) and
-	  each adopts the mid-value of the healthy computers' states, if it has all of them (docs/RESYNC.md, ADR-030, TS-23). 100 is the proposed default (TS-23).
+	  each adopts the mid-value of the healthy computers' states, if it has all of them (docs/design/RESYNC.md, ADR-030, TS-23). 100 is the proposed default (TS-23).
 	  The manager's digest persistence is then set to twice this plus 50 frames, so that a mismatch the resync would heal is not counted. Ignored without the
 	  flight function.
 
@@ -59,19 +75,66 @@ config TFC_RESYNC_GROUP
 	range 0 0x07
 	help
 	  The same value on every computer. A computer outside the group neither sends its state nor adopts the vote: the diverse computer of ADR-021 (the
-	  golden release) is left out with 0x03 so that the resync does not erase the differences it exists to show (docs/RESYNC.md section 6).
+	  golden release) is left out with 0x03 so that the resync does not erase the differences it exists to show (docs/design/RESYNC.md section 6).
 
 config TFC_TEST_DROP_PEERS_FIRST
-	int "Test knob: first frame in which this computer withholds its peers' sensor frames from the flight function"
+	int "Test knob: first frame in which this computer withholds every sensor frame from its flight function"
 	default 0
 	help
 	  A test aid, off at 0 together with the next one. From the frame with this SYNC number, for TFC_TEST_DROP_PEERS_FRAMES frames, this computer does not give
-	  the sensor frames of the other computers to its flight function (the manager still sees them), so its estimator integrates on its own sensor only and the
-	  replicas diverge deterministically. Used by the live resynchronisation test (sim/tests/test_live_resync.py); never set in a flight build.
+	  any sensor frame, its peers' or its own, to its flight function (the manager still sees them), so its consensus has no trustworthy gyro, its estimator holds its
+	  rates and the replicas diverge deterministically. Used by the live resynchronisation test (sim/tests/test_live_resync.py); never set in a flight build.
 
 config TFC_TEST_DROP_PEERS_FRAMES
 	int "Test knob: how many frames the peers' sensor frames are withheld"
 	default 0
+
+config TFC_RELEASE_ID
+	hex "The release this image reports in its heartbeat (0: the first four hex digits of the git hash)"
+	default 0x0
+	range 0 0xFFFF
+	help
+	  Computers on different releases are compared with the version tolerance and not blamed for differing from each other (ADR-021, docs/design/RESYNC.md section 6). The default
+	  makes every image built from a different commit a different release. Set it by hand to build two releases from one tree (the live mixed-release test does).
+
+config TFC_TEST_HANG_AT_FRAME
+	int "Test knob: from this frame the end-of-frame KICK stops (0: off)"
+	default 0
+	help
+	  A bench aid for the supervisor's procedure (P-S2-03): from the frame with this SYNC number the node no longer raises its KICK line, while everything else
+	  (frames, heartbeat, watchdog) goes on, so the supervisor has to be the one that acts. Never set in a flight build.
+
+config TFC_TEST_T0_AT_FRAMES_TO_ZERO
+	int "Test knob: the T0 line rises when this many frames remain to T-zero (0: off)"
+	default 0
+	help
+	  A bench aid for the launch procedure on a board without the supervisor: the line is read as high from the frame in the countdown that has this many frames left, which stands in
+	  for the supervisor's edge (the sync master accepts it only in the last second, `SyncClock::kT0Window`). Never set in a flight build.
+
+config TFC_TEST_CMD_OFFSET_MDEG
+	int "Test knob: milli-degrees added to this computer's pitch command (0: off)"
+	default 0
+	help
+	  A bench aid (P-S3-01, the live mixed-release test): a computer whose commands are off by a known amount. Never set in a flight build.
+
+config TFC_TEST_GYRO_BIAS_MDPS
+	int "Test knob: milli-dps added to this computer's gyro x sample (0: off)"
+	default 0
+	help
+	  A bench aid (P-S3-01): an IMU with a known bias, sent as it is, so that the sensor consensus and the sensor split can be exercised on the real bus. Never set in a flight build.
+
+config TFC_TEST_GYRO_DRIFT_MDPS_PER_FRAME
+	int "Test knob: milli-dps added to the gyro x bias in every frame, cumulative (0: off)"
+	default 0
+	help
+	  A bench aid (P-S3-01): an IMU that drifts, 50 being 0.05 dps per frame. Never set in a flight build.
+
+config TFC_TEST_CLOCK_PPM
+	int "Test knob: the sync master's frame period is this many ppm long (0: off)"
+	default 0
+	help
+	  A bench aid (P-S2-03): a master whose frame clock runs slow (positive) or fast (negative) by a known amount, for the supervisor's period check. Only the master drives the
+	  period; followers lock to SYNC. Never set in a flight build.
 
 config TFC_SIM_BUS_IMU
 	bool "Take the sensor input from the simulator's frames on the bus"
@@ -88,15 +151,15 @@ config TFC_AUTO_REINTEGRATE
 	  command, and only after it has passed probation (the Space Shuttle / airliner practice).
 	  On: after the minimum dwell, a node whose FIRST latch had a transient-looking cause (missing or
 	  damaged frames, one vote episode) goes on probation by itself. A stuck sensor, a digest
-	  mismatch and a repeat offender are never readmitted automatically. See docs/DECISIONS.md ADR-010.
+	  mismatch and a repeat offender are never readmitted automatically. See docs/decisions/DECISIONS.md ADR-010.
 
 config TFC_GROUND_KEY
 	string "Ground-command authentication key (32 hex digits = 128 bits)"
 	default "000102030405060708090a0b0c0d0e0f"
 	help
-	  The shared key for the SipHash-2-4 tag on ground commands (docs/DECISIONS.md ADR-019). The default is the PUBLIC
+	  The shared key for the SipHash-2-4 tag on ground commands (docs/decisions/DECISIONS.md ADR-019). The default is the PUBLIC
 	  bench key that the host tools and the tests also use, so the bench works out of the box. It protects nothing:
-	  provision your own before any real use (docs/DEFERRED.md). The value ends up in the binary and in the build
+	  provision your own before any real use (docs/design/FUTURE_WORK.md). The value ends up in the binary and in the build
 	  directory: it is a bench secret at best, not a flight key store.
 
 source "Kconfig.zephyr"

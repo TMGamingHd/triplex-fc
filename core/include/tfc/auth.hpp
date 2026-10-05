@@ -2,7 +2,7 @@
 // Message authentication for ground commands: SipHash-2-4 (Aumasson and Bernstein, 2012), a keyed 64-bit PRF designed
 // as a MAC for short messages. Pure functions, no state, no heap, fixed loop bounds. A command frame carries the low 32
 // bits of it (ADR-019). The key below is a PUBLIC bench key: it exists so the host tests, the virtual peers and the
-// firmware agree out of the box. A real uplink must provision its own (docs/FAULT_CAMPAIGN.md E10, docs/DEFERRED.md).
+// firmware agree out of the box. A real uplink must provision its own (docs/verification/FAULT_CAMPAIGN.md E10, docs/design/FUTURE_WORK.md).
 #pragma once
 #include <array>
 #include <cstddef>
