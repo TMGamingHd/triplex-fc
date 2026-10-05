@@ -37,7 +37,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "alpha_not_cleared_on_readmit": ("redundancy.hpp", "        alpha_[n].reset();\n", ""),
     "stuck_limit_doubled": ("redundancy.hpp", "uint16_t stuck_limit = 20;", "uint16_t stuck_limit = 40;"),
     "bus_alarm_off_by_one": ("redundancy.hpp", "rep.bus_alarm = oos_in_frame_ >= cfg_.bus_alarm_per_frame", "rep.bus_alarm = oos_in_frame_ > cfg_.bus_alarm_per_frame"),
-    "unknown_ids_count_as_known": ("redundancy.hpp", "f.id == id::kActOut || f.id == id::kSim ||", "f.id == id::kActOut || f.id >= id::kSim ||"),
+    "unknown_ids_count_as_known": ("redundancy.hpp", "(f.id >= id::kSim && f.id <= id::kSimLast)", "(f.id >= id::kSim)"),
     # ---- sequence tracking ----
     "decoder_ignores_len": ("protocol.hpp", "return f.len == 8U && f.data[7] == crc8(f.data.data(), 7);", "return f.data[7] == crc8(f.data.data(), 7);"),
     "counter_decrements": ("redundancy.hpp", "++counters_.crc_bad;", "counters_.crc_bad = counters_.crc_bad > 5 ? counters_.crc_bad - 1 : counters_.crc_bad + 1;"),
@@ -97,11 +97,55 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "scrub_ignores_config": ("redundancy.hpp", "    if (!repair_config()) {", "    if (false && !repair_config()) {"),
     "config_not_restored": ("redundancy.hpp", "      cfg_ = cfg_backup_;\n      cfg_digest_ = cfg_digest_backup_;", "      cfg_digest_ = cfg_digest_backup_;"),
     "queue_length_unchecked": ("redundancy.hpp", "if (!ensure(npending_ <= kMaxCommandsPerFrame, counters_.invariant_violations)) {", "if (false) {"),
+    # ---- the Pico: platform driver, injector, link, frame loop (docs/PICO_TESTS.md A5) ----
+    "pico_travel_not_limited": ("platform_driver.hpp", "return v > cfg_.limit_deg ? cfg_.limit_deg : (v < -cfg_.limit_deg ? -cfg_.limit_deg : v);", "return v;"),
+    "pico_travel_asymmetric": ("platform_driver.hpp", "(v < -cfg_.limit_deg ? -cfg_.limit_deg : v)", "(v < -cfg_.limit_deg - 5.0F ? -cfg_.limit_deg : v)"),
+    "pico_rate_not_limited": ("platform_driver.hpp", "return d > step ? cur + step : (d < -step ? cur - step : goal);", "return goal;"),
+    "pico_rate_limit_one_way": ("platform_driver.hpp", "(d < -step ? cur - step : goal)", "goal"),
+    "pico_never_holds": ("platform_driver.hpp", "} else if (age_ms_ >= cfg_.hold_after_ms) {", "} else if (false) {"),
+    "pico_holds_one_tick_late": ("platform_driver.hpp", "} else if (age_ms_ >= cfg_.hold_after_ms) {", "} else if (age_ms_ > cfg_.hold_after_ms) {"),
+    "pico_never_levels": ("platform_driver.hpp", "if (!have_ || age_ms_ >= cfg_.level_after_ms) {", "if (!have_) {"),
+    "pico_levels_at_the_full_rate": ("platform_driver.hpp", "rate = cfg_.level_rate_dps;", "rate = cfg_.rate_limit_dps;"),
+    "pico_nan_accepted": ("platform_driver.hpp", "if (!finite(x_deg) || !finite(y_deg)) {", "if (false) {"),
+    "pico_rejected_command_restarts_timeout": ("platform_driver.hpp", "      ++rejected_;\n      return false;", "      ++rejected_;\n      age_ms_ = 0U;\n      return false;"),
+    "pico_stale_command_still_saturated": ("platform_driver.hpp", "out_.saturated = have_ && age_ms_ < cfg_.hold_after_ms && (", "out_.saturated = have_ && ("),
+    "pico_age_wraps": ("platform_driver.hpp", "age_ms_ = age_ms_ > 0xFFFFU - dt_ms ? 0xFFFFU : static_cast<uint16_t>(age_ms_ + dt_ms);", "age_ms_ = static_cast<uint16_t>(age_ms_ + dt_ms);"),
+    "pico_servo_sign_ignored": ("platform_driver.hpp", "neutral_us + (sign * (angle_deg + trim_deg) * us_per_deg)", "neutral_us + ((angle_deg + trim_deg) * us_per_deg)"),
+    "pico_servo_trim_ignored": ("platform_driver.hpp", "(sign * (angle_deg + trim_deg) * us_per_deg)", "(sign * angle_deg * us_per_deg)"),
+    "pico_servo_pulse_not_clamped": ("platform_driver.hpp", "return p < min_us ? min_us : (p > max_us ? max_us : p);", "return p;"),
+    "pico_cut_not_clamped": ("injector.hpp", "left_[channel] = cut_ms > kMaxCutMs ? kMaxCutMs : cut_ms;", "left_[channel] = cut_ms;"),
+    "pico_cut_never_ends": ("injector.hpp", "l = l > dt_ms ? static_cast<uint16_t>(l - dt_ms) : 0U;", "l = l;"),
+    "pico_cut_ends_one_tick_early": ("injector.hpp", "l = l > dt_ms ? static_cast<uint16_t>(l - dt_ms) : 0U;", "l = l > 2U * dt_ms ? static_cast<uint16_t>(l - dt_ms) : 0U;"),
+    "pico_channel_not_checked": ("injector.hpp", "if (channel >= kInjectorChannels) {\n      return false;\n    }", "if (channel >= 8U) {\n      return false;\n    }"),
+    "pico_release_all_does_nothing": ("injector.hpp", "void release_all() noexcept { left_ = {}; }", "void release_all() noexcept {}"),
+    "pico_energised_bit_wrong": ("injector.hpp", "m = static_cast<uint8_t>(m | (left_[i] > 0U ? (1U << i) : 0U));", "m = static_cast<uint8_t>(m | (left_[i] > 0U ? (1U << (i ^ 1U)) : 0U));"),
+    "pico_link_crc_not_checked": ("pico_link.hpp", "if (b != crc8(buf_.data(), 2U + static_cast<std::size_t>(buf_[1]))) {", "if (false) {"),
+    "pico_link_length_not_checked": ("pico_link.hpp", "if (b > kMaxPayload) {  // not a frame", "if (false) {  // not a frame"),
+    "pico_link_no_resync_after_bad_crc": ("pico_link.hpp", "      if (b == kSync) {  // the byte that failed may itself start a frame\n        state_ = State::Type;\n      }\n", ""),
+    "pico_link_no_resync_after_bad_length": ("pico_link.hpp", "state_ = b == kSync ? State::Type : State::Sync;", "state_ = State::Sync;"),
+    "pico_link_angle_truncates": ("pico_link.hpp", "return static_cast<int16_t>(q >= 0.0F ? q + 0.5F : q - 0.5F);", "return static_cast<int16_t>(q);"),
+    "pico_link_angle_not_saturated": ("pico_link.hpp", "  if (q >= 32767.0F) {\n    return 32767;\n  }", "  if (q >= 40000.0F) {\n    return 32767;\n  }"),
+    "pico_link_status_length_unchecked": ("pico_link.hpp", "if (m.type != Type::Status || m.length != 9U) {", "if (m.type != Type::Status) {"),
+    "pico_app_boot_leaves_relays": ("pico_app.hpp", "    hal_.set_relays(0U);\n    hal_.set_servo_us(0U, cfg_.servo_x.pulse_us(0.0F));", "    hal_.set_servo_us(0U, cfg_.servo_x.pulse_us(0.0F));"),
+    "pico_app_link_timeout_ignored": ("pico_app.hpp", "if (quiet_ms_ >= cfg_.link_timeout_ms) {", "if (false) {"),
+    "pico_app_link_timeout_one_step_late": ("pico_app.hpp", "if (quiet_ms_ >= cfg_.link_timeout_ms) {", "if (quiet_ms_ > cfg_.link_timeout_ms) {"),
+    "pico_app_quiet_not_reset_by_a_frame": ("pico_app.hpp", "quiet_ms_ = heard ? 0U : (quiet_ms_ + cfg_.period_ms);", "quiet_ms_ = quiet_ms_ + cfg_.period_ms;"),
+    "pico_app_link_lost_never_clears": ("pico_app.hpp", "    } else if (heard) {\n      link_lost_ = false;\n    }", "    }"),
+    "pico_app_relays_not_applied": ("pico_app.hpp", "    hal_.set_relays(injector_.energised());\n\n    // ---- the status", "    // ---- the status"),
+    "pico_app_ping_not_answered": ("pico_app.hpp", "if (ping || (cfg_.status_every_steps != 0U", "if ((cfg_.status_every_steps != 0U"),
+    "pico_app_watchdog_not_fed": ("pico_app.hpp", "    hal_.feed_watchdog();\n  }", "  }"),
+    # (the app's sequence echo only follows commands the driver accepted; through the 16-bit link a command is always a finite number, so that path cannot be reached from outside and a mutant of it
+    #  would be equivalent: the rejection itself is tested directly on the driver)
+    "pico_app_y_servo_gets_x_map": ("pico_app.hpp", "hal_.set_servo_us(1U, cfg_.servo_y.pulse_us(platform_.output().y_deg));", "hal_.set_servo_us(1U, cfg_.servo_x.pulse_us(platform_.output().y_deg));"),
+    "pico_app_status_flags_missing_link_lost": ("pico_app.hpp", "f = static_cast<uint8_t>(f | (link_lost_ ? pico::statusflag::kLinkLost : 0U));", "f = f;"),
+    "pico_app_status_relays_stale": ("pico_app.hpp", "st.relays = injector_.energised();", "st.relays = 0U;"),
 }
 
 # Mutants that only the C++ unit tests can see, with the reason: the campaign's peers cannot produce the input that
 # distinguishes them from the real code.
 CAMPAIGN_SKIP = {
+    # the Pico's code is not in the campaign's reach (the campaign drives the flight bus, not the Pico's USB link)
+    "pico_travel_not_limited", "pico_travel_asymmetric", "pico_rate_not_limited", "pico_rate_limit_one_way", "pico_never_holds", "pico_holds_one_tick_late", "pico_never_levels", "pico_levels_at_the_full_rate", "pico_nan_accepted", "pico_rejected_command_restarts_timeout", "pico_stale_command_still_saturated", "pico_age_wraps", "pico_servo_sign_ignored", "pico_servo_trim_ignored", "pico_servo_pulse_not_clamped", "pico_cut_not_clamped", "pico_cut_never_ends", "pico_cut_ends_one_tick_early", "pico_channel_not_checked", "pico_release_all_does_nothing", "pico_energised_bit_wrong", "pico_link_crc_not_checked", "pico_link_length_not_checked", "pico_link_no_resync_after_bad_crc", "pico_link_no_resync_after_bad_length", "pico_link_angle_truncates", "pico_link_angle_not_saturated", "pico_link_status_length_unchecked", "pico_app_boot_leaves_relays", "pico_app_link_timeout_ignored", "pico_app_link_timeout_one_step_late", "pico_app_quiet_not_reset_by_a_frame", "pico_app_link_lost_never_clears", "pico_app_relays_not_applied", "pico_app_ping_not_answered", "pico_app_watchdog_not_fed", "pico_app_y_servo_gets_x_map", "pico_app_status_flags_missing_link_lost", "pico_app_status_relays_stale",
     "config_not_sanitised", "tolerance_not_validated", "persistence_not_validated",  # the peers never present a bad configuration
     "scrub_ignores_node_state", "scrub_ignores_safe_flag", "scrub_ignores_config",   # nor flip a bit of the manager's memory
     "config_not_restored", "queue_length_unchecked",                                  # nor overflow its command queue

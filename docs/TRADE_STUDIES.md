@@ -49,6 +49,9 @@ campaign; HIL needs the rig.
 | TS-15 | Sensor and compute health split: the degradation rule | Once a sensor channel is excluded, how should the computer degrade, and what does the split buy? | SIL (campaign groups, after the split) | 3 | medium, **before S3** |
 | TS-16 | Keeping replicated estimators together on a lossy bus | When two nodes receive different sets of sensor frames in one frame their estimators diverge for good: agree on inputs, resynchronise state, or tolerate the digest mismatch? | SIL, live triplex | 3 | medium, **before the closed loop is relied on** |
 | TS-17 | Hardware overrides: how many switches, which, and what can go wrong | When every program is down or wrong, which manual hardware overrides are worth their cost and their own failure modes? | paper FMEA, then HIL on the rig | 3 | medium, **before the override parts are ordered** |
+| TS-18 | Testing hardware-facing firmware without the hardware | Fake board under the real loop, the host emulation of the board's drivers, an instruction-set emulator, or the board only: which finds how many bugs per hour of work, and where does each go blind? | seeded bugs and mutation scores | 3 | small, **data already exists** |
+| TS-19 | The injector's cut semantics | A cut that ends by itself (today), a latched cut with an explicit restore, or a cut that needs a heartbeat: which is safest when the PC dies and still allows the long outages the supervisor's tests need? | HIL scenarios | 2 | small, before the supervisor tests |
+| TS-20 | The platform's behaviour when commands stop | Hold then level (today), hold for ever, level at once, stop the pulse and go limp, hold then stop: which has the smallest mechanical shock and the least confusing view for the IMUs and the flight computers? | rig measurements | 2 | medium, after E1 to E6 of `PICO_TESTS.md` |
 | TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `DEFERRED.md` section 7 |
 
 Recommended order, by value and by when the data exist: **TS-0** now; **TS-1, TS-2, TS-3, TS-4** on the simulator in October and
@@ -327,6 +330,64 @@ the Nucleo reset buttons, the pluggable stubs and H4 do not already cover; and *
 **Dependencies and timing.** The paper part needs only `HARDWARE_OVERRIDE.md` and can be done now; it decides the parts to order. The measured part needs the platform, the injector (P1-5) and the supervisor (S2b). Before the override parts are bought.
 
 **Talking point.** "I asked what the system does when all the software is wrong, listed the ways the safety switches could themselves fail, and chose how many to build from that."
+
+## 9d. TS-18: testing hardware-facing firmware without the hardware (docs/PICO_TESTS.md)
+
+**Question.** The Pico's loop talks to a USB port, two PWM channels, four relay pins and a watchdog. Four ways to test it before the board exists: **(1)** the real loop on the host under a fake
+board (done: `tests/test_pico_app.cpp`), **(2)** the real application on `native_sim` with Zephyr's emulated GPIO, a fake PWM and the UART on a pseudo-terminal, **(3)** an instruction-set
+emulator running the real binary (not verified to exist for the RP2350 with USB and PWM), **(4)** the board only. Each finds some bugs and is blind to others: (1) cannot see a wrong pin number, a wrong
+devicetree line, a PWM period that does not fit, a USB descriptor error; (2) sees the devicetree and driver wiring but not the real timing or the electrical side; (3) sees the machine code but not the
+board's analogue behaviour; (4) sees everything and is slow, scarce and cannot be put in CI.
+
+**Method: seeded bugs.** Plant a list of realistic bugs of three kinds (logic in the loop, wiring in the glue and the devicetree, timing and electrical), run each way of testing, and count which bugs it finds and the
+effort (work to build the method, run time, upkeep). The first data is in hand: **mutation testing of the loop and its portable parts** (`tools/mutation`, 40 mutants of the platform driver, the injector, the link and the loop)
+killed 36 of 40 on the first draft of the tests; of the four survivors three were real gaps (a saturation threshold, a length check, a servo map that was never given different values) and one was equivalent (a path the link cannot reach).
+After three tests were added all 39 non-equivalent mutants are killed. So the fake board reaches full mutation score on logic, **by construction not on glue**: a planted wrong relay pin or wrong PWM channel is invisible to it.
+
+**Criteria and weights.** Bugs found, by kind (weight 3); effort to build and keep (weight 2); speed and whether it runs in CI (weight 2); how much of the real code path is exercised (weight 2).
+
+**Output.** A table: method against bug kind, with the number found of the number planted, and the cost; one line saying where each method stops being worth its cost.
+
+**Decision rule.** The cheapest set of methods that finds every planted logic and wiring bug before the board; whatever remains goes on the bring-up list.
+
+**Dependencies and timing.** Method (1) exists. (2) needs a small refactor (the link on a chosen UART instead of the CDC device) and a test-only debug message. Run the seeded-bug experiment before the board arrives.
+
+**Talking point.** "I measured what each way of testing firmware without the hardware can and cannot see, with planted bugs, and used mutation testing as the yardstick."
+
+## 9e. TS-19: the injector's cut semantics
+
+**Question.** A relay cut can end by itself after a time the PC names (today, at most 30 s, refreshed by the PC; ADR-026), stay until an explicit restore command, or stay only while a heartbeat from the PC keeps arriving.
+What is safest, and what do the tests need? The supervisor's tests ask for outages of minutes (two power-cycles in 5 minutes mean `DEAD`, `SUPERVISOR.md` section 5), and a latched cut is the more faithful power loss; but a crashed PC with a
+latched cut leaves a node dead, which looks like a node fault (G6).
+
+**Options.** A: timed, self-ending, refreshed (today). B: latched, ended by a restore command or a power cycle of the Pico. C: latched but released after a link timeout (a heartbeat). D: A with a longer limit.
+
+**Criteria.** Safe when the PC dies (weight 3); can reproduce the long outages the supervisor and FDIR tests need (weight 2); how easy it is to leave a node cut by mistake (weight 3); how faithful the cut is to a real power loss (weight 1); effort (weight 1).
+
+**Method.** Scripted scenarios: kill the PC tool during a cut; pull the cable; reset the Pico; a 5-minute outage; the supervisor's `DEAD` sequence. Count nodes left cut and time to restore. The analysis is largely on paper: A and C are fail-passive by construction, B is not; the question for the experiment is whether the PC's refresh at 1 Hz is reliable enough for 5-minute outages.
+
+**Decision rule.** The most faithful option that leaves no node cut after any PC or link failure; expected: A with the PC refreshing, which needs no change and no longer limit.
+
+**Dependencies and timing.** Needs the injector on the bench and the supervisor's logic; small.
+
+**Talking point.** "I chose how a fault injector fails, so that the tool that breaks things cannot leave things broken."
+
+## 9f. TS-20: what the platform does when the commands stop
+
+**Question.** PLAT-002 says: hold after 100 ms, level after 1 s (at 30 degrees per second). Other choices are possible: hold for ever, level at once, stop the pulse (the servo goes limp or holds depending on its electronics), or hold and then stop the pulse. Which has the smallest mechanical
+shock, the least confusing motion for the IMUs, and a state the flight computers read correctly? Levelling while the flight computers are flying produces a motion they will treat as a fault or as vehicle motion.
+
+**Options.** H: hold for ever. L: level at once, rate-limited (a few rates). T (today): hold 100 ms then level at 30 degrees per second after 1 s. S: stop the pulse after the hold. TS: hold then level, then stop the pulse.
+
+**Criteria and weights.** Shock and servo current (weight 3); what the IMUs and the flight computers see: a slow ramp should not trip their checks (weight 3); servo heating or stall when holding for ever against a load (weight 2); what the servo does with no pulse (weight 2, unknown: PICO_TESTS E1); operator surprise (weight 1).
+
+**Method.** On the platform: stop the stream at several tilts and times, for each option measure the platform's motion (the IMUs and a camera), the servo current, and the flight computers' reaction (vote disagreements, Safe). A parameter sweep of the hold time (50 to 500 ms) and the level rate (10 to 100 degrees per second). Needs the real servo.
+
+**Decision rule.** The option with the smallest peak shock and no false fault in the flight computers; tie: the one that does not depend on the servo's no-pulse behaviour. Expected: T with a slower level rate, once E1 shows what the servo does without a pulse.
+
+**Dependencies and timing.** After E1 to E6 of `PICO_TESTS.md`; the platform rig.
+
+**Talking point.** "I tuned what a platform does when it loses its commander, from measured shock and from what the flight computers made of it."
 
 ## 10. Schedule
 
