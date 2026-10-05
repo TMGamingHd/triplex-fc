@@ -43,6 +43,14 @@ config TFC_LAUNCH_SEQUENCE
 	  starts it on an authenticated `launch` that passes the go/no-go, and scrubs on a failure during the 10 s countdown); the schedules follow the frames since T-zero
 	  and sit at their first point on the pad; the heartbeat carries a ready bit (docs/LAUNCH_SEQUENCE.md). Off: the schedules follow the SYNC frame number, as before.
 
+config TFC_PHASES
+	bool "Keep the mission phase and the WARM role (ADR-023)"
+	default n
+	help
+	  On: the manager starts in the power-up phase; the authenticated `phase` command changes it (refused when fewer computers vote than the new phase's minimum), `warm` rests
+	  a computer (judged by the shadow vote, not voting; `reintegrate` promotes it) and the `disable` tiers follow the phase (docs/MISSION_PHASES.md). Below the minimum is reported,
+	  never acted on. Off: the interlock tiers of ADR-019 apply, as before.
+
 config TFC_SENSOR_SPLIT
 	bool "Judge each IMU apart from its computer (the sensor/compute split)"
 	default TFC_FLIGHT_FUNCTION

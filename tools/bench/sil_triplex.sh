@@ -6,6 +6,7 @@
 #   tools/bench/sil_triplex.sh --build-drop                     one more flight image, build/flight_b_drop: node B withholds every sensor frame from its flight function in
 #                                                               frames 370 to 398, so the replicas diverge deterministically (the live resync test)
 #   tools/bench/sil_triplex.sh --build-t0                       the launch images with the T0 line simulated 40 frames before the end of the countdown: build/launch_t0_a, _b, _c (the live T0 test)
+#   tools/bench/sil_triplex.sh --build-phases                   the flight images with the mission phases and the WARM role on: build/phases_a, _b, _c (the live phases test)
 #   tools/bench/sil_triplex.sh --build-bias                     one more flight image, build/flight_b_bias: node B's gyro reads 3 dps too much (the live sensor-split test)
 #   tools/bench/sil_triplex.sh --build-mixed                    the mixed-release set (ADR-021): build/mixed_a, _b (release 0xA001), mixed_c (release 0xB002, commands 0.05 degree off) and
 #                                                               mixed_c_near (release 0xB002, commands 0.012 degree off, inside the version tolerance)
@@ -62,12 +63,19 @@ case "$mode" in
       letters=(a b c)
       west build -p auto -b native_sim/native/64 firmware/app -d "build/launch_t0_${letters[$n]}" -- -DCONFIG_TFC_NODE_ID="$n" -DCONFIG_TFC_FLIGHT_FUNCTION=y -DCONFIG_TFC_SIM_BUS_IMU=y -DCONFIG_TFC_LAUNCH_SEQUENCE=y -DCONFIG_TFC_TEST_T0_AT_FRAMES_TO_ZERO=40
     done ;;
+  --build-phases)
+    # shellcheck disable=SC1091
+    . firmware/env.sh
+    for n in 0 1 2; do
+      letters=(a b c)
+      west build -p auto -b native_sim/native/64 firmware/app -d "build/phases_${letters[$n]}" -- -DCONFIG_TFC_NODE_ID="$n" -DCONFIG_TFC_FLIGHT_FUNCTION=y -DCONFIG_TFC_PHASES=y
+    done ;;
   --build-bias)
-    # shellcheck disable=SC1091 disable=SC1091
+    # shellcheck disable=SC1091 disable=SC1091 disable=SC1091
     . firmware/env.sh
     west build -p auto -b native_sim/native/64 firmware/app -d build/flight_b_bias -- -DCONFIG_TFC_NODE_ID=1 -DCONFIG_TFC_FLIGHT_FUNCTION=y -DCONFIG_TFC_TEST_GYRO_BIAS_MDPS=3000 ;;
   --test)
-    (cd sim && python3 -m unittest tests.test_live_triplex tests.test_live_closed_loop tests.test_live_resync tests.test_live_split tests.test_live_release -v) ;;
+    (cd sim && python3 -m unittest tests.test_live_triplex tests.test_live_closed_loop tests.test_live_resync tests.test_live_split tests.test_live_release tests.test_live_phases -v) ;;
   --closed-loop)
     tmp="$(mktemp -d)"
     trap 'kill $(jobs -p) 2>/dev/null || true' EXIT

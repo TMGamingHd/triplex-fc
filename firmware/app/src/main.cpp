@@ -194,10 +194,13 @@ const char* mode_text(tfc::Mode m) {
 }
 
 // Per-node state letter for the status line: '+' voting, 'X' latched out, 'p' on probation,
-// 'D' disabled for the run, '?' no good data this frame.
+// 'w' resting as WARM (judged, not voting), 'D' disabled for the run, '?' no good data this frame.
 char node_state(const tfc::FrameReport& r, unsigned n) {
   if (((r.disabled_mask >> n) & 1U) != 0U) {
     return 'D';
+  }
+  if (((r.warm_mask >> n) & 1U) != 0U) {
+    return 'w';
   }
   if (((r.probation_mask >> n) & 1U) != 0U) {
     return 'p';
@@ -241,6 +244,7 @@ int main() {
   tfc::RedundancyConfig cfg;
   cfg.startup_grace_frames = kStartupGraceFrames;
   cfg.sensor_split = IS_ENABLED(CONFIG_TFC_SENSOR_SPLIT);
+  cfg.phases = IS_ENABLED(CONFIG_TFC_PHASES);
   if (kFlightFunction && kResyncPeriod != 0U) {
     cfg.digest_persist_frames = static_cast<uint16_t>((2U * kResyncPeriod) + 50U);  // a mismatch the resync would heal (even if one resync is skipped) is not counted (TS-23)
   }
@@ -312,7 +316,7 @@ int main() {
   printk("FC-%c (node %u): %s, 100 Hz frame loop%s%s.\n", 'A' + static_cast<char>(kNodeId), kNodeId,
          sync_start == tfc::SyncStart::Listen ? "listens for a master, then claims SYNC" : "following SYNC",
          kFlightFunction ? ", flight function on" : "", kSimBusImu ? ", sensors from the simulator" : "");
-  printk("status: '+' voting, 'X' latched out, 'p' on probation, 'D' disabled, '?' no good data this frame\n");
+  printk("status: '+' voting, 'X' latched out, 'p' on probation, 'w' resting as WARM, 'D' disabled, '?' no good data this frame\n");
 
   bool drop_peers = false;  // the test aid above is active in this frame
   // Hand every schedule-slot frame that has arrived to the manager (and the sensor frames to the flight function); our own frames are not repeated back.
@@ -655,8 +659,15 @@ int main() {
 
     for (unsigned i = 0; i < rep.command_count; ++i) {
       const tfc::CommandEvent& ce = rep.commands[i];
-      printk("[frame %u] GROUND COMMAND %s%s %c: %s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "", tfc::op_text(ce.op),
-             'A' + static_cast<char>(ce.node), tfc::result_text(ce.result));
+      if (ce.op == static_cast<uint8_t>(tfc::GroundOp::Phase)) {  // its node field is a phase number
+        printk("[frame %u] GROUND COMMAND %s%s P%u: %s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "", tfc::op_text(ce.op), static_cast<unsigned>(ce.node),
+               tfc::result_text(ce.result));
+      } else if (ce.op == static_cast<uint8_t>(tfc::GroundOp::Noop)) {
+        printk("[frame %u] GROUND COMMAND %s%s: %s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "", tfc::op_text(ce.op), tfc::result_text(ce.result));
+      } else {
+        printk("[frame %u] GROUND COMMAND %s%s %c: %s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "", tfc::op_text(ce.op),
+               'A' + static_cast<char>(ce.node), tfc::result_text(ce.result));
+      }
       if ((ce.flags & tfc::cmdflag::kCritical) != 0U) {
         printk("[frame %u] !!! CRITICAL: the last voting node was removed by operator command !!!\n", k);
       }
@@ -735,7 +746,7 @@ int main() {
     }
     if (cycle % kStatusEveryFrames == 0U) {
       const tfc::Counters& cn = mgr.counters();
-      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u sync_missed=%u mission=%u ready=%u resync=%u/%u far=%u wcet_step=%u wcet_vote=%u wcet_frame=%u\n",
+      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u sync_missed=%u mission=%u ready=%u resync=%u/%u far=%u wcet_step=%u wcet_vote=%u wcet_frame=%u phase=%u warm=0x%x\n",
              k, mode_text(rep.mode), node_state(rep, 0), node_state(rep, 1), node_state(rep, 2),
              static_cast<unsigned>(cn.crc_bad), static_cast<unsigned>(cn.seq_bad),
              static_cast<unsigned>(cn.missing), static_cast<unsigned>(cn.vote_disagreements),
@@ -745,7 +756,7 @@ int main() {
              static_cast<unsigned>(atomic_get(&g_bus_off_events)), static_cast<unsigned>(atomic_get(&g_error_passive_events)),
              static_cast<unsigned>(sync_missed_total), static_cast<unsigned>(tick.mission), own_ready ? 1U : 0U, static_cast<unsigned>(resync_adopted),
              static_cast<unsigned>(resync_skipped), static_cast<unsigned>(resync_corrected), static_cast<unsigned>(wcet_step_us), static_cast<unsigned>(wcet_vote_us),
-             static_cast<unsigned>(wcet_frame_us));
+             static_cast<unsigned>(wcet_frame_us), static_cast<unsigned>(rep.phase), static_cast<unsigned>(rep.warm_mask));
     }
   }
 }
