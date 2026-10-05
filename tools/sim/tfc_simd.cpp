@@ -30,6 +30,11 @@
 
 namespace {
 
+// A SYNC frame number beyond this (five minutes of frames, past the burn-out of the vehicle) is not a frame number of this run: it is ignored, so a corrupt or foreign SYNC cannot make the world step for hours.
+constexpr uint32_t kMaxFrame = 30000U;
+// A jump forward of more than this many frames (a minute) is a new run rather than a gap to step over.
+constexpr uint32_t kMaxGap = 6000U;
+
 volatile std::sig_atomic_t g_stop = 0;
 void on_signal(int) { g_stop = 1; }
 
@@ -207,7 +212,13 @@ int main(int argc, char** argv) {
         continue;
       }
       const uint32_t k = d.frame_no;
-      if (!started || k < runner.frame()) {  // the first SYNC, or the frame number went backwards: a new run
+      if (k > kMaxFrame) {
+        if (!quiet) {
+          std::fprintf(stderr, "ignored a SYNC with frame number %u\n", static_cast<unsigned>(k));
+        }
+        continue;
+      }
+      if (!started || k < runner.frame() || k - runner.frame() > kMaxGap) {  // the first SYNC, or the frame number went backwards: a new run
         if (started && !quiet) {
           std::fprintf(stderr, "frame number went back (%u to %u): a new run\n", static_cast<unsigned>(runner.frame()), static_cast<unsigned>(k));
         }

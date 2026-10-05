@@ -20,6 +20,8 @@ class FlightFunction {
  public:
   FlightFunction() noexcept = default;
   FlightFunction(const GainSchedule& gains, const Guidance& guidance) noexcept : gains_(gains), guidance_(guidance) {}
+  FlightFunction(const GainSchedule& gains, const Guidance& guidance, const EstimatorConfig& estimator) noexcept
+      : gains_(gains), guidance_(guidance), estimator_(estimator) {}
 
   // Start of frame `frame` (SYNC's number). `usable_nodes` (bit n = node n) says whose sensors may be used: the nodes the fault manager has not
   // excluded.

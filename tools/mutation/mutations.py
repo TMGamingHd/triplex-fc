@@ -138,12 +138,14 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     #  would be equivalent: the rejection itself is tested directly on the driver)
     "pico_app_y_servo_gets_x_map": ("pico_app.hpp", "hal_.set_servo_us(1U, cfg_.servo_y.pulse_us(platform_.output().y_deg));", "hal_.set_servo_us(1U, cfg_.servo_x.pulse_us(platform_.output().y_deg));"),
     "pico_app_status_flags_missing_link_lost": ("pico_app.hpp", "f = static_cast<uint8_t>(f | (link_lost_ ? pico::statusflag::kLinkLost : 0U));", "f = f;"),
+    "estimator_ignores_use_accel": ("estimator.hpp", "const bool accel_usable = cfg_.use_accel && in.accel_ok;", "const bool accel_usable = in.accel_ok;"),
     "pico_app_status_relays_stale": ("pico_app.hpp", "st.relays = injector_.energised();", "st.relays = 0U;"),
 }
 
 # Mutants that only the C++ unit tests can see, with the reason: the campaign's peers cannot produce the input that
 # distinguishes them from the real code.
 CAMPAIGN_SKIP = {
+    "estimator_ignores_use_accel",  # the campaign's peers do not run the estimator
     # the Pico's code is not in the campaign's reach (the campaign drives the flight bus, not the Pico's USB link)
     "pico_travel_not_limited", "pico_travel_asymmetric", "pico_rate_not_limited", "pico_rate_limit_one_way", "pico_never_holds", "pico_holds_one_tick_late", "pico_never_levels", "pico_levels_at_the_full_rate", "pico_nan_accepted", "pico_rejected_command_restarts_timeout", "pico_stale_command_still_saturated", "pico_age_wraps", "pico_servo_sign_ignored", "pico_servo_trim_ignored", "pico_servo_pulse_not_clamped", "pico_cut_not_clamped", "pico_cut_never_ends", "pico_cut_ends_one_tick_early", "pico_channel_not_checked", "pico_release_all_does_nothing", "pico_energised_bit_wrong", "pico_link_crc_not_checked", "pico_link_length_not_checked", "pico_link_no_resync_after_bad_crc", "pico_link_no_resync_after_bad_length", "pico_link_angle_truncates", "pico_link_angle_not_saturated", "pico_link_status_length_unchecked", "pico_app_boot_leaves_relays", "pico_app_link_timeout_ignored", "pico_app_link_timeout_one_step_late", "pico_app_quiet_not_reset_by_a_frame", "pico_app_link_lost_never_clears", "pico_app_relays_not_applied", "pico_app_ping_not_answered", "pico_app_watchdog_not_fed", "pico_app_y_servo_gets_x_map", "pico_app_status_flags_missing_link_lost", "pico_app_status_relays_stale",
     "config_not_sanitised", "tolerance_not_validated", "persistence_not_validated",  # the peers never present a bad configuration

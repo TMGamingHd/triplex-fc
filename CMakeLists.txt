@@ -38,7 +38,8 @@ add_executable(tfc_tests
   tests/test_runner.cpp
   tests/test_pico.cpp
   tests/test_pico_app.cpp
-  tests/test_pico_fuzz.cpp)
+  tests/test_pico_fuzz.cpp
+  tests/test_realism.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
 target_include_directories(tfc_tests PRIVATE tests tools/vehicle sim/vehicle firmware/app/src)
 target_compile_options(tfc_tests PRIVATE
@@ -71,6 +72,13 @@ add_executable(tfc_simd tools/sim/tfc_simd.cpp)
 target_link_libraries(tfc_simd PRIVATE tfc_core)
 target_include_directories(tfc_simd PRIVATE sim/vehicle)
 target_compile_options(tfc_simd PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
+
+# Sensitivity of the closed loop to sensor errors, a dispersed vehicle and late frames (tools/sim/tfc_sens.cpp).
+find_package(Threads REQUIRED)
+add_executable(tfc_sens tools/sim/tfc_sens.cpp)
+target_link_libraries(tfc_sens PRIVATE tfc_core Threads::Threads)
+target_include_directories(tfc_sens PRIVATE sim/vehicle)
+target_compile_options(tfc_sens PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
 
 # Flight-code gate (docs/CODING_STANDARD.md): the strictest warning set, as errors, over the whole core, and every header
 # compiled on its own so none depends on include order. Part of the default build, so CI fails on a regression.

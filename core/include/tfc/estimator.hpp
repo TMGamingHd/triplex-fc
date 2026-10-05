@@ -56,6 +56,9 @@ struct EstimatorConfig {
   float ki = 0.05F;              // gain of the bias integrator, 1/s^2
   float bias_limit_dps = 5.0F;   // the estimated gyro bias is clamped to this
   float accel_gate_g = 0.3F;     // the accelerometer corrects only while |a| is within 1 g +- this
+  // False: the accelerometer is not used at all (the attitude is the gyro's integral). For a vehicle under thrust, where the specific force is the thrust and not gravity: with a
+  // thrust-to-weight near 1 the gate above accepts thrust as gravity and pulls the estimated tilt to zero (docs/SIM_FIDELITY.md 3.2). The rig's platform is never under thrust.
+  bool use_accel = true;
 };
 
 struct Attitude {
@@ -84,10 +87,11 @@ class AttitudeEstimator {
       ++gyro_holds_;
     }
     std::array<float, 3> corr{0.0F, 0.0F, 0.0F};
-    if (!aligned_ && in.accel_ok && align(in.accel_g)) {
+    const bool accel_usable = cfg_.use_accel && in.accel_ok;
+    if (!aligned_ && accel_usable && align(in.accel_g)) {
       aligned_ = true;  // the first trustworthy gravity reading sets the attitude: no start-up transient for the integrator to learn from
     }
-    if (in.accel_ok && correction(in.accel_g, corr)) {
+    if (accel_usable && correction(in.accel_g, corr)) {
       for (unsigned i = 0; i < 3U; ++i) {
         bias_[i] += cfg_.ki * corr[i] * dt;
         bias_[i] = clamp(bias_[i], cfg_.bias_limit_dps * kDegToRad);
