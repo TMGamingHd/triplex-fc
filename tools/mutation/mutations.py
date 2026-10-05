@@ -171,11 +171,34 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "heartbeat_ready_not_packed": ("protocol.hpp", " | ((h.ready ? 1U : 0U) << 7U));", ");"),
     "estimator_ignores_use_accel": ("estimator.hpp", "const bool accel_usable = cfg_.use_accel && in.accel_ok;", "const bool accel_usable = in.accel_ok;"),
     "pico_app_status_relays_stale": ("pico_app.hpp", "st.relays = injector_.energised();", "st.relays = 0U;"),
+    # ---- the supervisor's clock of record (supervisor/include/sup/mission_clock.hpp): file names start with "sup/" ----
+    "sup_extender_ignores_the_wrap": ("sup/mission_clock.hpp", "if (started_ && hw < last_) {", "if (false) {"),
+    "sup_extender_wraps_on_an_equal_reading": ("sup/mission_clock.hpp", "if (started_ && hw < last_) {", "if (started_ && hw <= last_) {"),
+    "sup_crc_ignores_the_high_bytes": ("sup/mission_clock.hpp", "static_cast<uint8_t>(t0_rtc_s >> (8U * (i - 4U)))", "static_cast<uint8_t>(t0_rtc_s >> (8U * ((i - 4U) % 4U)))"),
+    "sup_record_ignores_the_crc": ("sup/mission_clock.hpp", "r.magic == kMetMagic && r.crc == met_crc(r.magic, r.t0_rtc_s)", "r.magic == kMetMagic"),
+    "sup_record_ignores_the_magic": ("sup/mission_clock.hpp", "r.magic == kMetMagic && r.crc == met_crc(r.magic, r.t0_rtc_s)", "r.crc == met_crc(r.magic, r.t0_rtc_s)"),
+    "sup_second_t0_replaces_the_first": ("sup/mission_clock.hpp", "if (source_ == MetSource::None) {", "if (true) {"),
+    "sup_met_us_overflows": ("sup/mission_clock.hpp", "return (s * 1000000U) + ((r * 1000000U) / cfg_.tick_hz);", "return (t * 1000000U) / cfg_.tick_hz;"),
+    "sup_met_frames_wrong_divisor": ("sup/mission_clock.hpp", "return met_ticks(ticks_now) / (static_cast<uint64_t>(cfg_.tick_hz / 100U));", "return met_ticks(ticks_now) / (static_cast<uint64_t>(cfg_.tick_hz / 1000U));"),
+    "sup_resume_accepts_a_future_t0": ("sup/mission_clock.hpp", "if (!record_valid(rec) || rec.t0_rtc_s > rtc_now_s) {", "if (!record_valid(rec)) {"),
+    "sup_resume_without_an_offset": ("sup/mission_clock.hpp", "if (elapsed_ticks > ticks_now) {", "if (false) {"),
+    "sup_met_before_t0_wraps": ("sup/mission_clock.hpp", "if (!launched() || ticks_now + offset_ticks_ < t0_ticks_) {", "if (!launched()) {"),
+    "sup_recovered_t0_claims_exactness": ("sup/mission_clock.hpp", "source_ == MetSource::Recovered ? 1000000U : 0U", "0U"),
+    "sup_watch_field_not_saturated": ("sup/mission_clock.hpp", "expect_wide > kMissionSaturated ? static_cast<uint64_t>(kMissionSaturated) : expect_wide", "expect_wide"),
+    "sup_watch_no_drift_allowance": ("sup/mission_clock.hpp", "((met * cfg_.ppm) / 1000000U)", "0U"),
+    "sup_watch_flags_at_once": ("sup/mission_clock.hpp", "return bad_run_ >= cfg_.persist;", "return bad_run_ >= 1U;"),
+    "sup_watch_run_count_wraps": ("sup/mission_clock.hpp", "(bad_run_ < 255U ? static_cast<uint8_t>(bad_run_ + 1U) : bad_run_)", "static_cast<uint8_t>(bad_run_ + 1U)"),
+    "sup_watch_ahead_not_detected": ("sup/mission_clock.hpp", "} else if (got > expect + allow) {", "} else if (false) {"),
+    "sup_watch_behind_not_detected": ("sup/mission_clock.hpp", "if (got + allow < expect) {", "if (false) {"),
+    "sup_watch_ignores_the_recovery_slack": ("sup/mission_clock.hpp", " + clock_slack(clock);", ";"),
+    "sup_watch_run_survives_a_clock_reset": ("sup/mission_clock.hpp", "      bad_run_ = 0U;\n      return Verdict::NotLaunched;", "      return Verdict::NotLaunched;"),
 }
 
 # Mutants that only the C++ unit tests can see, with the reason: the campaign's peers cannot produce the input that
 # distinguishes them from the real code.
 CAMPAIGN_SKIP = {
+    # the supervisor's code is not in the campaign's reach (the campaign drives the flight bus)
+    *(n for n in MUTATIONS if n.startswith("sup_")),
     # the launch sequence is not in the campaign's reach (its peers send no mission frame and no launch command)
     "mission_follower_ignores_sync_before_t_zero", "mission_flying_follower_adopts_sync", "mission_disagreement_not_reported", "mission_not_counted_through_a_gap", "mission_count_wraps_at_the_largest_value", "launch_by_a_follower", "launch_twice", "scrub_after_t_zero", "scrub_by_a_follower", "mission_countdown_boundary", "mission_flight_frames_off_by_one", "gate_accepts_two_healthy_nodes", "gate_accepts_a_node_not_ready", "gate_ignores_the_safe_request", "gate_ignores_act", "launch_needs_no_arm", "heartbeat_ready_not_packed",
     # the pad phase is not in the campaign's reach (its peers do not run the flight function)
@@ -199,8 +222,9 @@ def build_include(name: str, dest: Path) -> Path:
     """Copy core/include into `dest` with mutation `name` applied; returns the include directory."""
     inc = dest / "include"
     shutil.copytree(ROOT / "core/include", inc)
+    shutil.copytree(ROOT / "supervisor/include", dest / "include_sup")
     fn, old, new = MUTATIONS[name]
-    p = inc / "tfc" / fn
+    p = dest / "include_sup" / fn if fn.startswith("sup/") else inc / "tfc" / fn
     text = p.read_text()
     if old not in text:
         raise RuntimeError(f"mutation {name}: pattern not found in {fn} (the code moved: update tools/mutation/mutations.py)")
@@ -210,4 +234,4 @@ def build_include(name: str, dest: Path) -> Path:
 
 def check_patterns() -> list[str]:
     """Names of mutations whose pattern no longer occurs in the current core."""
-    return [n for n, (fn, old, _new) in MUTATIONS.items() if old not in (ROOT / "core/include/tfc" / fn).read_text()]
+    return [n for n, (fn, old, _new) in MUTATIONS.items() if old not in ((ROOT / "supervisor/include" / fn) if fn.startswith("sup/") else (ROOT / "core/include/tfc" / fn)).read_text()]

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Mechanical checks of the flight-code rules in docs/CODING_STANDARD.md that a compiler does not enforce.
 
-    python3 tools/check_standard.py            # checks core/include, exits 1 on a violation
+    python3 tools/check_standard.py            # checks core/include and supervisor/include, exits 1 on a violation
 
 Scans the flight core with comments and string literals removed, so a rule word in a comment is not a violation.
 The deeper rules (function size, complexity, warnings, analysis) are enforced by clang-tidy and the strict build.
@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "core" / "include"
+ROOTS = [CORE, ROOT / "supervisor" / "include"]  # the supervisor follows the same mechanical rules (it shares no code with core/, TFC-SUP-001)
 
 # rule -> (regex over code, why)
 FORBIDDEN = {
@@ -57,7 +58,8 @@ def main() -> int:
     for sym in global_state():
         print(f"P10-6 no mutable globals: writable data symbol in the core object: {sym}")
         bad += 1
-    for path in sorted(CORE.rglob("*.hpp")):
+    headers = sorted(h for root in ROOTS for h in root.rglob("*.hpp"))
+    for path in headers:
         code = strip(path.read_text())
         lines = code.splitlines()
         for rule, (pattern, why) in FORBIDDEN.items():
@@ -69,7 +71,7 @@ def main() -> int:
     if bad:
         print(f"\n{bad} violation(s) of docs/CODING_STANDARD.md", file=sys.stderr)
         return 1
-    print(f"ok: {len(list(CORE.rglob('*.hpp')))} core headers satisfy the mechanical rules")
+    print(f"ok: {len(headers)} flight-code headers satisfy the mechanical rules")
     return 0
 
 

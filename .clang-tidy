@@ -13,4 +13,4 @@ CheckOptions:
   - {key: readability-function-size.NestingThreshold, value: 4}
   - {key: readability-function-cognitive-complexity.Threshold, value: 25}
 WarningsAsErrors: '*'
-HeaderFilterRegex: 'core/include/.*'
+HeaderFilterRegex: '(core|supervisor)/include/.*'

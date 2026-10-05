@@ -72,7 +72,7 @@ jobs:
       - name: clang-tidy (flight code; bug patterns, CERT, size and complexity limits)
         run: clang-tidy -p build tests/*.cpp tools/replay/*.cpp
       - name: cppcheck
-        run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr --language=c++ --std=c++17 -I core/include core/include/tfc/*.hpp
+        run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr --language=c++ --std=c++17 -I core/include -I supervisor/include core/include/tfc/*.hpp supervisor/include/sup/*.hpp
       - name: Coding standard (mechanical rules of docs/CODING_STANDARD.md)
         run: python3 tools/check_standard.py
       - name: Structural coverage of core/ (gate may only be raised)
