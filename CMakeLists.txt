@@ -47,7 +47,8 @@ add_executable(tfc_tests
   tests/test_sensor_split.cpp
   tests/test_supervisor.cpp
   tests/test_release.cpp
-  tests/test_phases.cpp)
+  tests/test_phases.cpp
+  tests/test_state_share.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
 target_include_directories(tfc_tests PRIVATE tests tools/vehicle sim/vehicle firmware/app/src supervisor/include)
 target_compile_options(tfc_tests PRIVATE

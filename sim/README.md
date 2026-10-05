@@ -497,6 +497,8 @@ bad sample, not two; ADR-007), `vote disagreement`, `digest mismatch`, `stuck se
 | `safe_request_frames` | Frames spent with the (sticky) Safe request raised |
 | `bus_alarm_frames` | Frames with the out-of-schedule flood alarm raised |
 | `commands_unauthentic`, `commands_replayed` | Ground frames dropped because their tag did not verify, or because their counter was a repeat or too old (a replay); neither leaves a trace on the bus or reaches the command queue (ADR-019) |
+| `phase_changes`, `below_minimum_frames` | `phase` commands that changed the mission phase; frames spent with fewer voters than the phase's minimum (ADR-023, `--phases`) |
+| `state_restores` | restarts that took strike counts or the command counter from the others' state shares (FDIR-041; the replay never restores, so this stays 0 there) |
 | `arms_expired`, `critical_commands` | ARM frames never followed by their EXECUTE in time; commands that removed the last voting node (`--verbose` prints `*** CRITICAL ***`) |
 | `integrity_faults`, `invariant_violations` | Upsets found and repaired in the manager's own state (node states, Safe flag, configuration, command queue), and internal invariants that did not hold. Both are 0 in any normal run; `--verbose` prints `INTEGRITY FAULT` when one happens (ADR-015) |
 

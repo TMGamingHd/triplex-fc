@@ -18,4 +18,12 @@ config TFC_WATCHDOG_TIMEOUT_MS
 	help
 	  A supervisor that hangs resets itself and comes back with every output at its default and a warm start (it adopts running units and touches nothing).
 
+config TFC_OVERRIDE_LINES_FITTED
+	hex "Which hardware-override sense lines are wired (bit 0 H1 E-stop .. bit 5 H6/H7 node power-kill)"
+	default 0x0
+	range 0 0x3F
+	help
+	  The overrides' parts are ordered separately (docs/HARDWARE_OVERRIDE.md section 8). A line that is not wired is ignored; with none wired the feature is inert. A wired line that is engaged
+	  blocks `launch` and `t0` until the operator types `override-ok`; the sense lines never change what the supervisor does to a unit (TFC-HWO-005).
+
 source "Kconfig.zephyr"

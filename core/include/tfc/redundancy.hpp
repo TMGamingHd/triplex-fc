@@ -249,6 +249,7 @@ struct Counters {
   uint32_t arms_expired = 0;          // ARM frames that were never followed by their EXECUTE in time
   uint32_t critical_commands = 0;     // commands that removed the last voting node
   uint32_t phase_changes = 0;         // phase commands that changed the phase
+  uint32_t state_restores = 0;        // restarts that took strike counts or the command counter from the others' state shares (FDIR-041)
   uint32_t below_minimum_frames = 0;  // frames spent with fewer voters than the phase's minimum
 };
 
@@ -348,6 +349,82 @@ class RedundancyManager {
   }
   [[nodiscard]] uint16_t release_of(unsigned node) const noexcept { return node < kNodes ? release_[node] : 0U; }
 
+  // ---- the state share (FDIR-041, docs/PROTOCOL.md): what a restarted computer needs from the others ----
+  // This manager's own view, to be broadcast every few frames: the strike count of each computer (saturating at 15, what four bits carry) and the last accepted ground-command counter
+  // (0: none yet).
+  [[nodiscard]] StateShare state_share() const noexcept {
+    StateShare s;
+    for (unsigned n = 0; n < kNodes; ++n) {
+      s.strikes[n] = static_cast<uint8_t>(strikes_[n] < 15U ? strikes_[n] : 15U);
+    }
+    s.command_counter = (cmd_have_.intact() && cmd_have_.get() != 0U && cmd_ctr_.intact()) ? cmd_ctr_.get() : 0U;
+    return s;
+  }
+
+  struct Restored {
+    uint8_t strikes_raised = 0U;  // computers whose strike count was raised (bit n)
+    uint8_t disabled = 0U;        // computers that the restored strikes disabled
+    bool counter = false;         // the command counter was adopted
+  };
+
+  // A computer that has just restarted calls this once, after it has heard the others' shares (`self` is its own number; its own share is not used). For each strike count and for the
+  // command counter it takes the value that the two others agree on; where they differ, or only one has spoken, the more conservative one (the higher strike count, the counter that is
+  // ahead). It never lowers anything: a restored state cannot make this computer trust another more than it already does. A computer whose strikes reach the limit by the word of both
+  // others is Disabled again; one word alone can raise a count but not disable (a single faulty sender must not be able to take a healthy computer out of the vote).
+  Restored restore_from_peers(unsigned self) noexcept {
+    Restored out;
+    for (unsigned k = 0; k < kNodes; ++k) {
+      std::array<uint8_t, kNodes> v{};
+      unsigned have = 0U;
+      for (unsigned p = 0; p < kNodes; ++p) {
+        if (p != self && share_seen_[p]) {
+          v[have++] = shares_[p].strikes[k];
+        }
+      }
+      if (have == 0U) {
+        continue;
+      }
+      uint8_t chosen = have == 2U ? std::max(v[0], v[1]) : v[0];
+      const bool agreed = have == 2U && v[0] == v[1];
+      if (!agreed && cfg_.max_strikes != 0U) {
+        chosen = std::min(chosen, static_cast<uint8_t>(cfg_.max_strikes - 1U));  // one word alone, or two that differ, can raise the count but never disable a computer
+      }
+      if (chosen > strikes_[k]) {
+        strikes_[k] = chosen;
+        out.strikes_raised = static_cast<uint8_t>(out.strikes_raised | (1U << k));
+      }
+      if (cfg_.max_strikes != 0U && strikes_[k] >= cfg_.max_strikes && state_of(k) != NodeState::Disabled) {  // (only reachable when both agreed: the cap above holds one word below the limit)
+        set_state(k, NodeState::Disabled);
+        req_[k] = false;
+        warm_ = static_cast<uint8_t>(warm_ & ~(1U << k));
+        ++counters_.nodes_disabled;
+        out.disabled = static_cast<uint8_t>(out.disabled | (1U << k));
+      }
+    }
+    std::array<uint8_t, kNodes> c{};
+    unsigned have = 0U;
+    for (unsigned p = 0; p < kNodes; ++p) {
+      if (p != self && share_seen_[p] && shares_[p].command_counter != 0U) {
+        c[have++] = shares_[p].command_counter;
+      }
+    }
+    if (have != 0U) {
+      const bool ahead01 = have == 2U && static_cast<uint8_t>(c[1] - c[0]) < 128U;  // c[1] is not behind c[0]
+      const uint8_t chosen = (have == 2U && c[0] != c[1] && ahead01) ? c[1] : c[0];
+      const uint8_t gap = static_cast<uint8_t>(chosen - cmd_ctr_.get());  // how far the others' counter is ahead of this computer's own
+      const bool newer = !cmd_have_.intact() || cmd_have_.get() == 0U || !cmd_ctr_.intact() || (gap != 0U && gap < 128U);
+      if (newer) {
+        cmd_ctr_.set(chosen);
+        cmd_have_.set(1U);
+        out.counter = true;
+      }
+    }
+    if (out.strikes_raised != 0U || out.disabled != 0U || out.counter) {
+      ++counters_.state_restores;
+    }
+    return out;
+  }
+
   // Offer one received frame. Returns false if its ID is not part of the flight-bus schedule
   // (it is then only counted). SYNC, actuator, heartbeat and sim frames are accepted and ignored;
   // ground commands are queued and applied at the end of the frame.
@@ -362,6 +439,13 @@ class RedundancyManager {
       const bool known = f.id == id::kSync || f.id == id::kActOut || (f.id >= id::kSim && f.id <= id::kSimLast) ||
                          (f.id >= id::kHeartbeat && f.id < id::kHeartbeat + kNodes) || (f.id >= id::kState && f.id < id::kState + kNodes) ||
                          (f.id >= id::kResync && f.id < id::kResync + kResyncIds);
+      if (f.id >= id::kState && f.id < id::kState + kNodes) {  // the state share: what a restarted node needs (FDIR-041)
+        const DecodedStateShare ds = unpack_state_share(f);
+        if (ds.ok) {
+          shares_[f.id - id::kState] = ds.share;
+          share_seen_[f.id - id::kState] = true;
+        }
+      }
       if (f.id >= id::kHeartbeat && f.id < id::kHeartbeat + kNodes) {  // the heartbeat names the release the sender runs
         const DecodedHeartbeat hb = unpack_heartbeat(f);
         if (hb.ok) {
@@ -1556,6 +1640,8 @@ class RedundancyManager {
   uint16_t digest_run_ = 0U;                       // consecutive frames with a digest disagreement
   uint8_t resync_large_ = 0U;                      // computers reported far from the resync vote, for this frame
   std::array<uint16_t, kNodes> release_{};         // the release id each computer reported (0: not reported)
+  std::array<StateShare, kNodes> shares_{};        // the last state share heard from each computer (FDIR-041)
+  std::array<bool, kNodes> share_seen_{};
   bool release_split_now_ = false;                 // this frame: the releases disagree beyond the version tolerance
   uint32_t unres_hist_ = 0U;                       // 1 bit per frame: an unresolved disagreement
   uint32_t oos_in_frame_ = 0U;

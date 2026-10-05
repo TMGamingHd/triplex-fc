@@ -37,6 +37,30 @@ class ReplayBase(unittest.TestCase):
 
 
 @unittest.skipIf(REPLAY is None, "tfc_replay not built (cmake --build build/host)")
+class ReplayPhases(ReplayBase):
+    """Mission phases and the WARM role through the real core (ADR-023, `--phases`): scripted `phase`, `warm`, `noop` and `reintegrate` commands."""
+
+    def test_the_operator_rests_a_computer_a_phase_that_needs_three_is_refused_and_the_promotion_brings_it_back(self):
+        out = self.replay([], "--phases", "--expect-no-latch", "A", "--expect-no-latch", "B", frames=700,
+                          commands=["50:noop", "100:phase:coast", "150:warm:C", "300:phase:pre-launch", "350:reintegrate:C", "450:phase:pre-launch"])
+        self.assertEqual(out["phase"], "2")
+        self.assertEqual(out["warm"], "0x0")
+        self.assertEqual(out["phase_changes"], "2")
+        self.assertEqual(out["commands_refused"], "1")
+        self.assertEqual(out["healthy"], "3")
+        self.assertEqual(out["reintegrations"], "1")
+
+    def test_a_computer_still_resting_at_the_end_is_reported_and_the_system_is_duplex_by_mode(self):
+        out = self.replay([], "--phases", "--expect-mode", "duplex", frames=400, commands=["100:phase:coast", "150:warm:C"])
+        self.assertEqual((out["phase"], out["warm"], out["healthy"]), ("4", "0x4", "2"))
+
+    def test_without_phases_the_commands_are_refused_and_nothing_else_changes(self):
+        out = self.replay([], "--expect-mode", "triplex", frames=300, commands=["100:phase:coast"])
+        self.assertEqual(out["commands_refused"], "1")
+        self.assertNotIn("phase", out)
+
+
+@unittest.skipIf(REPLAY is None, "tfc_replay not built (cmake --build build/host)")
 class ReplayThroughCore(ReplayBase):
     def test_healthy_triplex_has_no_false_positives(self):
         out = self.replay([], "--expect-mode", "triplex", "--expect-no-latch", "A",

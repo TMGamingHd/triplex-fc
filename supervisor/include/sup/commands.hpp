@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // The supervisor's hardware commands, typed over USB serial (docs/SUPERVISOR.md section 6): `reset X`, `cycle X`, `hold X`, `release X`, `safe-now`, `safe-clear`, `launch`, `scrub`,
-// `t0`, `status`. X is A, B, C or ACT (any case). A line is parsed without allocating; a bad line gives `Kind::Unknown` and says why. Integer-only and portable; by TFC-SUP-001 it
+// `t0`, `override-ok`, `status`. X is A, B, C or ACT (any case). A line is parsed without allocating; a bad line gives `Kind::Unknown` and says why. Integer-only and portable; by TFC-SUP-001 it
 // shares no code with `core/`.
 #pragma once
 #include <cstddef>
@@ -22,6 +22,7 @@ enum class Kind : uint8_t {
   Launch,     // start the supervisor's countdown to T-zero
   Scrub,      // cancel the countdown
   T0,         // T-zero now (a bench shortcut)
+  OverrideOk, // accept the hardware overrides that are engaged now: a launch may go ahead with them (docs/HARDWARE_OVERRIDE.md G5)
   Status
 };
 
@@ -86,7 +87,7 @@ constexpr bool word_is(const char* s, std::size_t b, std::size_t e, const char* 
   };
   constexpr Entry table[] = {{"reset", Kind::Reset, true},   {"cycle", Kind::Cycle, true},       {"hold", Kind::Hold, true},   {"release", Kind::Release, true},
                              {"safe-now", Kind::SafeNow, false}, {"safe-clear", Kind::SafeClear, false}, {"launch", Kind::Launch, false}, {"scrub", Kind::Scrub, false},
-                             {"t0", Kind::T0, false},         {"status", Kind::Status, false}};
+                             {"t0", Kind::T0, false},         {"override-ok", Kind::OverrideOk, false}, {"status", Kind::Status, false}};
   const Entry* found = nullptr;
   for (const Entry& e : table) {
     if (detail::word_is(line, begin[0], end[0], e.word)) {

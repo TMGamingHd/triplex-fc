@@ -676,3 +676,165 @@ TFC_TEST(sup_rtc_converts_the_seven_registers_to_seconds_since_2000) {
 }
 
 }  // namespace
+
+// ============================== the override sense lines (HWO-005, HWO-007, G5) ==============================
+TFC_TEST(overrides_a_line_counts_only_after_it_has_held_its_level_for_the_debounce_time) {
+  OverrideSense s(0x3FU, 50U * kMs);
+  CHECK(s.sample(0x08U, 1000U * kMs) == 0U && s.engaged() == 0U);  // first seen: not yet
+  CHECK(s.sample(0x08U, 1049U * kMs) == 0U && s.engaged() == 0U);  // 49 ms
+  CHECK(s.sample(0x08U, 1050U * kMs) == 0x08U && s.engaged() == 0x08U);  // 50 ms: counts, and the change is reported once
+  CHECK(s.sample(0x08U, 1100U * kMs) == 0U && s.engaged() == 0x08U);
+  CHECK(s.sample(0x00U, 1200U * kMs) == 0U && s.engaged() == 0x08U);  // released: the same wait
+  CHECK(s.sample(0x00U, 1249U * kMs) == 0U && s.engaged() == 0x08U);
+  CHECK(s.sample(0x00U, 1250U * kMs) == 0x08U && s.engaged() == 0U);
+}
+
+TFC_TEST(overrides_a_glitch_shorter_than_the_debounce_is_ignored_whichever_way_it_goes_and_each_line_has_its_own_clock) {
+  OverrideSense s(0x3FU, 50U * kMs);
+  (void)s.sample(0x01U, 100U * kMs);
+  (void)s.sample(0x00U, 130U * kMs);  // a 30 ms blip
+  (void)s.sample(0x00U, 300U * kMs);
+  CHECK(s.engaged() == 0U && s.tested() == 0U);
+  (void)s.sample(0x01U, 400U * kMs);
+  (void)s.sample(0x01U, 450U * kMs);
+  CHECK(s.engaged() == 0x01U);
+  (void)s.sample(0x00U, 500U * kMs);
+  (void)s.sample(0x01U, 520U * kMs);  // a release blip while engaged
+  (void)s.sample(0x01U, 700U * kMs);
+  CHECK(s.engaged() == 0x01U && s.tested() == 0U);
+  (void)s.sample(0x03U, 800U * kMs);  // line 1 starts later than line 0 is steady
+  (void)s.sample(0x03U, 840U * kMs);
+  CHECK(s.engaged() == 0x01U);
+  (void)s.sample(0x03U, 850U * kMs);
+  CHECK(s.engaged() == 0x03U);
+}
+
+TFC_TEST(overrides_a_line_that_is_not_fitted_or_not_a_line_is_ignored) {
+  OverrideSense s(0x0AU, 10U * kMs);  // only lines 1 and 3 exist
+  (void)s.sample(0xFFU, 100U * kMs);
+  CHECK(s.sample(0xFFU, 200U * kMs) == 0x0AU && s.engaged() == 0x0AU);
+  CHECK(s.fitted() == 0x0AU && s.untested() == 0x0AU);
+  OverrideSense wide(0xFFU, 10U * kMs);  // only six lines exist
+  CHECK(wide.fitted() == kOverrideMask);
+  OverrideSense none(0U, 10U * kMs);
+  (void)none.sample(0xFFU, 100U * kMs);
+  (void)none.sample(0xFFU, 200U * kMs);
+  CHECK(none.engaged() == 0U && none.untested() == 0U);
+}
+
+TFC_TEST(overrides_an_override_is_tested_when_it_has_been_seen_engaged_and_then_released_in_this_session) {
+  OverrideSense s(0x07U, 10U * kMs);
+  (void)s.sample(0x01U, 0U);
+  (void)s.sample(0x01U, 20U * kMs);
+  CHECK(s.tested() == 0U && s.untested() == 0x07U);  // engaged only: it has not been seen to release
+  (void)s.sample(0x00U, 100U * kMs);
+  (void)s.sample(0x00U, 120U * kMs);
+  CHECK(s.tested() == 0x01U && s.untested() == 0x06U);
+  (void)s.sample(0x00U, 200U * kMs);  // a line that was never engaged is not tested by being released
+  CHECK(s.tested() == 0x01U);
+  (void)s.sample(0x01U, 300U * kMs);
+  (void)s.sample(0x01U, 320U * kMs);  // engaging again does not undo the test
+  CHECK(s.tested() == 0x01U);
+}
+
+TFC_TEST(overrides_the_acknowledgement_covers_what_is_engaged_now_and_ends_when_that_line_is_released) {
+  OverrideSense s(0x3FU, 10U * kMs);
+  (void)s.sample(0x08U, 0U);
+  (void)s.sample(0x08U, 20U * kMs);
+  CHECK(s.unacknowledged() == 0x08U);
+  s.acknowledge();
+  CHECK(s.unacknowledged() == 0U);
+  (void)s.sample(0x28U, 100U * kMs);  // a second one engaged later is not covered
+  (void)s.sample(0x28U, 120U * kMs);
+  CHECK(s.engaged() == 0x28U && s.unacknowledged() == 0x20U);
+  (void)s.sample(0x20U, 200U * kMs);  // the first is released, and engaged again: it needs its own acknowledgement
+  (void)s.sample(0x20U, 220U * kMs);
+  (void)s.sample(0x28U, 300U * kMs);
+  (void)s.sample(0x28U, 320U * kMs);
+  CHECK(s.unacknowledged() == 0x28U);
+}
+
+TFC_TEST(overrides_a_launch_is_refused_while_an_override_is_engaged_that_nobody_acknowledged_and_goes_ahead_after_override_ok) {
+  SupConfig cfg;
+  cfg.override_fitted = 0x3FU;
+  World w(cfg);
+  w.run_ms(300U);
+  w.in.overrides = 0x08U;  // H4 INJECTOR-DISARM left open
+  w.run_ms(60U);
+  CHECK(w.ev.overrides_changed == 0U);  // (reported once, at the step it counted)
+  w.ms("launch");
+  CHECK(w.resp == Response::Refused && w.ev.launch_blocked == 0x08U && !w.sup.counting_down());
+  w.ms("t0");
+  CHECK(w.resp == Response::Refused && w.ev.launch_blocked == 0x08U && !w.sup.launched());
+  w.ms("override-ok");
+  CHECK(w.resp == Response::Done);
+  w.ms("launch");
+  CHECK(w.resp == Response::Done && w.ev.countdown_started && w.ev.launch_blocked == 0U && w.sup.counting_down());
+  CHECK(w.ev.launch_untested == 0x3FU);  // and none has been tested this session
+}
+
+TFC_TEST(overrides_the_change_is_reported_at_the_step_it_counts_and_a_release_ends_the_block) {
+  SupConfig cfg;
+  cfg.override_fitted = 0x3FU;
+  World w(cfg);
+  w.run_ms(300U);
+  w.in.overrides = 0x02U;
+  uint8_t seen = 0U;
+  for (unsigned i = 0; i < 80U; ++i) {
+    w.ms();
+    seen = static_cast<uint8_t>(seen | w.ev.overrides_changed);
+  }
+  CHECK(seen == 0x02U);
+  w.in.overrides = 0x00U;
+  w.run_ms(80U);
+  w.ms("launch");
+  CHECK(w.resp == Response::Done && w.ev.launch_blocked == 0U);
+  CHECK(w.ev.launch_untested == 0x3DU);  // H2 was engaged and released: tested; the others not
+}
+
+TFC_TEST(overrides_without_fitted_lines_the_sense_inputs_change_nothing_and_status_says_nothing_about_them) {
+  World w;  // override_fitted = 0
+  w.run_ms(300U);
+  w.in.overrides = 0xFFU;
+  w.run_ms(100U);
+  w.ms("launch");
+  CHECK(w.resp == Response::Done && w.ev.launch_blocked == 0U && w.ev.launch_untested == 0U && w.ev.overrides_changed == 0U);
+  char text[400];
+  (void)w.sup.status_text(text, sizeof text);
+  CHECK(std::string(text).find("overrides") == std::string::npos);
+}
+
+TFC_TEST(overrides_the_status_shows_what_is_engaged_and_what_is_untested_when_lines_are_fitted) {
+  SupConfig cfg;
+  cfg.override_fitted = 0x3FU;
+  World w(cfg);
+  w.run_ms(300U);
+  w.in.overrides = 0x04U;
+  w.run_ms(80U);
+  char text[400];
+  (void)w.sup.status_text(text, sizeof text);
+  CHECK(std::string(text).find("overrides engaged=4 untested=63\n") != std::string::npos);
+}
+
+TFC_TEST(overrides_a_sense_line_is_never_an_input_to_a_decision_about_the_units) {  // TFC-HWO-005: two runs, one with every override engaged, give the same outputs, step by step
+  SupConfig cfg;
+  cfg.override_fitted = 0x3FU;
+  World a(cfg);
+  World b(cfg);
+  b.in.overrides = 0x3FU;
+  for (unsigned i = 0; i < 4000U; ++i) {
+    if (i == 1000U) {
+      a.u[1].hung = true;
+      b.u[1].hung = true;
+    }
+    a.ms();
+    b.ms();
+    CHECK(a.out.nrst_low == b.out.nrst_low && a.out.power_cut == b.out.power_cut && a.out.safe_line == b.out.safe_line && a.out.t0_line == b.out.t0_line);
+  }
+  CHECK(a.resets_seen[1] >= 1U && a.resets_seen == b.resets_seen && a.cycles_seen == b.cycles_seen);
+}
+
+TFC_TEST(overrides_the_command_is_parsed_and_takes_no_argument) {
+  CHECK(cmd("override-ok").kind == Kind::OverrideOk && cmd("OVERRIDE-OK").parse == Parse::Ok);
+  CHECK(cmd("override-ok A").parse == Parse::ExtraWords);
+}

@@ -50,6 +50,8 @@ constexpr bool kResync = kFlightFunction && kResyncPeriod != 0U && ((kResyncGrou
 
 constexpr uint32_t kDropFirst = CONFIG_TFC_TEST_DROP_PEERS_FIRST;    // test aid (docs/RESYNC.md): withhold the peers' sensor frames from the flight function
 constexpr uint32_t kDropFrames = CONFIG_TFC_TEST_DROP_PEERS_FRAMES;
+constexpr uint32_t kShareEveryFrames = 10U;  // the state share (FDIR-041): each computer broadcasts its strike counts and command counter this often, staggered by node
+constexpr uint32_t kRestoreAtCycle = 30U;     // a computer that has restarted takes them from the others once, this many frames after it came up
 constexpr uint32_t kTestT0At = CONFIG_TFC_TEST_T0_AT_FRAMES_TO_ZERO;
 constexpr uint32_t kTestHangAt = CONFIG_TFC_TEST_HANG_AT_FRAME;      // bench aids, all off by default (docs/procedures/P-S2-03, P-S3-01)
 constexpr int kTestCmdOffsetMdeg = CONFIG_TFC_TEST_CMD_OFFSET_MDEG;
@@ -576,6 +578,16 @@ int main() {
       own_ready = kLaunch && kFlightFunction && g_flight.sensors_ok() && g_cal.ready() && !rep.safe_request;
       hb.ready = own_ready;
       tx_errors += send(tfc::pack_heartbeat(kNodeId, hb, seq)) ? 0U : 1U;
+    }
+    if (k % kShareEveryFrames == kNodeId) {
+      tx_errors += send(tfc::pack_state_share(kNodeId, mgr.state_share(), seq)) ? 0U : 1U;
+    }
+    if (cycle == kRestoreAtCycle) {  // (on a power-on all the shares are zero and nothing changes; after a reset the strike counts and the command counter come back)
+      const tfc::RedundancyManager::Restored restored = mgr.restore_from_peers(kNodeId);
+      if (restored.strikes_raised != 0U || restored.disabled != 0U || restored.counter) {
+        printk("[frame %u] STATE RESTORED from the others' shares: strikes raised 0x%x, disabled 0x%x, command counter %s\n", k, static_cast<unsigned>(restored.strikes_raised),
+               static_cast<unsigned>(restored.disabled), restored.counter ? "adopted" : "kept");
+      }
     }
     if (kLaunch) {  // the go/no-go: what this computer knows of the others (a heartbeat or ACT frame more than three frames old does not count)
       tfc::LaunchFacts facts;

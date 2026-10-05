@@ -1,7 +1,7 @@
 /* The supervisor on a Pico 2 (docs/SUPERVISOR.md section 4, SUP-Lite; ADR-022).
  *
  * Pins (GP numbers): FRAME in GP2 to GP5 (A, B, C, ACT), KICK in GP6 to GP9, NRST out GP10 to GP13, power relay out GP14 to GP17 (active low, external pull-ups to 3.3 V), SAFE out GP18, T0 out GP19,
- * I2C0 to the real-time clock on GP20 (SDA) and GP21 (SCL). 20 of the 26 pins. Every input needs an external pull-down of 8.2 kOhm or less (the RP2350 E9 erratum); the unit boards' own
+ * I2C0 to the real-time clock on GP20 (SDA) and GP21 (SCL), the six override sense inputs on GP22, GP26, GP27, GP28, GP0 and GP1 (H1 to H5 and H6/H7). All 26 pins. Every input needs an external pull-down of 8.2 kOhm or less (the RP2350 E9 erratum); the unit boards' own
  * outputs are push-pull. The NRST pins are driven open-drain by the program (an output pulled low to reset, an input otherwise), because the RP2350's GPIO has no open-drain mode.
  * The record of T-zero is kept in the last 4 KB sector of the 4 MB flash.
  */
@@ -48,6 +48,8 @@
 		pwr-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>, <&gpio0 15 GPIO_ACTIVE_LOW>, <&gpio0 16 GPIO_ACTIVE_LOW>, <&gpio0 17 GPIO_ACTIVE_LOW>;
 		safe-gpios = <&gpio0 18 GPIO_ACTIVE_HIGH>;
 		t0-gpios = <&gpio0 19 GPIO_ACTIVE_HIGH>;
+		override-gpios = <&gpio0 22 GPIO_ACTIVE_HIGH>, <&gpio0 26 GPIO_ACTIVE_HIGH>, <&gpio0 27 GPIO_ACTIVE_HIGH>, <&gpio0 28 GPIO_ACTIVE_HIGH>, <&gpio0 0 GPIO_ACTIVE_HIGH>,
+				  <&gpio0 1 GPIO_ACTIVE_HIGH>;
 	};
 };
 

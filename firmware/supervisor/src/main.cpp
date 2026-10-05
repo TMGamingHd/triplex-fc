@@ -44,6 +44,13 @@ const struct gpio_dt_spec g_nrst[kUnits] = {LINE(nrst_gpios, 0), LINE(nrst_gpios
 const struct gpio_dt_spec g_pwr[kUnits] = {LINE(pwr_gpios, 0), LINE(pwr_gpios, 1), LINE(pwr_gpios, 2), LINE(pwr_gpios, 3)};
 const struct gpio_dt_spec g_safe = GPIO_DT_SPEC_GET(DT_NODELABEL(sup_lines), safe_gpios);
 const struct gpio_dt_spec g_t0 = GPIO_DT_SPEC_GET(DT_NODELABEL(sup_lines), t0_gpios);
+#if DT_NODE_HAS_PROP(DT_NODELABEL(sup_lines), override_gpios)
+const struct gpio_dt_spec g_override[sup::kOverrideLines] = {LINE(override_gpios, 0), LINE(override_gpios, 1), LINE(override_gpios, 2),
+                                                             LINE(override_gpios, 3), LINE(override_gpios, 4), LINE(override_gpios, 5)};
+constexpr bool kHaveOverrideLines = true;
+#else
+constexpr bool kHaveOverrideLines = false;
+#endif
 
 // The edge counters, written in the GPIO interrupt and read with interrupts off.
 struct Edges {
@@ -211,7 +218,16 @@ int main() {
     }
   }
 
-  sup::Supervisor supervisor;
+  sup::SupConfig sup_cfg;
+  sup_cfg.override_fitted = kHaveOverrideLines ? static_cast<uint8_t>(CONFIG_TFC_OVERRIDE_LINES_FITTED) : 0U;
+#if DT_NODE_HAS_PROP(DT_NODELABEL(sup_lines), override_gpios)
+  for (unsigned i = 0; i < sup::kOverrideLines; ++i) {
+    if (((sup_cfg.override_fitted >> i) & 1U) != 0U && gpio_is_ready_dt(&g_override[i])) {
+      (void)gpio_pin_configure_dt(&g_override[i], GPIO_INPUT);
+    }
+  }
+#endif
+  sup::Supervisor supervisor(sup_cfg);
   sup::RtcReading rtc = read_rtc();
   {
     sup::MetRecord rec;
@@ -241,6 +257,13 @@ int main() {
       rtc = read_rtc();
     }
     in.rtc_s = rtc.valid ? rtc.seconds : 0U;
+#if DT_NODE_HAS_PROP(DT_NODELABEL(sup_lines), override_gpios)
+    for (unsigned i = 0; i < sup::kOverrideLines; ++i) {  // the override sense lines: read-only (TFC-HWO-005)
+      if (((sup_cfg.override_fitted >> i) & 1U) != 0U && gpio_pin_get_dt(&g_override[i]) > 0) {
+        in.overrides = static_cast<uint8_t>(in.overrides | (1U << i));
+      }
+    }
+#endif
 
     sup::Command cmd;
     bool have_cmd = false;
@@ -301,6 +324,20 @@ int main() {
         (void)snprintk(msg.data(), msg.size(), "MISSION TIME %s disagrees with the clock\n", kUnitNames[u]);
         say(msg.data());
       }
+    }
+    std::array<char, 96> omsg{};
+    if (ev.overrides_changed != 0U) {
+      (void)snprintk(omsg.data(), omsg.size(), "OVERRIDE lines changed 0x%02x: engaged now 0x%02x\n", static_cast<unsigned>(ev.overrides_changed),
+                     static_cast<unsigned>(supervisor.overrides_engaged()));
+      say(omsg.data());
+    }
+    if (ev.launch_blocked != 0U) {
+      (void)snprintk(omsg.data(), omsg.size(), "LAUNCH REFUSED: override 0x%02x is engaged; `override-ok` accepts it\n", static_cast<unsigned>(ev.launch_blocked));
+      say(omsg.data());
+    }
+    if (ev.launch_untested != 0U) {
+      (void)snprintk(omsg.data(), omsg.size(), "overrides not yet tested this session: 0x%02x\n", static_cast<unsigned>(ev.launch_untested));
+      say(omsg.data());
     }
     if (ev.warm_start) {
       say("warm start: units are running, nothing is touched\n");

@@ -23,6 +23,7 @@
 
 #include "sup/commands.hpp"
 #include "sup/mission_clock.hpp"
+#include "sup/overrides.hpp"
 
 namespace sup {
 
@@ -45,6 +46,8 @@ struct SupConfig {
   uint32_t countdown_s = 10U;
   uint32_t t0_pulse_ms = 50U;
   uint32_t mission_check_frames = 100U;  // the mission-time plausibility check runs this often
+  uint8_t override_fitted = 0U;          // which override sense lines exist (overrides.hpp); 0: none, the feature is inert
+  uint32_t override_debounce_ms = 50U;
 };
 
 // What the hardware layer reports for one unit: cumulative counts of rising edges and the tick of the latest one.
@@ -59,6 +62,7 @@ struct Inputs {
   uint64_t ticks = 0U;   // the supervisor's own counter now
   uint64_t rtc_s = 0U;   // the battery-backed RTC's seconds now (read about once a second)
   std::array<UnitInput, kUnits> unit{};
+  uint8_t overrides = 0U;  // the override sense lines, bit set = engaged (overrides.hpp)
 };
 
 enum class UnitState : uint8_t {
@@ -96,12 +100,16 @@ struct Events {
   bool countdown_started = false;
   bool scrubbed = false;
   bool t0 = false;                         // T-zero happened this step: store `record`
+  uint8_t overrides_changed = 0U;          // override lines whose state changed this step
+  uint8_t launch_blocked = 0U;             // a launch or t0 was refused for these engaged, unacknowledged overrides
+  uint8_t launch_untested = 0U;            // a countdown started with these overrides not yet tested this session (reported, not refused)
   MetRecord record{};
 };
 
 class Supervisor {
  public:
-  explicit Supervisor(SupConfig cfg = {}) noexcept : clock_(ClockConfig{cfg.tick_hz}), cfg_(cfg) {}
+  explicit Supervisor(SupConfig cfg = {}) noexcept
+      : clock_(ClockConfig{cfg.tick_hz}), cfg_(cfg), ov_(cfg.override_fitted, static_cast<uint64_t>(cfg.override_debounce_ms) * cfg.tick_hz / 1000U) {}
 
   [[nodiscard]] bool config_ok() const noexcept { return clock_.config_ok(); }
 
@@ -119,6 +127,7 @@ class Supervisor {
     if (!started_) {
       begin(in);
     }
+    ev.overrides_changed = ov_.sample(in.overrides, in.ticks);
     if (cmd != nullptr) {
       response = execute(*cmd, in, ev);
     }
@@ -161,6 +170,13 @@ class Supervisor {
     }
     put(out, cap, n, launched_ ? "launched" : (counting_ ? "counting down" : "not launched"));
     put(out, cap, n, safe_ ? " SAFE-line-on\n" : "\n");
+    if (ov_.fitted() != 0U) {
+      put(out, cap, n, "overrides engaged=");
+      put_uint(out, cap, n, ov_.engaged());
+      put(out, cap, n, " untested=");
+      put_uint(out, cap, n, ov_.untested());
+      put(out, cap, n, "\n");
+    }
     out[n] = '\0';
     return n;
   }
@@ -171,6 +187,7 @@ class Supervisor {
   [[nodiscard]] uint32_t cycles(Unit u) const noexcept { return cycles_[idx(u)]; }
   [[nodiscard]] int32_t period_ppm(Unit u) const noexcept { return period_ppm_[idx(u)]; }
   [[nodiscard]] bool launched() const noexcept { return launched_; }
+  [[nodiscard]] uint8_t overrides_engaged() const noexcept { return ov_.engaged(); }
   [[nodiscard]] bool counting_down() const noexcept { return counting_; }
   [[nodiscard]] const MissionClock& clock() const noexcept { return clock_; }
   [[nodiscard]] bool warm() const noexcept { return mode_ == Mode::Warm; }
@@ -282,6 +299,11 @@ class Supervisor {
         if (launched_ || counting_) {
           return Response::Refused;
         }
+        if (ov_.unacknowledged() != 0U) {
+          ev.launch_blocked = ov_.unacknowledged();  // an override is engaged and nobody has said that is meant (G5)
+          return Response::Refused;
+        }
+        ev.launch_untested = ov_.untested();
         counting_ = true;
         count_end_ = in.ticks + seconds(cfg_.countdown_s);
         ev.countdown_started = true;
@@ -297,8 +319,15 @@ class Supervisor {
         if (launched_) {
           return Response::Refused;
         }
+        if (ov_.unacknowledged() != 0U) {
+          ev.launch_blocked = ov_.unacknowledged();
+          return Response::Refused;
+        }
         counting_ = false;
         fire_t0(in, ev);
+        return Response::Done;
+      case Kind::OverrideOk:
+        ov_.acknowledge();
         return Response::Done;
       case Kind::Status:
         return Response::Done;
@@ -548,6 +577,7 @@ class Supervisor {
   std::array<int32_t, kUnits> period_ppm_{};
   std::array<MissionWatch, 3> watch_{};
   SupConfig cfg_;
+  OverrideSense ov_;
   std::array<UnitState, kUnits> state_{};
   std::array<bool, kUnits> dead_{};
   std::array<bool, kUnits> window_open_{};

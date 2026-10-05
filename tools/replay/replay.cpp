@@ -443,7 +443,10 @@ int main(int argc, char** argv) {
                                                    {"commands_unauthentic", c.commands_unauthentic},
                                                    {"commands_replayed", c.commands_replayed},
                                                    {"arms_expired", c.arms_expired},
-                                                   {"critical_commands", c.critical_commands}};
+                                                   {"critical_commands", c.critical_commands},
+                                                   {"phase_changes", c.phase_changes},
+                                                   {"below_minimum_frames", c.below_minimum_frames},
+                                                   {"state_restores", c.state_restores}};
   for (const auto& kv : stats) {
     std::printf("%s=%lu\n", kv.first.c_str(), kv.second);
   }
