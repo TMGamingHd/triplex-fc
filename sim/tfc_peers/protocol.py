@@ -134,8 +134,10 @@ def pack_cmd(node: int, pitch_deg: float, yaw_deg: float, digest: int, seq: int)
     return Frame(ID_CMD_BASE + node, seal(bytes(buf), seq))
 
 
-GROUND_OPS = {"reintegrate": 1, "disable": 2, "clear-disabled": 3, "clear-safe": 4, "launch": 5, "scrub": 6}
-NODELESS_OPS = ("clear-safe", "launch", "scrub")  # the node field is ignored
+GROUND_OPS = {"reintegrate": 1, "disable": 2, "clear-disabled": 3, "clear-safe": 4, "launch": 5, "scrub": 6, "phase": 7, "noop": 8, "warm": 9}
+NODELESS_OPS = ("clear-safe", "launch", "scrub", "noop")  # the node field is ignored
+PHASE_OPS = ("phase",)  # the node field is a phase number 0..7 (docs/MISSION_PHASES.md), not a computer
+PHASE_NAMES = ("off", "power-up", "pre-launch", "ascent", "coast", "pre-burn", "burn", "safed")
 GROUND_OP_NAMES = {v: k for k, v in GROUND_OPS.items()}
 ARM_FLAG = 0x80
 

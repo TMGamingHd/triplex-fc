@@ -92,7 +92,9 @@ enum class CommandResult : uint8_t {
   RefusedNotDisabled,  // ClearDisabled for a node that is not disabled
   RefusedBadNode,
   RefusedBadOp,
-  RefusedNotArmed      // a dangerous operation without a matching ARM frame in the arm window (ADR-019)
+  RefusedNotArmed,     // a dangerous operation without a matching ARM frame in the arm window (ADR-019)
+  RefusedPhase,        // a phase change, or a demotion, that would leave fewer voting computers than the phase's minimum (ADR-023)
+  RefusedNotHealthy    // `warm` for a computer that is not a healthy voter
 };
 
 inline const char* state_text(NodeState st) noexcept {
@@ -114,6 +116,9 @@ inline const char* op_text(uint8_t op) noexcept {
     case GroundOp::ClearSafe: return "clear-safe";
     case GroundOp::Launch: return "launch";
     case GroundOp::Scrub: return "scrub";
+    case GroundOp::Phase: return "phase";
+    case GroundOp::Noop: return "noop";
+    case GroundOp::Warm: return "warm";
     default: break;
   }
   return "unknown-op";
@@ -129,6 +134,8 @@ inline const char* result_text(CommandResult r) noexcept {
     case CommandResult::RefusedBadNode: return "refused: no such node";
     case CommandResult::RefusedBadOp: return "refused: no such operation";
     case CommandResult::RefusedNotArmed: return "refused: needs an ARM frame first";
+    case CommandResult::RefusedPhase: return "refused: the mission phase needs more computers";
+    case CommandResult::RefusedNotHealthy: return "refused: node is not a healthy voter";
     default: break;
   }
   return "?";
@@ -215,7 +222,30 @@ struct RedundancyConfig {
   // frames **isolates nobody**: the outputs are held and a Safe request is raised, because nothing in the data says which release is right (the operator names the side to trust).
   bool release_aware = true;
   float version_tol_factor = 1.5F;
+  // ---- mission phases (ADR-023, docs/MISSION_PHASES.md) ----
+  // Off: the manager knows no phase and the interlock tiers of ADR-019 apply (disable: plain while two or more voters are left). On: the manager keeps the phase, set only by the authenticated
+  // `phase` command; a phase change or a demotion that would leave fewer voters than the phase's minimum is refused, one that leaves fewer than its nominal number needs an ARM, and being below
+  // the minimum is reported (an alert, never an automatic abort: "Simplex in ascent alerts only").
+  bool phases = false;
 };
+
+// The phases of the rig scenario and what each wants (docs/MISSION_PHASES.md section 3): the nominal number of voting computers and the minimum.
+namespace phases {
+constexpr uint8_t kOff = 0U;
+constexpr uint8_t kPowerUp = 1U;
+constexpr uint8_t kPreLaunch = 2U;
+constexpr uint8_t kAscent = 3U;
+constexpr uint8_t kCoast = 4U;
+constexpr uint8_t kPreBurn = 5U;
+constexpr uint8_t kBurn = 6U;
+constexpr uint8_t kSafed = 7U;
+constexpr uint8_t kCount = 8U;
+struct Rule {
+  uint8_t nominal;
+  uint8_t minimum;
+};
+constexpr std::array<Rule, kCount> kRules{{{0U, 0U}, {3U, 1U}, {3U, 3U}, {3U, 2U}, {2U, 2U}, {3U, 3U}, {3U, 2U}, {3U, 1U}}};
+}  // namespace phases
 
 // One frame's verdict on a unit on probation (a computer, or with the sensor split a sensor channel).
 enum class Verdict : uint8_t { Clean, Dirty, Neutral };

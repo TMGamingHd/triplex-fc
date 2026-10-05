@@ -225,7 +225,10 @@ enum class GroundOp : uint8_t {
   ClearDisabled = 3,  // maintenance: bring a disabled node back to "latched" with its strikes cleared (always needs an arm)
   ClearSafe = 4,      // lift a sticky Safe request (always needs an arm)
   Launch = 5,         // start the countdown (always needs an arm; the node field is ignored; the sync master acts, docs/LAUNCH_SEQUENCE.md)
-  Scrub = 6           // back to the pad, before T-zero (no arm; the node field is ignored)
+  Scrub = 6,          // back to the pad, before T-zero (no arm; the node field is ignored)
+  Phase = 7,          // change the mission phase (docs/MISSION_PHASES.md): the node field is the phase number 0..7; refused if fewer computers vote than the new phase needs
+  Noop = 8,           // changes nothing and needs no arm: it is answered like any command, so the operator can test the path end to end (TFC-FDIR-043); the node field is ignored
+  Warm = 9            // rest a voting computer as WARM: it is judged by the shadow vote but does not vote; `reintegrate` promotes it again (the interlock tiers of the phase apply)
 };
 constexpr uint8_t kArmFlag = 0x80U;
 

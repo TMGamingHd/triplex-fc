@@ -33,12 +33,27 @@ class GroundCommand:
     def __str__(self) -> str:
         if self.replay:
             return f"{self.frame}:replay"
-        who = "" if self.op in P.NODELESS_OPS else f":{P.NODE_NAMES[self.node]}"
+        if self.op in P.PHASE_OPS:
+            who = f":{P.PHASE_NAMES[self.node]}"
+        else:
+            who = "" if self.op in P.NODELESS_OPS else f":{P.NODE_NAMES[self.node]}"
         prefix = ("arm-" if self.arm else "") + ("forged-" if self.forged else "")
         return f"{self.frame}:{prefix}{self.op}{who}"
 
     def frame_for(self, counter: int, key: bytes | None = None) -> P.Frame:
         return P.pack_ground(P.GROUND_OPS[self.op], self.node, counter, key, self.arm, self.forged)
+
+
+def parse_phase(text: str) -> int:
+    """A mission phase (docs/MISSION_PHASES.md): its number 0..7, `pN`, or its name (power-up, pre-launch, ascent, coast, pre-burn, burn, safed, off)."""
+    t = text.strip().lower()
+    if t in P.PHASE_NAMES:
+        return P.PHASE_NAMES.index(t)
+    if t.startswith("p") and t[1:].isdigit():
+        t = t[1:]
+    if t.isdigit() and int(t) < len(P.PHASE_NAMES):
+        return int(t)
+    raise FaultSpecError(f"unknown phase {text!r} (use 0..7, p0..p7 or one of {', '.join(P.PHASE_NAMES)})")
 
 
 def parse_commands(spec: str) -> list[GroundCommand]:
@@ -69,6 +84,10 @@ def parse_commands(spec: str) -> list[GroundCommand]:
         raise FaultSpecError(f"unknown command {op!r}; known: {', '.join(P.GROUND_OPS)} (optionally prefixed arm-, armed- or forged-)")
     if op in P.NODELESS_OPS:
         node = 0
+    elif op in P.PHASE_OPS:
+        if len(parts) != 3:
+            raise FaultSpecError(f"command {op!r} needs a phase: FRAME:{op}:{'|'.join(P.PHASE_NAMES)} (or 0..7)")
+        node = parse_phase(parts[2])
     else:
         if len(parts) != 3:
             raise FaultSpecError(f"command {op!r} needs a node: FRAME:{op}:A|B|C")

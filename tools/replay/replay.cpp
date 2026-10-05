@@ -12,6 +12,7 @@
 // cross-checks the state digest, runs the stuck detector, and feeds one 3-of-5 ChannelMonitor
 // per node (docs/ARCHITECTURE.md sections 4-5). This tool only reads the log and reports.
 //              [--sensor-split]   judge each IMU's gyro and accelerometer pair apart from its computer (ADR-020 case 1); the summary and the dump then also carry the IMU channels' verdicts
+//              [--phases]         the manager keeps the mission phase and the WARM role (ADR-023): `phase`, `warm` and the interlock tiers of the phase apply; the summary then carries `phase` and `warm`
 //              [--release A=ID,B=ID,C=ID]   the release each computer reports (ADR-021): two that share one and a third that does not make the lone computer's commands subject to the version tolerance
 // Exit status: 0 ok, 1 an --expect-* failed, 2 usage/input error.
 #include <array>
@@ -125,7 +126,7 @@ bool parse_node(const std::string& s, unsigned& node) {
 
 int usage() {
   (void)std::fprintf(stderr,
-               "usage: tfc_replay LOG [--t0 SECONDS] [--first-frame N] [--startup-grace N] [--vote-us US] [--policy manual|auto] [--sensor-split] [--release A=ID,B=ID,C=ID] [--verbose] [--dump CSV]\n"
+               "usage: tfc_replay LOG [--t0 SECONDS] [--first-frame N] [--startup-grace N] [--vote-us US] [--policy manual|auto] [--sensor-split] [--phases] [--release A=ID,B=ID,C=ID] [--verbose] [--dump CSV]\n"
                "                      [--expect-latch NODE:FRAME|NODE:MIN-MAX]\n"
                "                      [--expect-no-latch NODE] [--expect-state NODE:STATE] [--expect-mode MODE]\n"
                "                      [--expect-min STAT:N]\n");
@@ -167,6 +168,8 @@ int main(int argc, char** argv) {
       }
     } else if (a == "--sensor-split") {
       cfg.sensor_split = true;
+    } else if (a == "--phases") {
+      cfg.phases = true;
     } else if (a == "--release" && has_val) {
       release_spec = argv[++i];
     } else if (a == "--dump" && has_val) {
@@ -285,6 +288,7 @@ int main(int argc, char** argv) {
   std::array<long, tfc::kNodes> sensor_latch_frame{-1, -1, -1};  // the IMU channels (with --sensor-split; otherwise they mirror the computers)
   tfc::Mode mode = tfc::Mode::Triplex;
   unsigned healthy = tfc::kNodes;
+  uint8_t last_warm = 0U;  // the WARM computers of the last frame (--phases)
   bool prev_safe_request = false;
   bool prev_bus_alarm = false;
   for (std::size_t k = 0; k < frames.size(); ++k) {
@@ -299,6 +303,7 @@ int main(int argc, char** argv) {
     const tfc::FrameReport& rep = mgr.end_frame();
     mode = rep.mode;
     healthy = rep.healthy;
+    last_warm = rep.warm_mask;
     if (verbose) {
       if (rep.safe_request != prev_safe_request) {
         std::printf("frame %zu: SAFE REQUEST %s (disagreement nobody can be blamed for)\n", k,
@@ -337,8 +342,14 @@ int main(int argc, char** argv) {
     if (verbose) {
       for (unsigned i = 0; i < rep.command_count; ++i) {
         const tfc::CommandEvent& ce = rep.commands[i];
-        std::printf("frame %zu: ground command %s%s %c: %s%s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "",
-                    tfc::op_text(ce.op), static_cast<char>('A' + ce.node), tfc::result_text(ce.result),
+        char who[8] = "";  // a computer, or for `phase` the phase number; `noop` and the nodeless ones name nobody
+        if (ce.op == static_cast<uint8_t>(tfc::GroundOp::Phase)) {
+          (void)std::snprintf(who, sizeof who, " P%u", static_cast<unsigned>(ce.node));
+        } else if (ce.op != static_cast<uint8_t>(tfc::GroundOp::Noop)) {
+          (void)std::snprintf(who, sizeof who, " %c", static_cast<char>('A' + ce.node));
+        }
+        std::printf("frame %zu: ground command %s%s%s: %s%s\n", k, (ce.flags & tfc::cmdflag::kArm) != 0U ? "ARM " : "",
+                    tfc::op_text(ce.op), who, tfc::result_text(ce.result),
                     (ce.flags & tfc::cmdflag::kCritical) != 0U ? "  *** CRITICAL: the last voting node was removed ***" : "");
       }
       for (unsigned n = 0; n < tfc::kNodes; ++n) {
@@ -400,6 +411,9 @@ int main(int argc, char** argv) {
       }
       std::printf("sstate.%c=%s\nsstrikes.%c=%u\n", static_cast<char>('A' + n), tfc::state_text(mgr.sensor_state(n)), static_cast<char>('A' + n), mgr.sensor_strikes(n));
     }
+  }
+  if (cfg.phases) {
+    std::printf("phase=%u\nwarm=0x%x\nbelow_minimum_frames=%u\n", static_cast<unsigned>(mgr.mission_phase()), static_cast<unsigned>(last_warm), static_cast<unsigned>(mgr.counters().below_minimum_frames));
   }
   std::printf("healthy=%u\nmode=%s\n", healthy, mode_name(mode));
   for (unsigned n = 0; n < tfc::kNodes; ++n) {

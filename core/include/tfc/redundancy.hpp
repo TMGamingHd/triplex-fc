@@ -192,6 +192,7 @@ namespace detail {
   mix(c.persist_n);
   mix(c.digest_persist_frames);
   mix(c.release_aware ? 1U : 0U);
+  mix(c.phases ? 1U : 0U);
   mix(bits(c.version_tol_factor));
   mix(c.stuck_limit);
   mix(bits(c.alpha_k));
@@ -247,6 +248,8 @@ struct Counters {
   uint32_t commands_replayed = 0;     // ground frames with a stale or repeated counter (dropped silently)
   uint32_t arms_expired = 0;          // ARM frames that were never followed by their EXECUTE in time
   uint32_t critical_commands = 0;     // commands that removed the last voting node
+  uint32_t phase_changes = 0;         // phase commands that changed the phase
+  uint32_t below_minimum_frames = 0;  // frames spent with fewer voters than the phase's minimum
 };
 
 struct FrameReport {
@@ -293,6 +296,10 @@ struct FrameReport {
   Mode sensor_mode = Mode::Safe;                 // from the number of healthy IMU channels (never Safe on a request: that is the computers' mode)
   // ---- releases (ADR-021) ----
   bool release_split = false;                    // the lone computer of another release disagreed with the pair beyond the version tolerance in this frame (nobody is blamed)
+  // ---- phases and roles (ADR-023) ----
+  uint8_t phase = 0U;                            // the mission phase (0 when cfg.phases is off)
+  uint8_t warm_mask = 0U;                        // computers resting as WARM: running and shadow-voted, not voting (a subset of probation_mask)
+  bool below_minimum = false;                    // fewer healthy voters than the phase's minimum: an alert only
 };
 
 class RedundancyManager {
@@ -309,6 +316,7 @@ class RedundancyManager {
         alpha_{AlphaCount(cfg_.alpha_k, cfg_.alpha_threshold), AlphaCount(cfg_.alpha_k, cfg_.alpha_threshold),
                AlphaCount(cfg_.alpha_k, cfg_.alpha_threshold)},
         sensors_(cfg_) {
+    mission_phase_.set(phases::kPowerUp);
     for (GuardedByte& g : st_) {
       g.set(static_cast<uint8_t>(NodeState::Healthy));
     }
@@ -439,6 +447,14 @@ class RedundancyManager {
         }
         clear_safe_request();
         break;
+      case GroundOp::Phase:
+        r = cmd_phase(node);  // (the node field is the phase number)
+        break;
+      case GroundOp::Warm:
+        r = cmd_warm(node);
+        break;
+      case GroundOp::Noop:  // nothing changes; it is answered like the others (TFC-FDIR-043)
+        break;
       case GroundOp::Launch:  // the manager does not own the mission clock: the firmware acts on the reported event (the sync master, after the go/no-go)
       case GroundOp::Scrub:
         break;
@@ -467,6 +483,9 @@ class RedundancyManager {
   [[nodiscard]] unsigned strikes(unsigned node) const noexcept { return node < kNodes ? strikes_[node] : 0U; }
   // Out of the vote for any reason (latched, on probation, or disabled).
   [[nodiscard]] bool latched(unsigned node) const noexcept { return node < kNodes && state_of(node) != NodeState::Healthy; }
+  // The mission phase (0 when phases are off), the computers resting as WARM, and what the phase wants.
+  [[nodiscard]] uint8_t mission_phase() const noexcept { return cfg_.phases ? phase_checked() : phases::kOff; }
+  [[nodiscard]] bool warm(unsigned node) const noexcept { return node < kNodes && ((warm_ >> node) & 1U) != 0U && state_of(node) == NodeState::Probation; }
   [[nodiscard]] bool permanent(unsigned node) const noexcept { return node < kNodes && state_of(node) == NodeState::Disabled; }
   // An IMU channel's state and strikes (with the split off, the computer's: an IMU is not judged apart from its computer).
   [[nodiscard]] NodeState sensor_state(unsigned k) const noexcept { return cfg_.sensor_split ? sensors_.state(k) : state(k); }
@@ -653,6 +672,16 @@ class RedundancyManager {
     if (cfg_.sensor_split && sensors_.scrub()) {
       mask = static_cast<uint8_t>(mask | 1U);  // an IMU channel's state failed its check: excluded, like a computer's
     }
+    if (!mission_phase_.intact() || mission_phase_.get() >= phases::kCount) {
+      mission_phase_.set(phases::kSafed);  // an unknown phase is the one with the most forgiving minimum and the operator's choice of the way back
+      mask = static_cast<uint8_t>(mask | 32U);
+    }
+    for (unsigned n = 0; n < kNodes; ++n) {
+      if (((warm_ >> n) & 1U) != 0U && state_of(n) != NodeState::Probation) {
+        warm_ = static_cast<uint8_t>(warm_ & ~(1U << n));  // a WARM bit on a computer that is not resting is a flipped bit
+        mask = static_cast<uint8_t>(mask | 1U);
+      }
+    }
     if (!safe_.intact() || safe_.get() > 1U) {
       safe_.set(1U);
       mask = static_cast<uint8_t>(mask | 2U);
@@ -747,31 +776,40 @@ class RedundancyManager {
   struct Needs {
     bool arm = false;
     bool critical = false;
+    bool refuse = false;  // would leave fewer voters than the phase's minimum (ADR-023)
   };
   Needs needs_arm(GroundOp op, unsigned node) const noexcept {
     Needs n;
     if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe || op == GroundOp::Launch) {
       n.arm = true;  // both undo a protective action
-    } else if (op == GroundOp::Disable) {
+    } else if (op == GroundOp::Disable || op == GroundOp::Warm) {
       const bool sensor = node >= kSensorBase;
       if (sensor ? sensors_.healthy(node - kSensorBase) : state_of(node) == NodeState::Healthy) {
         const unsigned healthy = sensor ? sensors_.count_healthy() : count_in_state(NodeState::Healthy);
         n.arm = healthy <= 2U;       // Triplex -> Duplex is plain; Duplex -> Simplex and Simplex -> nothing are not
         n.critical = healthy <= 1U;  // the last voter
+        if (!sensor && (cfg_.phases || op == GroundOp::Warm)) {
+          // The tiers of the phase (docs/MISSION_PHASES.md section 4): plain while the nominal number stays, an ARM below it, refused below the minimum. Without phases a WARM
+          // rest keeps the tiers of ADR-019 and never takes the last voter.
+          const phases::Rule rule = cfg_.phases ? phases::kRules[phase_checked()] : phases::Rule{2U, 1U};
+          n.arm = healthy - 1U < rule.nominal;
+          n.refuse = healthy - 1U < rule.minimum;
+        }
       }
     }
     return n;
   }
 
   CommandResult apply_ground(const DecodedGround& d, uint8_t& flags) noexcept {
-    if (d.op < static_cast<uint8_t>(GroundOp::Reintegrate) || d.op > static_cast<uint8_t>(GroundOp::Scrub)) {
+    if (d.op < static_cast<uint8_t>(GroundOp::Reintegrate) || d.op > static_cast<uint8_t>(GroundOp::Warm)) {
       ++counters_.commands_refused;
       return CommandResult::RefusedBadOp;
     }
     const GroundOp op = static_cast<GroundOp>(d.op);
-    const unsigned node = (op == GroundOp::ClearSafe || op == GroundOp::Launch || op == GroundOp::Scrub) ? 0U : d.node;
-    const bool imu_op = cfg_.sensor_split && node >= kSensorBase && node < kSensorBase + kNodes;  // (the other operations were given node 0 above)
-    if (node >= kNodes && !imu_op) {
+    const unsigned node = (op == GroundOp::ClearSafe || op == GroundOp::Launch || op == GroundOp::Scrub || op == GroundOp::Noop) ? 0U : d.node;
+    const bool is_phase = op == GroundOp::Phase;  // its node field is a phase number, not a node
+    const bool imu_op = cfg_.sensor_split && !is_phase && node >= kSensorBase && node < kSensorBase + kNodes;  // (the other operations were given node 0 above)
+    if (is_phase ? node >= phases::kCount : (node >= kNodes && !imu_op)) {
       ++counters_.commands_refused;
       return CommandResult::RefusedBadNode;
     }
@@ -783,6 +821,10 @@ class RedundancyManager {
       return CommandResult::Accepted;
     }
     const Needs need = needs_arm(op, node);
+    if (need.refuse) {
+      ++counters_.commands_refused;
+      return CommandResult::RefusedPhase;
+    }
     if (need.arm) {
       if (!armed_for(op, node)) {
         ++counters_.commands_refused;
@@ -811,12 +853,56 @@ class RedundancyManager {
     if (st == NodeState::Healthy) {
       return CommandResult::RefusedNotLatched;
     }
+    if (st == NodeState::Probation && warm(node)) {
+      warm_ = static_cast<uint8_t>(warm_ & ~(1U << node));  // promoted: the probation, which it has been serving all along, now completes
+      return CommandResult::Accepted;
+    }
     if (st == NodeState::Probation || req_[node]) {
       return CommandResult::AlreadyDone;
     }
     req_[node] = true;
     return CommandResult::Accepted;
   }
+
+  // Rest a voting computer as WARM: out of the vote, judged by the shadow vote every frame, kept there until promoted (ADR-023).
+  CommandResult cmd_warm(unsigned node) noexcept {
+    if (node >= kNodes) {
+      return CommandResult::RefusedBadNode;
+    }
+    if (warm(node)) {
+      return CommandResult::AlreadyDone;
+    }
+    if (state_of(node) != NodeState::Healthy) {
+      return CommandResult::RefusedNotHealthy;
+    }
+    set_state(node, NodeState::Probation);
+    warm_ = static_cast<uint8_t>(warm_ | (1U << node));
+    probation_clean_[node] = 0U;
+    req_[node] = false;
+    return CommandResult::Accepted;
+  }
+
+  // A phase change (the node field of the command is the phase). Only with phases on; refused if fewer computers vote than the new phase's minimum.
+  CommandResult cmd_phase(unsigned p) noexcept {
+    if (!cfg_.phases) {
+      return CommandResult::RefusedBadOp;
+    }
+    if (p >= phases::kCount) {
+      return CommandResult::RefusedBadNode;
+    }
+    if (p == phase_checked()) {
+      return CommandResult::AlreadyDone;
+    }
+    if (count_in_state(NodeState::Healthy) < phases::kRules[p].minimum) {
+      return CommandResult::RefusedPhase;
+    }
+    mission_phase_.set(static_cast<uint8_t>(p));
+    ++counters_.phase_changes;
+    return CommandResult::Accepted;
+  }
+
+  // The phase as stored; a damaged value is repaired by scrub() before it is used, and reads as the safest phase in between.
+  [[nodiscard]] uint8_t phase_checked() const noexcept { return (mission_phase_.intact() && mission_phase_.get() < phases::kCount) ? mission_phase_.get() : phases::kSafed; }
 
   CommandResult cmd_disable(unsigned node) noexcept {
     if (node >= kNodes) {
@@ -827,6 +913,7 @@ class RedundancyManager {
     }
     set_state(node, NodeState::Disabled);
     req_[node] = false;
+    warm_ = static_cast<uint8_t>(warm_ & ~(1U << node));
     ++counters_.nodes_disabled;
     disabled_by_command_ = static_cast<uint8_t>(disabled_by_command_ | (1U << node));
     return CommandResult::Accepted;
@@ -1144,6 +1231,12 @@ class RedundancyManager {
       }
     }
     rep.mode = rep.safe_request ? Mode::Safe : mode_from_healthy(rep.healthy);
+    rep.phase = mission_phase();
+    rep.warm_mask = static_cast<uint8_t>(warm_ & rep.probation_mask);
+    rep.below_minimum = cfg_.phases && rep.healthy < phases::kRules[phase_checked()].minimum;
+    if (rep.below_minimum) {
+      ++counters_.below_minimum_frames;
+    }
     if (cfg_.sensor_split) {
       const SensorHealth::Report& sr = sensor_report_;
       rep.sensor_reason = sr.reason;
@@ -1297,6 +1390,7 @@ class RedundancyManager {
     }
     if (v == Verdict::Dirty) {
       set_state(n, NodeState::Latched);  // thrown back: dwell starts again, a new request is needed
+      warm_ = static_cast<uint8_t>(warm_ & ~(1U << n));  // a WARM computer that fails the shadow vote is a faulty one, not a resting one
       dwell_[n] = 0U;
       dwell_hold_ = static_cast<uint8_t>(dwell_hold_ | (1U << n));
       req_[n] = false;
@@ -1307,7 +1401,9 @@ class RedundancyManager {
       ++counters_.probation_failures;
     } else if (v == Verdict::Clean) {
       const unsigned needed = strikes_[n] >= 2U ? cfg_.probation_frames_repeat : cfg_.probation_frames;
-      if (++probation_clean_[n] >= needed) {
+      if (++probation_clean_[n] >= needed && warm(n)) {
+        probation_clean_[n] = static_cast<uint16_t>(needed);  // a WARM computer has proved itself and stays ready: it votes again when it is promoted
+      } else if (probation_clean_[n] >= needed) {
         set_state(n, NodeState::Healthy);
         mon_[n].force_unlatch();
         alpha_[n].reset();
@@ -1431,6 +1527,8 @@ class RedundancyManager {
   std::array<bool, kNodes> seen_{};
   std::array<GuardedByte, kNodes> st_{};            // NodeState, stored with its complement
   GuardedByte safe_{};                              // Safe requested (0/1), stored with its complement
+  GuardedByte mission_phase_{};                     // the mission phase (ADR-023), stored with its complement
+  uint8_t warm_ = 0U;                               // computers resting as WARM (on probation, held there until promoted)
   std::array<uint8_t, kNodes> strikes_{};
   std::array<uint8_t, kNodes> latch_cause_{};
   std::array<uint8_t, kNodes> attempts_{};          // probations that failed since the last latch

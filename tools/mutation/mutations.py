@@ -51,7 +51,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "dwell_counts_command_frame": ("redundancy.hpp", "    dwell_hold_ = static_cast<uint8_t>(dwell_hold_ | (1U << node));  // the frame of the command is not part of the dwell\n", ""),
     "dwell_counts_failure_frame": ("redundancy.hpp", "      dwell_[n] = 0U;\n      dwell_hold_ = static_cast<uint8_t>(dwell_hold_ | (1U << n));\n      req_[n] = false;\n      if (attempts_", "      dwell_[n] = 0U;\n      req_[n] = false;\n      if (attempts_"),
     # ---- commands ----
-    "disable_command_ignored": ("redundancy.hpp", "    set_state(node, NodeState::Disabled);\n    req_[node] = false;\n    ++counters_.nodes_disabled;", "    req_[node] = false;\n    ++counters_.nodes_disabled;"),
+    "disable_command_ignored": ("redundancy.hpp", "    set_state(node, NodeState::Disabled);\n    req_[node] = false;\n    warm_ = static_cast<uint8_t>(warm_ & ~(1U << node));\n    ++counters_.nodes_disabled;", "    req_[node] = false;\n    warm_ = static_cast<uint8_t>(warm_ & ~(1U << node));\n    ++counters_.nodes_disabled;"),
     "clear_disabled_keeps_strikes": ("redundancy.hpp", "    strikes_[node] = 0U;\n    dwell_[node] = 0U;", "    dwell_[node] = 0U;"),
     "readmit_not_reported": ("redundancy.hpp", "        rep.newly_reintegrated = static_cast<uint8_t>(rep.newly_reintegrated | (1U << n));\n", "\n"),
     "disabled_not_reported": ("redundancy.hpp", "      rep.newly_disabled = static_cast<uint8_t>(rep.newly_disabled | (1U << n));\n      ++counters_.nodes_disabled;", "      ++counters_.nodes_disabled;"),
@@ -332,6 +332,38 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "t0_window_one_frame_short": ("sync_clock.hpp", "if (mission::frames_to_zero(mission_) > kT0Window) {", "if (mission::frames_to_zero(mission_) >= kT0Window) {"),
     "t0_one_frame_early": ("sync_clock.hpp", "mission_ = static_cast<uint16_t>(mission::kCountdownFrames + 1U);\n    return T0::Latched;", "mission_ = static_cast<uint16_t>(mission::kCountdownFrames);\n    return T0::Latched;"),
     "t0_early_edge_not_reported": ("sync_clock.hpp", "return T0::TooEarly;", "return T0::None;"),
+    "ph_phase_op_without_phases": ("redundancy.hpp", "if (!cfg_.phases) {\n      return CommandResult::RefusedBadOp;", "if (false) {\n      return CommandResult::RefusedBadOp;"),
+    "ph_phase_range_open": ("redundancy.hpp", "if (p >= phases::kCount) {", "if (p > phases::kCount) {"),
+    "ph_minimum_ignored_on_change": ("redundancy.hpp", "if (count_in_state(NodeState::Healthy) < phases::kRules[p].minimum) {", "if (false) {"),
+    "ph_minimum_off_by_one": ("redundancy.hpp", "if (count_in_state(NodeState::Healthy) < phases::kRules[p].minimum) {", "if (count_in_state(NodeState::Healthy) <= phases::kRules[p].minimum) {"),
+    "ph_same_phase_is_a_change": ("redundancy.hpp", "if (p == phase_checked()) {", "if (false) {"),
+    "ph_changes_not_counted": ("redundancy.hpp", "    ++counters_.phase_changes;\n", "\n"),
+    "ph_starts_in_the_wrong_phase": ("redundancy.hpp", "mission_phase_.set(phases::kPowerUp);\n    for", "mission_phase_.set(phases::kOff);\n    for"),
+    "ph_tier_nominal_ignored": ("redundancy.hpp", "n.arm = healthy - 1U < rule.nominal;", "n.arm = healthy <= 2U;"),
+    "ph_tier_minimum_ignored": ("redundancy.hpp", "n.refuse = healthy - 1U < rule.minimum;", "n.refuse = false;"),
+    "ph_tier_minimum_off_by_one": ("redundancy.hpp", "n.refuse = healthy - 1U < rule.minimum;", "n.refuse = healthy - 1U <= rule.minimum;"),
+    "ph_disable_keeps_the_old_tiers": ("redundancy.hpp", "if (!sensor && (cfg_.phases || op == GroundOp::Warm)) {", "if (!sensor && op == GroundOp::Warm) {"),
+    "ph_warm_follows_the_phase_only": ("redundancy.hpp", "if (!sensor && (cfg_.phases || op == GroundOp::Warm)) {", "if (!sensor && cfg_.phases) {"),
+    "ph_refusal_not_applied": ("redundancy.hpp", "    if (need.refuse) {", "    if (false) {"),
+    "ph_promotion_does_not_release_the_rest": ("redundancy.hpp", "warm_ = static_cast<uint8_t>(warm_ & ~(1U << node));  // promoted", "warm_ = warm_;  // promoted"),
+    "ph_warm_promotes_itself": ("redundancy.hpp", "if (++probation_clean_[n] >= needed && warm(n)) {", "if (++probation_clean_[n] >= needed && false) {"),
+    "ph_failed_warm_keeps_the_rest": ("redundancy.hpp", "      warm_ = static_cast<uint8_t>(warm_ & ~(1U << n));  // a WARM computer that fails the shadow vote is a faulty one, not a resting one\n", ""),
+    "ph_disable_keeps_the_rest": ("redundancy.hpp", "    warm_ = static_cast<uint8_t>(warm_ & ~(1U << node));\n    ++counters_.nodes_disabled;", "    ++counters_.nodes_disabled;"),
+    "ph_warm_of_a_computer_not_healthy": ("redundancy.hpp", "if (state_of(node) != NodeState::Healthy) {\n      return CommandResult::RefusedNotHealthy;", "if (false) {\n      return CommandResult::RefusedNotHealthy;"),
+    "ph_warm_twice_is_not_already_done": ("redundancy.hpp", "    if (warm(node)) {\n      return CommandResult::AlreadyDone;\n    }\n    if (state_of(node) != NodeState::Healthy) {", "    if (state_of(node) != NodeState::Healthy) {"),
+    "ph_warm_keeps_the_old_count": ("redundancy.hpp", "    warm_ = static_cast<uint8_t>(warm_ | (1U << node));\n    probation_clean_[node] = 0U;\n", "    warm_ = static_cast<uint8_t>(warm_ | (1U << node));\n"),
+    "ph_noop_unknown": ("redundancy.hpp", "      case GroundOp::Noop:  // nothing changes; it is answered like the others (TFC-FDIR-043)\n        break;\n", ""),
+    "ph_noop_node_checked": ("redundancy.hpp", "|| op == GroundOp::Noop) ? 0U : d.node;", ") ? 0U : d.node;"),
+    "ph_phase_number_checked_as_node": ("redundancy.hpp", "is_phase ? node >= phases::kCount : (node >= kNodes && !imu_op)", "(node >= kNodes && !imu_op)"),
+    "ph_below_minimum_never_reported": ("redundancy.hpp", "rep.below_minimum = cfg_.phases && rep.healthy < phases::kRules[phase_checked()].minimum;", "rep.below_minimum = false;"),
+    "ph_below_minimum_off_by_one": ("redundancy.hpp", "rep.below_minimum = cfg_.phases && rep.healthy < phases::kRules[phase_checked()].minimum;", "rep.below_minimum = cfg_.phases && rep.healthy <= phases::kRules[phase_checked()].minimum;"),
+    "ph_below_minimum_not_counted": ("redundancy.hpp", "      ++counters_.below_minimum_frames;\n", "\n"),
+    "ph_scrub_ignores_unknown_phase": ("redundancy.hpp", "if (!mission_phase_.intact() || mission_phase_.get() >= phases::kCount) {", "if (!mission_phase_.intact()) {"),
+    "ph_scrub_keeps_stray_warm_bits": ("redundancy.hpp", "        warm_ = static_cast<uint8_t>(warm_ & ~(1U << n));  // a WARM bit on a computer that is not resting is a flipped bit\n", ""),
+    "ph_warm_mask_not_reported": ("redundancy.hpp", "rep.warm_mask = static_cast<uint8_t>(warm_ & rep.probation_mask);", "rep.warm_mask = 0U;"),
+    "ph_phase_not_in_the_digest": ("redundancy.hpp", "  mix(c.phases ? 1U : 0U);\n", ""),
+    "ph_reintegrate_of_a_warm_one_refused": ("redundancy.hpp", "    if (st == NodeState::Probation && warm(node)) {", "    if (false) {"),
+    "ph_unknown_phase_reads_as_pre_launch": ("redundancy.hpp", "phase_checked() const noexcept { return (mission_phase_.intact() && mission_phase_.get() < phases::kCount) ? mission_phase_.get() : phases::kSafed; }", "phase_checked() const noexcept { return (mission_phase_.intact() && mission_phase_.get() < phases::kCount) ? mission_phase_.get() : phases::kPreLaunch; }"),
     "su_rtc_century_leap_rule": ("sup/rtc.hpp", "return (y % 4U == 0U && y % 100U != 0U) || y % 400U == 0U;", "return y % 4U == 0U;"),
     "su_rtc_oscillator_stop_ignored": ("sup/rtc.hpp", "if ((status & 0x80U) != 0U) {", "if (false) {"),
     "su_rtc_twelve_hour_mode_accepted": ("sup/rtc.hpp", "if ((r[2] & 0x40U) != 0U) {", "if (false) {"),
@@ -345,7 +377,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
 # distinguishes them from the real code.
 CAMPAIGN_SKIP = {
     # the supervisor's code is not in the campaign's reach (the campaign drives the flight bus)
-    *(n for n in MUTATIONS if n.startswith(("sup_", "rs_", "sh_", "split_", "su_", "rel_", "t0_"))),  # the supervisor, the resynchronisation and the sensor split are not in the campaign's reach (it runs the manager with the split off)
+    *(n for n in MUTATIONS if n.startswith(("sup_", "rs_", "sh_", "split_", "su_", "rel_", "t0_", "ph_"))),  # the supervisor, the resynchronisation and the sensor split are not in the campaign's reach (it runs the manager with the split off)
     # the launch sequence is not in the campaign's reach (its peers send no mission frame and no launch command)
     "mission_follower_ignores_sync_before_t_zero", "mission_flying_follower_adopts_sync", "mission_disagreement_not_reported", "mission_not_counted_through_a_gap", "mission_count_wraps_at_the_largest_value", "launch_by_a_follower", "launch_twice", "scrub_after_t_zero", "scrub_by_a_follower", "mission_countdown_boundary", "mission_flight_frames_off_by_one", "gate_accepts_two_healthy_nodes", "gate_accepts_a_node_not_ready", "gate_ignores_the_safe_request", "gate_ignores_act", "launch_needs_no_arm", "heartbeat_ready_not_packed",
     # the pad phase is not in the campaign's reach (its peers do not run the flight function)
