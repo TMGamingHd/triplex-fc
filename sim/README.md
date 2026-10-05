@@ -175,6 +175,19 @@ accepted (the first command after a restart is accepted whatever its counter); i
 computer keeps running, restart it or pass `--counter` above its last one. It is the interactive twin of `--command`; use
 `--command` when the command must land in an exact frame.
 
+### `python3 -m tfc_peers launch`: the launch checklist, automated
+Watches the bus (the flight computers' heartbeats, ACT's output, SYNC's mission frame), shows the go/no-go once a second, and when every item holds sends the launch (an authenticated ARM, then the EXECUTE) and runs the countdown. It exits **0 at T-zero**, 1 on a no-go or `--check`, 2 on a scrub, 3 if the command was not accepted, 4 if the countdown never completed. It asks you to type `LAUNCH` first unless `--yes`. The human checklist that goes with it is `docs/procedures/P-S2-02-launch-checklist.md`; the design is `docs/LAUNCH_SEQUENCE.md`.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--iface IFACE` | `vcan0` | SocketCAN interface. |
+| `--wait SECONDS` | `60` | How long to wait for a go before giving up (a no-go, exit 1, with the reasons). |
+| `--check` | off | Only report the go/no-go once and exit (0 go, 1 no-go); sends nothing. |
+| `--yes` | off | Do not ask for the typed confirmation. |
+| `--counter N` | the next one | Command counter of the ARM frame, as for `command`. |
+
+A scrub is `python3 -m tfc_peers command scrub` (before T-zero only); `command launch --arm` sends the launch by hand.
+
 ### `python3 -m tfc_peers pico OP [OPERANDS]`: the Pico (platform driver and fault injector) over USB serial
 Talks to the board of `docs/PICO.md`; needs `pyserial` (`pip install pyserial`) and a Pico running `firmware/pico`. Each call sends one command and prints the board's status.
 

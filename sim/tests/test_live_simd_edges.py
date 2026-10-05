@@ -66,6 +66,68 @@ class SimdEdges(unittest.TestCase):
         self.assertGreater(seen, 10)
         self.assertIsNone(self.proc.poll())
 
+    def test_with_hold_the_vehicle_waits_for_t_zero_and_a_late_simulator_joins_the_flight(self):
+        self.proc.terminate()
+        self.proc.wait(timeout=5)
+        self.proc = subprocess.Popen([SIMD, "--iface", "vcan0", "--hold", "--quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.3)
+        flags_mon = B.SocketCanBus("vcan0")
+        flags_mon.set_filter([(P.ID_SIM_FLAGS, 0x7FF)])
+        try:
+            def last_time_frames(seconds):
+                best = None
+                end = time.monotonic() + seconds
+                while time.monotonic() < end:
+                    f = flags_mon.recv(0.05)
+                    if f is not None and (s := P.unpack_sim_flags(f)) is not None:
+                        best = s.time_frames
+                return best
+            # on the pad (mission 0): flight time stays 0
+            for k in range(0, 40):
+                self.bus.send(0, P.pack_sync(k, k & 0xFF, 0))
+                time.sleep(0.002)
+                self.bus.send(0, P.pack_act_out(P.ActOut(state=1), k & 0xFF))
+                time.sleep(0.008)
+            self.assertEqual(last_time_frames(0.1), 0)
+            # T-zero: the mission frame reaches 1001 and the clamps open
+            for i in range(60):
+                k = 40 + i
+                self.bus.send(0, P.pack_sync(k, k & 0xFF, 1001 + i))
+                time.sleep(0.002)
+                self.bus.send(0, P.pack_act_out(P.ActOut(state=1), k & 0xFF))
+                time.sleep(0.008)
+            self.assertGreater(last_time_frames(0.1), 40)
+        finally:
+            flags_mon.close()
+        # a simulator that starts after T-zero joins at the flight age the mission frame says (here 2000 frames of flight at frame 9000)
+        self.proc.terminate()
+        self.proc.wait(timeout=5)
+        self.proc = subprocess.Popen([SIMD, "--iface", "vcan0", "--hold", "--quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.3)
+        mon = B.SocketCanBus("vcan0")
+        mon.set_filter([(P.ID_SIM_FLAGS, 0x7FF)])
+        try:
+            got = None
+            for i in range(400):
+                k = 9000 + i
+                self.bus.send(0, P.pack_sync(k, k & 0xFF, 1001 + 2000 + i))
+                time.sleep(0.002)
+                self.bus.send(0, P.pack_act_out(P.ActOut(state=1), k & 0xFF))
+                time.sleep(0.008)
+                f = mon.recv(0.0)
+                while f is not None:
+                    s = P.unpack_sim_flags(f)
+                    if s is not None:
+                        got = s.time_frames
+                    f = mon.recv(0.0)
+                if got is not None and got >= 2000:
+                    break
+            self.assertIsNotNone(got)
+            self.assertGreaterEqual(got, 2000)
+            self.assertLess(got, 2400)
+        finally:
+            mon.close()
+
     def test_without_acts_frames_the_simulator_holds_and_keeps_going(self):
         self.assertGreater(self.send_frames(range(0, 100), act=False), 80)  # a sensor frame for every SYNC, from the held command
         self.assertIsNone(self.proc.poll())

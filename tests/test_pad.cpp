@@ -235,3 +235,16 @@ TFC_TEST(closed_loop_a_pad_removes_the_lift_off_transient_of_a_misaligned_engine
   const sim::Result d = sim::run(vehicle);
   CHECK(c.max_deg_settled > 5.0 && d.max_deg_settled < 2.0);
 }
+
+TFC_TEST(runner_a_simulator_started_after_t_zero_joins_the_flight_in_progress) {
+  sim::SimRunner runner;
+  (void)runner.start_in_flight(4000U, 500U);  // SYNC says frame 4000, 500 frames after T-zero
+  CHECK(!runner.clamped() && runner.flight_frame() == 500U && runner.frame() == 4000U);
+  CHECK(runner.vehicle().altitude() > 10.0 && runner.vehicle().time() > 4.9);  // it has flown five seconds with the gimbal neutral
+  const tfc::ActFrame neutral;
+  const sim::SimFrames f = runner.end_of_frame(4000U, &neutral);
+  CHECK(runner.flight_frame() == 501U && f.n >= 2U);
+  sim::SimRunner early;  // a system frame number smaller than the flight age is possible (the numbering restarted): no underflow
+  (void)early.start_in_flight(10U, 500U);
+  CHECK(early.flight_frame() == 500U);
+}

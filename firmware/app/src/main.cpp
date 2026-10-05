@@ -19,7 +19,10 @@
 
 #include "sim_imu.hpp"
 #include "flight_tables.hpp"
+#include "tfc/act.hpp"
 #include "tfc/flight.hpp"
+#include "tfc/imu_calibration.hpp"
+#include "tfc/launch_gate.hpp"
 #include "tfc/progress.hpp"
 #include "tfc/protocol.hpp"
 #include "tfc/redundancy.hpp"
@@ -37,6 +40,7 @@ constexpr unsigned kNodeId = CONFIG_TFC_NODE_ID;
 BUILD_ASSERT(kNodeId <= 2U, "the node id is 0 (A), 1 (B) or 2 (C)");
 constexpr bool kFlightFunction = IS_ENABLED(CONFIG_TFC_FLIGHT_FUNCTION);
 constexpr bool kSimBusImu = IS_ENABLED(CONFIG_TFC_SIM_BUS_IMU);
+constexpr bool kLaunch = IS_ENABLED(CONFIG_TFC_LAUNCH_SEQUENCE);
 
 constexpr int64_t kSampleUs = 500;   // the IMU sample is latched here (ARCHITECTURE section 3) ...
 constexpr int64_t kGyroUs = 1500;     // ... and sent here
@@ -74,6 +78,7 @@ CAN_MSGQ_DEFINE(rx_sim_msgq, 8);   // the simulator's sensor inputs (0x501, 0x50
 
 // Statics, not locals: the flight function holds the tables and the filter state, about a kilobyte.
 tfc::FlightFunction g_flight;
+tfc::ImuCalibrator g_cal;  // this computer's own IMU, calibrated on the pad (docs/LAUNCH_SEQUENCE.md)
 
 void sleep_until_us(int64_t base_ticks, int64_t offset_us) {
   k_sleep(K_TIMEOUT_ABS_TICKS(base_ticks + k_us_to_ticks_ceil64(offset_us)));
@@ -247,6 +252,14 @@ int main() {
   bool last_safe_request = false;
   uint32_t tx_errors = 0;
   uint32_t sync_missed_total = 0;
+  // launch sequence state: what the peers and ACT last said, and the mission frame last seen
+  std::array<uint32_t, 3> hb_seen{};
+  std::array<bool, 3> hb_ready{};
+  uint32_t act_seen = 0U;
+  bool act_nominal = false;
+  bool seen_any = false;
+  uint16_t last_mission = 0U;
+  bool own_ready = false;
   uint8_t usable_nodes = 0x07U;  // whose sensors the flight function may use: the nodes the fault manager has not excluded
   if (kFlightFunction) {
     tfc::GainSchedule gains;
@@ -295,6 +308,7 @@ int main() {
     // ---- the start of the frame: the master wakes on its own clock, a follower waits for SYNC (up to its window) ----
     bool heard = false;
     uint32_t heard_number = 0U;
+    uint16_t heard_mission = 0U;
     int64_t base = nominal;
     can_frame sf;
     if (sync_clock.master()) {
@@ -308,6 +322,7 @@ int main() {
         if (d.ok) {
           heard = true;
           heard_number = d.frame_no;
+          heard_mission = d.mission;
         }
       }
     } else {
@@ -320,12 +335,13 @@ int main() {
         if (d.ok) {
           heard = true;
           heard_number = d.frame_no;
+          heard_mission = d.mission;
           base = k_uptime_ticks();  // the frame is locked to the arrival of SYNC
           break;
         }
       }
     }
-    const tfc::SyncTick tick = sync_clock.cycle(heard, heard_number);
+    const tfc::SyncTick tick = sync_clock.cycle(heard, heard_number, heard_mission);
     const uint32_t k = tick.frame;
     if (tick.took_over) {
       base = k_uptime_ticks();  // the new master's frame starts now, at the end of its wait; its SYNC tells the others
@@ -367,6 +383,23 @@ int main() {
     mgr.begin_frame(k);  // SYNC's frame number: the number every node stamps its frames with (ADR-018)
     if (kFlightFunction) {
       g_flight.begin_frame(k, usable_nodes);
+      if (kLaunch) {  // the schedules follow the frames since T-zero (the pad is flight frame 0), and the gyro is calibrated while the vehicle is on the pad
+        const bool on_pad = !tfc::mission::in_flight(tick.mission);
+        g_flight.set_mission(on_pad, tfc::mission::flight_frames(tick.mission));
+        g_cal.set_pad(on_pad);
+        if (tick.mission != last_mission) {
+          if (tick.mission == 1U) {
+            printk("[frame %u] COUNTDOWN: T-10 s\n", k);
+          } else if (tick.mission == static_cast<uint16_t>(tfc::mission::kCountdownFrames) + 1U) {
+            printk("[frame %u] T-ZERO: lift-off; the schedules start\n", k);
+          } else if (tick.mission == 0U && tfc::mission::in_countdown(last_mission)) {
+            printk("[frame %u] SCRUB: back to the pad\n", k);
+          } else if (tfc::mission::in_countdown(tick.mission) && (tick.mission - 1U) % 100U == 0U) {
+            printk("[frame %u] T-%u s\n", k, static_cast<unsigned>(tfc::mission::frames_to_zero(tick.mission) / 100U));
+          }
+        }
+        last_mission = tick.mission;
+      }
     }
     if (cycle == 0U) {
       k_msgq_purge(&rx_msgq);  // anything queued before the first frame belongs to no frame
@@ -374,7 +407,7 @@ int main() {
       k_msgq_purge(&rx_sim_msgq);
     }
     if (tick.master) {
-      tx_errors += send(tfc::pack_sync(k, seq)) ? 0U : 1U;
+      tx_errors += send(tfc::pack_sync(k, seq, tick.mission)) ? 0U : 1U;
     }
 
     // ---- t = 0.5 ms: latch the IMU sample ----
@@ -393,6 +426,9 @@ int main() {
     tfc::Vec3 gyro{};
     tfc::Vec3 accel{};
     const bool have_sample = imu_ok && imu.sample(k, gyro, accel);
+    if (have_sample && kLaunch) {
+      gyro = g_cal.process(gyro);  // the bias is subtracted before the sample is sent, so the consensus sees corrected values
+    }
     lines.frame(false);
     progress.report(kTaskSample);
 
@@ -439,6 +475,20 @@ int main() {
       f.id = cf.id;
       f.len = static_cast<uint8_t>(can_dlc_to_bytes(cf.dlc));
       std::memcpy(f.data.data(), cf.data, 8);
+      if (kLaunch) {
+        const tfc::DecodedHeartbeat dh = tfc::unpack_heartbeat(f);
+        if (dh.ok) {
+          const unsigned n = f.id - tfc::id::kHeartbeat;
+          hb_ready[n] = dh.hb.ready;
+          hb_seen[n] = k;
+        }
+        const tfc::DecodedAct da = tfc::unpack_act_out(f);
+        if (da.ok) {
+          act_nominal = da.act.state == static_cast<uint8_t>(tfc::ActMode::Nominal);
+          act_seen = k;
+          seen_any = true;
+        }
+      }
       mgr.on_frame(f);  // counts it as out-of-schedule (or ignores SYNC/ACT/heartbeat/sim IDs)
     }
     const tfc::FrameReport& rep = mgr.end_frame();
@@ -454,7 +504,46 @@ int main() {
         hb.node_state[n] = (rep.disabled_mask & bit) != 0U ? 3U : ((rep.probation_mask & bit) != 0U ? 2U : ((rep.latched_mask & bit) != 0U ? 1U : 0U));
       }
       hb.reset_count = static_cast<uint8_t>(resets.boots() > 255U ? 255U : resets.boots());
+      own_ready = kLaunch && kFlightFunction && g_flight.sensors_ok() && g_cal.ready() && !rep.safe_request;
+      hb.ready = own_ready;
       tx_errors += send(tfc::pack_heartbeat(kNodeId, hb, seq)) ? 0U : 1U;
+    }
+    if (kLaunch) {  // the go/no-go: what this computer knows of the others (a heartbeat or ACT frame more than three frames old does not count)
+      tfc::LaunchFacts facts;
+      facts.healthy_nodes = static_cast<uint8_t>(~rep.latched_mask & 0x07U);
+      facts.safe_requested = rep.safe_request;
+      facts.ready_nodes = static_cast<uint8_t>(own_ready ? (1U << kNodeId) : 0U);
+      for (unsigned n = 0; n < tfc::kNodes; ++n) {
+        if (n != kNodeId && hb_ready[n] && k - hb_seen[n] <= 3U) {
+          facts.ready_nodes = static_cast<uint8_t>(facts.ready_nodes | (1U << n));
+        }
+      }
+      facts.act_nominal = seen_any && act_nominal && k - act_seen <= 3U;
+      const uint8_t nogo_mask = tfc::launch_check(facts);
+      for (unsigned i = 0; i < rep.command_count; ++i) {
+        const tfc::CommandEvent& ce = rep.commands[i];
+        const bool executed = ce.result == tfc::CommandResult::Accepted && (ce.flags & tfc::cmdflag::kArm) == 0U;
+        if (ce.op == static_cast<uint8_t>(tfc::GroundOp::Launch) && executed) {
+          if (!tick.master) {
+            printk("[frame %u] LAUNCH: accepted; the sync master acts on it\n", k);
+          } else if (nogo_mask != 0U) {
+            printk("[frame %u] LAUNCH REFUSED, no-go: %s\n", k, tfc::nogo_text(nogo_mask));
+          } else if (sync_clock.launch()) {
+            printk("[frame %u] LAUNCH: go; the countdown starts\n", k);
+          } else {
+            printk("[frame %u] LAUNCH REFUSED: the sequence has already begun\n", k);
+          }
+        } else if (ce.op == static_cast<uint8_t>(tfc::GroundOp::Scrub) && executed) {
+          if (tick.master && sync_clock.scrub()) {
+            printk("[frame %u] SCRUB commanded\n", k);
+          } else if (tick.master) {
+            printk("[frame %u] SCRUB REFUSED: not in the countdown\n", k);
+          }
+        }
+      }
+      if (tick.master && tfc::mission::in_countdown(tick.mission) && nogo_mask != 0U && sync_clock.scrub()) {
+        printk("[frame %u] COUNTDOWN SCRUBBED, no-go: %s\n", k, tfc::nogo_text(nogo_mask));
+      }
     }
     if (progress.end_of_frame(true)) {  // the one place the watchdog is serviced, and the one place KICK is raised
       wdt.feed();
@@ -520,7 +609,7 @@ int main() {
     }
     if (cycle % kStatusEveryFrames == 0U) {
       const tfc::Counters& cn = mgr.counters();
-      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u sync_missed=%u\n",
+      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u sync_missed=%u mission=%u ready=%u\n",
              k, mode_text(rep.mode), node_state(rep, 0), node_state(rep, 1), node_state(rep, 2),
              static_cast<unsigned>(cn.crc_bad), static_cast<unsigned>(cn.seq_bad),
              static_cast<unsigned>(cn.missing), static_cast<unsigned>(cn.vote_disagreements),
@@ -528,7 +617,7 @@ int main() {
              static_cast<unsigned>(cn.out_of_schedule), tx_errors, static_cast<unsigned>(imu.errors()),
              static_cast<unsigned>(imu.stale()), static_cast<unsigned>(progress.refusals()),
              static_cast<unsigned>(atomic_get(&g_bus_off_events)), static_cast<unsigned>(atomic_get(&g_error_passive_events)),
-             static_cast<unsigned>(sync_missed_total));
+             static_cast<unsigned>(sync_missed_total), static_cast<unsigned>(tick.mission), own_ready ? 1U : 0U);
     }
   }
 }

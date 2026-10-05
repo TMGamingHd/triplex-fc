@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Command line: python3 -m tfc_peers {run,record,listen,log,decode,command,faults} ..."""
+"""Command line: python3 -m tfc_peers {run,record,listen,log,decode,command,launch,pico,faults} ..."""
 from __future__ import annotations
 
 import argparse
@@ -184,6 +184,23 @@ def cmd_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_launch(args: argparse.Namespace) -> int:
+    from . import launch as LA
+
+    bus = B.SocketCanBus(args.iface)
+    bus.set_filter([(P.ID_HEARTBEAT, 0x7FC), (P.ID_ACT_OUT, 0x7FF), (P.ID_SYNC, 0x7FF)])
+    try:
+        if not args.check and not args.yes:
+            answer = input("Launch checklist complete and every person clear? Type LAUNCH to continue: ")
+            if answer.strip() != "LAUNCH":
+                print("Not launched.")
+                return 1
+        counter = _next_counter(2, args.counter) if not args.check else 0
+        return LA.run(lambda t: bus.recv(t), lambda f: bus.send(0, f), time.monotonic, time.sleep, counter, wait_s=args.wait, check_only=args.check)
+    finally:
+        bus.close()
+
+
 def cmd_pico(args: argparse.Namespace) -> int:
     from . import pico_link as L
 
@@ -273,6 +290,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--counter", type=int, default=None, metavar="N", help="command counter of the first frame (default: the next one "
                    "after the last this tool sent, remembered in ~/.cache/tfc_peers/ground_counter)")
     p.set_defaults(fn=cmd_command)
+
+    p = sub.add_parser("launch", help="the launch checklist, automated: watch the go/no-go, send the launch (ARM then EXECUTE), run the countdown; exit 0 at T-zero")
+    p.add_argument("--iface", default="vcan0", help="SocketCAN interface (default vcan0)")
+    p.add_argument("--wait", type=float, default=60.0, help="seconds to wait for a go (default 60)")
+    p.add_argument("--check", action="store_true", help="only report the go/no-go and exit (0 go, 1 no-go); sends nothing")
+    p.add_argument("--yes", action="store_true", help="do not ask for the typed confirmation")
+    p.add_argument("--counter", type=int, default=None, metavar="N", help="command counter of the ARM frame (default: the next one, as for `command`)")
+    p.set_defaults(fn=cmd_launch)
 
     p = sub.add_parser("pico", help="talk to the Pico (platform driver and fault injector) over USB serial: status, platform X Y, cut NODE MS, restore NODE|all")
     p.add_argument("op", help="status, platform, cut or restore")

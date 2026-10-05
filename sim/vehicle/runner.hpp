@@ -47,7 +47,7 @@ class SimRunner {
     held_yaw_ = 0.0;
     flags_ = 0U;
     clamped_ = cfg_.start_held;
-    t0_ = 0U;
+    t0_ = 0;
     if (!clamped_) {
       for (uint32_t k = 0; k < k0; ++k) {
         advance(0.0, 0.0);
@@ -57,13 +57,29 @@ class SimRunner {
     return publish(k0);
   }
 
+  // Join a flight that is already `flight_frames` old at system frame `k0` (a simulator started after T-zero): the vehicle has flown that long with the gimbal neutral.
+  SimFrames start_in_flight(uint32_t k0, uint32_t flight_frames) {
+    vehicle_ = Vehicle6(cfg_.params, cfg_.scenario);
+    platform_ = Platform();
+    held_pitch_ = 0.0;
+    held_yaw_ = 0.0;
+    flags_ = 0U;
+    clamped_ = false;
+    for (uint32_t k = 0; k < flight_frames; ++k) {
+      advance(0.0, 0.0);
+    }
+    frame_ = k0;
+    t0_ = static_cast<int64_t>(k0) - static_cast<int64_t>(flight_frames);
+    return publish(k0);
+  }
+
   // T-zero: the clamps open and the vehicle flies from the next step. The guidance and gain schedules start here (flight frame 0).
   void release() {
     clamped_ = false;
-    t0_ = frame_;
+    t0_ = static_cast<int64_t>(frame_);
   }
   [[nodiscard]] bool clamped() const { return clamped_; }
-  [[nodiscard]] uint32_t flight_frame() const { return clamped_ ? 0U : frame_ - t0_; }
+  [[nodiscard]] uint32_t flight_frame() const { return clamped_ ? 0U : static_cast<uint32_t>(static_cast<int64_t>(frame_) - t0_); }
 
   // Frame `k` has ended: apply ACT's command for it (`act` is null if ACT's frame did not come, and then the last command is held), advance the world over the
   // frame, and return the frames for frame k+1.
@@ -156,7 +172,7 @@ class SimRunner {
   uint8_t flags_ = 0U;
   bool held_ = false;
   uint32_t frame_ = 0U;
-  uint32_t t0_ = 0U;  // the frame of T-zero
+  int64_t t0_ = 0;  // the frame of T-zero
   bool clamped_ = false;
 };
 

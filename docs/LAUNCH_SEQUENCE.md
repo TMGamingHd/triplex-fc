@@ -1,6 +1,6 @@
 # Launch sequence: the pad, the countdown and T-zero
 
-> Status: **the pad phase, the mission clock in SYNC, the launch and scrub commands and the go/no-go are built and tested on the host.** The firmware wiring, the simulator's release from the mission frame, the live test and the checklist are not built. The design is
+> Status: **built and tested on the host and live on the virtual rig** (the pad calibration, the mission clock in SYNC, the launch and scrub commands, the go/no-go, the firmware, the simulator's hold and release, the automated checklist). Not built: the supervisor's part and the real rig. The design is
 > accepted by the owner (4 Oct 2026: schedule time in the flight computers, the supervisor the independent authority for T-zero and the clock of record, `MISSION_CLOCK.md`).
 > Decided by the owner (4 Oct 2026): the sync master acts on the launch command; a 10 s countdown; a 10 s pad calibration; scrub only (no hold).
 
@@ -81,5 +81,10 @@ no digest disagreement. The command is an authenticated ARM then EXECUTE (ADR-01
 - **Launch commands and the gate:** ground operations `launch` (always needs an ARM) and `scrub`, reported to the firmware as events; `launch_check` (the go/no-go list); the heartbeat's `ready` bit (C++ and Python).
 - Tests: `tests/test_pad.cpp`, `tests/test_launch.cpp`, the mission tests in `tests/test_sync_clock.cpp`; 34 mutants of the new code, all killed.
 
+- **Firmware (this increment):** `CONFIG_TFC_LAUNCH_SEQUENCE`: the calibrator between the IMU read and the gyro frame; the flight function given the pad flag and the flight frame; the mission frame in SYNC (the master sends it and acts on a launch that passes the go/no-go, scrubs on a failure in the countdown); the heartbeat's ready bit; the console says `COUNTDOWN`, `T-n s`, `T-ZERO`, `SCRUB`, `LAUNCH REFUSED, no-go: ...`.
+- **Simulator:** `tfc_simd --hold` clamps the vehicle until the mission frame passes T-zero; a simulator started after T-zero joins the flight at its age.
+- **Operator:** `python3 -m tfc_peers launch` (the checklist, automated) and `docs/procedures/P-S2-02-launch-checklist.md` (the human steps and the cases).
+- **Live tests** (`sim/tests/test_live_launch.py`, five real processes plus the simulator): a launch before the calibration is ready is refused and nothing moves; a go launch counts down 10 s, releases at T-zero on every computer and flies the program within 1.5 degrees; a scrub returns to the pad and a second launch works; the loss of the sync master or of a follower in the countdown scrubs it (the design: three healthy computers are part of the go/no-go).
+
 ## 8. Still to do
-The firmware: the calibrator between the IMU read and the gyro frame, the flight function given the pad flag and the flight frame, the master acting on the launch event (gate, `launch()`), the countdown, the ready bit set; `tfc_simd` clamping and releasing from the mission frame; the live test (a 10 s pad, a launch, a scrub, a takeover during the countdown); `tfc_peers launch` and the human checklist; the supervisor's `T0` line and mission clock check (waits for the supervisor).
+The supervisor's `T0` line and its mission clock check (waits for the supervisor and its parts); the clock of record (`MISSION_CLOCK.md`: the supervisor, its correlation against UTC, the pulse and the serial line); a hold in the countdown (decided against for now); accelerometer calibration and the IMU's mounting alignment on the pad; the launch sequence on the real rig (P-S2-02 with hardware).
