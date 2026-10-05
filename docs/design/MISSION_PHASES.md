@@ -61,7 +61,7 @@ protects against that. (c) Which node rests in P4 should be chosen so that the g
 ## 5. What this needs
 
 - A phase and role field in the manager (`core/`), a phase table as parameters, and the `phase` command. Needs the estimator and the
-  simulator's scenario events to be useful, hence deferred (`DEFERRED.md`).
+  simulator's scenario events to be useful, hence deferred (`FUTURE_WORK.md`).
 - Supervisor `hold`, `release` and boot sequencing for COLD (`SUPERVISOR.md`).
 - Events and telemetry for every role change (IF-005, IF-006).
 - Tests: F71 (a phase change refused for lack of nodes) and F72 (a promotion that fails probation).

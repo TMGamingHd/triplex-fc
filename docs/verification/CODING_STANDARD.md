@@ -26,13 +26,13 @@
 
 | Concern | What the core does | Evidence |
 |---|---|---|
-| **Determinism** | Same inputs give the same outputs, bit for bit, on any platform: no `-ffast-math`, no uninitialised reads, no undefined behaviour, no float equality (`-Wfloat-equal`), the consensus-critical leaky count is Q16 fixed point, the CRC and digest are integer | per-frame decision hash of 10,657 scenarios identical before and after a refactor (`campaign.run`, `docs/FAULT_CAMPAIGN.md`) |
+| **Determinism** | Same inputs give the same outputs, bit for bit, on any platform: no `-ffast-math`, no uninitialised reads, no undefined behaviour, no float equality (`-Wfloat-equal`), the consensus-critical leaky count is Q16 fixed point, the CRC and digest are integer | per-frame decision hash of 10,657 scenarios identical before and after a refactor (`campaign.run`, `docs/verification/FAULT_CAMPAIGN.md`) |
 | **Fail to the safe side** | Every unresolved doubt resolves to "exclude the node", "hold the last good value" or "request Safe", never to "trust it". A Safe flag or node state that fails its integrity check reads as the restrictive value | `seu_*` tests; fuzz invariants I1-I8 |
 | **Validate at the boundary** | Frames: length, CRC, sequence. Configuration: every field range-checked and replaced by its default if invalid, and the fact reported. Faults for the test rig: every parameter validated | `decoders_reject_every_malformed_frame`, `config_every_invalid_field_*`, `tests/test_faults_fmea.py` |
 | **Protect critical state against upsets (SEU)** | Node states and the Safe flag are stored with their bitwise complement; the configuration is stored twice with a checksum; all are scrubbed at the start of every frame. An upset is repaired on the safe side, counted and reported (ADR-015) | `seu_*` tests; mutants `scrub_ignores_*` |
 | **Bounded, measured cost** | One frame of the manager costs about 0.5 us on a desktop CPU (section 5); worst-case on the target is to be measured with the cycle counter (milestone M2) | `tools/bench/bench_end_frame.cpp` |
 | **Single thread, no shared state** | The core is a plain object driven from one task; there are no atomics, locks or callbacks | by construction |
-| **Traceability** | Every requirement maps to a test or a measurement (`docs/REQUIREMENTS.md`); every fault to a matrix row (`docs/FAULT_MATRIX.md`); every design decision to an ADR (`docs/DECISIONS.md`) | `TFC-SW-005` |
+| **Traceability** | Every requirement maps to a test or a measurement (`docs/verification/REQUIREMENTS.md`); every fault to a matrix row (`docs/verification/FAULT_MATRIX.md`); every design decision to an ADR (`docs/decisions/DECISIONS.md`) | `TFC-SW-005` |
 
 ## 3. The verification stack
 
@@ -88,8 +88,8 @@ by measurement on the board (TFC-SYS-002).
 1. A change to `core/` comes with a test that fails without it, written first.
 2. `cmake --build build && ctest --test-dir build` must pass with zero warnings.
 3. A refactor must leave the campaign's per-frame decision hashes unchanged (`campaign.run`, then compare); a change that
-   alters behaviour says so in an ADR and in `docs/FAULT_CAMPAIGN.md`.
-4. A new fault kind is a new row in `docs/FAULT_MATRIX.md`, a unit test of what it puts on the wire, a replay test of what the
+   alters behaviour says so in an ADR and in `docs/verification/FAULT_CAMPAIGN.md`.
+4. A new fault kind is a new row in `docs/verification/FAULT_MATRIX.md`, a unit test of what it puts on the wire, a replay test of what the
    core decides, and a group in the campaign.
 5. A new check (`ensure`, `static_assert`, validation) is accompanied by a mutant in `tools/mutation/mutations.py` that removes
    it, and the suite must kill the mutant.

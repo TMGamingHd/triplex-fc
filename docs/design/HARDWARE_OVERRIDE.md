@@ -10,7 +10,7 @@ The system has three layers of authority, from the most capable to the most basi
 | Layer | Made of | Can fail by | Lives in |
 |---|---|---|---|
 | 3. Flight software | the flight computers, ACT, the simulator, the Pico platform driver | bugs, hangs, wrong values | `core/`, `firmware/` |
-| 2. Supervisor (ADR-022) | a second Pico 2 with its own small program, discrete lines to the nodes | a bug in its program, a hang, a spurious action | `docs/SUPERVISOR.md` |
+| 2. Supervisor (ADR-022) | a second Pico 2 with its own small program, discrete lines to the nodes | a bug in its program, a hang, a spurious action | `docs/design/SUPERVISOR.md` |
 | **1. Hardware override** | **switches, relays driven by switches, fuses, diodes: nothing that runs code** | a contact that does not make, a wire that breaks, a person pressing the wrong one | this page |
 
 The supervisor is software too, only smaller. The lecture's "lizard brain" survives a hung flight computer, but a hung or wrong supervisor
@@ -138,4 +138,4 @@ so the order for these parts waits for it; **none of them is in the parts list y
 ## 9. Relation to other documents
 
 `SUPERVISOR.md` (layer 2, and the `PWR`, `NRST`, `SAFE` lines this layer works beside); `SAFE_MODE.md` (what ACT does when `SAFE` is asserted);
-`VEHICLE_SIM.md` (the platform and PLAT-001 to 004); `FAULT_MATRIX.md` (F75 to F80); `TRADE_STUDIES.md` (TS-17); `PARTS_CHECK.md` (what the parts list has).
+`VEHICLE_SIM.md` (the platform and PLAT-001 to 004); `FAULT_MATRIX.md` (F75 to F80); `TRADE_STUDIES.md` (TS-17); `HARDWARE_PARTS.md` (what the parts list has).

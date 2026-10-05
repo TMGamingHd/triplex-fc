@@ -349,3 +349,25 @@ TFC_TEST(phase_the_arm_code_of_the_new_operations_is_their_own) {
   (void)r.send(GroundOp::Warm, 1U, true);
   CHECK(r.send(GroundOp::Warm, 1U) == CommandResult::Accepted);
 }
+
+TFC_TEST(phase_the_direct_command_refuses_a_computer_that_does_not_exist_and_warm_is_false_for_one) {
+  Rig r;
+  (void)r.run(5U);
+  CHECK(r.mgr.command(GroundOp::Warm, 3U) == CommandResult::RefusedBadNode);
+  CHECK(r.mgr.command(GroundOp::Warm, 200U) == CommandResult::RefusedBadNode);
+  CHECK(!r.mgr.warm(3U) && !r.mgr.warm(200U));
+}
+
+TFC_TEST(phase_with_the_sensor_split_on_the_phase_number_is_not_taken_for_an_imu_and_an_imu_cannot_be_rested) {
+  RedundancyConfig cfg;
+  cfg.phases = true;
+  cfg.sensor_split = true;
+  Rig r;
+  r.mgr = RedundancyManager(cfg);
+  (void)r.run(10U);
+  CHECK(r.send(GroundOp::Phase, phases::kCoast) == CommandResult::Accepted);  // 4: also the number of IMU A
+  CHECK(r.mgr.mission_phase() == phases::kCoast);
+  CHECK(r.send(GroundOp::Phase, phases::kBurn) == CommandResult::Accepted);   // 6
+  CHECK(r.send(GroundOp::Warm, 4U) == CommandResult::RefusedBadNode);         // an IMU channel has no role
+  CHECK(r.send_armed(GroundOp::Warm, 2U) == CommandResult::Accepted);         // (burn wants three: an ARM below that)
+}

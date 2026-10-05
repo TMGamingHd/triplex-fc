@@ -45,7 +45,7 @@ The Lite supervisor also has no bus tap and cannot send a countdown number; it h
 3. **The supervisor keeps its own mission clock from the `T0` edge** and compares it, through the master's `FRAME` pulses, with the system's: a drift or a jump is reported (and is the supervisor's evidence of a SYNC fault). It never overrides the computers' mission time, in line with "never takes a voting decision".
 4. After T-zero the system **does not need** the supervisor to keep flying.
 
-**Two clocks.** What is decided here is *schedule time* (frames since T-zero, minutes). The long-lived *clock of record* (mission elapsed time over hours to years, on the supervisor's own oscillator, correlated against UTC) is `docs/MISSION_CLOCK.md` (ADR-029); the two are linked at T-zero: the supervisor's epoch is the `T0` edge.
+**Two clocks.** What is decided here is *schedule time* (frames since T-zero, minutes). The long-lived *clock of record* (mission elapsed time over hours to years, on the supervisor's own oscillator, correlated against UTC) is `docs/design/MISSION_CLOCK.md` (ADR-029); the two are linked at T-zero: the supervisor's epoch is the `T0` edge.
 
 Alternatives (TS-21): the supervisor as the continuous time source (rejected above); the command carrying a 32-bit T-zero frame (the ground frame has no room); an ACT broadcast (ACT has no spare bytes in `0x300`); each computer counting from its own sight of the command (T-zero differs by a frame between computers).
 

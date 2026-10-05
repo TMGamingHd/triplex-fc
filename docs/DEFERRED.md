@@ -1,9 +1,9 @@
 # Decisions taken and work deferred
 
-> Each campaign edge case (docs/FAULT_CAMPAIGN.md section 6) was either fixed, accepted, or **deliberately postponed until the
+> Each campaign edge case (docs/verification/FAULT_CAMPAIGN.md section 6) was either fixed, accepted, or **deliberately postponed until the
 > thing it depends on exists**. This page is the register of the postponed work: what it is, why it waits, what triggers it, and
 > the design notes written down now so nobody has to re-derive them. "Trigger" is the milestone or artefact whose arrival
-> makes the work possible. Nothing here is a hidden requirement: items with a requirement id are listed in `docs/REQUIREMENTS.md`
+> makes the work possible. Nothing here is a hidden requirement: items with a requirement id are listed in `docs/verification/REQUIREMENTS.md`
 > with status "deferred".
 
 ## 1. Decisions taken for the edge cases
@@ -60,11 +60,11 @@ know is bad (`armed-disable` in Duplex, then `armed-clear-safe`): the interlock 
 - **Define the Safe action** (**trigger: the actuator node (ACT) exists**). Today Safe means "the output holds the last good value".
   What the vehicle should *do* in Safe (hold, null the gimbal, a fixed attitude, abort) is not decided, and holding the last gimbal
   command is not obviously safe for long on a real rocket. This is a requirement to write with ACT: what ACT outputs when the
-  flight computers request Safe, for how long, and who can leave Safe. **Proposed in `docs/SAFE_MODE.md` (ADR-023): freeze at once, null after a hold time at a limited rate, ACT able to do it alone; the owner's three open questions are at the end of that page.**
+  flight computers request Safe, for how long, and who can leave Safe. **Proposed in `docs/design/SAFE_MODE.md` (ADR-023): freeze at once, null after a hold time at a limited rate, ACT able to do it alone; the owner's three open questions are at the end of that page.**
 - **Pre-flight self-test (B)** (**trigger: the ISM330DHCX driver exists**). The part has a self-test that produces a known output
   change; it works at rest, so it protects the power-up check rather than the second fault in flight. A node whose sensor fails
   it should report "not ready" and not join the vote. Requirement TFC-FDIR-036 (deferred, verification by measurement). Belongs in
-  stage S1 of `docs/STAGED_BUILD.md`.
+  stage S1 of `docs/hardware/STAGED_BUILD.md`.
 - **Analytical redundancy (A)** (**trigger: the estimator exists, M3**). Check each node's gyro against the other sensors and the
   model (gyro-integrated attitude against the tilt from the accelerometers). It resolves faults larger than the model's own error:
   slow drifts, yes; a 1.5 dps bias just above a 1 dps tolerance, probably not. On the desk rig (a platform with known accelerations)
@@ -91,8 +91,8 @@ know is bad (`armed-disable` in Duplex, then `armed-clear-safe`): the interlock 
 ## 5. Fault-management additions from the ASTE-331 avionics lecture
 
 Five additions that follow from comparing this project with the course lecture "Avionics, C&DH and Flight Software" (2 Oct 2026; the
-slides are not for redistribution, so only the ideas are recorded here). Each has requirement ids in `docs/REQUIREMENTS.md` and a row in
-`docs/FAULT_MATRIX.md`. None changes the voter. Each needs an ADR when it is built. The first two wait for hardware, the third and the
+slides are not for redistribution, so only the ideas are recorded here). Each has requirement ids in `docs/verification/REQUIREMENTS.md` and a row in
+`docs/verification/FAULT_MATRIX.md`. None changes the voter. Each needs an ADR when it is built. The first two wait for hardware, the third and the
 fourth for node firmware and the heartbeat payload, the fifth can start in the core.
 
 ### 5.1 A watchdog that cannot be kept alive by the wrong task (FDIR-038, F57)
@@ -100,7 +100,7 @@ fourth for node firmware and the heartbeat payload, the fifth can start in the c
 **Why:** on the Mars rover's Sol 200 anomaly, enough tasks kept running to keep servicing the watchdog while others were hung, so the
 watchdog never fired. `ARCHITECTURE.md` already lists a per-node watchdog and a frame-deadline monitor; this fixes *what services it*.
 **What:** every monitored task reports progress once per frame (a bit in a progress word, cleared at the end of the frame). The watchdog
-is serviced in exactly one place, at the end of the frame, and only if the vote ran and every bit is set. The same end-of-frame event drives the `KICK` line to the supervisor (`docs/SUPERVISOR.md`), so the outside watchdog and the inside one see the same thing. Not from a timer, not from a
+is serviced in exactly one place, at the end of the frame, and only if the vote ran and every bit is set. The same end-of-frame event drives the `KICK` line to the supervisor (`docs/design/SUPERVISOR.md`), so the outside watchdog and the inside one see the same thing. Not from a timer, not from a
 task. A task that stops costs the servicing within one frame; the hardware timeout then resets the node, which the others see as F01.
 **Design notes:** the checkpoint logic is plain C++ and belongs in `core/` or next to it, so it can be tested on the host with a task
 that never reports (T) before it is tested on the board with a blocked task (M). Pick the watchdog timeout so a healthy frame never
@@ -109,7 +109,7 @@ in the datasheet.
 **Test:** F57 needs a firmware build in which one task blocks while SYNC and the frame sender carry on.
 
 ### 5.2 An independent way to isolate a node, and what to do about a bus alarm (FDIR-039, FDIR-040, F58, F59)
-**Trigger:** the supervisor exists (section 6.3, `docs/SUPERVISOR.md`).
+**Trigger:** the supervisor exists (section 6.3, `docs/design/SUPERVISOR.md`).
 **Why:** a software watchdog cannot help when the software is the problem, and the lecture's answer is a separate part with its own
 hardware that can reset the computer and accepts hardware commands that bypass flight software. The first version of this item was a
 bare line from another node; the supervisor replaces it, and gives the operator `hold X` to find a babbler by elimination (an
@@ -175,11 +175,11 @@ bold.**
 |---|---|---|---|
 | 6.1 | **Sensor strapping** (ADR-020). **Case 1, accepted:** separate sensor health from compute health (TFC-ARCH-001). **Order decided 4 Oct:** after the loop (P1), before S3 (3 Nov), as its own PR; TS-15 decides the degradation rule first. **Case 2, deferred stretch:** ring re-homing of an orphaned IMU (TFC-ARCH-003). Direct simultaneous wiring rejected | Case 1: after P1; the estimator takes channels with a valid flag from the start. Case 2: after S4 and the supervisor | Case 2 only: wanted as a stretch? Decide at S4. The cheap preparations are decided (STAGED_BUILD rule 11) |
 | 6.2 | **Release diversity** (ADR-021). Node C on the previous known-good release. **Decided 4 Oct: hold, request Safe, operator picks.** Automatic takeover by the old release stays open | FC-B and FC-C firmware; a tagged golden release; the `common_mode` campaign group can be written now | Automatic takeover (option c): after the TS-3 data (about November) |
-| 6.3 | **Supervisor** (ADR-022, `docs/SUPERVISOR.md`). **Decided 4 Oct: SUP-Lite** (Pico 2 plus TCXO module); Full remains an upgrade | **The parts order closes 6 Oct: one more Pico 2, a clock module and resistors must be in it** | None |
-| 6.4 | **Safe mode** (ADR-023, `docs/SAFE_MODE.md`). Freeze, then null; ACT does it alone. **Questions answered 4 Oct** (SAFE_MODE section 10; FAULT_RESPONSE section 6) | ACT firmware | None; the servo no-signal measurement (P-M1-01 step 10) confirms the ACT-reset rule |
-| 6.5 | **Phases and roles** (ADR-023, `docs/MISSION_PHASES.md`). HOT, WARM, COLD; phase table; `phase` command. **Phase minimums accepted 4 Oct** | Estimator and the simulator's scenario events | None for the minimums; the rest is a proposal |
+| 6.3 | **Supervisor** (ADR-022, `docs/design/SUPERVISOR.md`). **Decided 4 Oct: SUP-Lite** (Pico 2 plus TCXO module); Full remains an upgrade | **The parts order closes 6 Oct: one more Pico 2, a clock module and resistors must be in it** | None |
+| 6.4 | **Safe mode** (ADR-023, `docs/design/SAFE_MODE.md`). Freeze, then null; ACT does it alone. **Questions answered 4 Oct** (SAFE_MODE section 10; FAULT_RESPONSE section 6) | ACT firmware | None; the servo no-signal measurement (P-M1-01 step 10) confirms the ACT-reset rule |
+| 6.5 | **Phases and roles** (ADR-023, `docs/design/MISSION_PHASES.md`). HOT, WARM, COLD; phase table; `phase` command. **Phase minimums accepted 4 Oct** | Estimator and the simulator's scenario events | None for the minimums; the rest is a proposal |
 | 6.6 | **A second ACT** with a supervisor-driven output selector, to extend fail-operational to the actuator node (ADR-023) | After S4, if the budget allows: one Nucleo, one CAN Pal (about 24 USD) and a selector chip | **Stretch yes or no?** |
-| 6.7 | **Other items from the lecture:** dual-slot boot with a golden image (the lecture's multiple FSW images chosen by a tiny unchangeable boot program; the project's golden release is the natural second image; ties to FDIR-042 and to ADR-021); a verification-procedure template (`docs/VERIFICATION_PROCEDURE_TEMPLATE.md`, written now); bus and memory sizing analyses (ARCHITECTURE section 7) | Board bring-up | None |
+| 6.7 | **Other items from the lecture:** dual-slot boot with a golden image (the lecture's multiple FSW images chosen by a tiny unchangeable boot program; the project's golden release is the natural second image; ties to FDIR-042 and to ADR-021); a verification-procedure template (`docs/verification/VERIFICATION_PROCEDURE_TEMPLATE.md`, written now); bus and memory sizing analyses (ARCHITECTURE section 7) | Board bring-up | None |
 
 **What can be done now without hardware:** the `common_mode` campaign scenario (F63) against the current voter, which shows the
 weakness the golden-release rule is for (measured: the healthy node is latched at frame 102); the `noop` command (FDIR-043); the
@@ -216,5 +216,5 @@ right, anything whose output reaches ACT.
 the flight binary contains no inference code (`tools/check_elf.sh` extended); the AI client has no access to the key.
 
 **Cost and order.** Items 1 and 3 are the two worth doing: they need only the PC, the existing campaign, and the telemetry of section 5.4.
-Item 5 comes free with TS-1 and TS-4. Do not start before the software-ready gate (`SOFTWARE_READINESS.md`) and the first hardware
+Item 5 comes free with TS-1 and TS-4. Do not start before the software-ready gate (`STATUS.md`) and the first hardware
 measurements. **Requirements:** TFC-AI-001 to 003 (proposed boundary). **Study:** TS-14.

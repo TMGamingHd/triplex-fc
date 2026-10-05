@@ -13,6 +13,7 @@ namespace tfc {
 struct ManagerTestAccess {  // reaches into the manager to set a strike count or damage a record (test code only; the other test files define their own members the same way)
   static void set_strikes(RedundancyManager& m, unsigned node, uint8_t v) { m.strikes_[node] = v; }
   static void damage_command_history(RedundancyManager& m) { m.cmd_have_.n_ = static_cast<uint8_t>(m.cmd_have_.n_ ^ 0x01U); }
+  static void damage_command_counter(RedundancyManager& m) { m.cmd_ctr_.n_ = static_cast<uint8_t>(m.cmd_ctr_.n_ ^ 0x01U); }
 };
 }
 namespace {
@@ -219,4 +220,39 @@ TFC_TEST(share_the_command_counter_of_one_peer_is_taken_when_only_one_has_spoken
   }
   (void)step(o, k++, {share(1U, 0U, 0U, 0U, 200U), share(2U, 0U, 0U, 0U, 0U)});  // 200 and "none": a "none" is not a counter that is behind or ahead
   CHECK(o.restore_from_peers(0U).counter && o.state_share().command_counter == 200U);
+}
+
+TFC_TEST(share_with_the_strike_limit_switched_off_the_others_can_raise_a_count_but_nothing_is_ever_disabled) {
+  RedundancyConfig cfg;
+  cfg.max_strikes = 0U;  // strikes never disable
+  RedundancyManager m(cfg);
+  uint32_t k = 0U;
+  for (; k < 5U; ++k) {
+    (void)step(m, k);
+  }
+  (void)step(m, k++, {share(1U, 0U, 9U, 15U, 0U), share(2U, 0U, 4U, 15U, 0U)});
+  const RedundancyManager::Restored r = m.restore_from_peers(0U);
+  CHECK(m.strikes(1U) == 9U && m.strikes(2U) == 15U);  // the higher where they differ, no cap: there is no limit to hold below
+  CHECK(r.disabled == 0U && m.state(1U) == NodeState::Healthy && m.state(2U) == NodeState::Healthy);
+}
+
+TFC_TEST(share_a_command_record_that_fails_its_check_says_none_and_is_replaced_by_what_the_others_say) {
+  for (const bool counter_damaged : {false, true}) {
+    RedundancyManager m;
+    uint32_t k = 0U;
+    for (; k < 5U; ++k) {
+      (void)step(m, k);
+    }
+    (void)step(m, k++, {gcmd(GroundOp::Noop, 0U, 9U)});
+    CHECK(m.state_share().command_counter == 9U);
+    if (counter_damaged) {
+      ManagerTestAccess::damage_command_counter(m);
+    } else {
+      ManagerTestAccess::damage_command_history(m);
+    }
+    CHECK(m.state_share().command_counter == 0U);  // it cannot vouch for the number
+    (void)step(m, k++, {share(1U, 0U, 0U, 0U, 5U), share(2U, 0U, 0U, 0U, 5U)});  // (the scrub of this frame has already reset the damaged record)
+    (void)m.restore_from_peers(0U);
+    CHECK(m.state_share().command_counter == 5U);
+  }
 }

@@ -63,7 +63,7 @@ Reading it:
 ## 3. What the audit found
 
 ### 3.1 There is no pad phase, and the lift-off is the weak point
-> **Update (4 Oct 2026, the same day): the pad phase is built on the host** (`docs/LAUNCH_SEQUENCE.md`): the transient with 1 degree of thrust misalignment falls from 5.3 to 1.2 degrees and a vehicle now flies a gyro bias of at least 8 dps (from 0.19). The mission clock on the bus, the launch command and the firmware wiring are still to do.
+> **Update (4 Oct 2026, the same day): the pad phase is built on the host** (`docs/design/LAUNCH_SEQUENCE.md`): the transient with 1 degree of thrust misalignment falls from 5.3 to 1.2 degrees and a vehicle now flies a gyro bias of at least 8 dps (from 0.19). The mission clock on the bus, the launch command and the firmware wiring are still to do.
 
 The vehicle is released at frame 0 while ACT is still in Standby and holds the gimbal at neutral for the first second (100 trustworthy votes: Standby to Nominal at frame 103). With the engines 1 degree off the commanded
 direction, the unopposed moment turns the vehicle **5.3 degrees in that second**, 22 degrees at 3 degrees of misalignment, and the loop then recovers: the lift-off column above. A real launch holds the vehicle on the pad

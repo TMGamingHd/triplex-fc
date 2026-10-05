@@ -46,7 +46,7 @@ are marked as Full-only. The Pico 2 has no CAN controller, which is why Lite has
 parts sheet means every input line needs an external pull-down of 8.2 kOhm or less.
 
 ## 3a. Clock
-> Extended 4 Oct 2026 (ADR-029, `docs/MISSION_CLOCK.md`): the supervisor keeps the **clock of record**, mission elapsed time across resets and years, on a battery-backed oscillator, correlated against the PC's UTC, and gives time to the nodes by a pulse per second and a one-way serial line. The paragraph below is the original frame-clock check.
+> Extended 4 Oct 2026 (ADR-029, `docs/design/MISSION_CLOCK.md`): the supervisor keeps the **clock of record**, mission elapsed time across resets and years, on a battery-backed oscillator, correlated against the PC's UTC, and gives time to the nodes by a pulse per second and a one-way serial line. The paragraph below is the original frame-clock check.
 
 The supervisor's reference needs to be better than the nodes' (the Nucleo's crystal is in the tens of ppm). A TCXO real-time-clock
 module such as a DS3231 (specified at about 2 ppm at room temperature, with a 32.768 kHz output; **price and exact figures not checked**,
@@ -77,7 +77,7 @@ injector) can carry the `PWR` lines, so no relay parts are added. The ELEGOO mod
 pull a relay in: the supervisor's `PWR` pins need external pull-ups to 3.3 V (and the check at 3.3 V drive in the compatibility audit,
 item 7, applies).
 
-**Channel allocation (decided 4 Oct 2026, ADR-026; `PARTS_CHECK.md` item 1).** The two relay modules give 8 channels: 4 for the injector's power cuts (A, B, C, ACT) and 4 for these `PWR`
+**Channel allocation (decided 4 Oct 2026, ADR-026; `HARDWARE_PARTS.md` item 1).** The two relay modules give 8 channels: 4 for the injector's power cuts (A, B, C, ACT) and 4 for these `PWR`
 lines. The parts sheet also counts those four as the injector's sensor-line and bus-stub faults; both uses cannot have them, so a **third relay module** (6.99 USD) is proposed for the sensor
 and bus faults. Each relay bank's coil supply gets a disarm switch (`HARDWARE_OVERRIDE.md`, H4 and H5), so no program can cut a node when the switch is open.
 

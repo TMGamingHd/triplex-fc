@@ -47,7 +47,7 @@ The order in which things are turned off, and the state the rig is left in (rela
 | Bus log (`candump -L`), decoded copy | |
 | Supervisor log (its own time) | |
 | Logic-analyser capture | |
-| Fault-matrix row updated, with the test id | `docs/FAULT_MATRIX.md` |
+| Fault-matrix row updated, with the test id | `docs/verification/FAULT_MATRIX.md` |
 
 Data fields worth recording with each event (as the lecture's telemetry list suggests): the session id, the node, the record type, the
 time received on the PC, the node's frame number (the spacecraft-clock analogue) and the supervisor's time, and for each channel both the

@@ -1,6 +1,6 @@
 # P-S4-01: stage S4, Triplex, the fault campaign on the real bus, and the resync
 
-Follows `docs/VERIFICATION_PROCEDURE_TEMPLATE.md`. Exit test of S4: "Fault matrix filled with measured data".
+Follows `docs/verification/VERIFICATION_PROCEDURE_TEMPLATE.md`. Exit test of S4: "Fault matrix filled with measured data".
 
 | Field | Entry |
 |---|---|
@@ -29,10 +29,10 @@ P-S3-01 passed with the same three images. The three computers' pad calibrations
 | 7 | Operator | A computer's IMU and another computer's commands faulted together | The IMU channel and the other computer latched; two voters and two IMUs remain; no Safe request (F94) | | |
 | 8 | Operator | The launch checklist (P-S2-02) on three real computers with the platform | As in that procedure | | |
 | 9 | Operator | Make the fault manager's command tolerance bite: inject a 0.02 degree command offset on one computer for 3 frames | Whether the manager's 0.01 degree tolerance latches it: **record it**; it is the number that decides whether the tolerance is widened (RESYNC.md 6b) | | |
-| 10 | Operator | Fill `docs/FAULT_MATRIX.md`: for each row run, the measured detection time and this test id; failures as *failed* | The HIL column filled | | |
+| 10 | Operator | Fill `docs/verification/FAULT_MATRIX.md`: for each row run, the measured detection time and this test id; failures as *failed* | The HIL column filled | | |
 
 ## 4. Shutdown
 Injector disarmed first; the supervisor last; the platform to level; E-stop reset.
 
 ## 5. Records
-As-run copy; all logs and analyser captures; the fault matrix; `docs/RESYNC.md` and `docs/TRADE_STUDIES.md` TS-23 updated with the loss rate and the decision it implies; `docs/PROOF.md` updated with the measured figures that can be claimed.
+As-run copy; all logs and analyser captures; the fault matrix; `docs/design/RESYNC.md` and `docs/decisions/TRADE_STUDIES.md` TS-23 updated with the loss rate and the decision it implies; `docs/project/PROOF.md` updated with the measured figures that can be claimed.

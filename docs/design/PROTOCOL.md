@@ -8,7 +8,7 @@
 ## Identifiers
 | Id | Name | From | Content | Version |
 |---|---|---|---|---|
-| `0x010` | SYNC | the sync master | 32-bit frame number and the 16-bit mission frame (0 = not launched, 1 to 1000 the countdown, 1001 T-zero, then flight; `docs/LAUNCH_SEQUENCE.md`) | 1, mission frame added (old senders put 0 there) |
+| `0x010` | SYNC | the sync master | 32-bit frame number and the 16-bit mission frame (0 = not launched, 1 to 1000 the countdown, 1001 T-zero, then flight; `docs/design/LAUNCH_SEQUENCE.md`) | 1, mission frame added (old senders put 0 there) |
 | `0x100+n` | GYRO | node n | three axes, 0.125 dps per count | 1 |
 | `0x110+n` | ACCEL | node n | three axes, 1/2048 g per count | 1 |
 | `0x200+n` | CMD | node n | pitch and yaw gimbal command, 0.001 degree; a 16-bit state digest | 1 |
@@ -40,7 +40,7 @@ source hash, so that a node on the golden release (ADR-021) can be told from one
 **State share (`0x410+n`).** Byte 0: strikes of node A (low nibble) and B (high nibble); byte 1: strikes of node C; byte 2: the last accepted ground-command counter. This is what a restarted node needs from the others
 to rebuild its strike record and close the counter gap (FDIR-041). Example: strikes 1, 15, 2 and counter 200: `f102c800000006f7`.
 
-**State resync (`0x420 + 4n + k`).** Once per resync period (the last frame of it, after the command slot) each computer sends its quantised estimator and controller state in four frames of three signed 16-bit words, little-endian, bytes 0 to 5; byte 6 is the low byte of the frame number the state belongs to (a chunk of another cycle is not used), byte 7 the CRC. The twelve words: 0 to 3 the attitude quaternion (1/32767 per count, scalar part non-negative), 4 to 6 the gyro bias integrator (1e-5 rad/s per count), 7 and 8 the controller's integrators and 9 and 10 its last outputs (0.001 degree per count), 11 the low byte of the update count with *aligned* (bit 8) and *rates valid* (bit 9). Example, node B chunk 2 carrying 0x0102, -2, 0x7FFF for frame 0x55: id 0x426, data `0201feffff7f55e4` (`tests/test_resync.cpp` and `sim/tests/test_protocol.py` pin it). What the receivers do with it is in `docs/RESYNC.md`.
+**State resync (`0x420 + 4n + k`).** Once per resync period (the last frame of it, after the command slot) each computer sends its quantised estimator and controller state in four frames of three signed 16-bit words, little-endian, bytes 0 to 5; byte 6 is the low byte of the frame number the state belongs to (a chunk of another cycle is not used), byte 7 the CRC. The twelve words: 0 to 3 the attitude quaternion (1/32767 per count, scalar part non-negative), 4 to 6 the gyro bias integrator (1e-5 rad/s per count), 7 and 8 the controller's integrators and 9 and 10 its last outputs (0.001 degree per count), 11 the low byte of the update count with *aligned* (bit 8) and *rates valid* (bit 9). Example, node B chunk 2 carrying 0x0102, -2, 0x7FFF for frame 0x55: id 0x426, data `0201feffff7f55e4` (`tests/test_resync.cpp` and `sim/tests/test_protocol.py` pin it). What the receivers do with it is in `docs/design/RESYNC.md`.
 
 **Simulator frames.** `0x501` and `0x502` are the vehicle's sensor inputs for the frame, in the same scales as the gyro and accel frames (each node's simulated IMU adds its own noise and faults).
 `0x503`: altitude (10 m per count), speed (1 m/s per count), mass (1 kg per count), each a 16-bit unsigned number that saturates. `0x504`: dynamic pressure (10 Pa per count, unsigned),

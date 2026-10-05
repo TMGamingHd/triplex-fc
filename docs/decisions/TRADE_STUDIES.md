@@ -55,7 +55,7 @@ campaign; HIL needs the rig.
 | TS-21 | Where the mission clock lives | The supervisor as the continuous source, the supervisor deciding T-zero with the flight computers as the clock (hybrid), mission time in SYNC from the sync master alone, or each computer counting for itself: which survives a failure of the supervisor, of the sync master and of a node's link, and keeps every computer on the same schedule? | SIL with fault injection, live triplex | 3 | medium, before the mission time goes into SYNC |
 | TS-22 | The independent time reference | A TCXO RTC, an oven crystal, a GPS-disciplined oscillator, a chip-scale atomic clock, with or without correlation against the PC's UTC: what error does each leave over a run, what does it cost, and what happens when it fails? | bench measurement (Allan variance, drift against NTP and GPS) | 3 | small to medium, after the parts arrive |
 | TS-23 | How often the replicas resynchronise (the period) | Every 10, 20, 50, 100, 200, 500 or 1000 frames: what does the period change in flight survival, the digest check, healing and rejoin time, bus load and the detection of a failing state? | SIL closed loop (`tfc_resync`) | 3 | medium, **before the firmware default is fixed** |
-| TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `DEFERRED.md` section 7 |
+| TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `FUTURE_WORK.md` section 7 |
 
 Recommended order, by value and by when the data exist: **TS-0** now; **TS-1, TS-2, TS-3, TS-4** on the simulator in October and
 November, while the hardware is built; **TS-5, TS-8, TS-9** on the rig after S3; the others as short write-ups.
@@ -310,13 +310,13 @@ What it shows: (1) **a handful of lost frames in a flight makes the digests diff
 
 *Caveat on the loss model.* The drops here are independent at each receiver. Classic CAN is built so that a frame damaged at one node is flagged and re-sent for all (an atomic broadcast, with a known exception for errors in the last bits of a frame), so a lost frame at one node and not the others is **not** the likely cause on a healthy wired bus. The likely causes are local: a receive FIFO that overflows, a frame that arrives after the node has already run its step (late, in a time-triggered frame), a node that was reset and rejoined, or a software drop. The model stands for those; the rate to use for them is a measurement still to be made on the rig (the live triplex with a counter of frames each node used in each frame). Consequence for the options: **D alone (tolerate with persistence) cannot work**, because the mismatch does not decay inside any persistence window; the digest must either compare something that converges (E) or the states must be pulled together (C) or the inputs agreed (B). The bus loss rate this needs to survive is also now a number to ask for: the CAN fault campaign should say what loss a real bus shows, since a good wired bus loses far fewer than 0.01 %.
 
-**Decision (5 Oct 2026, owner: option C with persistence-based detection; ADR-030).** Built on the host and measured (`docs/RESYNC.md`): with the resync every 100 frames the 60 s flight that was lost at 1 % frame loss flies (max error 0.55 degree), and still flies at 10 %; a 2 degree state corruption in one computer is healed and reported as one large correction; the digest check counts a mismatch only after a configured persistence. Not yet in the firmware, so not yet on the bus. The expected finding (D with E is not enough for the controller's integrator) was not tested separately: option D alone is ruled out by the first measurement.
+**Decision (5 Oct 2026, owner: option C with persistence-based detection; ADR-030).** Built on the host and measured (`docs/design/RESYNC.md`): with the resync every 100 frames the 60 s flight that was lost at 1 % frame loss flies (max error 0.55 degree), and still flies at 10 %; a 2 degree state corruption in one computer is healed and reported as one large correction; the digest check counts a mismatch only after a configured persistence. Not yet in the firmware, so not yet on the bus. The expected finding (D with E is not enough for the controller's integrator) was not tested separately: option D alone is ruled out by the first measurement.
 
 **Dependencies and timing.** Needs the fault injector on the bus (P1-5, the Pico, or a host injector) and the runner's closed loop (P1-4d). Before the closed loop is used for the demonstration.
 
 **Talking point.** "I found that replicated estimators diverge permanently on a single lost frame, measured it, and compared four ways of keeping them together."
 
-## 9c. TS-17: hardware overrides, how many and which (docs/HARDWARE_OVERRIDE.md)
+## 9c. TS-17: hardware overrides, how many and which (docs/design/HARDWARE_OVERRIDE.md)
 
 **Question.** The software has three layers (flight software, the supervisor, and nothing); the owner asked for a layer of hardware switches that works when every
 program is down or wrong. How many overrides does the rig need, which functions should they have, and what can go wrong with each? More switches cover more
@@ -370,7 +370,7 @@ the Nucleo reset buttons, the pluggable stubs and H4 do not already cover; and *
 
 **Talking point.** "I asked what the system does when all the software is wrong, listed the ways the safety switches could themselves fail, and chose how many to build from that."
 
-## 9d. TS-18: testing hardware-facing firmware without the hardware (docs/PICO_TESTS.md)
+## 9d. TS-18: testing hardware-facing firmware without the hardware (docs/verification/PICO_TESTS.md)
 
 **Question.** The Pico's loop talks to a USB port, two PWM channels, four relay pins and a watchdog. Four ways to test it before the board exists: **(1)** the real loop on the host under a fake
 board (done: `tests/test_pico_app.cpp`), **(2)** the real application on `native_sim` with Zephyr's emulated GPIO, a fake PWM and the UART on a pseudo-terminal, **(3)** an instruction-set
@@ -428,7 +428,7 @@ shock, the least confusing motion for the IMUs, and a state the flight computers
 
 **Talking point.** "I tuned what a platform does when it loses its commander, from measured shock and from what the flight computers made of it."
 
-## 9g. TS-21: where the mission clock lives (docs/LAUNCH_SEQUENCE.md section 3)
+## 9g. TS-21: where the mission clock lives (docs/design/LAUNCH_SEQUENCE.md section 3)
 
 **Question.** The guidance and gain schedules need one number that every computer agrees on: the time since T-zero. It can come from four places. The owner's first idea is the supervisor, which is independent and cannot be affected by the rest of the system.
 What does each option do when the supervisor, the sync master, or one computer's link fails during the ascent, and when two computers see the launch command a frame apart?
@@ -447,7 +447,7 @@ a restarted computer rejoins on the right schedule (weight 2); independence: an 
 
 **Talking point.** "I put the authority for launch in an independent computer and the clock in the replicated ones, and tested what each choice does when each part fails."
 
-## 9h. TS-22: the independent time reference (docs/MISSION_CLOCK.md)
+## 9h. TS-22: the independent time reference (docs/design/MISSION_CLOCK.md)
 
 **Question.** The clock of record must be independent of the flight computers and good enough for the mission length. The five-year drift is 316 s for a TCXO class part, 16 s for an oven crystal and milliseconds for an atomic clock (datasheet-class figures, not checked).
 Which reference gives an error the project can state and defend at an acceptable cost, and does time correlation against the PC's UTC (the way a spacecraft's clock is correlated against ground time) make the cheap one enough?
@@ -467,7 +467,7 @@ The time-error budget is then extrapolated to five years with the measured aging
 
 **Talking point.** "I asked what keeps the time of a mission that outlasts any one computer, measured what an oscillator drifts, and designed the correlation a spacecraft uses against ground time."
 
-## 9i. TS-23: how often the replicas resynchronise (docs/RESYNC.md, ADR-030)
+## 9i. TS-23: how often the replicas resynchronise (docs/design/RESYNC.md, ADR-030)
 
 **Question.** The state resynchronisation (TS-16 option C) has one number to choose, the period. A short one heals a lost frame sooner and costs more bus time; a long one costs nothing and leaves the states apart for longer. What does the period actually change, how much, and where is the best value?
 
@@ -518,7 +518,7 @@ The time-error budget is then extrapolated to five years with the measured aging
 - *The cost* is small everywhere; period 10 is the only one that adds more than 1 % average bus load.
 - *Drift detection* runs the other way: it prefers the long periods.
 
-*What no period fixes* (the fault manager's command tolerance, `docs/RESYNC.md` section 6b): frames in which two computers' commands differ by more than the manager's 0.01 degree are caused by the immediate effect of a lost frame, so they do not depend on the period (28 per flight at 0.1 % loss at period 10 and at 100, 284 and 281 at 1 %), but the resync is what keeps them from lasting: without it every flight at 0.1 % loss has a run of three such frames in a row, with it none of 16 does; at 1 % loss 7 to 8 of 16 flights still do, at any period. At that loss rate the tolerance, or option B, has to change.
+*What no period fixes* (the fault manager's command tolerance, `docs/design/RESYNC.md` section 6b): frames in which two computers' commands differ by more than the manager's 0.01 degree are caused by the immediate effect of a lost frame, so they do not depend on the period (28 per flight at 0.1 % loss at period 10 and at 100, 284 and 281 at 1 %), but the resync is what keeps them from lasting: without it every flight at 0.1 % loss has a run of three such frames in a row, with it none of 16 does; at 1 % loss 7 to 8 of 16 flights still do, at any period. At that loss rate the tolerance, or option B, has to change.
 
 **Decision rule.** The *longest* period for which (a) no flight is lost at 1 % loss, (b) a digest persistence of 2P + 50 never false-flags at 0.1 % loss and (c) a lost frame is healed, and a restarted computer rejoins, within one probation (1 s). That is **period 100**: (a) holds up to period 1000, (b) holds up to 1000 at 0.1 % (0 of 32), (c) fails from 200 up. If the rig measures a loss rate near 1 % the digest check is only usable at period 20 or below and the rule's (b) should be re-run at that rate; the choice then trades 0.8 % of the bus for a usable digest.
 
@@ -526,7 +526,7 @@ The time-error budget is then extrapolated to five years with the measured aging
 
 **Open question this exposed: slow drift.** Resynchronisation heals a drift below `large_limit / period` per second without a report. A cheap second rule would count how many resyncs *in a row* changed the same computer's state while the others' did not (on a bus with a loss of 0.1 % or less this is rare for a healthy computer, and a drifting one is changed every time), and report it as a bad frame. It was not built: the measured loss rate is needed to set its count. Recorded as a follow-up with the real-bus measurement.
 
-**The diverse node.** It is left out of the resync by a switch (`CONFIG_TFC_RESYNC_GROUP`) and does not appear in these tables; the reasons, the measured command difference it then shows and the option of a slew-limited adoption are in `docs/RESYNC.md` section 6.
+**The diverse node.** It is left out of the resync by a switch (`CONFIG_TFC_RESYNC_GROUP`) and does not appear in these tables; the reasons, the measured command difference it then shows and the option of a slew-limited adoption are in `docs/design/RESYNC.md` section 6.
 
 **Talking point.** "I measured what the resync period buys: flight survival does not depend on it up to 1 % loss, the usefulness of the digest check depends on it strongly, and the cost is a 1.6 ms burst; the best value is the longest one that still heals within a probation."
 

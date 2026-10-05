@@ -352,7 +352,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "ph_warm_of_a_computer_not_healthy": ("redundancy.hpp", "if (state_of(node) != NodeState::Healthy) {\n      return CommandResult::RefusedNotHealthy;", "if (false) {\n      return CommandResult::RefusedNotHealthy;"),
     "ph_warm_twice_is_not_already_done": ("redundancy.hpp", "    if (warm(node)) {\n      return CommandResult::AlreadyDone;\n    }\n    if (state_of(node) != NodeState::Healthy) {", "    if (state_of(node) != NodeState::Healthy) {"),
     "ph_warm_keeps_the_old_count": ("redundancy.hpp", "    warm_ = static_cast<uint8_t>(warm_ | (1U << node));\n    probation_clean_[node] = 0U;\n", "    warm_ = static_cast<uint8_t>(warm_ | (1U << node));\n"),
-    "ph_noop_unknown": ("redundancy.hpp", "      case GroundOp::Noop:  // nothing changes; it is answered like the others (TFC-FDIR-043)\n        break;\n", ""),
+    "ph_noop_unknown": ("redundancy.hpp", "      case GroundOp::Noop:    // nothing changes; it is answered like the others (TFC-FDIR-043)\n", ""),
     "ph_noop_node_checked": ("redundancy.hpp", "|| op == GroundOp::Noop) ? 0U : d.node;", ") ? 0U : d.node;"),
     "ph_phase_number_checked_as_node": ("redundancy.hpp", "is_phase ? node >= phases::kCount : (node >= kNodes && !imu_op)", "(node >= kNodes && !imu_op)"),
     "ph_below_minimum_never_reported": ("redundancy.hpp", "rep.below_minimum = cfg_.phases && rep.healthy < phases::kRules[phase_checked()].minimum;", "rep.below_minimum = false;"),
@@ -384,7 +384,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "ss_counter_older_adopted": ("redundancy.hpp", "(gap != 0U && gap < 128U)", "(gap != 0U)"),
     "ss_counter_not_marked_present": ("redundancy.hpp", "        cmd_ctr_.set(chosen);\n        cmd_have_.set(1U);\n", "        cmd_ctr_.set(chosen);\n"),
     "ss_restore_not_counted": ("redundancy.hpp", "      ++counters_.state_restores;\n", ""),
-    "ss_restore_counted_when_nothing_changed": ("redundancy.hpp", "    if (out.strikes_raised != 0U || out.disabled != 0U || out.counter) {\n      ++counters_.state_restores;", "    if (true) {\n      ++counters_.state_restores;"),
+    "ss_restore_counted_when_nothing_changed": ("redundancy.hpp", "    if (out.strikes_raised != 0U || out.counter) {", "    if (true) {"),
     # (not listed, equivalent: a computer that has not spoken has an all-zero share, which neither raises a maximum nor can make two words agree on a number that matters; the disable test needs both words to agree because the cap holds one word below the limit; a zero counter never reaches the choice)
     "su_ov_debounce_off_by_one": ("sup/overrides.hpp", "now - since_[i] >= debounce_", "now - since_[i] > debounce_"),
     "su_ov_no_debounce": ("sup/overrides.hpp", " && now - since_[i] >= debounce_", ""),

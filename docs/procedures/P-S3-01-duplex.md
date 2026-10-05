@@ -1,6 +1,6 @@
 # P-S3-01: stage S3, Duplex (FC-A and FC-B)
 
-Follows `docs/VERIFICATION_PROCEDURE_TEMPLATE.md`. Exit test of S3: "Unplug B: back to Simplex without a glitch. Inject a bad value: miscompare flagged".
+Follows `docs/verification/VERIFICATION_PROCEDURE_TEMPLATE.md`. Exit test of S3: "Unplug B: back to Simplex without a glitch. Inject a bad value: miscompare flagged".
 
 | Field | Entry |
 |---|---|
@@ -34,4 +34,4 @@ P-S1-01 for FC-A and the same for FC-B (its own run, same limits). Both calibrat
 Virtual peer first, then the nodes; relays released.
 
 ## 5. Records
-As-run copy; logs; the fault-matrix rows with the test id; the loss figure and the bias spread into `docs/RESYNC.md` and `docs/LAUNCH_SEQUENCE.md` if they differ from the assumptions.
+As-run copy; logs; the fault-matrix rows with the test id; the loss figure and the bias spread into `docs/design/RESYNC.md` and `docs/design/LAUNCH_SEQUENCE.md` if they differ from the assumptions.

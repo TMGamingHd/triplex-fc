@@ -1,6 +1,6 @@
 # P-S2-03: stage S2b, the supervisor (SUP-Lite)
 
-Follows `docs/VERIFICATION_PROCEDURE_TEMPLATE.md`. Exit test of S2b (`docs/STAGED_BUILD.md`): "A node made to hang is reset within 3 frames; the supervisor unplugged leaves FC-A and ACT running (F57, F58, F66)". Design: `docs/SUPERVISOR.md`; logic and its host tests: `supervisor/include/sup/`, `tests/test_supervisor*.cpp`.
+Follows `docs/verification/VERIFICATION_PROCEDURE_TEMPLATE.md`. Exit test of S2b (`docs/hardware/STAGED_BUILD.md`): "A node made to hang is reset within 3 frames; the supervisor unplugged leaves FC-A and ACT running (F57, F58, F66)". Design: `docs/design/SUPERVISOR.md`; logic and its host tests: `supervisor/include/sup/`, `tests/test_supervisor*.cpp`.
 
 | Field | Entry |
 |---|---|
@@ -40,7 +40,7 @@ P-S1-01 and P-S2-01 passed. Supervisor wiring checked with a meter (no input flo
 Nodes off first, supervisor last; relays released; the coin cell left in. Keep the console text, the analyser captures and the correlation pairs.
 
 ## 5. Records
-This file as run; the console log; the analyser captures; rows F57 to F59, F66 to F68 of `docs/FAULT_MATRIX.md` updated with this test id; the measured drift into `docs/MISSION_CLOCK.md`.
+This file as run; the console log; the analyser captures; rows F57 to F59, F66 to F68 of `docs/verification/FAULT_MATRIX.md` updated with this test id; the measured drift into `docs/design/MISSION_CLOCK.md`.
 
 ## 6. Not covered here
 The `T0` line into the flight computers (the node firmware reads it in the launch increment of P-S4-01); the hardware overrides (P-HWO-01); the supervisor as a power-cycle of the *real* injector's cut (the two are in series, check P-HWO-01 step 4).

@@ -1,6 +1,6 @@
 # Fault coverage: an FMEA-style gap analysis
 
-> Status: working document, last updated with the campaign run recorded in `docs/FAULT_CAMPAIGN.md`. "Modelled" means the virtual peers can inject it; "Covered"
+> Status: working document, last updated with the campaign run recorded in `docs/verification/FAULT_CAMPAIGN.md`. "Modelled" means the virtual peers can inject it; "Covered"
 > means a test checks the response. SpaceX-related statements are from public material or inference.
 
 ## 1. How real programs think about this
@@ -37,7 +37,7 @@ dropout, stuck, bias, drift, spike, saturate, corrupt, cmd_offset, digest, babbl
 
 ## 3. Gaps found and what was added (now 32 kinds)
 
-Every bold item in section 1 became a fault kind (matrix rows F27-F45). The campaign (`docs/FAULT_CAMPAIGN.md`) then found
+Every bold item in section 1 became a fault kind (matrix rows F27-F45). The campaign (`docs/verification/FAULT_CAMPAIGN.md`) then found
 three *response* gaps that no new fault kind could have shown, and a coverage gap in the checks themselves:
 
 | Class from section 1 | Kind | Row | Measured response |
@@ -57,7 +57,7 @@ three *response* gaps that no new fault kind could have shown, and a coverage ga
 | Common-cause faults | `correlated` group | - | two nodes with the same error: the healthy node is outvoted and blamed (voting cannot help; needs design diversity) |
 | Multi-fault and fault during recovery | `pairs`, `new_pairs`, `cascades` groups | - | 1,788 combinations, no property violated |
 
-Response gaps found by the campaign and fixed (details: `docs/FAULT_CAMPAIGN.md` section 6):
+Response gaps found by the campaign and fixed (details: `docs/verification/FAULT_CAMPAIGN.md` section 6):
 
 | Gap | Where it shows | Fix |
 |---|---|---|

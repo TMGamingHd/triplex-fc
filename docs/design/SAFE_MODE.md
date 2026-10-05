@@ -1,6 +1,6 @@
 # Safe mode: research and proposal
 
-> Status: **accepted for Safe mode, 4 Oct 2026** (the open questions in section 10 were answered by the owner); the phase table it refers to is still a proposal (resolves the "define the Safe action" item of `DEFERRED.md` section 3 as far as it can be resolved before the
+> Status: **accepted for Safe mode, 4 Oct 2026** (the open questions in section 10 were answered by the owner); the phase table it refers to is still a proposal (resolves the "define the Safe action" item of `FUTURE_WORK.md` section 3 as far as it can be resolved before the
 > actuator node exists). All numbers are proposals. Sources were read as search summaries, not in full; check them before quoting them in
 > the write-up (section 9).
 
@@ -43,7 +43,7 @@ decision, and (c) end in a position everyone agrees on.
 
 ## 5. Options for the Safe action
 
-> **Correction, 4 Oct 2026.** The two servos are the *platform's* (driven by the Pico from the simulator), not an actuator behind ACT: ACT has no servo output, and its Safe action is the *value of the gimbal command it puts on the bus* (`docs/VEHICLE_SIM.md` section 2). Where this page says "servos" it means the platform: the platform's own protection is the Pico's limits and link watchdog (PLAT-001 to 004) and the E-stop.
+> **Correction, 4 Oct 2026.** The two servos are the *platform's* (driven by the Pico from the simulator), not an actuator behind ACT: ACT has no servo output, and its Safe action is the *value of the gimbal command it puts on the bus* (`docs/design/VEHICLE_SIM.md` section 2). Where this page says "servos" it means the platform: the platform's own protection is the Pico's limits and link watchdog (PLAT-001 to 004) and the E-stop.
 
 | Option | What the output does | For | Against |
 |---|---|---|---|

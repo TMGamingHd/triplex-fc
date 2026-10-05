@@ -105,7 +105,7 @@ F17 reset or brownout, and the loss of ACT's own output.
 |---|---|
 | Detected | The supervisor's missing `KICK` from ACT, 3 frames; ACT's own watchdog |
 | Class | **R6** on ACT, then **R5**: after any ACT reset ACT starts **in Safe**, as the lecture's reset pattern does, not in the nominal mode |
-| Vehicle | ACT's output is the gimbal command on the bus; there is no servo behind it (`docs/VEHICLE_SIM.md`). On boot ACT has no last command, so naive start-up would jump the output to neutral: a step. Proposal: ACT keeps its last output in memory that survives a reset (no-init RAM, CRC-checked) and resumes from it, then nulls at the rate limit; if that memory is invalid it starts from neutral. |
+| Vehicle | ACT's output is the gimbal command on the bus; there is no servo behind it (`docs/design/VEHICLE_SIM.md`). On boot ACT has no last command, so naive start-up would jump the output to neutral: a step. Proposal: ACT keeps its last output in memory that survives a reset (no-init RAM, CRC-checked) and resumes from it, then nulls at the rate limit; if that memory is invalid it starts from neutral. |
 | Operator | `clear-safe` under an ARM when the exit conditions hold |
 | Limit | While ACT is single (ADR-023) this is fail-passive, not fail-operational |
 

@@ -37,7 +37,7 @@ All numeric limits are **proposals**. Each will be confirmed, tightened or dropp
 | TFC-FDIR-024 | When no node is healthy, two or more nodes on probation shall be judged against the vote among themselves: the odd one out fails, nodes that cannot be told apart neither advance nor fail, and agreeing nodes are readmitted after the normal probation (ADR-014). A single candidate shall wait. | T |
 | TFC-FDIR-025 | The manager shall detect a single-bit upset in its node states, its Safe flag or its configuration within one frame, repair it on the safe side (node excluded, Safe requested, configuration restored), and count and report it (ADR-015). | T |
 | TFC-FDIR-026 | An invalid configuration value (a non-finite or non-positive tolerance, M-of-N outside 1 <= M <= N <= 32, a stuck limit below 2, out-of-range leaky-count constants, an arbitration factor between 0 and 1, contradictory probation or strike limits) shall be replaced by its default and reported, never used (ADR-015). | T |
-| TFC-FDIR-027 | Every CAN id that is not part of the flight-bus schedule shall be counted as out-of-schedule traffic. The schedule includes the simulator's range `0x500` to `0x50F`, the state share `0x410` to `0x412` and the heartbeats (docs/PROTOCOL.md); every id above the ground command `0x510` is out of schedule. | T |
+| TFC-FDIR-027 | Every CAN id that is not part of the flight-bus schedule shall be counted as out-of-schedule traffic. The schedule includes the simulator's range `0x500` to `0x50F`, the state share `0x410` to `0x412` and the heartbeats (docs/design/PROTOCOL.md); every id above the ground command `0x510` is out of schedule. | T |
 | TFC-FDIR-028 | In Duplex, a node whose output stopped following a moving signal (a frozen or stale command) shall never cause the healthy node to be isolated, and shall not put a wrong value on the output: it is isolated, or the output is held and Safe requested (ADR-017). | T |
 | TFC-FDIR-029 | When no majority of estimator-state digests exists (three different values), no node shall be isolated; the disagreement shall be treated as unresolved (hold, Safe request). | T |
 | TFC-FDIR-030 | Every sensor and command frame shall carry the number of the SYNC frame of its cycle; a receiver shall treat as a sequence error a frame whose number is not the current one, nor an earlier one whose own cycle delivered nothing, nor a number not yet seen; a node whose frames are out of phase (early, late, repeated, frozen or wrongly numbered) shall be isolated within 3 frames, and a single lost, damaged or late frame shall still cost exactly one sample (ADR-018). | T |
@@ -46,15 +46,15 @@ All numeric limits are **proposals**. Each will be confirmed, tightened or dropp
 | TFC-FDIR-033 | `disable` of a voting node shall be a plain command only while it leaves at least two healthy nodes; leaving one voter shall need an ARM; removing the last voter shall need an ARM and be reported as critical in the frame report, on the console and in `critical_commands` (ADR-019). | T |
 | TFC-FDIR-034 | The manager's command state (counter record, ARM) shall be guarded and scrubbed like its other critical state (FDIR-025); a damaged ARM shall be cleared and a damaged counter record shall forget the history, never accept an unauthentic frame (ADR-015, ADR-019). | T |
 | TFC-FDIR-035 | The arbitration reference shall follow the signal's motion only to the extent that the last agreed step exceeds one tolerance per frame (full from two), so that channels whose per-frame change is below the tolerance are arbitrated exactly as against the last agreed value (ADR-017 amended). | T |
-| TFC-FDIR-036 | *(Deferred: the self-test mechanism exists and is host-tested (`ism330dhcx.hpp`); the datasheet's limits are not set and the test is not called until they are, and it needs the part.)* A node shall run the sensor's built-in self-test at power-up and shall not join the vote if it fails (docs/DEFERRED.md). | M |
-| TFC-FDIR-037 | *(Deferred, until the board exists.)* The flight computer shall record, per node and stream, the arrival margin to the vote deadline, and shall raise a non-latching "timing degraded" flag when it stays under a threshold; a slot-window check against the arrival time shall be added telemetry-first (docs/DEFERRED.md; E3, E11). | M |
-| TFC-FDIR-038 | *(The progress monitor exists and is host-tested (`progress.hpp`); wiring into the frame loop and the board's watchdog is next.)* A node's hardware watchdog shall be serviced only once per frame, at the end of a completed frame: after the vote has run and every monitored task has reported progress in that frame. A task that stops reporting shall stop the servicing, whatever the other tasks keep doing, and the node shall reset or fall silent within the watchdog timeout (proposal: 3 frames, to match FDIR-001) (docs/DEFERRED.md section 5.1). | T, M |
-| TFC-FDIR-039 | *(Deferred, until the supervisor exists; ADR-022.)* The power or reset of each flight-computer node shall be controllable by lines that do not depend on the firmware of the node being controlled, driven by the supervisor (SUP-003), so that a node whose firmware is hung or misbehaving can be reset, power-cycled or held in reset (docs/SUPERVISOR.md). | M |
+| TFC-FDIR-036 | *(Deferred: the self-test mechanism exists and is host-tested (`ism330dhcx.hpp`); the datasheet's limits are not set and the test is not called until they are, and it needs the part.)* A node shall run the sensor's built-in self-test at power-up and shall not join the vote if it fails (docs/design/FUTURE_WORK.md). | M |
+| TFC-FDIR-037 | *(Deferred, until the board exists.)* The flight computer shall record, per node and stream, the arrival margin to the vote deadline, and shall raise a non-latching "timing degraded" flag when it stays under a threshold; a slot-window check against the arrival time shall be added telemetry-first (docs/design/FUTURE_WORK.md; E3, E11). | M |
+| TFC-FDIR-038 | *(The progress monitor exists and is host-tested (`progress.hpp`); wiring into the frame loop and the board's watchdog is next.)* A node's hardware watchdog shall be serviced only once per frame, at the end of a completed frame: after the vote has run and every monitored task has reported progress in that frame. A task that stops reporting shall stop the servicing, whatever the other tasks keep doing, and the node shall reset or fall silent within the watchdog timeout (proposal: 3 frames, to match FDIR-001) (docs/design/FUTURE_WORK.md section 5.1). | T, M |
+| TFC-FDIR-039 | *(Deferred, until the supervisor exists; ADR-022.)* The power or reset of each flight-computer node shall be controllable by lines that do not depend on the firmware of the node being controlled, driven by the supervisor (SUP-003), so that a node whose firmware is hung or misbehaving can be reset, power-cycled or held in reset (docs/design/SUPERVISOR.md). | M |
 | TFC-FDIR-040 | *(Deferred, until the rig, with FDIR-009.)* The response to a bus alarm that persists for more than N frames (proposal: 10) shall be defined and tested. As a minimum it shall be reported; the operator shall be able to hold one node at a time in reset through the supervisor (`hold X`) to find the source by elimination. It shall never hold a node in reset automatically on a bus alarm alone, because an out-of-schedule id cannot be attributed to a node (ADR-009). | M |
-| TFC-FDIR-041 | *(Deferred, until nodes B and C have firmware and the heartbeat payload is defined.)* Each node shall broadcast its view of the membership and command state (mode, per-node state, strike counts, last accepted command counter) at least every N frames (proposal: 10). A node that restarts shall rebuild its strike counts and command counter from what the others broadcast, using a value that at least two nodes agree on and, where they disagree, the more conservative one (the higher strike count and counter; a Disabled node stays Disabled); a restored state shall never make a node more trusted than the others hold it (docs/DEFERRED.md section 5.3). | T, M |
-| TFC-FDIR-042 | *(The reset log exists and is host-tested (`resetlog.hpp`); wiring into the firmware and acting on a loop is next.)* Each node shall keep a reset counter and the cause of its last reset (power, watchdog, software) across resets, shall come up after a reset not voting and in a minimal state, and shall rejoin only through the normal join and probation path (FDIR-006). A node that resets more than R times in a window (proposal: 3 in 60 s) shall stay out of the vote, report the reboot loop, and rejoin only after a maintenance command (docs/DEFERRED.md section 5.5). | T, M |
-| TFC-FDIR-043 | *(Planned, not implemented.)* A `noop` ground command shall pass the same CRC, tag and counter checks as the others, change no state, need no ARM, and be answered with an accepted outcome and its counter, so the operator can check the command path from end to end (docs/DEFERRED.md section 5.4). | T |
-| TFC-FDIR-044 | *(Built, host and firmware (native_sim, live); not run on the target; ADR-030.)* The replicated flight computers shall exchange their estimator and controller state every N frames (proposal 100) and each shall adopt the mid-value of the states of the healthy computers when it has all of them, and nothing otherwise, so that a computer that missed or received late a sensor frame is brought back to the same state as the others within N frames (docs/RESYNC.md). | T |
+| TFC-FDIR-041 | *(Deferred, until nodes B and C have firmware and the heartbeat payload is defined.)* Each node shall broadcast its view of the membership and command state (mode, per-node state, strike counts, last accepted command counter) at least every N frames (proposal: 10). A node that restarts shall rebuild its strike counts and command counter from what the others broadcast, using a value that at least two nodes agree on and, where they disagree, the more conservative one (the higher strike count and counter; a Disabled node stays Disabled); a restored state shall never make a node more trusted than the others hold it (docs/design/FUTURE_WORK.md section 5.3). | T, M |
+| TFC-FDIR-042 | *(The reset log exists and is host-tested (`resetlog.hpp`); wiring into the firmware and acting on a loop is next.)* Each node shall keep a reset counter and the cause of its last reset (power, watchdog, software) across resets, shall come up after a reset not voting and in a minimal state, and shall rejoin only through the normal join and probation path (FDIR-006). A node that resets more than R times in a window (proposal: 3 in 60 s) shall stay out of the vote, report the reboot loop, and rejoin only after a maintenance command (docs/design/FUTURE_WORK.md section 5.5). | T, M |
+| TFC-FDIR-043 | *(Planned, not implemented.)* A `noop` ground command shall pass the same CRC, tag and counter checks as the others, change no state, need no ARM, and be answered with an accepted outcome and its counter, so the operator can check the command path from end to end (docs/design/FUTURE_WORK.md section 5.4). | T |
+| TFC-FDIR-044 | *(Built, host and firmware (native_sim, live); not run on the target; ADR-030.)* The replicated flight computers shall exchange their estimator and controller state every N frames (proposal 100) and each shall adopt the mid-value of the states of the healthy computers when it has all of them, and nothing otherwise, so that a computer that missed or received late a sensor frame is brought back to the same state as the others within N frames (docs/design/RESYNC.md). | T |
 | TFC-FDIR-045 | *(Built, host and firmware; ADR-030.)* A computer whose own state is found, at a resynchronisation, further from the vote than a stated tolerance shall be reported to the fault manager as a bad frame for that computer: resynchronisation shall heal the replicas without hiding a failing computer. | T |
 | TFC-FDIR-046 | *(Built, host and firmware; ADR-030.)* A state-digest mismatch shall count against a computer, or as an unresolved disagreement, only after it has lasted a configured number of frames in a row (default 1; with resynchronisation, a little more than N). | T |
 
@@ -73,7 +73,7 @@ All numeric limits are **proposals**. Each will be confirmed, tightened or dropp
 | TFC-ARCH-007 | *(Accepted 4 Oct 2026, ADR-021.)* When two nodes running one release agree with each other and disagree with the node running the other release beyond the version tolerance for M of N frames, no node shall be isolated, the output shall be held and a Safe request raised; the operator shall be able to resolve it by disabling one side under an ARM and clearing Safe (ADR-021, ADR-008). | T |
 | TFC-ARCH-008 | *(Deferred, with ARCH-004.)* The estimator-state digest shall be computed over a version-stable, quantised state, so that nodes of different releases behaving correctly produce the same digest. | T |
 
-## Supervisor (accepted 4 Oct 2026 as SUP-Lite, ADR-022; docs/SUPERVISOR.md)
+## Supervisor (accepted 4 Oct 2026 as SUP-Lite, ADR-022; docs/design/SUPERVISOR.md)
 All deferred until the supervisor hardware exists. Items marked Full need the variant with a listen-only CAN tap, which was **not** chosen: they are not built unless Full is taken later.
 
 | ID | Requirement | Verif. |
@@ -88,24 +88,24 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-SUP-008 | The supervisor shall have its own hardware watchdog and shall report its own reset count and the cause of its last reset. | M |
 | TFC-SUP-009 | The supervisor shall keep mission elapsed time on its own clock. *(Full.)* It shall flag a node whose SYNC frame number, multiplied by the frame period, departs from that time by more than a set bound (the plausibility check on a time seed). | T, M |
 | TFC-SUP-010 | The supervisor shall never decide whether a working node's data are good: its isolating actions are limited to a node that is silent, hung, looping through resets, or named by the operator. | I, T |
-| TFC-SUP-011 | *(Proposed, ADR-029.)* The supervisor shall keep mission elapsed time on an oscillator of its own, backed by a battery so that it survives a power cut of the rig, and shall report it, with the oscillator's measured drift, over USB (docs/MISSION_CLOCK.md). | T, M |
+| TFC-SUP-011 | *(Proposed, ADR-029.)* The supervisor shall keep mission elapsed time on an oscillator of its own, backed by a battery so that it survives a power cut of the rig, and shall report it, with the oscillator's measured drift, over USB (docs/design/MISSION_CLOCK.md). | T, M |
 | TFC-SUP-012 | *(Proposed, ADR-029.)* The supervisor shall record correlation pairs (its counter against the PC's UTC) and the fitted drift and offset, so that its time converts to UTC with a stated error. | T, M |
 | TFC-SUP-013 | *(Proposed, ADR-029.)* The supervisor shall distribute time to the flight computers and ACT by a pulse per second and a one-way serial message, not by the flight bus; a node that loses either shall flag the age of its time and carry on. | T, M |
 | TFC-SUP-014 | *(Proposed, ADR-029.)* No control decision of any node shall depend on the supervisor's time (TFC-SUP-007). | I |
 
-## Safe mode (proposed, ADR-023; docs/SAFE_MODE.md)
+## Safe mode (proposed, ADR-023; docs/design/SAFE_MODE.md)
 | ID | Requirement | Verif. |
 |---|---|---|
-| TFC-SAFE-001 | *(Logic built and host-tested: `docs/ACT_LOGIC.md`.)* On entering Safe the output shall freeze at the last good voted command at once, with no step; after `T_hold` (proposal: 50 frames) it shall move to the neutral command at no more than the rate limit (proposal: a quarter of full travel per second) and then hold neutral until Safe is cleared. | T, M |
+| TFC-SAFE-001 | *(Logic built and host-tested: `docs/design/ACT_LOGIC.md`.)* On entering Safe the output shall freeze at the last good voted command at once, with no step; after `T_hold` (proposal: 50 frames) it shall move to the neutral command at no more than the rate limit (proposal: a quarter of full travel per second) and then hold neutral until Safe is cleared. | T, M |
 | TFC-SAFE-002 | *(Logic built and host-tested.)* ACT shall carry out the sequence of SAFE-001 by itself, without the flight computers or the bus, when it has had no valid vote for 3 frames, when the vote status carries a Safe request, or when its `SAFE` line is asserted. | T, M |
 | TFC-SAFE-003 | *(Logic built and host-tested; the authenticated ground-command path is P1-4.)* Safe shall be left only when at least two healthy flight computers have agreed for 100 frames, ACT sees valid votes, and an operator `clear-safe` under an ARM has been accepted (ADR-019). Nothing shall leave Safe by itself. | T |
 | TFC-SAFE-004 | Every entry to and exit from Safe shall be recorded as an event with its cause and counted (IF-005, IF-006). | T |
 | TFC-SAFE-005 | The neutral command, `T_hold`, the rate limit and the lost-vote count shall be parameters with defaults in non-volatile memory, validated like FDIR-026: an invalid value is replaced by its default and reported. | T |
-| TFC-SAFE-006 | The Safe action shall be defined per mission phase (docs/MISSION_PHASES.md). | I |
-| TFC-SAFE-007 | Responses shall follow the ladder: ignore, flag, isolate, degrade, hold and request Safe, Safe; the lowest adequate rung shall be used, and no monitor shall be allowed to trip on a single sample or be disabled by a parameter (docs/SAFE_MODE.md section 8). | I, T |
+| TFC-SAFE-006 | The Safe action shall be defined per mission phase (docs/design/MISSION_PHASES.md). | I |
+| TFC-SAFE-007 | Responses shall follow the ladder: ignore, flag, isolate, degrade, hold and request Safe, Safe; the lowest adequate rung shall be used, and no monitor shall be allowed to trip on a single sample or be disabled by a parameter (docs/design/SAFE_MODE.md section 8). | I, T |
 | TFC-SAFE-008 | *(Accepted 4 Oct 2026.)* A Safe event shall be reported to the vehicle simulator as a flag; the simulator shall keep the run going with the frozen or nulled output and mark it safed, and only an operator abort shall end it. | T |
 
-## Mission phases (proposed, ADR-023; docs/MISSION_PHASES.md)
+## Mission phases (proposed, ADR-023; docs/design/MISSION_PHASES.md)
 | ID | Requirement | Verif. |
 |---|---|---|
 | TFC-PHASE-001 | *(Deferred, until the estimator and the simulator's scenario events exist.)* Each node shall have a role (HOT, WARM, COLD) independent of its health. HOT: powered, voting, output used. WARM: powered, running, judged by the shadow vote, output not used. COLD: not running. | T |
@@ -113,7 +113,7 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-PHASE-003 | *(Deferred, with PHASE-001.)* Promotion of a WARM node to HOT shall use the probation criteria (FDIR-006, FDIR-020, FDIR-021); demotion shall follow the interlock tiers of FDIR-033 and shall be refused below the phase minimum. | T |
 | TFC-PHASE-004 | *(Deferred, with PHASE-001.)* The phase shall be changed only by an authenticated `phase` command (ADR-019); a flight computer shall never change the phase itself. | T |
 
-## Fault response (proposed; docs/FAULT_RESPONSE.md)
+## Fault response (proposed; docs/design/FAULT_RESPONSE.md)
 | ID | Requirement | Verif. |
 |---|---|---|
 | TFC-RESP-001 | Every row of the fault matrix shall name a response class (R0 to R6 of `FAULT_RESPONSE.md`) and the behaviour of the vehicle's output, and the response shall be demonstrated by the test named in the row. | I |
@@ -121,14 +121,14 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-RESP-003 | *(Logic built and host-tested; the no-init RAM and the board are P1-4.)* After any reset ACT shall start in Safe, not in nominal mode, and shall resume from its last output, kept in memory that survives a reset and protected by a check; if that memory is invalid it shall start from neutral. The output shall not step by more than the rate limit across a reset. | T, M |
 | TFC-RESP-004 | *(Deferred, with the supervisor.)* The supervisor shall not reset or power-cycle a flight computer on its own while that computer is the only one whose output agrees with the vote; only the operator's `hold` may. | T |
 
-## AI boundary (proposed; docs/DEFERRED.md section 7)
+## AI boundary (proposed; docs/design/FUTURE_WORK.md section 7)
 | ID | Requirement | Verif. |
 |---|---|---|
 | TFC-AI-001 | No learned or statistical-inference component shall run in the flight binaries or take part in a vote; the flight binaries shall contain no inference runtime. | I, T |
 | TFC-AI-002 | An AI-assisted tool shall not hold the ground-command key and shall not send a command; any suggestion shall be logged with its inputs, and a human shall issue the command. | I |
 | TFC-AI-003 | The campaign output shall be byte-identical with every AI-assisted component disabled and enabled. | T |
 
-## Control loop (docs/CONTROL_LOOP.md)
+## Control loop (docs/design/CONTROL_LOOP.md)
 | ID | Requirement | Verif. |
 |---|---|---|
 | TFC-LOOP-001 | Given the same frames, every replica shall compute a bit-identical command and digest (sensor consensus, estimator and controller are deterministic: only arithmetic, comparisons and `sqrt`; no fused multiply-add, no fast-math). | T |
@@ -139,7 +139,7 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-LOOP-006 | The estimator shall align from the first trustworthy gravity reading, and the controller's gimbal command shall never exceed its angle limit or change by more than its slew limit in a frame. | T |
 | TFC-LOOP-007 | The controller's gains shall follow a schedule (up to sixteen points of kp, kd, ki against frame, interpolated, held at the ends), designed from the local divergence and control effectiveness of the nominal trajectory, and the pitch program shall have up to sixteen points. | T |
 
-## Vehicle simulator and platform (ADR-024; docs/VEHICLE_SIM.md)
+## Vehicle simulator and platform (ADR-024; docs/design/VEHICLE_SIM.md)
 | ID | Requirement | Verif. |
 |---|---|---|
 | TFC-SIM-001 | The simulator shall be deterministic: the same scenario and seed shall give a byte-identical state history. | T |
@@ -153,7 +153,7 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-PLAT-003 | The E-stop shall cut the servo rail independently of every firmware. | I, M |
 | TFC-PLAT-004 | The platform shall show the vehicle's long-axis tilt in the pitch and yaw planes within +-45 degrees; beyond that it shall saturate and the simulator shall mark the run. | T, M |
 
-## Hardware override (proposed; docs/HARDWARE_OVERRIDE.md, ADR-027, TS-17)
+## Hardware override (proposed; docs/design/HARDWARE_OVERRIDE.md, ADR-027, TS-17)
 | ID | Requirement | Verif. |
 |---|---|---|
 | TFC-HWO-001 | With every program down or hung (PC, simulator, Pico, ACT, flight computers, supervisor), a person shall be able to bring the platform to a safe state with a manual control that contains no code. | D, M |
@@ -165,7 +165,7 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-HWO-007 | Each override shall be operated and its result logged in a pre-session check; an override not tested in a session shall be reported at the start of the next run. | D |
 | TFC-HWO-008 | An override whose spurious activation would cost a run shall be guarded or keyed and shall show its state. | I |
 
-## Launch sequence (proposed; docs/LAUNCH_SEQUENCE.md, ADR-028)
+## Launch sequence (proposed; docs/design/LAUNCH_SEQUENCE.md, ADR-028)
 | ID | Requirement | Verif. |
 |---|---|---|
 | TFC-LAUN-001 | *(Built on the host.)* Each flight computer shall calibrate the gyro bias of its own IMU over at least 10 s at rest before launch and subtract it before it sends its sample; the calibration shall be ready only if the platform was at rest and the bias is plausible, and shall be frozen at T-zero. | T |
@@ -182,7 +182,7 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-SW-001 | `core/` shall contain no dynamic allocation, exceptions, or RTTI. | I, T |
 | TFC-SW-002 | `core/` shall build with warnings as errors and be clean under clang-tidy and cppcheck. | T |
 | TFC-SW-003 | `core/` shall pass the full test suite under ASan and UBSan. | T |
-| TFC-SW-004 | Branch coverage of the voter and FDIR code shall be as high as the structure allows (see SW-010 for the gate and `docs/CODING_STANDARD.md` for the deviation from 100%). | T |
+| TFC-SW-004 | Branch coverage of the voter and FDIR code shall be as high as the structure allows (see SW-010 for the gate and `docs/verification/CODING_STANDARD.md` for the deviation from 100%). | T |
 | TFC-SW-005 | Every requirement shall trace to at least one test ID in the fault matrix or a measurement procedure. | I |
 | TFC-SW-006 | Every merge to main shall run the SIL regression in CI. | T |
 | TFC-SW-007 | `core/` shall compile with the strictest warning set as errors (GCC `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wold-style-cast -Wcast-qual -Wnull-dereference -Wfloat-equal -Wswitch-enum -Wswitch-default -Wmissing-declarations -Wuseless-cast -Wlogical-op -Wstack-usage=2048` among others), and each header shall compile on its own. | T |
@@ -198,6 +198,6 @@ All deferred until the supervisor hardware exists. Items marked Full need the va
 | TFC-IF-001 | All bus payloads shall be 8 bytes: 6 data, 1 sequence, 1 CRC-8. | T |
 | TFC-IF-002 | Any single bit flip in a payload shall be detected. | T |
 | TFC-IF-003 | CAN IDs shall order SYNC, sensors, commands, actuator output, heartbeat by priority. | T |
-| TFC-IF-004 | *(Deferred, until the first telemetry exists.)* One machine-readable command and telemetry dictionary shall define every ground command (name, opcode, arguments and their limits, whether an ARM is needed, the modes that refuse it), every telemetry channel and every event record. The firmware, the virtual peers and the documentation shall be checked against it (docs/DEFERRED.md section 5.4). | I, T |
-| TFC-IF-005 | *(Deferred, until the first telemetry exists.)* Housekeeping telemetry shall be sent as numbered channels at a fixed rate (proposal: 1 Hz, and at once on a change of mode): mode, Safe flag, bus alarm, each node's state and strike count, the error counters, the command counters and the reset counters, each with a caution and a warning limit where one is meaningful (docs/DEFERRED.md section 5.4). | T, M |
-| TFC-IF-006 | *(Deferred, until the first telemetry exists.)* Every event (latch, probation, readmission, disable, mode change, Safe request and clear, bus alarm, reset, watchdog service refused) shall be recorded with its frame number, kind, node, reason code and a per-kind sequence number, so a lost record is detectable; every ground command accepted for processing shall produce exactly one success or refused record (docs/DEFERRED.md section 5.4). | T |
+| TFC-IF-004 | *(Deferred, until the first telemetry exists.)* One machine-readable command and telemetry dictionary shall define every ground command (name, opcode, arguments and their limits, whether an ARM is needed, the modes that refuse it), every telemetry channel and every event record. The firmware, the virtual peers and the documentation shall be checked against it (docs/design/FUTURE_WORK.md section 5.4). | I, T |
+| TFC-IF-005 | *(Deferred, until the first telemetry exists.)* Housekeeping telemetry shall be sent as numbered channels at a fixed rate (proposal: 1 Hz, and at once on a change of mode): mode, Safe flag, bus alarm, each node's state and strike count, the error counters, the command counters and the reset counters, each with a caution and a warning limit where one is meaningful (docs/design/FUTURE_WORK.md section 5.4). | T, M |
+| TFC-IF-006 | *(Deferred, until the first telemetry exists.)* Every event (latch, probation, readmission, disable, mode change, Safe request and clear, bus alarm, reset, watchdog service refused) shall be recorded with its frame number, kind, node, reason code and a per-kind sequence number, so a lost record is detectable; every ground command accepted for processing shall produce exactly one success or refused record (docs/design/FUTURE_WORK.md section 5.4). | T |

@@ -57,7 +57,7 @@ One thing the tests found: with the integrator limited to 3 degrees the vehicle 
 - **No actuator node.** The test's ACT is a `vote3` of the three commands, with a hold when they cannot be voted. The real ACT (SW-08, SW-09) adds the output latch, the step bound and the Safe sequence.
 - **No vehicle-simulator gateway** between the host model and the nodes on the bus (SW-06, SW-07); the model here lives in the tests.
 - **A linear-ish plant.** The model is two decoupled planes with a sine on the gimbal; it is the controller's test bench, not a 6-DOF ascent. The 6-DOF model comes with the simulator (SW-06), and the controller gains will be re-tuned there.
-- **The accelerometer gate.** On the real vehicle in ascent, thrust makes the accelerometer unusable as a gravity reference for most of the flight; the estimator then coasts on the gyro and the bias estimate stops improving. That is a property of the idea (and an argument for the analytical-redundancy item in `DEFERRED.md`), and the rig, whose platform does not accelerate, does not show it.
+- **The accelerometer gate.** On the real vehicle in ascent, thrust makes the accelerometer unusable as a gravity reference for most of the flight; the estimator then coasts on the gyro and the bias estimate stops improving. That is a property of the idea (and an argument for the analytical-redundancy item in `FUTURE_WORK.md`), and the rig, whose platform does not accelerate, does not show it.
 - **Timing.** Execution time on the board is not measured (the cost of one step on the host is small; the figure that matters is the Cortex-M4's, measured at S1/S2 with the cycle counter).
 
 ## 6. Requirements and tests

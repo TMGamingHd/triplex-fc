@@ -10,7 +10,7 @@ steps, and says which number measured that day settles which open setting. Days 
 | The images | `. firmware/env.sh`; build `firmware/app` for `nucleo_g474re` with and without `-DCONFIG_TFC_FLIGHT_FUNCTION=y`, `firmware/act` for `nucleo_g474re`, `firmware/pico` and `firmware/supervisor` for `rpi_pico2/rp2350a/m33`; `tools/check_elf.sh` on each ELF |
 | The tests | `build/host/tfc_tests`, `python3 -m unittest discover` in `sim`, the live tests of `tools/bench/sil_triplex.sh --test` |
 | Printouts | P-M1-01, P-S1-01 and the others below, with room to write: they are filled in as run and kept (`docs/procedures/`) |
-| **Open question for the order** | the hardware overrides (`docs/HARDWARE_OVERRIDE.md`, about 25 USD of switches, a servo-tester board) were not on the parts list; if they are not in the order they wait, and the checks of P-HWO-01 are skipped until they are |
+| **Open question for the order** | the hardware overrides (`docs/design/HARDWARE_OVERRIDE.md`, about 25 USD of switches, a servo-tester board) were not on the parts list; if they are not in the order they wait, and the checks of P-HWO-01 are skipped until they are |
 
 ## Day 1: unpack and measure (M1) — P-M1-01
 Every part against the sheet; JP5 on every Nucleo; adapter outputs under 5.25 V; relay at 3.3 V drive and with a floating input; the servo with a 3.3 V signal and with **no** signal; mounting holes; the IMU's logic level.
@@ -38,7 +38,7 @@ FC-B joins. Unplug B (back to Simplex without a glitch); inject a bad value (mis
 
 ## Day 5: Triplex and the bus (S4) — P-S4-01
 FC-C joins. The fault campaign on the real bus (F01 to F18 and the rows of the matrix that have a HIL column). **A one-hour quiet run with the resync on, then `python3 tools/bench/bus_loss.py logs/s4.log --resync-period 100 --console A=a.txt --console B=b.txt --console C=c.txt`.**
-**What the numbers decide:** this is the **real bus loss rate**, the number TS-23, the digest persistence and the manager's command tolerance have been waiting for (`docs/RESYNC.md` sections 5 and 6b); the arrival time of the twelve resync frames against the 7 ms and 8 ms
+**What the numbers decide:** this is the **real bus loss rate**, the number TS-23, the digest persistence and the manager's command tolerance have been waiting for (`docs/design/RESYNC.md` sections 5 and 6b); the arrival time of the twelve resync frames against the 7 ms and 8 ms
 slots (the burst budget, `RESYNC.md` section 6); whether three Nucleos' states stay bit-identical after a resync (the digests equal on the frame after, as in the live test on `vcan0`).
 
 ## Then

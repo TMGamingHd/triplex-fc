@@ -1,6 +1,6 @@
 # P-HWO-01: the hardware overrides, the pre-session check
 
-Follows `docs/VERIFICATION_PROCEDURE_TEMPLATE.md`. Design: `docs/HARDWARE_OVERRIDE.md` (ADR-027). Done before the first unattended run and at the start of every session; an override not operated in a session is reported at the start of the next run (TFC-HWO-007). **Skip a step whose switch is not fitted, and say so.**
+Follows `docs/verification/VERIFICATION_PROCEDURE_TEMPLATE.md`. Design: `docs/design/HARDWARE_OVERRIDE.md` (ADR-027). Done before the first unattended run and at the start of every session; an override not operated in a session is reported at the start of the next run (TFC-HWO-007). **Skip a step whose switch is not fitted, and say so.**
 
 | Field | Entry |
 |---|---|
@@ -26,4 +26,4 @@ Show that each override changes the state it should, in the way it should, with 
 | 8 | Operator | Read `status` after each step | Each sense line read right in each position; each override logged with a date as tested | | |
 
 ## 4. Records
-As-run copy; the dates tested per override into `docs/HARDWARE_OVERRIDE.md` section 7; the fault-matrix rows F75 to F80.
+As-run copy; the dates tested per override into `docs/design/HARDWARE_OVERRIDE.md` section 7; the fault-matrix rows F75 to F80.

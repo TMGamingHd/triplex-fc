@@ -74,5 +74,5 @@ So the resync is what keeps the manager's command vote from latching healthy com
 | ID | Requirement |
 |---|---|
 | TFC-FDIR-044 | The replicated flight computers shall exchange their estimator and controller state every N frames (proposal 100) and each shall adopt the mid-value of the states of the healthy computers when it has all of them, and nothing otherwise, so that a computer that missed or received late a sensor frame is brought back to the same state as the others within N frames. |
-| TFC-FDIR-045 | A computer whose own state is found, at a resynchronisation, further from the vote than a stated tolerance shall be reported to the fault manager as a bad frame for that computer; resynchronisation shall never hide a failing computer (docs/RESYNC.md section 3). |
+| TFC-FDIR-045 | A computer whose own state is found, at a resynchronisation, further from the vote than a stated tolerance shall be reported to the fault manager as a bad frame for that computer; resynchronisation shall never hide a failing computer (docs/design/RESYNC.md section 3). |
 | TFC-FDIR-046 | A state-digest mismatch shall count against a computer, or as an unresolved disagreement, only after it has lasted a configured number of frames in a row (default 1; with resynchronisation, more than N). |

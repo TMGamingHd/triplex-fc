@@ -419,7 +419,7 @@ class RedundancyManager {
         out.counter = true;
       }
     }
-    if (out.strikes_raised != 0U || out.disabled != 0U || out.counter) {
+    if (out.strikes_raised != 0U || out.counter) {  // (a computer is only disabled after its strike count was raised)
       ++counters_.state_restores;
     }
     return out;
@@ -537,8 +537,7 @@ class RedundancyManager {
       case GroundOp::Warm:
         r = cmd_warm(node);
         break;
-      case GroundOp::Noop:  // nothing changes; it is answered like the others (TFC-FDIR-043)
-        break;
+      case GroundOp::Noop:    // nothing changes; it is answered like the others (TFC-FDIR-043)
       case GroundOp::Launch:  // the manager does not own the mission clock: the firmware acts on the reported event (the sync master, after the go/no-go)
       case GroundOp::Scrub:
         break;
