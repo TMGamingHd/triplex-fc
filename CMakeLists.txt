@@ -42,7 +42,8 @@ add_executable(tfc_tests
   tests/test_realism.cpp
   tests/test_pad.cpp
   tests/test_launch.cpp
-  tests/test_supervisor_clock.cpp)
+  tests/test_supervisor_clock.cpp
+  tests/test_resync.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
 target_include_directories(tfc_tests PRIVATE tests tools/vehicle sim/vehicle firmware/app/src supervisor/include)
 target_compile_options(tfc_tests PRIVATE

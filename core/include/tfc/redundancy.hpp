@@ -65,6 +65,7 @@ constexpr uint8_t kVote = 8U;     // value disagreed with the vote on some chann
 constexpr uint8_t kDigest = 16U;  // estimator-state digest disagreed
 constexpr uint8_t kStuck = 32U;   // sensor bytes bit-identical for too many frames
 constexpr uint8_t kIntermittent = 64U;  // latched by the leaky count: bad often enough, never 3-of-5 in a row
+constexpr uint8_t kResync = 128U;       // the state resynchronisation found this node's state far from the vote (RedundancyManager::report_state_correction)
 }  // namespace reason
 
 // Writes the set reason bits as words, e.g. "vote disagreement + digest mismatch", into `out`
@@ -74,13 +75,14 @@ inline void format_reasons(uint8_t bits, char* out, std::size_t cap) noexcept {
     uint8_t bit;
     const char* text;
   };
-  constexpr std::array<Name, 7> names = {{{reason::kMissing, "frame missing"},
+  constexpr std::array<Name, 8> names = {{{reason::kMissing, "frame missing"},
                                           {reason::kCrc, "CRC failure"},
                                           {reason::kSeq, "sequence error"},
                                           {reason::kVote, "vote disagreement"},
                                           {reason::kDigest, "digest mismatch"},
                                           {reason::kStuck, "stuck sensor"},
-                                          {reason::kIntermittent, "intermittent fault"}}};
+                                          {reason::kIntermittent, "intermittent fault"},
+                                          {reason::kResync, "state far from the vote"}}};
   if (cap == 0U) {
     return;
   }
@@ -185,6 +187,10 @@ struct RedundancyConfig {
   std::array<float, kVoteChannels> tol{{1.0F, 1.0F, 1.0F, 0.02F, 0.02F, 0.02F, 0.01F, 0.01F}};
   uint8_t persist_m = 3;            // latch when M of the last N frames are bad
   uint8_t persist_n = 5;
+  // A digest disagreement counts (as a bad frame for the node it blames, or as an unresolved disagreement) only once it has lasted this many frames in a row. 1: at once, as before.
+  // With the state resynchronisation (docs/RESYNC.md) a lost frame leaves the digests different for up to one resync period, and the resync heals it: set this to a little more than the
+  // period, so that a mismatch which the resync did not heal is what counts.
+  uint16_t digest_persist_frames = 1;
   uint16_t stuck_limit = 20;         // identical sensor frames before "stuck"
   // Leaky count for intermittent faults, OR'd with the M-of-N window (ADR-013): +1 per bad frame,
   // x alpha_k per good frame, latch at alpha_threshold. Catches a node that is bad one frame in three
@@ -256,7 +262,7 @@ namespace detail {
       e |= cfgerr::kTolerance;
     }
   }
-  if (c.persist_m < 1U || c.persist_m > c.persist_n || c.persist_n > 32U) {
+  if (c.persist_m < 1U || c.persist_m > c.persist_n || c.persist_n > 32U || c.digest_persist_frames < 1U) {
     e |= cfgerr::kPersistence;
   }
   if (c.stuck_limit < 2U) {
@@ -297,6 +303,7 @@ namespace detail {
   if ((errors & cfgerr::kPersistence) != 0U) {
     c.persist_m = def.persist_m;
     c.persist_n = def.persist_n;
+    c.digest_persist_frames = def.digest_persist_frames;
   }
   if ((errors & cfgerr::kStuckLimit) != 0U) {
     c.stuck_limit = def.stuck_limit;
@@ -360,6 +367,7 @@ namespace detail {
   }
   mix(c.persist_m);
   mix(c.persist_n);
+  mix(c.digest_persist_frames);
   mix(c.stuck_limit);
   mix(bits(c.alpha_k));
   mix(bits(c.alpha_threshold));
@@ -394,6 +402,7 @@ struct Counters {
   uint32_t out_of_schedule = 0;     // frames on IDs that are not part of the schedule
   uint32_t stuck_flags = 0;
   uint32_t digest_flags = 0;
+  uint32_t state_corrections = 0;   // computers whose state the resynchronisation found far from the vote (reported by the firmware)
   uint32_t vote_disagreements = 0;  // frames where any channel vote blamed a node
   uint32_t unresolved_frames = 0;   // frames with a disagreement nobody could be blamed for
   uint32_t held_frames = 0;         // frames in which some output channel held its last good value
@@ -493,7 +502,8 @@ class RedundancyManager {
     unsigned node = 0U;
     if (!classify(f.id, stream, node)) {
       const bool known = f.id == id::kSync || f.id == id::kActOut || (f.id >= id::kSim && f.id <= id::kSimLast) ||
-                         (f.id >= id::kHeartbeat && f.id < id::kHeartbeat + kNodes) || (f.id >= id::kState && f.id < id::kState + kNodes);
+                         (f.id >= id::kHeartbeat && f.id < id::kHeartbeat + kNodes) || (f.id >= id::kState && f.id < id::kState + kNodes) ||
+                         (f.id >= id::kResync && f.id < id::kResync + kResyncIds);
       if (!known) {
         ++counters_.out_of_schedule;
         ++oos_in_frame_;
@@ -517,7 +527,11 @@ class RedundancyManager {
     std::array<bool, kNodes> good{};
     const uint8_t valid = judge_arrivals(rep, good);
     const VoteSummary vs = vote_channels(rep, valid);
-    const DigestVerdict dv = digest_outliers(valid);
+    DigestVerdict dv = digest_outliers(valid);
+    digest_run_ = (dv.blame != 0U || dv.unresolved) ? (digest_run_ < 0xFFFFU ? static_cast<uint16_t>(digest_run_ + 1U) : digest_run_) : uint16_t{0};
+    if (digest_run_ < cfg_.digest_persist_frames) {
+      dv = DigestVerdict{};  // not yet: a mismatch that the resynchronisation may still heal
+    }
     tally_votes(vs, dv);
     update_safe(rep, vs.unresolved || dv.unresolved);
     report_bus(rep);
@@ -527,7 +541,15 @@ class RedundancyManager {
     advance_life_cycle(rep, good, stuck_now, valid);
     summarize(rep);
     ++frame_no_;
+    resync_large_ = 0U;
     return rep;
+  }
+
+  // The state resynchronisation found these computers' states far from the vote (bit n = node n; docs/RESYNC.md): called before end_frame() of the frame the resync was in. It is a
+  // bad frame for each, through the same detectors as any other reason, so one large correction is not a latch and a computer that keeps needing them is one.
+  void report_state_correction(uint8_t large_mask) noexcept {
+    resync_large_ = static_cast<uint8_t>(resync_large_ | (large_mask & 0x07U));
+    counters_.state_corrections += popcount32(large_mask & 0x07U);
   }
 
   // ---- operator / ground commands (also reachable as CAN ground frames) ----
@@ -1079,6 +1101,9 @@ class RedundancyManager {
       if (((digest_bad >> n) & 1U) != 0U) {
         add_reason(rep, n, reason::kDigest);
       }
+      if (((resync_large_ >> n) & 1U) != 0U) {
+        add_reason(rep, n, reason::kResync);
+      }
       if (state_of(n) == NodeState::Healthy) {
         decide_latch(n, rep);
       }
@@ -1436,6 +1461,8 @@ class RedundancyManager {
   std::array<bool, kVoteChannels> have_prev_{};    // prev_good_ and last_good_ are consecutive trusted frames
   std::array<bool, kVoteChannels> have_last_{};
   std::array<bool, kVoteChannels> ref_fresh_{};    // last_good_ was set by the previous frame's trusted vote
+  uint16_t digest_run_ = 0U;                       // consecutive frames with a digest disagreement
+  uint8_t resync_large_ = 0U;                      // computers reported far from the resync vote, for this frame
   uint32_t unres_hist_ = 0U;                       // 1 bit per frame: an unresolved disagreement
   uint32_t oos_in_frame_ = 0U;
   Counters counters_{};

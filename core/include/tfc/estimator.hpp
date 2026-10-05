@@ -143,6 +143,24 @@ class AttitudeEstimator {
     return static_cast<uint16_t>((h ^ (h >> 16)) & 0xFFFFU);
   }
 
+  // The whole of what the estimator carries from one step to the next (the sensor inputs of a step are not part of it: the next step replaces them). Exchanged between the
+  // replicas for the state resynchronisation (docs/RESYNC.md, TS-16 option C): `state()` copies it out, `set_state()` replaces it.
+  struct State {
+    std::array<float, 4> q{1.0F, 0.0F, 0.0F, 0.0F};
+    std::array<float, 3> bias{};
+    uint32_t steps = 0U;
+    bool aligned = false;
+    bool rates_valid = false;
+  };
+  [[nodiscard]] State state() const noexcept { return State{q_, bias_, steps_, aligned_, rates_valid_}; }
+  void set_state(const State& s) noexcept {
+    q_ = s.q;
+    bias_ = s.bias;
+    steps_ = s.steps;
+    aligned_ = s.aligned;
+    rates_valid_ = s.rates_valid;
+  }
+
   [[nodiscard]] uint32_t steps() const noexcept { return steps_; }
   [[nodiscard]] uint32_t gyro_holds() const noexcept { return gyro_holds_; }
   [[nodiscard]] uint32_t accel_skips() const noexcept { return accel_skips_; }

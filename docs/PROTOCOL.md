@@ -15,6 +15,7 @@
 | `0x300` | ACT out | ACT | the voted gimbal command and the vote status | **2** |
 | `0x400+n` | Heartbeat | node n | protocol version, mode, role, view of the nodes, reset count, release hash | **2** |
 | `0x410+n` | State share | node n | strike counts and the last accepted command counter | **2** |
+| `0x420+4n+k` | State resync | node n, chunk k (0-3) | a quarter of the node's estimator and controller state: three 16-bit words, once per resync period | **2** |
 | `0x501` | Sim rates | the simulator | the sensor inputs' body rates, as a gyro frame | **2** |
 | `0x502` | Sim accel | the simulator | the sensor inputs' acceleration, as an accel frame | **2** |
 | `0x503` | Sim state | the simulator | altitude, speed, mass | **2** |
@@ -38,6 +39,8 @@ source hash, so that a node on the golden release (ADR-021) can be told from one
 
 **State share (`0x410+n`).** Byte 0: strikes of node A (low nibble) and B (high nibble); byte 1: strikes of node C; byte 2: the last accepted ground-command counter. This is what a restarted node needs from the others
 to rebuild its strike record and close the counter gap (FDIR-041). Example: strikes 1, 15, 2 and counter 200: `f102c800000006f7`.
+
+**State resync (`0x420 + 4n + k`).** Once per resync period (the last frame of it, after the command slot) each computer sends its quantised estimator and controller state in four frames of three signed 16-bit words, little-endian, bytes 0 to 5; byte 6 is the low byte of the frame number the state belongs to (a chunk of another cycle is not used), byte 7 the CRC. The twelve words: 0 to 3 the attitude quaternion (1/32767 per count, scalar part non-negative), 4 to 6 the gyro bias integrator (1e-5 rad/s per count), 7 and 8 the controller's integrators and 9 and 10 its last outputs (0.001 degree per count), 11 the low byte of the update count with *aligned* (bit 8) and *rates valid* (bit 9). Example, node B chunk 2 carrying 0x0102, -2, 0x7FFF for frame 0x55: id 0x426, `0201feffff7f55` + CRC (`tests/test_resync.cpp` pins it). What the receivers do with it is in `docs/RESYNC.md`.
 
 **Simulator frames.** `0x501` and `0x502` are the vehicle's sensor inputs for the frame, in the same scales as the gyro and accel frames (each node's simulated IMU adds its own noise and faults).
 `0x503`: altitude (10 m per count), speed (1 m/s per count), mass (1 kg per count), each a 16-bit unsigned number that saturates. `0x504`: dynamic pressure (10 Pa per count, unsigned),
