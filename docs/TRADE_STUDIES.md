@@ -52,6 +52,7 @@ campaign; HIL needs the rig.
 | TS-18 | Testing hardware-facing firmware without the hardware | Fake board under the real loop, the host emulation of the board's drivers, an instruction-set emulator, or the board only: which finds how many bugs per hour of work, and where does each go blind? | seeded bugs and mutation scores | 3 | small, **data already exists** |
 | TS-19 | The injector's cut semantics | A cut that ends by itself (today), a latched cut with an explicit restore, or a cut that needs a heartbeat: which is safest when the PC dies and still allows the long outages the supervisor's tests need? | HIL scenarios | 2 | small, before the supervisor tests |
 | TS-20 | The platform's behaviour when commands stop | Hold then level (today), hold for ever, level at once, stop the pulse and go limp, hold then stop: which has the smallest mechanical shock and the least confusing view for the IMUs and the flight computers? | rig measurements | 2 | medium, after E1 to E6 of `PICO_TESTS.md` |
+| TS-21 | Where the mission clock lives | The supervisor as the continuous source, the supervisor deciding T-zero with the flight computers as the clock (hybrid), mission time in SYNC from the sync master alone, or each computer counting for itself: which survives a failure of the supervisor, of the sync master and of a node's link, and keeps every computer on the same schedule? | SIL with fault injection, live triplex | 3 | medium, before the mission time goes into SYNC |
 | TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `DEFERRED.md` section 7 |
 
 Recommended order, by value and by when the data exist: **TS-0** now; **TS-1, TS-2, TS-3, TS-4** on the simulator in October and
@@ -388,6 +389,25 @@ shock, the least confusing motion for the IMUs, and a state the flight computers
 **Dependencies and timing.** After E1 to E6 of `PICO_TESTS.md`; the platform rig.
 
 **Talking point.** "I tuned what a platform does when it loses its commander, from measured shock and from what the flight computers made of it."
+
+## 9g. TS-21: where the mission clock lives (docs/LAUNCH_SEQUENCE.md section 3)
+
+**Question.** The guidance and gain schedules need one number that every computer agrees on: the time since T-zero. It can come from four places. The owner's first idea is the supervisor, which is independent and cannot be affected by the rest of the system.
+What does each option do when the supervisor, the sync master, or one computer's link fails during the ascent, and when two computers see the launch command a frame apart?
+
+**Options.** A: the supervisor sends mission time continuously (needs a bus transmitter, or a discrete encoding). B (recommended, hybrid): the supervisor decides T-zero with a discrete line, the sync master latches it and carries mission time in SYNC, the supervisor
+checks it with its own clock. C: mission time in SYNC from the sync master alone, started by the command. D: each computer counts from its own sight of the command.
+
+**Criteria and weights.** Agreement of all computers on T (weight 3: a frame of difference diverges the replicas, TS-16); survives a supervisor failure after T-zero (weight 3: TFC-SUP-007); survives a sync-master takeover without a jump (weight 3);
+a restarted computer rejoins on the right schedule (weight 2); independence: an error in the time is detectable from outside (weight 2); complexity and parts (weight 1).
+
+**Method.** On the live triplex with the closed loop and fault injection: kill the sync master at 20 s, at 60 s (max-Q); reset a follower at 40 s; delay the launch command to one computer by one frame; reset the (virtual or real) supervisor at 60 s; drop SYNC frames for 3, 10, 50 frames; measure the largest difference in the schedule index between computers, the attitude error, and whether Safe was entered.
+
+**Expected finding, to be shown or refuted.** A fails the supervisor-reset case by construction; D fails the one-frame case; C and B pass all, and B adds the independent check and the supervisor's authority over T-zero at the price of one discrete line.
+
+**Dependencies and timing.** Needs the mission time in SYNC (the next step of the launch sequence); the supervisor part waits for its parts.
+
+**Talking point.** "I put the authority for launch in an independent computer and the clock in the replicated ones, and tested what each choice does when each part fails."
 
 ## 10. Schedule
 

@@ -66,6 +66,8 @@ Per flight computer (A, B, C) and for ACT:
 
 For each IMU, in the stretch of ADR-020 (ring re-homing, after S4): one `ADOPT` line (SUP -> the IMU's bus switch and its backup host). Not built in v1; the pins are reserved.
 
+For the launch sequence (ADR-028, proposed): one `T0` line from the supervisor to every flight computer, asserted when the supervisor decides T-zero; the sync master latches it. The supervisor also keeps a mission clock from that edge and checks the system's mission time against it. It is not the runtime source of mission time (`LAUNCH_SEQUENCE.md` section 3).
+
 For ACT, two more: `SAFE` (SUP -> ACT, a hardware "enter Safe now") and, only if a second ACT is built (ADR-023), `SEL` (SUP -> the
 output selector). To the PC: one USB serial port (the hardware commands, section 6, and telemetry).
 

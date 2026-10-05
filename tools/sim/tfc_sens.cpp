@@ -4,7 +4,8 @@
 // scaled up until the flight fails, found by bisection. A flight FAILS if, after the first 3 s, the attitude strays more than `--limit` degrees from the pitch program (the lift-off transient is reported separately), the platform saturates, ACT enters
 // Safe, or a value is not finite. Run it twice, with the platform's sensors (the rig) and with the vehicle's own (a real vehicle): gravity is observable on the platform and not on
 // a vehicle under thrust, which changes what a gyro bias does.
-//   tfc_sens [--mode platform|vehicle] [--no-accel] [--frames N] [--limit DEG] [--only NAME] [--list]
+//   tfc_sens [--mode platform|vehicle] [--no-accel] [--pad FRAMES] [--frames N] [--limit DEG] [--only NAME] [--list]
+// --pad FRAMES puts a pad phase before T-zero (the vehicle clamped, the estimators calibrating their gyros, ACT going Nominal); 1500 is 15 s.
 // --no-accel switches the estimator's accelerometer correction off (EstimatorConfig::use_accel), which is what a vehicle under thrust needs.
 #include <algorithm>
 #include <cstdio>
@@ -50,6 +51,7 @@ int main(int argc, char** argv) {
   std::string only;
   bool list = false;
   bool no_accel = false;
+  uint32_t pad_frames = 0U;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--mode" && i + 1 < argc) {
@@ -60,12 +62,14 @@ int main(int argc, char** argv) {
       limit_deg = std::atof(argv[++i]);
     } else if (a == "--only" && i + 1 < argc) {
       only = argv[++i];
+    } else if (a == "--pad" && i + 1 < argc) {
+      pad_frames = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
     } else if (a == "--no-accel") {
       no_accel = true;
     } else if (a == "--list") {
       list = true;
     } else {
-      std::fprintf(stderr, "usage: tfc_sens [--mode platform|vehicle] [--no-accel] [--frames N] [--limit DEG] [--only NAME] [--list]\n");
+      std::fprintf(stderr, "usage: tfc_sens [--mode platform|vehicle] [--no-accel] [--pad FRAMES] [--frames N] [--limit DEG] [--only NAME] [--list]\n");
       return 2;
     }
   }
@@ -102,9 +106,10 @@ int main(int argc, char** argv) {
   base.frames = frames;
   base.cfg.vehicle_true = vehicle_true;
   base.estimator.use_accel = !no_accel;
+  base.pad_frames = pad_frames;
   const Verdict nominal = fly(base, deps[0], 0.0, limit_deg);
-  std::printf("Mode: %s sensors%s; %u frames; a flight fails if, after 3 s, it is more than %.1f degrees from the program, or on platform saturation, Safe or a non-finite value.\n",
-              vehicle_true ? "vehicle" : "platform", no_accel ? ", accelerometer correction off" : "", static_cast<unsigned>(frames), limit_deg);
+  std::printf("Mode: %s sensors%s%s; %u frames; a flight fails if, after 3 s, it is more than %.1f degrees from the program, or on platform saturation, Safe or a non-finite value.\n",
+              vehicle_true ? "vehicle" : "platform", no_accel ? ", accelerometer correction off" : "", pad_frames > 0U ? ", with a pad phase" : "", static_cast<unsigned>(frames), limit_deg);
   std::printf("Nominal: %s (max error %.2f deg after 3 s and %.2f in the first 3 s, rms %.3f deg)\n\n", nominal.ok ? "flies" : "FAILS", nominal.r.max_deg_settled, nominal.r.max_deg_liftoff, nominal.r.rms_deg);
   std::printf("| Departure | Largest value that still flies | Unit | Max error there after 3 s (deg) | Lift-off transient there (deg) |\n|---|---|---|---|---|\n");
 

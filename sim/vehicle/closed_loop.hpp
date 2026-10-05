@@ -11,6 +11,7 @@
 #include "runner.hpp"
 #include "tfc/act.hpp"
 #include "tfc/flight.hpp"
+#include "tfc/imu_calibration.hpp"
 #include "tfc/protocol.hpp"
 
 namespace sim {
@@ -115,6 +116,8 @@ struct Result {
   double final_altitude = 0.0;
   double final_tilt_deg = 0.0;
   uint32_t nominal_from = 0U;       // the frame ACT reached Nominal
+  uint32_t ready_at = 0U;           // the first frame on which all three flight computers were ready for launch (0 if never, or no pad)
+  bool calibrated = false;          // every computer's IMU calibration was ready at lift-off
   uint32_t safe_frames = 0U;
   uint32_t held_frames = 0U;        // frames in which the runner did not get ACT's frame
   uint32_t platform_saturated = 0U;
@@ -128,7 +131,8 @@ struct Loop {
   RunnerConfig cfg;
   SensorErrors sensors;
   tfc::EstimatorConfig estimator;           // the flight computers' estimator settings (use_accel false for a vehicle under thrust)
-  uint32_t frames = 10000U;
+  uint32_t frames = 10000U;                  // frames of flight (after T-zero)
+  uint32_t pad_frames = 0U;                  // frames on the pad before T-zero: the vehicle is clamped, the estimators calibrate, ACT goes Nominal; 0: released at the first frame, as before
   uint32_t node_b_dead_from = 0xFFFFFFFFU;   // node B stops sending (all its frames) from this frame
   uint32_t all_dead_from = 0xFFFFFFFFU;      // every flight computer stops sending from this frame (a total loss)
   uint32_t act_lost_from = 0xFFFFFFFFU;      // ACT's frames stop reaching the runner for `act_lost_for` frames from here
@@ -137,10 +141,13 @@ struct Loop {
 };
 
 inline Result run(const Loop& lp) {
-  SimRunner runner(lp.cfg);
+  RunnerConfig rcfg = lp.cfg;
+  rcfg.start_held = lp.pad_frames > 0U;
+  SimRunner runner(rcfg);
   const FlightTables tables = flight_tables(lp.cfg.design);
   std::array<tfc::FlightFunction, 3> ff{tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator), tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator),
                                         tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator)};
+  std::array<tfc::ImuCalibrator, 3> cal{};  // each computer calibrates its own IMU on the pad and subtracts the bias before it sends
   std::array<ImuModel, 3> imu{ImuModel(lp.sensors, 0x1234U), ImuModel(lp.sensors, 0x1235U), ImuModel(lp.sensors, 0x1236U)};  // the firmware's seeds: 0x1234 + node
   tfc::ActLogic act;
   tfc::ActRecord none{};
@@ -149,7 +156,13 @@ inline Result run(const Loop& lp) {
   SimFrames pending = runner.start(0U);
   double sum_sq = 0.0;
   bool reached_nominal = false;
-  for (uint32_t k = 0; k < lp.frames; ++k) {
+  const uint32_t total = lp.pad_frames + lp.frames;
+  for (uint32_t k = 0; k < total; ++k) {
+    const bool pad_now = k < lp.pad_frames;
+    const uint32_t fk = pad_now ? 0U : k - lp.pad_frames;  // frames since T-zero
+    if (lp.pad_frames > 0U && k == lp.pad_frames) {
+      runner.release();
+    }
     const tfc::DecodedVec3 dr = tfc::unpack_vec3(pending.f[0], tfc::kGyroLsbDps);
     const tfc::DecodedVec3 da = tfc::unpack_vec3(pending.f[1], tfc::kAccelLsbG);
     const uint8_t seq = static_cast<uint8_t>(k);
@@ -163,6 +176,10 @@ inline Result run(const Loop& lp) {
       tfc::Vec3 g;
       tfc::Vec3 a;
       imu[n].sample(dr.x, da.x, g, a);
+      if (lp.pad_frames > 0U) {
+        cal[n].set_pad(pad_now);
+        g = cal[n].process(g);
+      }
       if (lp.sensor_fault_b && n == 1U) {
         g.v[0] += 15.0F;
         g.v[1] += 15.0F;
@@ -176,6 +193,9 @@ inline Result run(const Loop& lp) {
         continue;
       }
       ff[n].begin_frame(k, alive[1] ? 0x07U : 0x05U);  // (a total loss never gets here)
+      if (lp.pad_frames > 0U) {
+        ff[n].set_mission(pad_now, fk);
+      }
       for (unsigned m = 0; m < 3U; ++m) {
         if (!alive[m]) {
           continue;
@@ -186,6 +206,9 @@ inline Result run(const Loop& lp) {
       (void)act.on_frame(tfc::pack_cmd(static_cast<uint8_t>(n), ff[n].step(), seq));
     }
     act.safe_request(false);
+    if (pad_now && r.ready_at == 0U && ff[0].sensors_ok() && ff[1].sensors_ok() && ff[2].sensors_ok() && cal[0].ready() && cal[1].ready() && cal[2].ready()) {
+      r.ready_at = k;
+    }
     const tfc::ActOutput& out = act.end_frame();
     if (out.mode == tfc::ActMode::Nominal && !reached_nominal) {
       reached_nominal = true;
@@ -197,12 +220,15 @@ inline Result run(const Loop& lp) {
     r.held_frames += lost ? 1U : 0U;
     pending = runner.end_of_frame(k, lost ? nullptr : &wire.act);
     const Tilts t = runner.vehicle().tilts();
-    const tfc::Reference ref = tables.guidance.at(k + 1U);
+    if (pad_now) {
+      continue;  // nothing flies on the pad
+    }
+    const tfc::Reference ref = tables.guidance.at(fk + 1U);
     const double ep = t.y_deg - static_cast<double>(ref.tilt_y_deg);
     const double ey = t.x_deg - static_cast<double>(ref.tilt_x_deg);
     const double e = std::fmax(std::fabs(ep), std::fabs(ey));
     r.max_deg = std::fmax(r.max_deg, e);
-    (k < 300U ? r.max_deg_liftoff : r.max_deg_settled) = std::fmax(k < 300U ? r.max_deg_liftoff : r.max_deg_settled, e);
+    (fk < 300U ? r.max_deg_liftoff : r.max_deg_settled) = std::fmax(fk < 300U ? r.max_deg_liftoff : r.max_deg_settled, e);
     sum_sq += (ep * ep) + (ey * ey);
     r.platform_saturated += runner.platform().saturated() ? 1U : 0U;
     r.finite = r.finite && std::isfinite(t.x_deg) && std::isfinite(t.y_deg) && std::isfinite(static_cast<double>(out.pitch_deg));
@@ -213,6 +239,7 @@ inline Result run(const Loop& lp) {
     }
   }
   r.rms_deg = std::sqrt(sum_sq / (2.0 * lp.frames));
+  r.calibrated = lp.pad_frames > 0U && cal[0].ready() && cal[1].ready() && cal[2].ready();
   r.final_altitude = runner.vehicle().altitude();
   r.final_tilt_deg = runner.vehicle().tilts().y_deg;
   const tfc::DecodedSimFlags fl = tfc::unpack_sim_flags(pending.f[4]);
