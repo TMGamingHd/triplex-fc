@@ -4,7 +4,8 @@
 // frame number: a SYNC that skips numbers (a sync-master takeover) steps the world over the skipped frames with the last command held, so sim time never drifts from the
 // flight computers' frame count. A run starts at the first SYNC heard and starts over if the frame number goes backwards (the sync master was reset).
 // With --pico PORT it also streams the vehicle's tilts to the Pico that drives the platform (docs/PICO.md): one platform frame per simulated frame, so 100 Hz.
-//   tfc_simd [--iface vcan0] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
+// With --hold the vehicle stands clamped on the pad until the mission frame in SYNC passes T-zero (docs/LAUNCH_SEQUENCE.md), then flies; a simulator that starts after T-zero joins the flight in progress.
+//   tfc_simd [--iface vcan0] [--hold] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
 #include <fcntl.h>
 #include <poll.h>
 #include <termios.h>
@@ -144,6 +145,8 @@ int main(int argc, char** argv) {
     double v[3] = {0.0, 0.0, 0.0};
     if (a == "--iface") {
       iface = next();
+    } else if (a == "--hold") {
+      cfg.start_held = true;
     } else if (a == "--pico") {
       pico_port = next();
     } else if (a == "--vehicle-true") {
@@ -166,7 +169,7 @@ int main(int argc, char** argv) {
     } else if (a == "--quiet") {
       quiet = true;
     } else {
-      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
+      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--hold] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
       return 2;
     }
   }
@@ -222,11 +225,21 @@ int main(int argc, char** argv) {
         if (started && !quiet) {
           std::fprintf(stderr, "frame number went back (%u to %u): a new run\n", static_cast<unsigned>(runner.frame()), static_cast<unsigned>(k));
         }
-        send_all(sock, runner.start(k), tx_errors);
+        if (cfg.start_held && tfc::mission::in_flight(d.mission)) {
+          send_all(sock, runner.start_in_flight(k, tfc::mission::flight_frames(d.mission)), tx_errors);  // joining after T-zero
+        } else {
+          send_all(sock, runner.start(k), tx_errors);
+        }
         started = true;
         first_frame = k;
         acted = 0xFFFFFFFFU;
         continue;
+      }
+      if (runner.clamped() && tfc::mission::in_flight(d.mission)) {  // T-zero: the clamps open
+        runner.release();
+        if (!quiet) {
+          std::fprintf(stderr, "T-zero at frame %u: released\n", static_cast<unsigned>(k));
+        }
       }
       // frames the world has not been stepped over (ACT's frame did not come, or SYNC skipped numbers): step them with the last command held
       while (runner.frame() < k) {

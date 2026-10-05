@@ -34,6 +34,15 @@ config TFC_FLIGHT_FUNCTION
 	  using the pitch program and gains in flight_tables.hpp. Off (default): a scripted function of the frame number, which the Python virtual
 	  peers reproduce bit for bit, so they can stand in for the other two nodes.
 
+config TFC_LAUNCH_SEQUENCE
+	bool "The launch sequence: pad calibration, mission frame, launch and scrub, go/no-go"
+	depends on TFC_FLIGHT_FUNCTION
+	default n
+	help
+	  On: each computer calibrates its own gyro on the pad (10 s at rest) and subtracts the bias before it sends; the mission frame rides in SYNC (the sync master
+	  starts it on an authenticated `launch` that passes the go/no-go, and scrubs on a failure during the 10 s countdown); the schedules follow the frames since T-zero
+	  and sit at their first point on the pad; the heartbeat carries a ready bit (docs/LAUNCH_SEQUENCE.md). Off: the schedules follow the SYNC frame number, as before.
+
 config TFC_SIM_BUS_IMU
 	bool "Take the sensor input from the simulator's frames on the bus"
 	default n

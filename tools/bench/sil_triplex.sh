@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # The software triplex on one vcan0: three instances of the real firmware (native_sim), nodes A, B and C, with nothing from Python but a monitor.
-#   tools/bench/sil_triplex.sh --build [--flight] [--sim-imu]   build the three flight computers into build/native_sim, native_sim_n1, native_sim_n2,
+#   tools/bench/sil_triplex.sh --build [--flight] [--sim-imu] [--launch]   build the three flight computers into build/native_sim, native_sim_n1, native_sim_n2,
 #                                                               and the actuator node into build/act_native
 #   tools/bench/sil_triplex.sh --test                           run the live test (sim/tests/test_live_triplex.py) against them
 #   tools/bench/sil_triplex.sh --closed-loop [seconds]          the closed loop: the loop_* images, ACT and the vehicle simulator (build/host/tfc_simd) on vcan0
@@ -16,12 +16,14 @@ cd "$ROOT"
 mode="${1:-}"; shift || true
 flight=n
 simimu=n
+launch=n
 prefix=triplex
 secs=10
 for a in "$@"; do
   case "$a" in
     --flight) flight=y; prefix=flight ;;
     --sim-imu) simimu=y; prefix=loop ;;
+    --launch) flight=y; simimu=y; launch=y; prefix=launch ;;
     [0-9]*) secs="$a" ;;
     *) echo "unknown option $a" >&2; exit 2 ;;
   esac
@@ -33,7 +35,7 @@ case "$mode" in
     for n in 0 1 2; do
       letters=(a b c)
       dir="build/${prefix}_${letters[$n]}"
-      west build -p auto -b native_sim/native/64 firmware/app -d "$dir" -- -DCONFIG_TFC_NODE_ID="$n" -DCONFIG_TFC_FLIGHT_FUNCTION="$flight" -DCONFIG_TFC_SIM_BUS_IMU="$simimu"
+      west build -p auto -b native_sim/native/64 firmware/app -d "$dir" -- -DCONFIG_TFC_NODE_ID="$n" -DCONFIG_TFC_FLIGHT_FUNCTION="$flight" -DCONFIG_TFC_SIM_BUS_IMU="$simimu" -DCONFIG_TFC_LAUNCH_SEQUENCE="$launch"
     done
     west build -p auto -b native_sim/native/64 firmware/act -d build/act_native ;;
   --test)
