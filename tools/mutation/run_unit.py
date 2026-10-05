@@ -26,7 +26,10 @@ def one(name: str) -> tuple[str, str, str]:
         r = subprocess.run(["g++", *FLAGS, f"-I{inc}", f"-I{tmp / 'include_sup'}", f"-I{ROOT / 'tests'}", f"-I{ROOT / 'tools' / 'vehicle'}", f"-I{ROOT / 'sim' / 'vehicle'}", f"-I{ROOT / 'firmware' / 'app' / 'src'}", *map(str, TESTS), "-o", str(exe)], capture_output=True, text=True)
         if r.returncode:
             return name, "BUILD-FAILED", r.stderr.strip().splitlines()[0][:120] if r.stderr.strip() else ""
-        run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=600)
+        try:
+            run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=600)
+        except subprocess.TimeoutExpired:  # a mutant that makes the code loop for ever is caught: the suite does not finish
+            return name, "killed", "timed out (an endless loop)"
         out = run.stdout + run.stderr
         failing = [ln.split("]", 1)[1].strip() for ln in out.splitlines() if ln.startswith("[FAIL]")]
         if run.returncode == 0:
