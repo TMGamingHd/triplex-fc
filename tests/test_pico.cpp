@@ -56,6 +56,11 @@ TFC_TEST(pico_link_golden_frames_are_pinned) {
   sat.tilt_x_deg = 1.0e9F;   // saturates in the 16-bit field
   sat.tilt_y_deg = -1.0e9F;
   CHECK(hex(pack_platform(sat)) == "a50105ffff7f0080b5");
+  PlatformCommand wide;  // 330 degrees is 33,000 counts: beyond the 16-bit field, so it saturates (it must not wrap)
+  wide.tilt_x_deg = 330.0F;
+  wide.tilt_y_deg = -330.0F;
+  const Message wm = pack_platform(wide);
+  CHECK(wm.payload[1] == 0xFFU && wm.payload[2] == 0x7FU && wm.payload[3] == 0x00U && wm.payload[4] == 0x80U);
   PlatformCommand not_a_number;
   not_a_number.tilt_x_deg = std::nanf("");  // no angle: zero, not a random value
   not_a_number.tilt_y_deg = 0.0F;
@@ -83,6 +88,14 @@ TFC_TEST(pico_link_round_trip_and_the_parser_finds_frames_in_a_stream) {
   CHECK(unpack_status(pack_status(Status{4U, -1.5F, 2.5F, 0x20U, 0x0FU, 12345U}), s) && s.seq_echo == 4U && near(s.out_x_deg, -1.5F, 0.006F) && s.relays == 0x0FU &&
         s.command_age_ms == 12345U);
   CHECK(!unpack_platform(pack_ping(), back) && !unpack_relay(pack_ping(), rc) && !unpack_status(pack_ping(), s));  // wrong type
+  Message short_status = pack_status(Status{});
+  short_status.length = 8U;
+  Message long_status = pack_status(Status{});
+  long_status.length = 10U;
+  CHECK(!unpack_status(short_status, s) && !unpack_status(long_status, s));  // wrong length
+  Message bad_relay = pack_relay(RelayCommand{1U, 5U});
+  bad_relay.length = 2U;
+  CHECK(!unpack_relay(bad_relay, rc));
   Message wrong = pack_platform(pc);
   wrong.length = 4U;
   CHECK(!unpack_platform(wrong, back));  // wrong length
