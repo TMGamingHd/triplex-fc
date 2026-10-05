@@ -175,6 +175,20 @@ TFC_TEST(realism_the_closed_loop_with_default_dispersions_is_the_nominal_flight_
   CHECK(c.max_deg_liftoff > 5.0 * a.max_deg_liftoff);  // the pad hold is missing: ACT is in Standby for the first second and the misaligned engines turn the vehicle
 }
 
+TFC_TEST(ts16_a_clean_bus_keeps_the_three_state_digests_equal_and_a_lossy_one_measurably_does_not) {
+  sim::Loop clean;
+  clean.frames = 3000U;
+  const sim::Result a = sim::run(clean);
+  CHECK(a.lost_frames == 0U && a.digest_mismatch_frames == 0U && a.max_command_spread_deg == 0.0);  // identical inputs: identical states
+  sim::Loop lossy = clean;
+  lossy.frame_loss_prob = 0.01F;
+  const sim::Result b = sim::run(lossy);
+  CHECK(b.lost_frames > 100U && b.lost_frames < 500U);  // 6 frames x 2 receivers x 3000 frames x 1% (the own frames are never lost) = 240 expected
+  CHECK(b.digest_mismatch_frames > 0U && b.longest_mismatch_run >= 1U);  // TS-16: the replicated estimators drift apart
+  const sim::Result c = sim::run(lossy);
+  CHECK(b.digest_mismatch_frames == c.digest_mismatch_frames && b.max_command_spread_deg == c.max_command_spread_deg);  // and it is repeatable
+}
+
 TFC_TEST(edge_a_flight_past_burnout_stays_finite_and_ends_with_the_engines_off) {
   sim::Loop lp;
   lp.frames = 30000U;  // 300 s: the 24 t of propellant burn out at about 158 s; the tables stop at 100 s and hold their last values

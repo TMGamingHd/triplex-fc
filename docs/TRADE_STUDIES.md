@@ -275,6 +275,17 @@ Variants for what the consensus is with two channels left: the mean, or the cont
 
 **Decision rule.** The cheapest option with no false isolation or Safe from a single lost or late frame in any frame type and no loss of detection of a real estimator fault. Expected finding, to be shown or refuted: D with E is enough for gyro-bias and attitude differences, which decay, but not for a difference in the *controller's integrator*, which is held by anti-windup and does not decay on its own; that one needs C.
 
+**First measurement (4 Oct 2026, host closed loop, option A as built).** `sim::Loop::frame_loss_prob` drops each sensor frame of another computer independently at each receiver (a computer always gets its own), over a 60 s ascent with the real flight function, three replicas and ACT (`tests/test_realism.cpp`, `ts16_*`; the sweep itself was a scratch program, not kept):
+| Loss per frame | Frames lost (of 72 000 receptions) | Frames with the three digests not all equal | Largest command difference between two computers | Flight |
+|---|---|---|---|---|
+| 0 | 0 | 0 | 0 | flies |
+| 0.01 % | 4 | 82 % | 0.06 deg | flies (0.61 deg max error) |
+| 0.1 % | 64 | 99 % | 0.07 deg | flies (0.61 deg max error) |
+| 1 % | 725 | 99 % | 0.17 deg | lost: ACT in Safe for 2 219 frames |
+| 5 % | 3 589 | 99.8 % | 0.15 deg | lost: ACT in Safe for 2 730 frames |
+
+What it shows: (1) **a handful of lost frames in a flight makes the digests differ for the rest of it** (4 losses, 82 % of the frames, one run of 4 873 frames), so the permanent divergence of the question is confirmed and is not a rare corner; (2) the *commands* stay within 0.2 degree of each other, so the damage is the digest mismatch and what the manager and ACT do with it, not a control error: the digest is a fingerprint of quantised state, so any difference, however small, persists; (3) at 1 % loss the flight is lost. This loop has no FDIR and no state-share frames, so the Safe at 1 % is ACT's own response (the cause was not analysed here: to be done with the fault injector); the real system adds the manager's reaction to the mismatch on top. Consequence for the options: **D alone (tolerate with persistence) cannot work**, because the mismatch does not decay inside any persistence window; the digest must either compare something that converges (E) or the states must be pulled together (C) or the inputs agreed (B). The bus loss rate this needs to survive is also now a number to ask for: the CAN fault campaign should say what loss a real bus shows, since a good wired bus loses far fewer than 0.01 %.
+
 **Dependencies and timing.** Needs the fault injector on the bus (P1-5, the Pico, or a host injector) and the runner's closed loop (P1-4d). Before the closed loop is used for the demonstration.
 
 **Talking point.** "I found that replicated estimators diverge permanently on a single lost frame, measured it, and compared four ways of keeping them together."
