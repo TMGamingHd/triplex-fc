@@ -43,6 +43,14 @@ config TFC_LAUNCH_SEQUENCE
 	  starts it on an authenticated `launch` that passes the go/no-go, and scrubs on a failure during the 10 s countdown); the schedules follow the frames since T-zero
 	  and sit at their first point on the pad; the heartbeat carries a ready bit (docs/LAUNCH_SEQUENCE.md). Off: the schedules follow the SYNC frame number, as before.
 
+config TFC_SENSOR_SPLIT
+	bool "Judge each IMU apart from its computer (the sensor/compute split)"
+	default TFC_FLIGHT_FUNCTION
+	help
+	  On: a bad IMU is excluded from the sensor consensus and its computer stays a voter for commands for as long as its commands agree; a bad computer is
+	  excluded from the command vote and its IMU stays in the consensus (ADR-020 case 1, TS-15: option B). Off: a computer is one unit and a bad IMU latches the
+	  whole computer, which is what the scripted virtual peers' fault tests expect. On by default with the flight function, which is where the consensus exists.
+
 config TFC_RESYNC_PERIOD
 	int "State resynchronisation period in frames (0: off)"
 	default 100
@@ -72,6 +80,38 @@ config TFC_TEST_DROP_PEERS_FIRST
 config TFC_TEST_DROP_PEERS_FRAMES
 	int "Test knob: how many frames the peers' sensor frames are withheld"
 	default 0
+
+config TFC_TEST_HANG_AT_FRAME
+	int "Test knob: from this frame the end-of-frame KICK stops (0: off)"
+	default 0
+	help
+	  A bench aid for the supervisor's procedure (P-S2-03): from the frame with this SYNC number the node no longer raises its KICK line, while everything else
+	  (frames, heartbeat, watchdog) goes on, so the supervisor has to be the one that acts. Never set in a flight build.
+
+config TFC_TEST_CMD_OFFSET_MDEG
+	int "Test knob: milli-degrees added to this computer's pitch command (0: off)"
+	default 0
+	help
+	  A bench aid (P-S3-01, the live mixed-release test): a computer whose commands are off by a known amount. Never set in a flight build.
+
+config TFC_TEST_GYRO_BIAS_MDPS
+	int "Test knob: milli-dps added to this computer's gyro x sample (0: off)"
+	default 0
+	help
+	  A bench aid (P-S3-01): an IMU with a known bias, sent as it is, so that the sensor consensus and the sensor split can be exercised on the real bus. Never set in a flight build.
+
+config TFC_TEST_GYRO_DRIFT_MDPS_PER_FRAME
+	int "Test knob: milli-dps added to the gyro x bias in every frame, cumulative (0: off)"
+	default 0
+	help
+	  A bench aid (P-S3-01): an IMU that drifts, 50 being 0.05 dps per frame. Never set in a flight build.
+
+config TFC_TEST_CLOCK_PPM
+	int "Test knob: the sync master's frame period is this many ppm long (0: off)"
+	default 0
+	help
+	  A bench aid (P-S2-03): a master whose frame clock runs slow (positive) or fast (negative) by a known amount, for the supervisor's period check. Only the master drives the
+	  period; followers lock to SYNC. Never set in a flight build.
 
 config TFC_SIM_BUS_IMU
 	bool "Take the sensor input from the simulator's frames on the bus"

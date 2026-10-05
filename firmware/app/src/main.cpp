@@ -13,6 +13,7 @@
 //
 // Include core/ (and so the C++ standard library) BEFORE Zephyr headers: Zephyr defines an
 // `__unused` macro that breaks a glibc header (struct_mutex.h) on the native_sim host build.
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -48,6 +49,11 @@ constexpr bool kResync = kFlightFunction && kResyncPeriod != 0U && ((kResyncGrou
 
 constexpr uint32_t kDropFirst = CONFIG_TFC_TEST_DROP_PEERS_FIRST;    // test aid (docs/RESYNC.md): withhold the peers' sensor frames from the flight function
 constexpr uint32_t kDropFrames = CONFIG_TFC_TEST_DROP_PEERS_FRAMES;
+constexpr uint32_t kTestHangAt = CONFIG_TFC_TEST_HANG_AT_FRAME;      // bench aids, all off by default (docs/procedures/P-S2-03, P-S3-01)
+constexpr int kTestCmdOffsetMdeg = CONFIG_TFC_TEST_CMD_OFFSET_MDEG;
+constexpr int kTestGyroBiasMdps = CONFIG_TFC_TEST_GYRO_BIAS_MDPS;
+constexpr int kTestGyroDriftMdps = CONFIG_TFC_TEST_GYRO_DRIFT_MDPS_PER_FRAME;
+constexpr int kTestClockPpm = CONFIG_TFC_TEST_CLOCK_PPM;
 constexpr int64_t kSampleUs = 500;   // the IMU sample is latched here (ARCHITECTURE section 3) ...
 constexpr int64_t kGyroUs = 1500;     // ... and sent here
 constexpr int64_t kCmdUs = 5000;   // the command goes out here; the peers' sensor frames (sent by 3 ms) are drained just before
@@ -232,6 +238,7 @@ int main() {
   }
   tfc::RedundancyConfig cfg;
   cfg.startup_grace_frames = kStartupGraceFrames;
+  cfg.sensor_split = IS_ENABLED(CONFIG_TFC_SENSOR_SPLIT);
   if (kFlightFunction && kResyncPeriod != 0U) {
     cfg.digest_persist_frames = static_cast<uint16_t>((2U * kResyncPeriod) + 50U);  // a mismatch the resync would heal (even if one resync is skipped) is not counted (TS-23)
   }
@@ -263,7 +270,7 @@ int main() {
   const bool quarantined = IS_ENABLED(CONFIG_TFC_QUARANTINE_ON_RESET_LOOP) && resets.loop_detected();
   tfc::ProgressMonitor progress(kProgressRequired);
   constexpr int64_t kPeriodUs = fc::sim::kFrameUs;
-  const int64_t period = k_us_to_ticks_ceil64(kPeriodUs);
+  const int64_t period = k_us_to_ticks_ceil64(kPeriodUs + static_cast<int64_t>(kPeriodUs) * kTestClockPpm / 1000000);  // (the clock skew knob lengthens or shortens the master's frame)
   const int64_t window = k_us_to_ticks_ceil64(tfc::sync_window_us(kNodeId, CONFIG_TFC_SYNC_STAGGER_US));
   // Node A listens first, even after a power-up (it may be the one that was off while B took over: two masters would collide on one id), and
   // claims the bus if nobody is sending after a few frames; B and C only follow, and take over only after they have heard a master and lost it.
@@ -278,6 +285,10 @@ int main() {
   uint32_t resync_adopted = 0;
   uint32_t resync_skipped = 0;
   uint32_t resync_corrected = 0;  // computers found far from the vote, summed over the resyncs
+  uint32_t wcet_step_us = 0;      // the longest the flight function, the manager's frame and the whole frame have taken so far (the real margin of the 7 ms vote)
+  uint32_t wcet_vote_us = 0;
+  uint32_t wcet_frame_us = 0;
+  float test_gyro_drift_dps = 0.0F;
   // launch sequence state: what the peers and ACT last said, and the mission frame last seen
   std::array<uint32_t, 3> hb_seen{};
   std::array<bool, 3> hb_ready{};
@@ -403,6 +414,7 @@ int main() {
     }
     lines.kick(false);
     lines.frame(true);  // FRAME: a pulse at the start of every frame, cleared when the sample is latched
+    const uint32_t cycles_frame_start = k_cycle_get_32();
     if (cycle % kStatusEveryFrames == 0U) {
       resets.running(cycle);  // how long this boot has lasted, for the next boot's loop check
     }
@@ -457,6 +469,10 @@ int main() {
     if (have_sample && kLaunch) {
       gyro = g_cal.process(gyro);  // the bias is subtracted before the sample is sent, so the consensus sees corrected values
     }
+    if (have_sample && (kTestGyroBiasMdps != 0 || kTestGyroDriftMdps != 0)) {  // the bench aids: a known bias, a known drift
+      test_gyro_drift_dps += static_cast<float>(kTestGyroDriftMdps) * 0.001F;
+      gyro.v[0] += (static_cast<float>(kTestGyroBiasMdps) * 0.001F) + test_gyro_drift_dps;
+    }
     lines.frame(false);
     progress.report(kTaskSample);
 
@@ -480,12 +496,17 @@ int main() {
     sleep_until_us(base, kCmdUs);
     drain_schedule_slots();  // the peers' sensor frames, which the flight function needs now
     tfc::Command cmd;
+    const uint32_t cycles_step = k_cycle_get_32();
     if (kFlightFunction) {
       cmd = g_flight.step();
     } else {
       // Without the flight function the command is a fixed function of the frame number, the same on every replica and on the PC, so the digest can be
       // checked against a golden run; it does not come from the IMU.
       cmd = fc::sim::command(fc::sim::truth(k), k);
+    }
+    wcet_step_us = std::max(wcet_step_us, k_cyc_to_us_floor32(k_cycle_get_32() - cycles_step));
+    if (kTestCmdOffsetMdeg != 0) {
+      cmd.pitch_deg += static_cast<float>(kTestCmdOffsetMdeg) * 0.001F;  // the bench aid: a computer whose commands are off by a known amount
     }
     const tfc::Frame c = tfc::pack_cmd(kNodeId, cmd, seq);
     mgr.on_frame(c);
@@ -528,8 +549,10 @@ int main() {
       }
       mgr.on_frame(f);  // counts it as out-of-schedule (or ignores SYNC/ACT/heartbeat/sim IDs)
     }
+    const uint32_t cycles_vote = k_cycle_get_32();
     const tfc::FrameReport& rep = mgr.end_frame();
-    usable_nodes = static_cast<uint8_t>(~rep.latched_mask & 0x07U);  // next frame's flight function uses only the nodes that are voting
+    wcet_vote_us = std::max(wcet_vote_us, k_cyc_to_us_floor32(k_cycle_get_32() - cycles_vote));
+    usable_nodes = static_cast<uint8_t>(~rep.sensor_latched_mask & 0x07U);  // next frame's flight function uses only the IMUs that are in the consensus (with the split, a computer that is out of the command vote still contributes its IMU)
     progress.report(kTaskVote);
     {  // the heartbeat: what ACT and the supervisor need to know (protocol v2): mode, Safe request, bus alarm, how this node sees the three
       tfc::Heartbeat hb;
@@ -610,9 +633,12 @@ int main() {
         printk("[frame %u] RESYNC: nothing adopted (%s)\n", k, vote.why == tfc::resync::Why::Incomplete ? "a state did not arrive whole" : (vote.why == tfc::resync::Why::TooFew ? "fewer than two voters" : "the states disagree"));
       }
     }
+    wcet_frame_us = std::max(wcet_frame_us, k_cyc_to_us_floor32(k_cycle_get_32() - cycles_frame_start));
     if (progress.end_of_frame(true)) {  // the one place the watchdog is serviced, and the one place KICK is raised
       wdt.feed();
-      lines.kick(true);
+      if (kTestHangAt == 0U || k < kTestHangAt) {  // (the bench aid: from a chosen frame the KICK stops while everything else goes on)
+        lines.kick(true);
+      }
     }
 
     for (unsigned i = 0; i < rep.command_count; ++i) {
@@ -642,6 +668,29 @@ int main() {
       if ((rep.newly_disabled & bit) != 0U) {
         printk("[frame %u] node %c DISABLED for the run (strikes: %u)\n", k, 'A' + static_cast<char>(n),
                static_cast<unsigned>(rep.strikes[n]));
+      }
+    }
+    if (cfg.sensor_split) {  // the IMU channels' own events
+      for (unsigned n = 0; n < tfc::kNodes; ++n) {
+        const unsigned bit = 1U << n;
+        const char c = static_cast<char>('A' + n);
+        if ((rep.sensor_newly_latched & bit) != 0U) {
+          std::array<char, 96> why{};
+          tfc::format_reasons(rep.sensor_reason[n], why.data(), why.size());
+          printk("[frame %u] IMU %c LATCHED OUT (computer %c stays in the command vote): %s\n", k, c, c, why.data());
+        }
+        if ((rep.sensor_probation_started & bit) != 0U) {
+          printk("[frame %u] IMU %c ON PROBATION\n", k, c);
+        }
+        if ((rep.sensor_probation_failed & bit) != 0U) {
+          printk("[frame %u] IMU %c FAILED PROBATION, back to latched\n", k, c);
+        }
+        if ((rep.sensor_newly_reintegrated & bit) != 0U) {
+          printk("[frame %u] IMU %c REINTEGRATED into the consensus\n", k, c);
+        }
+        if ((rep.sensor_newly_disabled & bit) != 0U) {
+          printk("[frame %u] IMU %c DISABLED for the run\n", k, c);
+        }
       }
     }
     for (unsigned n = 0; n < tfc::kNodes; ++n) {
@@ -674,7 +723,7 @@ int main() {
     }
     if (cycle % kStatusEveryFrames == 0U) {
       const tfc::Counters& cn = mgr.counters();
-      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u sync_missed=%u mission=%u ready=%u resync=%u/%u far=%u\n",
+      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u sync_missed=%u mission=%u ready=%u resync=%u/%u far=%u wcet_step=%u wcet_vote=%u wcet_frame=%u\n",
              k, mode_text(rep.mode), node_state(rep, 0), node_state(rep, 1), node_state(rep, 2),
              static_cast<unsigned>(cn.crc_bad), static_cast<unsigned>(cn.seq_bad),
              static_cast<unsigned>(cn.missing), static_cast<unsigned>(cn.vote_disagreements),
@@ -683,7 +732,8 @@ int main() {
              static_cast<unsigned>(imu.stale()), static_cast<unsigned>(progress.refusals()),
              static_cast<unsigned>(atomic_get(&g_bus_off_events)), static_cast<unsigned>(atomic_get(&g_error_passive_events)),
              static_cast<unsigned>(sync_missed_total), static_cast<unsigned>(tick.mission), own_ready ? 1U : 0U, static_cast<unsigned>(resync_adopted),
-             static_cast<unsigned>(resync_skipped), static_cast<unsigned>(resync_corrected));
+             static_cast<unsigned>(resync_skipped), static_cast<unsigned>(resync_corrected), static_cast<unsigned>(wcet_step_us), static_cast<unsigned>(wcet_vote_us),
+             static_cast<unsigned>(wcet_frame_us));
     }
   }
 }

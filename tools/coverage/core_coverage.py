@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Structural coverage of the flight core (core/include) by the C++ unit, fuzz and recovery tests, with gcov.
+"""Structural coverage of the flight core (core/include) and the supervisor logic (supervisor/include) by the C++ unit, fuzz and recovery tests, with gcov.
 
     python3 tools/coverage/core_coverage.py [--min-line PCT] [--min-branch PCT] [--list]
 
@@ -47,7 +47,7 @@ def main(argv=None) -> int:
             data = json.loads(gzip.open(gz).read())
             for f in data["files"]:
                 path = str(Path(f["file"]).resolve()) if Path(f["file"]).is_absolute() else str((tmp / f["file"]).resolve())
-                if "core/include" not in path:
+                if "core/include" not in path and "supervisor/include" not in path:
                     continue
                 for ln in f["lines"]:
                     n = ln["line_number"]

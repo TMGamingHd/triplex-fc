@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import dataclasses
 import hashlib
 import os
 import subprocess
@@ -58,6 +59,8 @@ def execute(sc: Sc, tmp: str, want_dump: bool = True) -> tuple[dict, list[dict],
     finally:
         peers.truth = orig_truth
     cmd = [REPLAY, log, "--policy", sc.policy]
+    if sc.split:
+        cmd.append("--sensor-split")
     if want_dump:
         cmd += ["--dump", csvp]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -102,6 +105,7 @@ def evaluate(sc: Sc, tmp: str) -> Result:
         h.update(repr(tuple(r[c] for c in shared)).encode())
     res.metrics["trace"] = h.hexdigest()[:16]
     res.counters = {k: int(v) for k, v in kv.items() if v.lstrip("-").isdigit()}
+    res.metrics["sensor_latch"] = {n: int(kv[f"slatch.{name}"]) for n, name in enumerate("ABC") if kv.get(f"slatch.{name}", "-") != "-"}
     res.final_mode = kv.get("mode", "")
     for n, name in enumerate("ABC"):
         lf = kv.get(f"latch.{name}", "-")
@@ -201,7 +205,43 @@ def evaluate(sc: Sc, tmp: str) -> Result:
         res.anomalies.append(("E_COUNT", f"strikes={res.strikes.get(node)} expected {tag['strikes_expected']}"))
     if "final_state" in tag and res.final_state.get(node) != tag["final_state"]:
         res.anomalies.append(("E_STATE", f"node {'ABC'[node]} final state {res.final_state.get(node)}, expected {tag['final_state']}"))
+    if sc.split:
+        res.anomalies += split_checks(sc, res, rows, tmp)
     return res
+
+
+def split_checks(sc: Sc, res: Result, rows: list[dict], tmp: str) -> list[tuple[str, str]]:
+    """What the sensor split promises (ADR-020 case 1, TS-15): a fault of a computer's IMU removes the IMU channel and not the computer; a fault of the computer's
+    commands removes the computer and not its IMU; and the split detects what the unsplit manager detected, no later than two frames after it. `tag["class"]` is
+    sensor, command or pair (an IMU fault on one computer and a command fault on another); other scenarios are judged by the always-true properties only."""
+    out: list[tuple[str, str]] = []
+    cls = sc.tag.get("class")
+    s_latch = res.metrics.get("sensor_latch", {})
+    if cls in ("sensor", "command", "pair") and sc.context == "triplex":
+        imu_node = "ABC".index(sc.tag["imu"]) if "imu" in sc.tag else None
+        cmd_node = "ABC".index(sc.tag["cmd"]) if "cmd" in sc.tag else None
+        stray_computers = {n for n in res.latch if n != cmd_node}
+        stray_imus = {n for n in s_latch if n != imu_node}
+        if stray_computers:
+            out.append(("E_SPLIT_COMPUTER", f"a computer was latched for a fault it does not have: {sorted(stray_computers)} (latches {res.latch})"))
+        if stray_imus:
+            out.append(("E_SPLIT_IMU", f"an IMU channel was latched that has no fault: {sorted(stray_imus)} (sensor latches {s_latch})"))
+        base = dataclasses.replace(sc, split=False)
+        with tempfile.TemporaryDirectory(prefix="tfc-camp-base-") as btmp:
+            kv, _rows, _ = execute(base, btmp, want_dump=False)
+        off = {n: int(kv[f"latch.{name}"]) for n, name in enumerate("ABC") if kv.get(f"latch.{name}", "-") != "-"}
+        fstart = min((f.start for f in parsed_faults(sc)), default=0)
+        if imu_node is not None and imu_node in off:
+            got = s_latch.get(imu_node)
+            if got is None:
+                out.append(("E_SPLIT_MISS", f"the unsplit manager latched computer {'ABC'[imu_node]} at {off[imu_node]} for its IMU fault; the split never latched the IMU"))
+            elif got > off[imu_node] + 2:
+                out.append(("E_SPLIT_SLOW", f"IMU {'ABC'[imu_node]} latched at {got}, the unsplit computer at {off[imu_node]} (start {fstart})"))
+        if cmd_node is not None and cmd_node in off and res.latch.get(cmd_node) is None:
+            out.append(("E_SPLIT_MISS", f"the unsplit manager latched computer {'ABC'[cmd_node]} at {off[cmd_node]} for its command fault; the split never did"))
+        if cmd_node is not None and cmd_node in off and res.latch.get(cmd_node) is not None and res.latch[cmd_node] > off[cmd_node] + 2:
+            out.append(("E_SPLIT_SLOW", f"computer {'ABC'[cmd_node]} latched at {res.latch[cmd_node]} with the split, at {off[cmd_node]} without"))
+    return out
 
 
 def _sampled_for_determinism(key: str) -> bool:

@@ -143,8 +143,10 @@ jobs:
           west build -p always -b nucleo_g474re firmware/app -d build/nucleo_g474re
           west build -p always -b nucleo_g474re firmware/act -d build/act_nucleo
           west build -p always -b rpi_pico2/rp2350a/m33 firmware/pico -d build/pico
+          west build -p always -b rpi_pico2/rp2350a/m33 firmware/supervisor -d build/supervisor
       - name: No heap, exceptions, RTTI or vtables in the flight binary
         run: |
           tools/check_elf.sh build/nucleo_g474re/zephyr/zephyr.elf
           tools/check_elf.sh build/act_nucleo/zephyr/zephyr.elf
           tools/check_elf.sh build/pico/zephyr/zephyr.elf
+          tools/check_elf.sh build/supervisor/zephyr/zephyr.elf

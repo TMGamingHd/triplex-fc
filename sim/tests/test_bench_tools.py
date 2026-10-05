@@ -24,6 +24,7 @@ def load(name: str):
 jitter = load("frame_jitter")
 log_t0 = load("log_t0")
 golden = load("check_golden")
+bus_loss = load("bus_loss")
 
 from tfc_peers import peers as PE  # noqa: E402
 from tfc_peers import protocol as P  # noqa: E402
@@ -156,6 +157,68 @@ class GoldenRun(unittest.TestCase):
         # a command whose sequence byte does not belong to the cycle of the last SYNC
         stale = [f for f in frames if f.id != P.ID_SYNC][:1] + [P.pack_sync(7, 7)]
         self.assertEqual(golden.compare(stale, 0)["compared"], 0)
+
+
+class BusLossTests(unittest.TestCase):
+    """tools/bench/bus_loss.py on a synthetic capture with known losses."""
+
+    def capture(self, frames=400, drop=(), late=(), resync=0):
+        lines = []
+        t = 0
+        for k in range(frames):
+            lines.append((t, bus_loss.SYNC, k.to_bytes(4, "little") + b"\x00\x00\x00\x00"))
+            for cid in bus_loss.SCHEDULE:
+                if (k, cid) in drop:
+                    continue
+                delay = 9000 if (k, cid) in late else 1500
+                lines.append((t + delay, cid, b"\x00" * 8))
+            if resync and k % resync == resync - 1:
+                lines += [(t + 5500 + i * 130, 0x420 + i, b"\x00" * 8) for i in range(12)]
+            t += 10000
+        return lines
+
+    def test_a_clean_capture_has_no_loss(self):
+        stats, n = bus_loss.analyse(self.capture(), 0, 7000)
+        self.assertEqual(n, 398)
+        self.assertTrue(all(s["seen"] == s["expected"] for s in stats.values()))
+        self.assertEqual(stats[0x100]["expected"], 398)
+
+    def test_missing_and_late_frames_are_counted_per_id(self):
+        drop = {(50, 0x101), (51, 0x101), (200, 0x300)}
+        late = {(60, 0x200), (61, 0x200), (62, 0x200)}
+        stats, _ = bus_loss.analyse(self.capture(drop=drop, late=late), 0, 7000)
+        self.assertEqual(stats[0x101]["expected"] - stats[0x101]["seen"], 2)
+        self.assertEqual(stats[0x300]["expected"] - stats[0x300]["seen"], 1)
+        self.assertEqual(sum(1 for d in stats[0x200]["delays"] if d > 7000), 3)
+        self.assertEqual(stats[0x100]["expected"] - stats[0x100]["seen"], 0)
+
+    def test_resync_frames_are_expected_only_in_their_frames(self):
+        stats, n = bus_loss.analyse(self.capture(resync=100), 100, 7000)
+        self.assertEqual(stats[0x420]["expected"], 3)  # frames 99, 199, 299 of the 398 analysed
+        self.assertEqual(stats[0x42B]["expected"], stats[0x42B]["seen"])
+        stats2, _ = bus_loss.analyse(self.capture(resync=100), 0, 7000)
+        self.assertNotIn(0x420, stats2)
+
+    def test_the_report_and_the_console_figures(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "x.log"
+            log.write_text("\n".join(f"({t // 1000000}.{t % 1000000:06d}) can0 {cid:03X}#{data.hex().upper()}" for t, cid, data in self.capture(drop={(70, 0x110)})))
+            con = Path(d) / "a.txt"
+            con.write_text("[frame 300] TRIPLEX  A+ B+ C+  | crc=1 seq=0 missing=26 vote=0 digest=0 stuck=0\n")
+            rc = bus_loss.main([str(log), "--console", f"A={con}"])
+            self.assertEqual(rc, 0)
+            text = bus_loss.report(*bus_loss.analyse(bus_loss.read(log), 0, 7000), 7000, [("A", str(con))])
+            self.assertIn("accel A", text)
+            self.assertIn("1 missing of", text)
+            self.assertIn("console A: frame 300, missing 26, crc 1, seq 0", text)
+            self.assertIn("0.1 % to 1 %", text)  # 27 of 2700 slot frames is 1 %: at the top of that band
+
+
+    def test_an_empty_log_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "empty.log"
+            log.write_text("")
+            self.assertEqual(bus_loss.main([str(log)]), 2)
 
 
 if __name__ == "__main__":

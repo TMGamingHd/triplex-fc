@@ -741,6 +741,55 @@ def duplex_boundary() -> list[Scenario]:
     return out
 
 
+
+# ------------------------------------------------------------------ the sensor split (ADR-020 case 1, TS-15)
+SENSOR_KINDS = ("stuck", "bias", "drift", "spike", "saturate", "scale", "noise", "invert", "swap", "zero", "clip", "oscillate", "repeat", "bitflip", "stuckbit")
+COMMAND_KINDS = ("cmd_offset", "cmdstuck", "cmdinvert", "digest")
+SPLIT_STARTS = (30, 77, 100, 143, 190)
+
+
+def _split(group, faults, **kw) -> Scenario:
+    return _sc(group, faults, "any", split=True, **kw)
+
+
+def split_sensor() -> list[Scenario]:
+    """Every sensor-class fault kind on every computer's IMU, at five start instants: the IMU channel is isolated and the computer stays a voter, and the split
+    detects what the unsplit manager detected (within two frames)."""
+    out = []
+    for kind, n, s in itertools.product(SENSOR_KINDS, range(3), SPLIT_STARTS):
+        out.append(_split("split_sensor", [PHASE_KINDS[kind].format(n=N[n], s=s)], frames=s + 120, tag=dict(**{"class": "sensor"}, imu=N[n], kind=kind, start=s)))
+    return out
+
+
+def split_command() -> list[Scenario]:
+    """Every command-class fault on every computer: the computer is isolated and its IMU stays in the consensus."""
+    out = []
+    for kind, n, s in itertools.product(COMMAND_KINDS, range(3), SPLIT_STARTS):
+        out.append(_split("split_command", [PHASE_KINDS[kind].format(n=N[n], s=s)], frames=s + 120, tag=dict(**{"class": "command"}, cmd=N[n], kind=kind, start=s)))
+    return out
+
+
+def split_pairs() -> list[Scenario]:
+    """An IMU fault on one computer and a command fault on another (the double fault of ADR-020 case 2, without the ring): each unit is removed for its own fault
+    and the other computer's IMU and the first computer's commands keep working."""
+    out = []
+    imu = {"bias": "{n}:bias:start={s},mag=3.0", "stuck": "{n}:stuck:start={s}", "saturate": "{n}:saturate:start={s}", "zero": "{n}:zero:start={s}"}
+    cmd = {"cmd_offset": "{n}:cmd_offset:start={s},mag=1.0", "cmdinvert": "{n}:cmdinvert:start={s}"}
+    for (ik, it), (ck, ct), (a, b), (sa, sb) in itertools.product(imu.items(), cmd.items(), ((0, 1), (1, 2), (2, 0)), ((100, 100), (100, 130), (130, 100))):
+        out.append(_split("split_pairs", [it.format(n=N[a], s=sa), ct.format(n=N[b], s=sb)], frames=sa + sb + 120,
+                          tag=dict(**{"class": "pair"}, imu=N[a], cmd=N[b], kinds=f"{ik}+{ck}", sa=sa, sb=sb)))
+    return out
+
+
+def split_all() -> list[Scenario]:
+    """Every fault kind at several instants, in Triplex and Duplex, with the split on: only the always-true safety properties (M1 to M10, S1 to S3) are judged."""
+    out = []
+    for (kind, tmpl), s, ctx in itertools.product(PHASE_KINDS.items(), range(44, 200, 16), ("triplex", "duplex")):
+        node = (s // 4) % 3
+        c = "triplex" if ctx == "triplex" else f"duplex-{N[(node + 1) % 3]}"
+        out.append(_split("split_all", [tmpl.format(n=N[node], s=s)], context=c, frames=s + 80, tag=dict(kind=kind, start=s, node=N[node])))
+    return out
+
 def all_groups() -> dict:
     return {
         "dropout": dropout, "stuck": stuck, "bias_gyro": lambda: _bias("gyro"), "bias_accel": lambda: _bias("accel"),
@@ -751,4 +800,5 @@ def all_groups() -> dict:
         "contexts": contexts, "new_sensor": new_sensor_faults, "new_bits": new_bit_faults, "new_command": new_command_faults,
         "new_frame": new_frame_faults, "new_timing": new_timing_faults, "new_intermittent": new_intermittent, "new_pairs": new_pairs,
         "cascades": cascades, "ground_security": ground_security, "duplex_boundary": duplex_boundary, "total_loss": total_loss, "long_run": long_run, "phase_sweep": phase_sweep, "recovery_edges": recovery_edges,
+        "split_sensor": split_sensor, "split_command": split_command, "split_pairs": split_pairs, "split_all": split_all,
     }

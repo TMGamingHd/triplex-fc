@@ -33,6 +33,8 @@ struct ManagerTestAccess {
   static void flip_cmd_counter(RedundancyManager& m) { m.cmd_ctr_.v_ = static_cast<uint8_t>(m.cmd_ctr_.v_ ^ 0x80U); }
   static void flip_cmd_have(RedundancyManager& m) { m.cmd_have_.n_ = static_cast<uint8_t>(m.cmd_have_.n_ ^ 0x01U); }
   static void set_failures(uint32_t& counter, uint32_t v) { counter = v; }
+  static void set_sensor_state_consistent(RedundancyManager& m, unsigned k, uint8_t raw) { m.sensors_.st_[k].v_ = raw; m.sensors_.st_[k].n_ = static_cast<uint8_t>(~raw); }
+  static void set_sensor_state_primary(RedundancyManager& m, unsigned k, uint8_t raw) { m.sensors_.st_[k].v_ = raw; }
 };
 }  // namespace tfc
 
@@ -863,4 +865,23 @@ TFC_TEST(seu_an_upset_in_the_command_counter_forgets_the_history_and_is_reported
     (void)m.on_frame(tfct::gcmd(GroundOp::Reintegrate, 0, 10));
     CHECK(m.end_frame().command_count == 0U && m.counters().commands_replayed == 1U);  // and replay protection works again from there
   }
+}
+
+TFC_TEST(seu_an_upset_in_a_sensor_channel_state_excludes_the_channel_and_is_reported) {
+  RedundancyConfig cfg;
+  cfg.sensor_split = true;
+  RedundancyManager m(cfg);
+  for (int k = 0; k < 10; ++k) (void)step(m, k, kNone);
+  ManagerTestAccess::set_sensor_state_primary(m, 2U, static_cast<uint8_t>(NodeState::Healthy) ^ 1U);  // one bit flipped: its complement now disagrees
+  CHECK(m.sensor_state(2) == NodeState::Latched);  // read before the scrub: a damaged state reads as excluded
+  FrameReport r = step(m, 10, kNone);
+  CHECK((r.integrity_mask & 1U) != 0U && m.sensor_state(2) == NodeState::Latched && r.sensor_latched_mask == 0x04U && r.latched_mask == 0U);
+  ManagerTestAccess::set_sensor_state_consistent(m, 0U, 9U);  // a value that is no state at all
+  r = step(m, 11, kNone);
+  CHECK((r.integrity_mask & 1U) != 0U && m.sensor_state(0) == NodeState::Latched);
+  CHECK(m.sensor_state(3U) == NodeState::Disabled && m.sensor_strikes(3U) == 0U);  // out of range
+  RedundancyManager off;  // with the split off the sensor states are not looked at
+  for (int k = 0; k < 5; ++k) (void)step(off, k, kNone);
+  ManagerTestAccess::set_sensor_state_primary(off, 0U, 3U);
+  CHECK((step(off, 5, kNone).integrity_mask & 1U) == 0U);
 }

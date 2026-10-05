@@ -11,6 +11,7 @@
 // runs: it decodes gyro/accel/command frames, checks CRC and sequence, votes every channel,
 // cross-checks the state digest, runs the stuck detector, and feeds one 3-of-5 ChannelMonitor
 // per node (docs/ARCHITECTURE.md sections 4-5). This tool only reads the log and reports.
+//              [--sensor-split]   judge each IMU's gyro and accelerometer pair apart from its computer (ADR-020 case 1); the summary and the dump then also carry the IMU channels' verdicts
 // Exit status: 0 ok, 1 an --expect-* failed, 2 usage/input error.
 #include <array>
 #include <cstdint>
@@ -123,7 +124,7 @@ bool parse_node(const std::string& s, unsigned& node) {
 
 int usage() {
   (void)std::fprintf(stderr,
-               "usage: tfc_replay LOG [--t0 SECONDS] [--first-frame N] [--startup-grace N] [--vote-us US] [--policy manual|auto] [--verbose] [--dump CSV]\n"
+               "usage: tfc_replay LOG [--t0 SECONDS] [--first-frame N] [--startup-grace N] [--vote-us US] [--policy manual|auto] [--sensor-split] [--verbose] [--dump CSV]\n"
                "                      [--expect-latch NODE:FRAME|NODE:MIN-MAX]\n"
                "                      [--expect-no-latch NODE] [--expect-state NODE:STATE] [--expect-mode MODE]\n"
                "                      [--expect-min STAT:N]\n");
@@ -162,6 +163,8 @@ int main(int argc, char** argv) {
       if (vote_us == 0U || vote_us > kFrameUs) {
         return usage();
       }
+    } else if (a == "--sensor-split") {
+      cfg.sensor_split = true;
     } else if (a == "--dump" && has_val) {
       dump_path = argv[++i];
     } else if (a == "--policy" && has_val) {
@@ -257,12 +260,14 @@ int main(int argc, char** argv) {
     }
     (void)std::fprintf(dump,
                        "frame,mode,healthy,valid,latched,probation,disabled,safe,alarm,held,unresolved,newly_latched,"
-                       "newly_started,newly_readmitted,newly_disabled,probation_failed,integrity,reason_a,reason_b,reason_c,out0,out1,out2,out3,out4,out5,out6,out7\n");
+                       "newly_started,newly_readmitted,newly_disabled,probation_failed,integrity,reason_a,reason_b,reason_c,out0,out1,out2,out3,out4,out5,out6,out7,"
+                       "s_valid,s_latched,s_probation,s_disabled,s_healthy,s_mode,s_newly_latched,s_reason_a,s_reason_b,s_reason_c\n");
   }
 
   // ---- feed the log to the redundancy manager, one 10 ms frame at a time ----
   tfc::RedundancyManager mgr(cfg);
   std::array<long, tfc::kNodes> latch_frame{-1, -1, -1};
+  std::array<long, tfc::kNodes> sensor_latch_frame{-1, -1, -1};  // the IMU channels (with --sensor-split; otherwise they mirror the computers)
   tfc::Mode mode = tfc::Mode::Triplex;
   unsigned healthy = tfc::kNodes;
   bool prev_safe_request = false;
@@ -309,7 +314,10 @@ int main(int argc, char** argv) {
       for (unsigned ch = 0; ch < tfc::kVoteChannels; ++ch) {
         (void)std::fprintf(dump, ",%.6f", static_cast<double>(rep.output[ch]));
       }
-      (void)std::fprintf(dump, "\n");
+      (void)std::fprintf(dump, ",%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n", static_cast<unsigned>(rep.sensor_valid_mask), static_cast<unsigned>(rep.sensor_latched_mask),
+                         static_cast<unsigned>(rep.sensor_probation_mask), static_cast<unsigned>(rep.sensor_disabled_mask), rep.sensor_healthy,
+                         static_cast<unsigned>(rep.sensor_mode), static_cast<unsigned>(rep.sensor_newly_latched), static_cast<unsigned>(rep.sensor_reason[0]),
+                         static_cast<unsigned>(rep.sensor_reason[1]), static_cast<unsigned>(rep.sensor_reason[2]));
     }
     if (verbose) {
       for (unsigned i = 0; i < rep.command_count; ++i) {
@@ -339,6 +347,12 @@ int main(int argc, char** argv) {
       }
     }
     for (unsigned n = 0; n < tfc::kNodes; ++n) {
+      if (cfg.sensor_split && ((rep.sensor_newly_latched >> n) & 1U) != 0U && sensor_latch_frame[n] < 0) {
+        sensor_latch_frame[n] = static_cast<long>(k);
+        if (verbose) {
+          std::printf("frame %zu: IMU %c latched because: %s\n", k, static_cast<char>('A' + n), reason_text(rep.sensor_reason[n]).c_str());
+        }
+      }
       if (((rep.newly_latched >> n) & 1U) == 0U) {
         continue;
       }
@@ -360,6 +374,16 @@ int main(int argc, char** argv) {
       std::printf("latch.%c=-\n", static_cast<char>('A' + n));
     } else {
       std::printf("latch.%c=%ld\n", static_cast<char>('A' + n), latch_frame[n]);
+    }
+  }
+  if (cfg.sensor_split) {
+    for (unsigned n = 0; n < tfc::kNodes; ++n) {
+      if (sensor_latch_frame[n] < 0) {
+        std::printf("slatch.%c=-\n", static_cast<char>('A' + n));
+      } else {
+        std::printf("slatch.%c=%ld\n", static_cast<char>('A' + n), sensor_latch_frame[n]);
+      }
+      std::printf("sstate.%c=%s\nsstrikes.%c=%u\n", static_cast<char>('A' + n), tfc::state_text(mgr.sensor_state(n)), static_cast<char>('A' + n), mgr.sensor_strikes(n));
     }
   }
   std::printf("healthy=%u\nmode=%s\n", healthy, mode_name(mode));

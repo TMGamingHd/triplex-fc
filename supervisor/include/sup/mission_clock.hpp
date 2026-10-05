@@ -164,7 +164,8 @@ enum class Verdict : uint8_t {
 
 class MissionWatch {
  public:
-  explicit MissionWatch(WatchConfig cfg = {}) noexcept : cfg_(cfg) {}
+  MissionWatch() noexcept = default;
+  explicit MissionWatch(WatchConfig cfg) noexcept : cfg_(cfg) {}
 
   // `field` is the mission field of SYNC as reported. Called about once a second. Returns this check's verdict; `flagged()` is the persistent result.
   Verdict check(const MissionClock& clock, uint64_t ticks_now, uint16_t field) noexcept {

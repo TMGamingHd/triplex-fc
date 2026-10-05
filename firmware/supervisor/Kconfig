@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+mainmenu "Supervisor (Pico 2, SUP-Lite)"
+
+config TFC_USB_VID
+	hex "USB vendor id"
+	default 0x1209
+	help
+	  The pid.codes open vendor id, for a private bench device. Nothing here is for sale or for the field.
+
+config TFC_USB_PID
+	hex "USB product id"
+	default 0x0002
+
+config TFC_WATCHDOG_TIMEOUT_MS
+	int "Hardware watchdog timeout (milliseconds)"
+	default 100
+	range 20 4000
+	help
+	  A supervisor that hangs resets itself and comes back with every output at its default and a warm start (it adopts running units and touches nothing).
+
+source "Kconfig.zephyr"

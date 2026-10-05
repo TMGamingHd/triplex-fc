@@ -47,6 +47,8 @@ to rebuild its strike record and close the counter gap (FDIR-041). Example: stri
 then the attitude error of the pitch and yaw planes (0.001 degree, signed). `0x505`: a flags byte (1 safed, 2 platform saturated, 4 engine out, 8 command held, 16 aborted), the engines on, and the
 simulation time in 10 ms frames (32 bits). Their timing and use: `VEHICLE_SIM.md` section 6 .
 
+**The node field of a ground command** is 0 to 2 for a flight computer; **with the sensor split (ADR-020), 4 to 6 address IMU channel 0 to 2** for `reintegrate`, `disable` and `clear-disabled` (any other value is refused as a bad node, and without the split so is 4 to 6). The ARM code of a command is its operation and the whole node field, so an ARM for computer B does not cover IMU B.
+
 **Ground commands** gained two operations: `launch` (5; always needs an ARM) and `scrub` (6; plain); the node field is ignored. Examples: SYNC frame 0x01020304, seq 9, mission 1001: `04030201e90309d2`; mission 65535, frame 0, seq 0: `00000000ffff0045`. Heartbeat B, mode 3, ready, resets 5, hash 0xBEEF, seq 4: `02830005efbe048c`.
 
 ## Rules

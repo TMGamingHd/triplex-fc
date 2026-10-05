@@ -1,0 +1,59 @@
+/* The supervisor on a Pico 2 (docs/SUPERVISOR.md section 4, SUP-Lite; ADR-022).
+ *
+ * Pins (GP numbers): FRAME in GP2 to GP5 (A, B, C, ACT), KICK in GP6 to GP9, NRST out GP10 to GP13, power relay out GP14 to GP17 (active low, external pull-ups to 3.3 V), SAFE out GP18, T0 out GP19,
+ * I2C0 to the real-time clock on GP20 (SDA) and GP21 (SCL). 20 of the 26 pins. Every input needs an external pull-down of 8.2 kOhm or less (the RP2350 E9 erratum); the unit boards' own
+ * outputs are push-pull. The NRST pins are driven open-drain by the program (an output pulled low to reset, an input otherwise), because the RP2350's GPIO has no open-drain mode.
+ * The record of T-zero is kept in the last 4 KB sector of the 4 MB flash.
+ */
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/pinctrl/rpi-pico-rp2350a-pinctrl.h>
+
+&pinctrl {
+	i2c0_supervisor: i2c0_supervisor {
+		group1 {
+			pinmux = <I2C0_SDA_P20>, <I2C0_SCL_P21>;
+			input-enable;
+			input-schmitt-enable;
+		};
+	};
+};
+
+&i2c0 {
+	pinctrl-0 = <&i2c0_supervisor>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	status = "okay";
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		storage_partition: partition@3ff000 {
+			label = "storage";
+			reg = <0x3ff000 0x1000>;
+		};
+	};
+};
+
+/ {
+	sup_lines: supervisor-lines {
+		compatible = "tfc,supervisor-lines";
+		frame-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>, <&gpio0 3 GPIO_ACTIVE_HIGH>, <&gpio0 4 GPIO_ACTIVE_HIGH>, <&gpio0 5 GPIO_ACTIVE_HIGH>;
+		kick-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>, <&gpio0 7 GPIO_ACTIVE_HIGH>, <&gpio0 8 GPIO_ACTIVE_HIGH>, <&gpio0 9 GPIO_ACTIVE_HIGH>;
+		nrst-gpios = <&gpio0 10 GPIO_ACTIVE_LOW>, <&gpio0 11 GPIO_ACTIVE_LOW>, <&gpio0 12 GPIO_ACTIVE_LOW>, <&gpio0 13 GPIO_ACTIVE_LOW>;
+		pwr-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>, <&gpio0 15 GPIO_ACTIVE_LOW>, <&gpio0 16 GPIO_ACTIVE_LOW>, <&gpio0 17 GPIO_ACTIVE_LOW>;
+		safe-gpios = <&gpio0 18 GPIO_ACTIVE_HIGH>;
+		t0-gpios = <&gpio0 19 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+/* The USB serial port to the PC: one CDC ACM function on the board's USB device controller. */
+&zephyr_udc0 {
+	cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};

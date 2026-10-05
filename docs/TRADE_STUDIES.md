@@ -253,7 +253,28 @@ Variants for what the consensus is with two channels left: the mean, or the cont
 
 **Decision rule.** The option with the highest command-voter availability that adds **no** false isolation and violates no oracle; on a tie, the simpler. The expected finding, to be shown or refuted: B gives nearly all of the gain for a single sensor fault, and C or D matter only for two sensor faults at once.
 
-**Dependencies and timing.** Needs the estimator's channel interface (P1) and the campaign groups; run **after the loop and before S3 (3 Nov)**, in the same window as the split itself. The ring re-homing of ADR-020 is TS-7's question, not this one.
+**Results (5 Oct 2026; `python3 -m campaign.ts15`, 3 start instants per fault, the standard motion, the same scenarios with and without the split).** "False isolations" counts computers removed from the command vote that had no fault of their own (with option A, every IMU fault is one); the Duplex rows have one computer dropped by the context. Command-voter availability is the share of the possible computer-frames, after the fault starts, in which a computer took part in the command vote.
+
+| Class of fault | Runs | Option | Command-voter availability | False isolations (computers) | Safe requests | Frames with the output beyond tolerance |
+|---|---|---|---|---|---|---|
+| one IMU (Triplex) | 36 | A | 67.3 % | 36 | 0 of 36 | 0 |
+| one IMU (Triplex) | 36 | B | 100.0 % | 0 | 0 of 36 | 0 |
+| one IMU (Duplex) | 36 | A | 37.4 % | 33 | 12 of 36 | 0 |
+| one IMU (Duplex) | 36 | B | 66.7 % | 0 | 12 of 36 | 0 |
+| two IMUs | 90 | A | 37.3 % | 177 | 41 of 90 | 55 |
+| two IMUs | 90 | B | 100.0 % | 0 | 41 of 90 | 55 |
+| one computer (commands) | 18 | A | 67.2 % | 0 | 0 of 18 | 0 |
+| one computer (commands) | 18 | B | 67.2 % | 0 | 0 of 18 | 0 |
+| IMU of one, commands of another | 72 | A | 35.2 % | 72 | 6 of 72 | 0 |
+| IMU of one, commands of another | 72 | B | 67.7 % | 0 | 0 of 72 | 0 |
+| IMU and commands of the same computer | 72 | A | 67.3 % | 0 | 0 of 72 | 0 |
+| IMU and commands of the same computer | 72 | B | 67.7 % | 0 | 0 of 72 | 0 |
+
+What it shows. (1) For a fault of one IMU, **B keeps all three computers voting (100 % against 67 %) with no computer removed**, and the sensor consensus continues on the two good IMUs. (2) Two IMU faults at once take away only sensing: A loses the computers too (37 % availability, 177 computers removed), B keeps them all; the 41 Safe requests of 90 and the 55 frames of output beyond tolerance are **the same under both options**, because they come from two IMUs that cannot be told apart (ADR-008), not from the split. (3) A fault of the computer's commands is unchanged (the same 67 %), as it must be. (4) An IMU on one computer and the commands of another (the double fault of ADR-020 case 2 without the ring): A removes both computers and leaves Duplex-or-worse on commands (35 % availability, 6 Safe requests); **B removes only the computer with the command fault (68 %, no Safe request) and keeps the other's IMU out and its commands in**. (5) No class has more Safe requests or more output exposure with B than with A.
+
+**Decision (5 Oct 2026): option B** (the split, with no stricter tolerance and no demotion). The decision rule asks for the highest command-voter availability that adds no false isolation and violates no oracle, and on a tie the simpler: B has the highest availability in every class where the options differ, removes the false isolations altogether, and violates no oracle (the 997 split scenarios of the campaign groups `split_sensor`, `split_command`, `split_pairs` and `split_all` pass the always-true properties M1 to M10 and S1 to S3, and the split detects what the unsplit manager detected, within two frames). Options C and D are **not built**: their case is the two-IMU fault, where the table shows B equal to A on Safe requests and exposure, so a stricter tolerance or a demotion has nothing to improve that this study can measure; they stay recorded as options in case the rig shows a two-IMU fault that does matter. The split is a configuration switch in the manager (`RedundancyConfig::sensor_split`, default off so that every existing result is exactly as it was) and is **on by default in the firmware with the flight function** (`CONFIG_TFC_SENSOR_SPLIT`).
+
+**Dependencies and timing.** Needs the estimator's channel interface (P1) and the campaign groups; run **after the loop and before S3 (3 Nov)**, in the same window as the split itself (done 5 Oct). The ring re-homing of ADR-020 is TS-7's question, not this one.
 
 **Talking point.** "I measured what splitting sensor health from computer health buys, and which rule for the degraded case was worth its complexity."
 

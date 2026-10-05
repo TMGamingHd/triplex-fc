@@ -45,197 +45,13 @@
 #include "tfc/fault_monitor.hpp"
 #include "tfc/integrity.hpp"
 #include "tfc/protocol.hpp"
+#include "tfc/redundancy_types.hpp"
+#include "tfc/sensor_health.hpp"
 #include "tfc/voter.hpp"
 
 namespace tfc {
 
-constexpr unsigned kNodes = kChannels;      // flight computers A, B, C
-constexpr unsigned kVoteChannels = 8;       // gyro x3, accel x3, command pitch, command yaw
-constexpr unsigned kStreams = 3;            // per node: gyro, accel, command
-constexpr unsigned kChPitch = 6;            // indices into FrameReport::output / votes
-constexpr unsigned kChYaw = 7;
-constexpr unsigned kMaxCommandsPerFrame = 4;
-
-// Why a node's data was judged bad in a frame (bit mask in FrameReport::reason).
-namespace reason {
-constexpr uint8_t kMissing = 1U;  // a gyro/accel/command frame did not arrive
-constexpr uint8_t kCrc = 2U;      // a frame arrived but failed its CRC
-constexpr uint8_t kSeq = 4U;      // sequence number out of order
-constexpr uint8_t kVote = 8U;     // value disagreed with the vote on some channel
-constexpr uint8_t kDigest = 16U;  // estimator-state digest disagreed
-constexpr uint8_t kStuck = 32U;   // sensor bytes bit-identical for too many frames
-constexpr uint8_t kIntermittent = 64U;  // latched by the leaky count: bad often enough, never 3-of-5 in a row
-constexpr uint8_t kResync = 128U;       // the state resynchronisation found this node's state far from the vote (RedundancyManager::report_state_correction)
-}  // namespace reason
-
-// Writes the set reason bits as words, e.g. "vote disagreement + digest mismatch", into `out`
-// (NUL-terminated, truncated to `cap`). No heap; for logs on the host and on the target.
-inline void format_reasons(uint8_t bits, char* out, std::size_t cap) noexcept {
-  struct Name {
-    uint8_t bit;
-    const char* text;
-  };
-  constexpr std::array<Name, 8> names = {{{reason::kMissing, "frame missing"},
-                                          {reason::kCrc, "CRC failure"},
-                                          {reason::kSeq, "sequence error"},
-                                          {reason::kVote, "vote disagreement"},
-                                          {reason::kDigest, "digest mismatch"},
-                                          {reason::kStuck, "stuck sensor"},
-                                          {reason::kIntermittent, "intermittent fault"},
-                                          {reason::kResync, "state far from the vote"}}};
-  if (cap == 0U) {
-    return;
-  }
-  std::size_t n = 0;
-  auto put = [&](const char* text) {
-    for (const char* c = text; *c != '\0' && n + 1U < cap; ++c) {
-      out[n++] = *c;
-    }
-  };
-  for (const Name& nm : names) {
-    if ((bits & nm.bit) != 0U) {
-      if (n != 0U) {
-        put(" + ");
-      }
-      put(nm.text);
-    }
-  }
-  if (n == 0U) {
-    put("(none)");
-  }
-  out[n] = '\0';
-}
-
-enum class NodeState : uint8_t {
-  Healthy,    // votes
-  Latched,    // excluded; serving its minimum dwell, waiting for a reintegration request
-  Probation,  // excluded, being compared with the voted output (shadow vote)
-  Disabled    // excluded for the rest of the run (strikes used up, or disabled by an operator)
-};
-
-// Who may start a probation. Manual: only an operator command (the Space Shuttle / airliner
-// practice, ADR-010). AutoTransient: also automatically after the minimum dwell, but only for a
-// first latch whose cause looks transient (frame problems or one vote episode); never for a stuck
-// sensor or a digest mismatch, never for a repeat offender.
-enum class ReintegrationPolicy : uint8_t { Manual, AutoTransient };
-
-enum class CommandResult : uint8_t {
-  Accepted,
-  AlreadyDone,         // e.g. reintegration already requested / on probation, node already disabled
-  RefusedDisabled,     // the node is disabled: only ClearDisabled can help
-  RefusedNotLatched,   // reintegration of a node that is healthy
-  RefusedNotDisabled,  // ClearDisabled for a node that is not disabled
-  RefusedBadNode,
-  RefusedBadOp,
-  RefusedNotArmed      // a dangerous operation without a matching ARM frame in the arm window (ADR-019)
-};
-
-inline const char* state_text(NodeState st) noexcept {
-  switch (st) {
-    case NodeState::Healthy: return "healthy";
-    case NodeState::Latched: return "latched";
-    case NodeState::Probation: return "probation";
-    case NodeState::Disabled: return "disabled";
-    default: break;
-  }
-  return "?";
-}
-
-inline const char* op_text(uint8_t op) noexcept {
-  switch (static_cast<GroundOp>(op)) {
-    case GroundOp::Reintegrate: return "reintegrate";
-    case GroundOp::Disable: return "disable";
-    case GroundOp::ClearDisabled: return "clear-disabled";
-    case GroundOp::ClearSafe: return "clear-safe";
-    case GroundOp::Launch: return "launch";
-    case GroundOp::Scrub: return "scrub";
-    default: break;
-  }
-  return "unknown-op";
-}
-
-inline const char* result_text(CommandResult r) noexcept {
-  switch (r) {
-    case CommandResult::Accepted: return "accepted";
-    case CommandResult::AlreadyDone: return "already done";
-    case CommandResult::RefusedDisabled: return "refused: node is disabled";
-    case CommandResult::RefusedNotLatched: return "refused: node is not latched";
-    case CommandResult::RefusedNotDisabled: return "refused: node is not disabled";
-    case CommandResult::RefusedBadNode: return "refused: no such node";
-    case CommandResult::RefusedBadOp: return "refused: no such operation";
-    case CommandResult::RefusedNotArmed: return "refused: needs an ARM frame first";
-    default: break;
-  }
-  return "?";
-}
-
-namespace cmdflag {
-constexpr uint8_t kArm = 1U;       // this event is an ARM frame
-constexpr uint8_t kArmed = 2U;     // executed under a matching ARM
-constexpr uint8_t kCritical = 4U;  // removed the last voting node: reported loudly
-}  // namespace cmdflag
-
-struct CommandEvent {
-  uint8_t op = 0U;
-  uint8_t node = 0U;
-  CommandResult result = CommandResult::Accepted;
-  uint8_t flags = 0U;  // cmdflag bits
-};
-
-struct RedundancyConfig {
-  // Vote tolerances per channel: gyro (dps) x3, accel (g) x3, command (deg) x2.
-  std::array<float, kVoteChannels> tol{{1.0F, 1.0F, 1.0F, 0.02F, 0.02F, 0.02F, 0.01F, 0.01F}};
-  uint8_t persist_m = 3;            // latch when M of the last N frames are bad
-  uint8_t persist_n = 5;
-  // A digest disagreement counts (as a bad frame for the node it blames, or as an unresolved disagreement) only once it has lasted this many frames in a row. 1: at once, as before.
-  // With the state resynchronisation (docs/RESYNC.md) a lost frame leaves the digests different for up to one resync period, and the resync heals it: set this to a little more than the
-  // period, so that a mismatch which the resync did not heal is what counts.
-  uint16_t digest_persist_frames = 1;
-  uint16_t stuck_limit = 20;         // identical sensor frames before "stuck"
-  // Leaky count for intermittent faults, OR'd with the M-of-N window (ADR-013): +1 per bad frame,
-  // x alpha_k per good frame, latch at alpha_threshold. Catches a node that is bad one frame in three
-  // (or two in five) that the window never sees. alpha_threshold = 0 disables it.
-  float alpha_k = 0.9F;
-  float alpha_threshold = 3.0F;
-  // A node that has never delivered a good sample is not judged for this many frames: peers boot
-  // in any order, and "not here yet" is not "failed". 0 = judge from the first frame (absent means
-  // invalid). Once a node has been seen, it is always judged.
-  uint32_t startup_grace_frames = 0;
-  // Duplex arbitration (two valid nodes that disagree): blame a node only if it jumped more than
-  // `factor` x tolerance away from the last agreed value (set by the previous frame) while the other
-  // stayed within one tolerance of it. Otherwise the disagreement is unresolved: nobody is blamed,
-  // the last good output is held (and, being stale, never used to blame anyone later), and a
-  // persistent run of them requests Safe. 0 disables arbitration.
-  float duplex_arbitration_factor = 2.0F;
-  // This many out-of-schedule frames inside one 10 ms frame raises the bus alarm (babbling node).
-  uint32_t bus_alarm_per_frame = 3;
-
-  // ---- reintegration and disabling (ADR-010) ----
-  ReintegrationPolicy policy = ReintegrationPolicy::Manual;
-  uint16_t min_dwell_frames = 200;          // a latched node waits at least this long (2 s) before probation
-  // ... except after a first, transient-looking latch (frame problems or one vote episode): then the dwell is this long
-  // (0.5 s). Every frame a node is out is a frame the system runs with less redundancy, and the node still has to pass the
-  // whole probation; a repeat offender or a physical cause keeps the full dwell (ADR-010 amended).
-  uint16_t min_dwell_frames_transient = 50;
-  uint16_t probation_frames = 100;          // agreeing frames needed after the first latch (1 s)
-  uint16_t probation_frames_repeat = 300;   // ... after a repeat latch (strike 2 or more)
-  uint8_t max_strikes = 3;                  // latches before the node is disabled for the run
-  uint8_t max_strikes_physical = 2;         // ... when the cause is physical (below)
-  // Reason bits that point at failed hardware (a recurring fault counts: it is how loose connectors and
-  // wearing-out parts behave), so a repeat disables the node at the second strike.
-  uint8_t physical_causes = reason::kStuck | reason::kIntermittent;
-  // Strikes older than this many frames are forgotten. 0 = the whole run (a flight is minutes long).
-  uint32_t strike_window_frames = 0;
-  // AutoTransient only: causes that look transient, and how many failed probations are tolerated.
-  uint8_t auto_eligible_causes = reason::kMissing | reason::kCrc | reason::kSeq | reason::kVote;
-  uint8_t auto_max_attempts = 3;
-
-  // ---- ground commands (ADR-019) ----
-  bool ground_auth = true;               // require a valid SipHash tag and a fresh counter on every ground frame
-  AuthKey ground_key = kBenchKey;        // the shared key. The default is the PUBLIC bench key: provision your own
-  uint8_t command_window = 32;           // a command is fresh if its counter is 1..window ahead of the last accepted one
-  uint8_t arm_window_frames = 250;       // an ARM frame stays valid this long (2.5 s)
-};
+// The shared types (node and channel counts, reasons, node states, command results, the configuration) are in redundancy_types.hpp.
 
 // What validate_config() found wrong (bit mask). Each bad field is replaced by its default.
 namespace cfgerr {
@@ -452,6 +268,19 @@ struct FrameReport {
                                 // requested and STAYS requested until clear_safe_request(); outputs are held
   bool bus_alarm = false;       // out-of-schedule frames this frame >= RedundancyConfig::bus_alarm_per_frame
   uint32_t out_of_schedule_in_frame = 0U;
+  // ---- sensing (ADR-020 case 1). Without the split these mirror the computers' masks and count, so a consumer has one code path. ----
+  std::array<uint8_t, kNodes> sensor_reason{};   // reason:: bits per IMU channel this frame
+  uint8_t sensor_valid_mask = 0U;                // IMUs whose gyro and accelerometer took part in the sensor votes
+  uint8_t sensor_latched_mask = 0U;              // IMUs out of the consensus for any reason
+  uint8_t sensor_probation_mask = 0U;
+  uint8_t sensor_disabled_mask = 0U;
+  uint8_t sensor_newly_latched = 0U;
+  uint8_t sensor_newly_disabled = 0U;
+  uint8_t sensor_probation_started = 0U;
+  uint8_t sensor_probation_failed = 0U;
+  uint8_t sensor_newly_reintegrated = 0U;
+  unsigned sensor_healthy = 0U;                  // IMU channels that have been seen and are Healthy
+  Mode sensor_mode = Mode::Safe;                 // from the number of healthy IMU channels (never Safe on a request: that is the computers' mode)
 };
 
 class RedundancyManager {
@@ -466,7 +295,8 @@ class RedundancyManager {
              ChannelMonitor(cfg_.persist_m, cfg_.persist_n, 0xFFFFU, 0xFFU)},
         stuck_{StuckDetector(cfg_.stuck_limit), StuckDetector(cfg_.stuck_limit), StuckDetector(cfg_.stuck_limit)},
         alpha_{AlphaCount(cfg_.alpha_k, cfg_.alpha_threshold), AlphaCount(cfg_.alpha_k, cfg_.alpha_threshold),
-               AlphaCount(cfg_.alpha_k, cfg_.alpha_threshold)} {
+               AlphaCount(cfg_.alpha_k, cfg_.alpha_threshold)},
+        sensors_(cfg_) {
     for (GuardedByte& g : st_) {
       g.set(static_cast<uint8_t>(NodeState::Healthy));
     }
@@ -538,6 +368,9 @@ class RedundancyManager {
 
     std::array<bool, kNodes> stuck_now{};
     judge_nodes(rep, good, vs.disagree, dv.blame, stuck_now);
+    if (cfg_.sensor_split) {
+      judge_sensors(rep, vs);
+    }
     advance_life_cycle(rep, good, stuck_now, valid);
     summarize(rep);
     ++frame_no_;
@@ -559,15 +392,16 @@ class RedundancyManager {
   // Apply one command now; results are also reported in FrameReport::commands when they arrive as frames.
   CommandResult command(GroundOp op, unsigned node) noexcept {
     CommandResult r = CommandResult::Accepted;
+    const bool imu = cfg_.sensor_split && node >= kSensorBase && node < kSensorBase + kNodes;  // an IMU channel, not a computer
     switch (op) {
       case GroundOp::Reintegrate:
-        r = cmd_reintegrate(node);
+        r = imu ? sensors_.reintegrate(node - kSensorBase) : cmd_reintegrate(node);
         break;
       case GroundOp::Disable:
-        r = cmd_disable(node);
+        r = imu ? sensors_.disable(node - kSensorBase) : cmd_disable(node);
         break;
       case GroundOp::ClearDisabled:
-        r = cmd_clear_disabled(node);
+        r = imu ? sensors_.clear_disabled(node - kSensorBase) : cmd_clear_disabled(node);
         break;
       case GroundOp::ClearSafe:
         if (!safe_requested()) {
@@ -604,6 +438,10 @@ class RedundancyManager {
   // Out of the vote for any reason (latched, on probation, or disabled).
   [[nodiscard]] bool latched(unsigned node) const noexcept { return node < kNodes && state_of(node) != NodeState::Healthy; }
   [[nodiscard]] bool permanent(unsigned node) const noexcept { return node < kNodes && state_of(node) == NodeState::Disabled; }
+  // An IMU channel's state and strikes (with the split off, the computer's: an IMU is not judged apart from its computer).
+  [[nodiscard]] NodeState sensor_state(unsigned k) const noexcept { return cfg_.sensor_split ? sensors_.state(k) : state(k); }
+  [[nodiscard]] unsigned sensor_strikes(unsigned k) const noexcept { return cfg_.sensor_split ? sensors_.strikes(k) : strikes(k); }
+  [[nodiscard]] const SensorHealth::Counters& sensor_counters() const noexcept { return sensors_.counters(); }
   [[nodiscard]] const Counters& counters() const noexcept { return counters_; }
   [[nodiscard]] const FrameReport& last_report() const noexcept { return report_; }
   // The configuration in force (sanitised), and what was wrong with the one that was passed in (cfgerr bits).
@@ -619,6 +457,10 @@ class RedundancyManager {
     bool cmd = false;
     bool crc_bad = false;
     bool seq_bad = false;
+    bool sensor_crc_bad = false;  // the same, for the gyro and accelerometer frames only ...
+    bool sensor_seq_bad = false;
+    bool cmd_crc_bad = false;     // ... and for the command frame only (the sensor split judges them separately)
+    bool cmd_seq_bad = false;
     std::array<bool, kStreams> arrived{};  // a frame (good or damaged) came in on this stream
     std::array<float, kVoteChannels> x{};
     uint16_t digest = 0U;
@@ -626,7 +468,8 @@ class RedundancyManager {
   };
 
   struct VoteSummary {
-    uint8_t disagree = 0U;    // nodes blamed by any channel's vote
+    uint8_t disagree = 0U;    // nodes blamed by any channel's vote (with the split: by a command channel's vote)
+    uint8_t sensor_disagree = 0U;  // with the split: IMUs blamed by a gyro or accelerometer vote
     bool unresolved = false;  // a disagreement nobody could be blamed for
   };
 
@@ -642,8 +485,6 @@ class RedundancyManager {
     std::array<VoteResult, kVoteChannels> votes{};
     DigestVerdict digest{};
   };
-
-  enum class Verdict : uint8_t { Clean, Dirty, Neutral };
 
   static void add_reason(FrameReport& rep, unsigned n, uint8_t bit) noexcept {
     rep.reason[n] = static_cast<uint8_t>(rep.reason[n] | bit);
@@ -750,12 +591,14 @@ class RedundancyManager {
       }
     }
     if (!ok) {
+      (stream == 2U ? r.cmd_crc_bad : r.sensor_crc_bad) = true;
       r.crc_bad = true;  // a damaged frame has no trustworthy number: it did not arrive as a good frame, but its slot was not empty
       ++counters_.crc_bad;
       phase_[node][stream].note_damaged();
       return;
     }
     if (phase_[node][stream].classify(seq, frame_no_) == FrameTiming::Bad) {
+      (stream == 2U ? r.cmd_seq_bad : r.sensor_seq_bad) = true;
       r.seq_bad = true;
       ++counters_.seq_bad;
     }
@@ -776,6 +619,9 @@ class RedundancyManager {
         probation_clean_[n] = 0U;
         mask = static_cast<uint8_t>(mask | 1U);
       }
+    }
+    if (cfg_.sensor_split && sensors_.scrub()) {
+      mask = static_cast<uint8_t>(mask | 1U);  // an IMU channel's state failed its check: excluded, like a computer's
     }
     if (!safe_.intact() || safe_.get() > 1U) {
       safe_.set(1U);
@@ -849,7 +695,7 @@ class RedundancyManager {
   }
 
   static uint8_t arm_code_for(GroundOp op, unsigned node) noexcept {
-    return static_cast<uint8_t>((static_cast<unsigned>(op) << 2U) | (node & 3U));
+    return static_cast<uint8_t>((static_cast<unsigned>(op) << 3U) | (node & 7U));  // node 0 to 2: a computer; 4 to 6: an IMU channel (the sensor split)
   }
 
   [[nodiscard]] bool armed_for(GroundOp op, unsigned node) const noexcept {
@@ -876,10 +722,13 @@ class RedundancyManager {
     Needs n;
     if (op == GroundOp::ClearDisabled || op == GroundOp::ClearSafe || op == GroundOp::Launch) {
       n.arm = true;  // both undo a protective action
-    } else if (op == GroundOp::Disable && state_of(node) == NodeState::Healthy) {
-      const unsigned healthy = count_in_state(NodeState::Healthy);
-      n.arm = healthy <= 2U;       // Triplex -> Duplex is plain; Duplex -> Simplex and Simplex -> nothing are not
-      n.critical = healthy <= 1U;  // the last voter
+    } else if (op == GroundOp::Disable) {
+      const bool sensor = node >= kSensorBase;
+      if (sensor ? sensors_.healthy(node - kSensorBase) : state_of(node) == NodeState::Healthy) {
+        const unsigned healthy = sensor ? sensors_.count_healthy() : count_in_state(NodeState::Healthy);
+        n.arm = healthy <= 2U;       // Triplex -> Duplex is plain; Duplex -> Simplex and Simplex -> nothing are not
+        n.critical = healthy <= 1U;  // the last voter
+      }
     }
     return n;
   }
@@ -891,7 +740,8 @@ class RedundancyManager {
     }
     const GroundOp op = static_cast<GroundOp>(d.op);
     const unsigned node = (op == GroundOp::ClearSafe || op == GroundOp::Launch || op == GroundOp::Scrub) ? 0U : d.node;
-    if (node >= kNodes) {
+    const bool imu_op = cfg_.sensor_split && node >= kSensorBase && node < kSensorBase + kNodes;  // (the other operations were given node 0 above)
+    if (node >= kNodes && !imu_op) {
       ++counters_.commands_refused;
       return CommandResult::RefusedBadNode;
     }
@@ -974,19 +824,22 @@ class RedundancyManager {
     uint8_t valid = 0U;
     for (unsigned n = 0; n < kNodes; ++n) {
       const NodeRx& r = rx_[n];
-      const bool present = r.gyro && r.accel && r.cmd;
+      const bool split = cfg_.sensor_split;  // with the split, a computer is judged on its command frame only; its IMU has its own verdict
+      const bool present = split ? r.cmd : (r.gyro && r.accel && r.cmd);
+      const bool crc_bad = split ? r.cmd_crc_bad : r.crc_bad;
+      const bool seq_bad = split ? r.cmd_seq_bad : r.seq_bad;
       const bool in_grace = !seen_[n] && counters_.frames <= cfg_.startup_grace_frames;
-      if (!present && !r.crc_bad && !in_grace) {
+      if (!present && !crc_bad && !in_grace) {
         ++counters_.missing;
         add_reason(rep, n, reason::kMissing);
       }
-      if (r.crc_bad) {
+      if (crc_bad) {
         add_reason(rep, n, reason::kCrc);
       }
-      if (r.seq_bad) {
+      if (seq_bad) {
         add_reason(rep, n, reason::kSeq);
       }
-      good[n] = present && !r.crc_bad && !r.seq_bad;
+      good[n] = present && !crc_bad && !seq_bad;
       if (good[n] && !seen_[n]) {
         seen_[n] = true;
         rep.newly_seen = static_cast<uint8_t>(rep.newly_seen | (1U << n));
@@ -996,7 +849,60 @@ class RedundancyManager {
       }
     }
     rep.valid_mask = valid;
+    if (cfg_.sensor_split) {
+      judge_sensor_arrivals(rep);
+    }
     return valid;
+  }
+
+  // The sensor side of the arrivals (the split on): which IMUs delivered both frames, clean and in sequence, and why not.
+  void judge_sensor_arrivals(FrameReport& rep) noexcept {
+    uint8_t svalid = 0U;
+    for (unsigned k = 0; k < kNodes; ++k) {
+      const NodeRx& r = rx_[k];
+      const bool present = r.gyro && r.accel;
+      const bool in_grace = !sensors_.seen(k) && counters_.frames <= cfg_.startup_grace_frames;
+      uint8_t why = 0U;
+      if (!present && !r.sensor_crc_bad && !in_grace) {
+        why = static_cast<uint8_t>(why | reason::kMissing);
+      }
+      if (r.sensor_crc_bad) {
+        why = static_cast<uint8_t>(why | reason::kCrc);
+      }
+      if (r.sensor_seq_bad) {
+        why = static_cast<uint8_t>(why | reason::kSeq);
+      }
+      sensor_arrival_[k] = why;
+      sensor_good_[k] = present && !r.sensor_crc_bad && !r.sensor_seq_bad;
+      if (sensor_good_[k]) {
+        (void)sensors_.note_good(k);
+      }
+      if (sensor_good_[k] && sensors_.healthy(k)) {
+        svalid = static_cast<uint8_t>(svalid | (1U << k));
+      }
+    }
+    sensor_valid_ = svalid;
+    rep.sensor_valid_mask = svalid;
+  }
+
+  // The sensor channels' verdicts for the frame (the split on), from the votes of the six sensor values.
+  void judge_sensors(FrameReport& rep, const VoteSummary& vs) noexcept {
+    SensorHealth::Input in;
+    in.good = sensor_good_;
+    in.blame = vs.sensor_disagree;
+    for (unsigned k = 0; k < kNodes; ++k) {
+      in.x[k] = &rx_[k].x;
+      in.stuck_hash[k] = fnv1a(rx_[k].raw.data(), rx_[k].raw.size());
+    }
+    in.output = &rep.output;
+    in.tol = &cfg_.tol;
+    in.output_trusted = (rep.held_mask & 0x3FU) == 0U && !rep.safe_request;
+    in.healthy_valid = sensor_valid_;
+    sensor_report_ = SensorHealth::Report{};
+    sensors_.update(in, cfg_, sensor_arrival_, sensor_report_);
+    for (unsigned k = 0; k < kNodes; ++k) {
+      counters_.stuck_flags += (sensor_report_.reason[k] & reason::kStuck) != 0U ? 1U : 0U;
+    }
   }
 
   // Vote the 8 channels; fills rep.votes / output / held_mask.
@@ -1005,7 +911,9 @@ class RedundancyManager {
     const bool safe_now = safe_requested();  // the flag as of the end of the previous frame
     for (unsigned ch = 0; ch < kVoteChannels; ++ch) {
       const std::array<float, kNodes> x = {rx_[0].x[ch], rx_[1].x[ch], rx_[2].x[ch]};
-      const VoteResult v = vote3(x, valid, cfg_.tol[ch]);
+      const bool on_sensors = cfg_.sensor_split && ch < kSensorValues;  // the six sensor values are voted among the healthy IMUs, the commands among the healthy computers
+      const uint8_t mask = on_sensors ? sensor_valid_ : valid;
+      const VoteResult v = vote3(x, mask, cfg_.tol[ch]);
       rep.votes[ch] = v;
       uint8_t blame = v.disagree_mask;
       bool trusted = true;
@@ -1019,7 +927,7 @@ class RedundancyManager {
           // Two nodes disagree: the vote alone cannot say who is wrong. Use continuity with the last
           // agreed value; if that does not single one out, blame nobody.
           blame = 0U;
-          trusted = arbitrate(ch, x, valid, out, blame);
+          trusted = arbitrate(ch, x, mask, out, blame);
           if (!trusted) {
             s.unresolved = true;
           }
@@ -1043,7 +951,8 @@ class RedundancyManager {
         rep.output[ch] = have_last_[ch] ? last_good_[ch] : 0.0F;  // hold the last good value
         rep.held_mask = static_cast<uint8_t>(rep.held_mask | (1U << ch));
       }
-      s.disagree = static_cast<uint8_t>(s.disagree | blame);
+      uint8_t& blamed = on_sensors ? s.sensor_disagree : s.disagree;
+      blamed = static_cast<uint8_t>(blamed | blame);
     }
     return s;
   }
@@ -1088,7 +997,7 @@ class RedundancyManager {
   void judge_nodes(FrameReport& rep, const std::array<bool, kNodes>& good, uint8_t disagree, uint8_t digest_bad,
                    std::array<bool, kNodes>& stuck_now) noexcept {
     for (unsigned n = 0; n < kNodes; ++n) {
-      if (good[n]) {
+      if (good[n] && !cfg_.sensor_split) {  // (with the split a frozen sensor is the IMU's verdict)
         stuck_now[n] = stuck_[n].update(static_cast<int32_t>(fnv1a(rx_[n].raw.data(), rx_[n].raw.size())));
       }
       if (stuck_now[n]) {
@@ -1178,6 +1087,26 @@ class RedundancyManager {
       }
     }
     rep.mode = rep.safe_request ? Mode::Safe : mode_from_healthy(rep.healthy);
+    if (cfg_.sensor_split) {
+      const SensorHealth::Report& sr = sensor_report_;
+      rep.sensor_reason = sr.reason;
+      rep.sensor_latched_mask = sr.latched_mask;
+      rep.sensor_probation_mask = sr.probation_mask;
+      rep.sensor_disabled_mask = sr.disabled_mask;
+      rep.sensor_newly_latched = sr.newly_latched;
+      rep.sensor_newly_disabled = sr.newly_disabled;
+      rep.sensor_probation_started = sr.probation_started;
+      rep.sensor_probation_failed = sr.probation_failed;
+      rep.sensor_newly_reintegrated = sr.newly_reintegrated;
+      rep.sensor_healthy = sr.healthy;
+    } else {
+      rep.sensor_valid_mask = rep.valid_mask;
+      rep.sensor_latched_mask = rep.latched_mask;
+      rep.sensor_probation_mask = rep.probation_mask;
+      rep.sensor_disabled_mask = rep.disabled_mask;
+      rep.sensor_healthy = rep.healthy;
+    }
+    rep.sensor_mode = mode_from_healthy(rep.sensor_healthy);
   }
 
   // The node's monitor just latched: count the strike and decide Latched or Disabled.
@@ -1232,7 +1161,7 @@ class RedundancyManager {
       return c;
     }
     c.usable = true;
-    for (unsigned ch = 0; ch < kVoteChannels; ++ch) {
+    for (unsigned ch = first_channel(); ch < kVoteChannels; ++ch) {
       const std::array<float, kNodes> x = {rx_[0].x[ch], rx_[1].x[ch], rx_[2].x[ch]};
       c.votes[ch] = vote3(x, c.members, cfg_.tol[ch]);
     }
@@ -1244,7 +1173,7 @@ class RedundancyManager {
   // members that disagree, three that all differ) the frame is neutral.
   Verdict cohort_verdict(unsigned n, const Cohort& c, FrameReport& rep) const noexcept {
     bool neutral = false;
-    for (unsigned ch = 0; ch < kVoteChannels; ++ch) {
+    for (unsigned ch = first_channel(); ch < kVoteChannels; ++ch) {
       const VoteResult& v = c.votes[ch];
       if (v.status == VoteStatus::Triplex) {
         if (((v.disagree_mask >> n) & 1U) != 0U) {
@@ -1267,7 +1196,7 @@ class RedundancyManager {
 
   // Shadow vote: compare a probationer with the voted output and the digest of the healthy nodes.
   Verdict shadow_verdict(unsigned n, uint8_t valid, FrameReport& rep) const noexcept {
-    for (unsigned ch = 0; ch < kVoteChannels; ++ch) {
+    for (unsigned ch = first_channel(); ch < kVoteChannels; ++ch) {
       if (std::fabs(rx_[n].x[ch] - rep.output[ch]) > cfg_.tol[ch]) {
         add_reason(rep, n, reason::kVote);  // disagrees with the shadow vote
         return Verdict::Dirty;
@@ -1304,7 +1233,7 @@ class RedundancyManager {
       v = Verdict::Dirty;  // a missing, damaged, out-of-sequence or frozen frame
     } else if (cohort.usable) {
       v = cohort_verdict(n, cohort, rep);
-    } else if (valid == 0U || rep.held_mask != 0U) {
+    } else if (valid == 0U || (rep.held_mask & (cfg_.sensor_split ? 0xC0U : 0xFFU)) != 0U) {
       v = Verdict::Neutral;  // no trustworthy reference this frame (nobody healthy, Safe, unresolved)
     } else {
       v = shadow_verdict(n, valid, rep);
@@ -1371,6 +1300,9 @@ class RedundancyManager {
     return d;
   }
 
+  // The first channel a computer's probation is judged on: all eight, or with the sensor split only the two command channels (its IMU has its own probation).
+  [[nodiscard]] unsigned first_channel() const noexcept { return cfg_.sensor_split ? kChPitch : 0U; }
+
   // Where the signal should be now. The step is added only as far as the signal really moves: below one tolerance per frame it is
   // indistinguishable from the noise of the two samples it is made of (adding it only widens and shifts the decision band: E19),
   // from two tolerances up it is used in full (the command channels, where the standstill reference blamed the wrong node: E16).
@@ -1430,10 +1362,15 @@ class RedundancyManager {
   RedundancyConfig cfg_;
   RedundancyConfig cfg_backup_;  // second copy: the first is checked against a checksum every frame
   uint32_t cfg_digest_;
+  std::array<bool, kNodes> sensor_good_{};        // per IMU: both frames arrived clean this frame (the split on)
+  std::array<uint8_t, kNodes> sensor_arrival_{};  // ... and the arrival reasons if not
+  uint8_t sensor_valid_ = 0U;                     // the IMUs that took part in the sensor votes
   uint32_t cfg_digest_backup_;
   std::array<ChannelMonitor, kNodes> mon_;
   std::array<StuckDetector, kNodes> stuck_;
   std::array<AlphaCount, kNodes> alpha_;
+  SensorHealth sensors_;                     // the sensor channels' life cycle, used when cfg_.sensor_split (ADR-020 case 1)
+  SensorHealth::Report sensor_report_{};      // its report for the frame in progress
   std::array<bool, kNodes> seen_{};
   std::array<GuardedByte, kNodes> st_{};            // NodeState, stored with its complement
   GuardedByte safe_{};                              // Safe requested (0/1), stored with its complement

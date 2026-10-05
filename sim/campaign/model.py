@@ -19,6 +19,7 @@ class Scenario:
     frames: int = 500
     seed: int = 1
     policy: str = "manual"
+    split: bool = False             # the manager judges each IMU channel apart from its computer (ADR-020 case 1, tfc_replay --sensor-split)
     context: str = "triplex"        # triplex | duplex-X | simplex-XY (the named nodes are dropped at frame 5)
     rest: bool = False              # vehicle at rest (constant truth)
     expect: str = "any"             # detect | ignore | gray | any   (for the *single* fault under test)
@@ -35,7 +36,7 @@ class Scenario:
         return specs
 
     def key(self) -> str:
-        return f"{self.group}|{','.join(self.faults)}|{','.join(self.commands)}|{self.context}|s{self.seed}|f{self.frames}|{self.policy}|rest={self.rest}"
+        return f"{self.group}|{','.join(self.faults)}|{','.join(self.commands)}|{self.context}|s{self.seed}|f{self.frames}|{self.policy}|rest={self.rest}" + ("|split" if self.split else "")
 
 
 @dataclass
