@@ -10,6 +10,7 @@
 #include "design.hpp"
 #include "runner.hpp"
 #include "tfc/act.hpp"
+#include "tfc/redundancy.hpp"
 #include "tfc/flight.hpp"
 #include "tfc/imu_calibration.hpp"
 #include "tfc/protocol.hpp"
@@ -137,6 +138,10 @@ struct Result {
   uint32_t resyncs_skipped = 0U;          // ... that a computer could not do (too few complete states, or no agreement)
   uint32_t corrections_changed = 0U;      // adoptions that changed a computer's own state in any bit
   uint32_t corrections_large = 0U;        // adoptions that found a computer's own state far from the vote
+  uint32_t frames_over_manager_tol = 0U;  // frames in which two computers' commands differed by more than the fault manager's command tolerance
+  uint32_t runs_of_three_over_manager_tol = 0U;  // ... and how many times that lasted three frames in a row (what its 3-of-5 detector needs)
+  double max_spread_ab_deg = 0.0;         // the largest command difference between computers A and B in a frame
+  double max_spread_c_deg = 0.0;          // ... between C and either of them (what a version tolerance for a diverse computer C has to absorb)
 };
 
 struct Loop {
@@ -154,6 +159,7 @@ struct Loop {
   uint32_t loss_seed = 77U;
   uint32_t resync_period = 0U;               // the replicas exchange their state in the last frame of every period and adopt the vote (TS-16 option C); 0: never
   tfc::resync::Config resync;
+  uint8_t resync_nodes = 0x07U;              // the computers that take part in the resync (send their state, vote, adopt); the others never adopt: the diverse computer of ADR-021 is left out with 0x03
   uint32_t corrupt_b_at = 0xFFFFFFFFU;       // at this frame (after its step) node B's attitude state is corrupted by about 2 degrees: a real estimator fault
 };
 
@@ -172,6 +178,7 @@ inline Result run(const Loop& lp) {
   Result r;
   Lcg loss(lp.loss_seed);
   uint32_t mismatch_run = 0U;
+  uint32_t over_run = 0U;
   SimFrames pending = runner.start(0U);
   double sum_sq = 0.0;
   bool reached_nominal = false;
@@ -244,7 +251,16 @@ inline Result run(const Loop& lp) {
         }
       }
       r.max_command_spread_deg = std::fmax(r.max_command_spread_deg, frame_spread);
+      const auto d2 = [&cmds](unsigned a, unsigned b) {
+        return std::fmax(std::fabs(static_cast<double>(cmds[a].pitch_deg - cmds[b].pitch_deg)), std::fabs(static_cast<double>(cmds[a].yaw_deg - cmds[b].yaw_deg)));
+      };
+      r.max_spread_ab_deg = std::fmax(r.max_spread_ab_deg, d2(0U, 1U));
+      r.max_spread_c_deg = std::fmax(r.max_spread_c_deg, std::fmax(d2(0U, 2U), d2(1U, 2U)));
       r.frames_over_tol += frame_spread > static_cast<double>(tfc::ActConfig{}.tol_deg) ? 1U : 0U;
+      const bool over_mgr = frame_spread > static_cast<double>(tfc::RedundancyConfig{}.tol[tfc::kChPitch]);
+      over_run = over_mgr ? over_run + 1U : 0U;
+      r.frames_over_manager_tol += over_mgr ? 1U : 0U;
+      r.runs_of_three_over_manager_tol += over_run == 3U ? 1U : 0U;
     }
     if (lp.corrupt_b_at == k) {
       tfc::resync::SharedState bad = ff[1].shared_state();
@@ -255,20 +271,20 @@ inline Result run(const Loop& lp) {
       uint8_t healthy = 0U;
       std::array<std::array<tfc::Frame, tfc::kResyncChunks>, 3> tx{};
       for (uint8_t n = 0; n < 3U; ++n) {
-        if (alive[n]) {
+        if (alive[n] && ((lp.resync_nodes >> n) & 1U) != 0U) {
           healthy = static_cast<uint8_t>(healthy | (1U << n));
           tx[n] = tfc::resync::pack_state(n, ff[n].shared_state(), seq);
         }
       }
       std::array<tfc::resync::Outcome, 3> votes{};
       for (unsigned n = 0; n < 3U; ++n) {
-        if (!alive[n]) {
+        if (!alive[n] || ((healthy >> n) & 1U) == 0U) {
           continue;
         }
         tfc::resync::Collector col;
         col.begin(k);
         for (unsigned m = 0; m < 3U; ++m) {
-          for (unsigned c = 0; c < tfc::kResyncChunks && alive[m]; ++c) {
+          for (unsigned c = 0; c < tfc::kResyncChunks && ((healthy >> m) & 1U) != 0U; ++c) {
             if (m != n && lp.frame_loss_prob > 0.0F && ((loss.uniform() + 1.0F) * 0.5F) < lp.frame_loss_prob) {
               ++r.lost_frames;
               continue;
@@ -279,7 +295,7 @@ inline Result run(const Loop& lp) {
         votes[n] = tfc::resync::vote(col, healthy, lp.resync);
       }
       for (unsigned n = 0; n < 3U; ++n) {  // adopt after every vote was taken: the shares are those of the end of this frame
-        if (!alive[n]) {
+        if (!alive[n] || ((healthy >> n) & 1U) == 0U) {
           continue;
         }
         if (votes[n].adopted && ff[n].adopt_state(votes[n].state)) {

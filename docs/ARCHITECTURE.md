@@ -56,6 +56,7 @@ Time-triggered rather than event-driven so behavior is predictable and jitter is
 | 1.5 - 3.0 | Sensor exchange: each FC sends gyro then accel | `0x100+n`, `0x110+n` |
 | 3.0 - 5.0 | Consensus, estimator, controller, digest | - |
 | 5.0 - 6.5 | Each FC sends its command + estimator digest | `0x200+n` |
+| 5.5 - 7.1 | **Once per resync period (the last frame of each 100):** each participating FC sends its state after the step in four frames; the others' are collected at vote time + 1 ms and the mid-value state adopted before the next frame (docs/RESYNC.md; the manager hands over at 7.0 ms as before) | `0x420` to `0x42B` |
 | 6.5 - 7.0 | ACT votes, publishes voted output and vote status | `0x300` |
 | 7.0 - 10.0 | Heartbeats, sim traffic, slack (**target: at least 25% slack**) | `0x400+n`, `0x410+n`, `0x500` to `0x50F` (the simulator), `0x510` (ground commands `0x510`) |
 
@@ -71,7 +72,8 @@ Bus load **target**: about 14 frames per 10 ms, roughly 20% of a 1 Mbit/s classi
 2. **Deterministic replicas.** Same compiler, same code, same inputs give bit-identical estimator state and command. Each command carries a 16-bit digest of the quantized estimator state.
 3. **Cross-check.** Every FC also listens to its peers' commands and digests (peer judging) and flags a peer whose digest or command deviates. The digest exposes silent state divergence before it can reach the actuator.
 4. **Actuator vote.** ACT votes the three commands with the same mid-value select and a tolerance, and latches its output. It does not trust FC-side judgments; it flags on its own.
-5. **Known caveat.** CAN gives near-atomic broadcast but has a documented inconsistent-omission corner case (a receiver can miss a frame that others got, if the error occurs in the last bits). The digest cross-check is what catches the resulting divergence. This is a good write-up topic.
+5. **State resynchronisation.** The replicas are stateful, so a frame that one of them missed leaves their states apart for good; every 100 frames they exchange their state and adopt the mid-value (TS-16 option C, ADR-030, docs/RESYNC.md).
+6. **Known caveat.** CAN gives near-atomic broadcast but has a documented inconsistent-omission corner case (a receiver can miss a frame that others got, if the error occurs in the last bits). The digest cross-check is what catches the resulting divergence. This is a good write-up topic.
 
 Missing / late / CRC-bad / out-of-sequence data is treated exactly like a miscompare for that channel.
 

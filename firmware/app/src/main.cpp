@@ -27,6 +27,7 @@
 #include "tfc/protocol.hpp"
 #include "tfc/redundancy.hpp"
 #include "tfc/resetlog.hpp"
+#include "tfc/resync.hpp"
 #include "tfc/sync_clock.hpp"
 
 #include "hw.hpp"
@@ -41,11 +42,18 @@ BUILD_ASSERT(kNodeId <= 2U, "the node id is 0 (A), 1 (B) or 2 (C)");
 constexpr bool kFlightFunction = IS_ENABLED(CONFIG_TFC_FLIGHT_FUNCTION);
 constexpr bool kSimBusImu = IS_ENABLED(CONFIG_TFC_SIM_BUS_IMU);
 constexpr bool kLaunch = IS_ENABLED(CONFIG_TFC_LAUNCH_SEQUENCE);
+constexpr uint32_t kResyncPeriod = CONFIG_TFC_RESYNC_PERIOD;  // frames between state resynchronisations (docs/RESYNC.md)
+constexpr uint8_t kResyncGroup = static_cast<uint8_t>(CONFIG_TFC_RESYNC_GROUP & 0x07U);
+constexpr bool kResync = kFlightFunction && kResyncPeriod != 0U && ((kResyncGroup >> CONFIG_TFC_NODE_ID) & 1U) != 0U;  // this computer takes part
 
+constexpr uint32_t kDropFirst = CONFIG_TFC_TEST_DROP_PEERS_FIRST;    // test aid (docs/RESYNC.md): withhold the peers' sensor frames from the flight function
+constexpr uint32_t kDropFrames = CONFIG_TFC_TEST_DROP_PEERS_FRAMES;
 constexpr int64_t kSampleUs = 500;   // the IMU sample is latched here (ARCHITECTURE section 3) ...
 constexpr int64_t kGyroUs = 1500;     // ... and sent here
 constexpr int64_t kCmdUs = 5000;   // the command goes out here; the peers' sensor frames (sent by 3 ms) are drained just before
+constexpr int64_t kResyncTxUs = 5500;  // in a resync frame, this computer's state goes out here, after the three commands (12 frames take 1.6 ms of bus)
 constexpr int64_t kVoteUs = CONFIG_TFC_VOTE_US;
+constexpr int64_t kResyncRxUs = kVoteUs + 1000;  // ... and the others' arrive by here: collect, vote, adopt
 constexpr uint32_t kStatusEveryFrames = 100;
 // The phases of a frame that must each have run before the watchdog may be serviced (tfc::ProgressMonitor, FDIR-038).
 constexpr unsigned kTaskSample = 0U;
@@ -75,10 +83,12 @@ CAN_MSGQ_DEFINE(rx_msgq, 32);      // the three schedule slots (gyro, accel, com
 CAN_MSGQ_DEFINE(rx_all_msgq, 64);  // everything: only used to see what is NOT in the schedule (babbling)
 CAN_MSGQ_DEFINE(rx_sync_msgq, 4);  // SYNC, for the nodes that follow it (and for a master to see another's)
 CAN_MSGQ_DEFINE(rx_sim_msgq, 8);   // the simulator's sensor inputs (0x501, 0x502; the mask also lets 0x500, 0x503 through)
+CAN_MSGQ_DEFINE(rx_resync_msgq, 16);  // the peers' state in a resync frame (0x420 to 0x42F): 8 frames of the two others, plus margin
 
 // Statics, not locals: the flight function holds the tables and the filter state, about a kilobyte.
 tfc::FlightFunction g_flight;
 tfc::ImuCalibrator g_cal;  // this computer's own IMU, calibrated on the pad (docs/LAUNCH_SEQUENCE.md)
+tfc::resync::Collector g_resync;  // the states received in the current resync frame
 
 void sleep_until_us(int64_t base_ticks, int64_t offset_us) {
   k_sleep(K_TIMEOUT_ABS_TICKS(base_ticks + k_us_to_ticks_ceil64(offset_us)));
@@ -99,6 +109,9 @@ bool is_schedule_slot(uint32_t id) {
   return (id & ~0x3U) == tfc::id::kGyroBase || (id & ~0x3U) == tfc::id::kAccelBase ||
          (id & ~0x3U) == tfc::id::kCmdBase;
 }
+
+// True if `id` is one of this node's own resync chunks (the state is fed to the collector directly).
+bool is_own_resync(uint32_t id) { return (id - tfc::id::kResync) / tfc::kResyncChunks == kNodeId; }
 
 bool is_own(uint32_t id) {
   return id == tfc::id::kGyroBase + kNodeId || id == tfc::id::kAccelBase + kNodeId ||
@@ -138,6 +151,13 @@ bool bus_init() {
   if (can_add_rx_filter_msgq(can_dev, &rx_sync_msgq, &sync) < 0) {
     printk("cannot add the SYNC rx filter\n");
     return false;
+  }
+  if (kResync) {
+    const can_filter rs{.id = tfc::id::kResync, .mask = 0x7F0U, .flags = 0U};  // 0x420 to 0x42F
+    if (can_add_rx_filter_msgq(can_dev, &rx_resync_msgq, &rs) < 0) {
+      printk("cannot add the resync rx filter\n");
+      return false;
+    }
   }
   if (kSimBusImu) {
     const can_filter sim{.id = tfc::id::kSim, .mask = 0x7FCU, .flags = 0U};
@@ -212,6 +232,9 @@ int main() {
   }
   tfc::RedundancyConfig cfg;
   cfg.startup_grace_frames = kStartupGraceFrames;
+  if (kFlightFunction && kResyncPeriod != 0U) {
+    cfg.digest_persist_frames = static_cast<uint16_t>((2U * kResyncPeriod) + 50U);  // a mismatch the resync would heal (even if one resync is skipped) is not counted (TS-23)
+  }
   cfg.policy = IS_ENABLED(CONFIG_TFC_AUTO_REINTEGRATE) ? tfc::ReintegrationPolicy::AutoTransient
                                                        : tfc::ReintegrationPolicy::Manual;
   if (!parse_key(CONFIG_TFC_GROUND_KEY, cfg.ground_key)) {
@@ -252,6 +275,9 @@ int main() {
   bool last_safe_request = false;
   uint32_t tx_errors = 0;
   uint32_t sync_missed_total = 0;
+  uint32_t resync_adopted = 0;
+  uint32_t resync_skipped = 0;
+  uint32_t resync_corrected = 0;  // computers found far from the vote, summed over the resyncs
   // launch sequence state: what the peers and ACT last said, and the mission frame last seen
   std::array<uint32_t, 3> hb_seen{};
   std::array<bool, 3> hb_ready{};
@@ -273,6 +299,7 @@ int main() {
          kFlightFunction ? ", flight function on" : "", kSimBusImu ? ", sensors from the simulator" : "");
   printk("status: '+' voting, 'X' latched out, 'p' on probation, 'D' disabled, '?' no good data this frame\n");
 
+  bool drop_peers = false;  // the test aid above is active in this frame
   // Hand every schedule-slot frame that has arrived to the manager (and the sensor frames to the flight function); our own frames are not repeated back.
   auto drain_schedule_slots = [&]() {
     can_frame cf;
@@ -283,7 +310,7 @@ int main() {
       std::memcpy(f.data.data(), cf.data, 8);
       if (!is_own(f.id)) {
         mgr.on_frame(f);
-        if (kFlightFunction) {
+        if (kFlightFunction && !drop_peers) {
           (void)g_flight.on_frame(f);
         }
       }
@@ -380,6 +407,7 @@ int main() {
       resets.running(cycle);  // how long this boot has lasted, for the next boot's loop check
     }
     const uint8_t seq = static_cast<uint8_t>(k);
+    drop_peers = kDropFrames != 0U && k >= kDropFirst && k - kDropFirst < kDropFrames;
     mgr.begin_frame(k);  // SYNC's frame number: the number every node stamps its frames with (ADR-018)
     if (kFlightFunction) {
       g_flight.begin_frame(k, usable_nodes);
@@ -462,6 +490,15 @@ int main() {
     const tfc::Frame c = tfc::pack_cmd(kNodeId, cmd, seq);
     mgr.on_frame(c);
     tx_errors += send(c) ? 0U : 1U;
+    const bool resync_frame = kResync && tfc::resync::due(k, kResyncPeriod);  // every participant has the same SYNC frame number, so the same frames
+    if (resync_frame) {
+      sleep_until_us(base, kResyncTxUs);
+      g_resync.begin(k);
+      for (const tfc::Frame& rf : tfc::resync::pack_state(kNodeId, g_flight.shared_state(), seq)) {  // the state after this frame's step
+        (void)g_resync.on_frame(rf);  // our own share is not repeated back by the bus
+        tx_errors += send(rf) ? 0U : 1U;
+      }
+    }
 
     // ---- t = 7.0 ms: everything from the peers has arrived; vote ----
     sleep_until_us(base, kVoteUs);
@@ -545,6 +582,34 @@ int main() {
         printk("[frame %u] COUNTDOWN SCRUBBED, no-go: %s\n", k, tfc::nogo_text(nogo_mask));
       }
     }
+    if (resync_frame) {  // the others' states have arrived: take the vote and adopt it, before the next frame's step
+      sleep_until_us(base, kResyncRxUs);
+      can_frame rc;
+      while (k_msgq_get(&rx_resync_msgq, &rc, K_NO_WAIT) == 0) {
+        tfc::Frame rf;
+        rf.id = rc.id;
+        rf.len = static_cast<uint8_t>(can_dlc_to_bytes(rc.dlc));
+        std::memcpy(rf.data.data(), rc.data, 8);
+        if (!is_own_resync(rf.id)) {
+          (void)g_resync.on_frame(rf);
+        }
+      }
+      const tfc::resync::Outcome vote = tfc::resync::vote(g_resync, static_cast<uint8_t>(kResyncGroup & ~rep.latched_mask & 0x07U), tfc::resync::Config{});
+      const bool replaced = vote.adopted && g_flight.shared_state().w != vote.state.w;  // this computer's state is not the vote (it is replaced, whether or not it voted)
+      if (vote.adopted && g_flight.adopt_state(vote.state)) {
+        ++resync_adopted;
+        mgr.report_state_correction(vote.large);  // counted against the computers far from the vote in the next frame's judgement
+        resync_corrected += static_cast<uint32_t>(tfc::popcount32(vote.large));
+        if (vote.changed != 0U || replaced) {
+          printk("[frame %u] RESYNC: adopted the vote of %u computers; state corrected on mask 0x%x, far from the vote on mask 0x%x%s\n", k,
+                 static_cast<unsigned>(tfc::popcount32(vote.voters)), static_cast<unsigned>(vote.changed), static_cast<unsigned>(vote.large),
+                 replaced ? " (this computer's state was replaced)" : "");
+        }
+      } else {
+        ++resync_skipped;
+        printk("[frame %u] RESYNC: nothing adopted (%s)\n", k, vote.why == tfc::resync::Why::Incomplete ? "a state did not arrive whole" : (vote.why == tfc::resync::Why::TooFew ? "fewer than two voters" : "the states disagree"));
+      }
+    }
     if (progress.end_of_frame(true)) {  // the one place the watchdog is serviced, and the one place KICK is raised
       wdt.feed();
       lines.kick(true);
@@ -609,7 +674,7 @@ int main() {
     }
     if (cycle % kStatusEveryFrames == 0U) {
       const tfc::Counters& cn = mgr.counters();
-      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u sync_missed=%u mission=%u ready=%u\n",
+      printk("[frame %u] %s  A%c B%c C%c  | crc=%u seq=%u missing=%u vote=%u digest=%u stuck=%u oos=%u tx_err=%u imu_err=%u imu_stale=%u wdt_refused=%u bus_off=%u err_passive=%u sync_missed=%u mission=%u ready=%u resync=%u/%u far=%u\n",
              k, mode_text(rep.mode), node_state(rep, 0), node_state(rep, 1), node_state(rep, 2),
              static_cast<unsigned>(cn.crc_bad), static_cast<unsigned>(cn.seq_bad),
              static_cast<unsigned>(cn.missing), static_cast<unsigned>(cn.vote_disagreements),
@@ -617,7 +682,8 @@ int main() {
              static_cast<unsigned>(cn.out_of_schedule), tx_errors, static_cast<unsigned>(imu.errors()),
              static_cast<unsigned>(imu.stale()), static_cast<unsigned>(progress.refusals()),
              static_cast<unsigned>(atomic_get(&g_bus_off_events)), static_cast<unsigned>(atomic_get(&g_error_passive_events)),
-             static_cast<unsigned>(sync_missed_total), static_cast<unsigned>(tick.mission), own_ready ? 1U : 0U);
+             static_cast<unsigned>(sync_missed_total), static_cast<unsigned>(tick.mission), own_ready ? 1U : 0U, static_cast<unsigned>(resync_adopted),
+             static_cast<unsigned>(resync_skipped), static_cast<unsigned>(resync_corrected));
     }
   }
 }

@@ -54,6 +54,7 @@ campaign; HIL needs the rig.
 | TS-20 | The platform's behaviour when commands stop | Hold then level (today), hold for ever, level at once, stop the pulse and go limp, hold then stop: which has the smallest mechanical shock and the least confusing view for the IMUs and the flight computers? | rig measurements | 2 | medium, after E1 to E6 of `PICO_TESTS.md` |
 | TS-21 | Where the mission clock lives | The supervisor as the continuous source, the supervisor deciding T-zero with the flight computers as the clock (hybrid), mission time in SYNC from the sync master alone, or each computer counting for itself: which survives a failure of the supervisor, of the sync master and of a node's link, and keeps every computer on the same schedule? | SIL with fault injection, live triplex | 3 | medium, before the mission time goes into SYNC |
 | TS-22 | The independent time reference | A TCXO RTC, an oven crystal, a GPS-disciplined oscillator, a chip-scale atomic clock, with or without correlation against the PC's UTC: what error does each leave over a run, what does it cost, and what happens when it fails? | bench measurement (Allan variance, drift against NTP and GPS) | 3 | small to medium, after the parts arrive |
+| TS-23 | How often the replicas resynchronise (the period) | Every 10, 20, 50, 100, 200, 500 or 1000 frames: what does the period change in flight survival, the digest check, healing and rejoin time, bus load and the detection of a failing state? | SIL closed loop (`tfc_resync`) | 3 | medium, **before the firmware default is fixed** |
 | TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `DEFERRED.md` section 7 |
 
 Recommended order, by value and by when the data exist: **TS-0** now; **TS-1, TS-2, TS-3, TS-4** on the simulator in October and
@@ -444,6 +445,69 @@ The time-error budget is then extrapolated to five years with the measured aging
 **Dependencies and timing.** The supervisor's firmware and parts (the TCXO module, the second Pico). The correlation software is host-side and can be written first.
 
 **Talking point.** "I asked what keeps the time of a mission that outlasts any one computer, measured what an oscillator drifts, and designed the correlation a spacecraft uses against ground time."
+
+## 9i. TS-23: how often the replicas resynchronise (docs/RESYNC.md, ADR-030)
+
+**Question.** The state resynchronisation (TS-16 option C) has one number to choose, the period. A short one heals a lost frame sooner and costs more bus time; a long one costs nothing and leaves the states apart for longer. What does the period actually change, how much, and where is the best value?
+
+**What the period touches (the criteria).**
+1. *Flight survival* on a lossy bus: is a flight lost? (weight 3)
+2. *The digest check*: how long the three digests stay different, which decides whether a digest persistence can be set that never counts a healed mismatch. (weight 2)
+3. *Time to heal and to rejoin*: a lost frame leaves the states apart for about half a period on average, a computer that restarted rejoins within one period, two if one resync is skipped. A probation lasts 1 s (100 frames), so a period well beyond that stretches every rejoin. (weight 2)
+4. *Bus load and the schedule*: each resync is a burst of 12 frames (about 130 microseconds each at 1 Mbit/s, so 1.6 ms, in a frame that carries about 1.8 ms already: 34 % busy that frame, 18 % in every other) and the manager's hand-over moves in that frame. Average added load = 1.6 ms / (period x 10 ms). (weight 1: it is small at every period tried, but it is paid in the frame budget of the target, which is not measured)
+5. *Detecting a failing state*: a sudden corruption is healed at the next resync and reported if it is larger than the large-correction limit (0.5 degree), at any period; but a state that **drifts** away at rate r is healed before it is reported if r x period is below that limit. At period 100 (1 s) a drift below 0.5 degree per second is healed in silence; at 1000 (10 s) below 0.05. A *short* period therefore hides slow faults that a long one would show. (weight 1: sudden upsets are the expected fault; a slow drift of the estimator alone has no known cause here)
+6. *Cost of adopting at all*: the state is quantised (0.0035 degree of attitude) and mid-valued every time. Measured on a clean bus at every period: no change in the flight and no digest difference (first table), so the cost is zero in this model.
+
+**Method.** `tools/sim/tfc_resync.cpp`: the closed loop of the 60 s ascent (three flight functions, the real ACT logic, the simulated vehicle) for each period and each frame-loss rate, 32 independent random loss patterns per cell (the loss is independent at each receiver for every sensor frame and every resync chunk, the pessimistic model of TS-16). A flight is lost if ACT enters Safe or the attitude strays more than 5 degrees from the program after 3 s. "Digest persistence P + 50 / 2P + 50" counts the seeds in which a digest mismatch lasted longer than that, i.e. in which a manager set to that persistence would have counted it.
+
+**Results** (`./build/rel/tfc_resync --seeds 32`; the numbers are means over the 32 patterns unless a longest value or a count is named).
+
+*Flights lost, of 32:*
+| Loss per frame | none | 10 | 20 | 50 | 100 | 200 | 500 | 1000 |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 0.01 % | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 0.1 % | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 1 % | **11** | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 5 % | **28** | 0 | 0 | 1 | 1 | 1 | 2 | 3 |
+
+*Share of the frames in which the three digests are not all equal (the lower, the more useful the digest check):*
+| Loss per frame | none | 10 | 20 | 50 | 100 | 200 | 500 | 1000 |
+|---|---|---|---|---|---|---|---|---|
+| 0.01 % | 69 % | 0.5 % | 0.7 % | 1.3 % | 2.3 % | 3.9 % | 10.5 % | 20.1 % |
+| 0.1 % | 95 % | 4.1 % | 5.7 % | 10.5 % | 17.7 % | 29 % | 56 % | 75 % |
+| 1 % | 99 % | 34 % | 44 % | 63 % | 77 % | 87 % | 95 % | 97 % |
+| 5 % | 99.9 % | 86 % | 92 % | 96 % | 98 % | 99 % | 99 % | 99.7 % |
+
+*Seeds (of 32) in which a digest persistence of 2P + 50 would have counted a mismatch (a false flag: nothing was wrong that the resync had not healed):*
+| Loss per frame | 10 | 20 | 50 | 100 | 200 | 500 | 1000 |
+|---|---|---|---|---|---|---|---|
+| 0.01 % and 0.1 % | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 1 % | 0 | 3 | 9 | 21 | 16 | 8 | 4 |
+| 5 % | 32 | 32 | 32 | 32 | 32 | 32 | 30 |
+
+(With persistence P + 50 instead, the 0.1 % row already flags 1 seed at period 100, 2 at 200 and 6 at 500: one skipped resync makes a mismatch two periods long, so **2P + 50 is the persistence to use**.) The resyncs a computer skips (a chunk of a peer's state lost) are a property of the loss and not of the period: 0.1 % at 0.8 %, 1 % at 7.8 %, 5 % at 33 %. The command difference between computers and the frames beyond ACT's agreement tolerance (about 5 at 0.1 % and 48 at 1 %) also do not depend on the period, and the flight's attitude error stays at 0.4 to 0.65 degree: over minutes, not seconds, is when an unhealed difference grows enough to matter, which is why even a period of 1000 flies at 1 %.
+
+*Bus load* (analytic): the burst is 1.6 ms at every period; the average added load is 1.6 % at period 10, 0.8 % at 20, 0.31 % at 50, 0.16 % at 100, 0.08 % at 200 and below 0.03 % beyond 500.
+
+**What the table says.**
+- *Flight survival* is flat up to 1 % loss at every period, because a divergence has to grow over many seconds to matter; only at 5 % loss does a long period lose flights (1 to 3 of 32 beyond 50).
+- *The digest check* is where the period matters. At a realistic loss (0.1 % and below) period 100 leaves the digests equal 82 % of the time and a persistence of 2P + 50 = 250 never false-flags; at 1 % loss only periods up to 20 keep the digest check mostly clean, and at 5 % none does.
+- *Healing and rejoin time* scale directly with the period: 0.1 s at 10, 1 s at 100, 10 s at 1000 (twice that if a resync is skipped).
+- *The cost* is small everywhere; period 10 is the only one that adds more than 1 % average bus load.
+- *Drift detection* runs the other way: it prefers the long periods.
+
+*What no period fixes* (the fault manager's command tolerance, `docs/RESYNC.md` section 6b): frames in which two computers' commands differ by more than the manager's 0.01 degree are caused by the immediate effect of a lost frame, so they do not depend on the period (28 per flight at 0.1 % loss at period 10 and at 100, 284 and 281 at 1 %), but the resync is what keeps them from lasting: without it every flight at 0.1 % loss has a run of three such frames in a row, with it none of 16 does; at 1 % loss 7 to 8 of 16 flights still do, at any period. At that loss rate the tolerance, or option B, has to change.
+
+**Decision rule.** The *longest* period for which (a) no flight is lost at 1 % loss, (b) a digest persistence of 2P + 50 never false-flags at 0.1 % loss and (c) a lost frame is healed, and a restarted computer rejoins, within one probation (1 s). That is **period 100**: (a) holds up to period 1000, (b) holds up to 1000 at 0.1 % (0 of 32), (c) fails from 200 up. If the rig measures a loss rate near 1 % the digest check is only usable at period 20 or below and the rule's (b) should be re-run at that rate; the choice then trades 0.8 % of the bus for a usable digest.
+
+**Decision (5 Oct 2026, proposed): default period 100 frames and a digest persistence of 2P + 50 = 250 frames, both configurable in the firmware (`TFC_RESYNC_PERIOD`), to be revisited with the measured loss of the real bus.** What would change it: a measured loss above about 0.3 % (shorten to 20 to 50); a frame budget on the target that cannot take the burst every second (lengthen); a failing-state fault that drifts rather than jumps (needs a second rule, below).
+
+**Open question this exposed: slow drift.** Resynchronisation heals a drift below `large_limit / period` per second without a report. A cheap second rule would count how many resyncs *in a row* changed the same computer's state while the others' did not (on a bus with a loss of 0.1 % or less this is rare for a healthy computer, and a drifting one is changed every time), and report it as a bad frame. It was not built: the measured loss rate is needed to set its count. Recorded as a follow-up with the real-bus measurement.
+
+**The diverse node.** It is left out of the resync by a switch (`CONFIG_TFC_RESYNC_GROUP`) and does not appear in these tables; the reasons, the measured command difference it then shows and the option of a slew-limited adoption are in `docs/RESYNC.md` section 6.
+
+**Talking point.** "I measured what the resync period buys: flight survival does not depend on it up to 1 % loss, the usefulness of the digest check depends on it strongly, and the cost is a 1.6 ms burst; the best value is the longest one that still heals within a probation."
 
 ## 10. Schedule
 

@@ -133,7 +133,7 @@ TFC_TEST(resync_frames_round_trip_and_reject_what_is_not_theirs) {
   Frame last = pack_resync(2U, 3U, {1, 2, 3}, 0U);
   CHECK(unpack_resync(last).ok && last.id == id::kResync + kResyncIds - 1U);
   Frame golden = pack_resync(1U, 2U, {0x0102, -2, 0x7FFF}, 0x55U);  // the wire format, byte for byte
-  CHECK(golden.id == 0x426U && golden.data[0] == 0x02 && golden.data[1] == 0x01 && golden.data[2] == 0xFE && golden.data[3] == 0xFF && golden.data[4] == 0xFF && golden.data[5] == 0x7F && golden.data[6] == 0x55);
+  CHECK(golden.id == 0x426U && golden.data[0] == 0x02 && golden.data[1] == 0x01 && golden.data[2] == 0xFE && golden.data[3] == 0xFF && golden.data[4] == 0xFF && golden.data[5] == 0x7F && golden.data[6] == 0x55 && golden.data[7] == 0xE4);
 }
 
 TFC_TEST(resync_the_collector_keeps_only_whole_states_of_this_cycle) {
@@ -515,6 +515,29 @@ TFC_TEST(resync_the_closed_loop_flies_a_one_percent_lossy_bus_that_it_loses_with
   CHECK(c.resyncs_adopted == 180U && c.resyncs_skipped == 0U && c.corrections_changed == 0U && c.digest_mismatch_frames == 0U);  // 3 computers x 60 resyncs, nothing to correct
   const sim::Result again = sim::run(with);
   CHECK(again.resyncs_adopted == r.resyncs_adopted && again.corrections_changed == r.corrections_changed);  // repeatable
+}
+
+TFC_TEST(resync_a_computer_outside_the_group_never_adopts_and_drifts_from_the_pair) {
+  sim::Loop lp;
+  lp.frames = 6000U;
+  lp.estimator.use_accel = false;
+  lp.resync_period = 100U;
+  lp.resync_nodes = 0x03U;  // the diverse computer C is left out (ADR-021)
+  const sim::Result clean = sim::run(lp);
+  CHECK(clean.resyncs_adopted == 120U && clean.resyncs_skipped == 0U && clean.max_spread_ab_deg == 0.0 && clean.max_spread_c_deg < 0.2);  // 2 computers x 60 resyncs; A and B stay identical; C differs from them only by the quantisation of what they adopt (about 0.0035 degree per resync, a random walk: 0.09 degree over 60 s)
+  lp.frame_loss_prob = 0.01F;
+  const sim::Result lossy = sim::run(lp);
+  CHECK(lossy.resyncs_adopted + lossy.resyncs_skipped == 120U);               // C neither votes nor adopts: only A and B are counted
+  CHECK(lossy.max_spread_c_deg > 2.0 * lossy.max_spread_ab_deg);              // so C drifts from the pair further than they differ (measured: 0.29 against 0.12 degree)
+  CHECK(lossy.max_spread_c_deg < 0.6 && lossy.safe_frames == 0U);             // a version tolerance of 0.5 degree would absorb it for this flight, and ACT's mid-value never loses its vote
+  sim::Loop all = lp;
+  all.resync_nodes = 0x07U;
+  const sim::Result with_c = sim::run(all);
+  CHECK(with_c.max_spread_c_deg < lossy.max_spread_c_deg);                    // with C in the group the difference is smaller still
+  sim::Loop none = lp;
+  none.resync_nodes = 0x00U;
+  none.frame_loss_prob = 0.0F;
+  CHECK(sim::run(none).resyncs_adopted == 0U);                                // an empty group does nothing
 }
 
 TFC_TEST(resync_a_corrupted_state_is_healed_and_reported_as_a_large_correction) {

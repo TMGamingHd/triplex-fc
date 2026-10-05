@@ -84,6 +84,12 @@ target_link_libraries(tfc_sens PRIVATE tfc_core Threads::Threads)
 target_include_directories(tfc_sens PRIVATE sim/vehicle)
 target_compile_options(tfc_sens PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
 
+# How often should the replicas resynchronise? (tools/sim/tfc_resync.cpp, TS-23)
+add_executable(tfc_resync tools/sim/tfc_resync.cpp)
+target_link_libraries(tfc_resync PRIVATE tfc_core Threads::Threads)
+target_include_directories(tfc_resync PRIVATE sim/vehicle)
+target_compile_options(tfc_resync PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
+
 # Flight-code gate (docs/CODING_STANDARD.md): the strictest warning set, as errors, over the whole core, and every header
 # compiled on its own so none depends on include order. Part of the default build, so CI fails on a regression.
 set(TFC_STRICT_FLAGS -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wdouble-promotion -Wold-style-cast

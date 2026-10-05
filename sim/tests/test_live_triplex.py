@@ -160,7 +160,7 @@ class LiveTriplexFlightFunction(LiveTriplex):
     """The same run, with every node computing its command from the sensors through the estimator and controller."""
 
     BINS = FLIGHT_BINS
-    TS16 = True
+    TS16 = False  # was True until the state resynchronisation (ADR-030): the two remaining estimators are brought together at the next resync, so a Safe request after the takeover is a failure again
 
 
 if __name__ == "__main__":
