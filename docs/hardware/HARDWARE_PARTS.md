@@ -1,6 +1,6 @@
 # Hardware parts: everything the setup needs
 
-> Status: **reference** (reviewed 5 Oct 2026). Written from the owner's parts sheet (Triplex_Flight_Computer_Parts_v4, prices checked 2026-09-29) plus the decisions of 4 and 5 Oct, and merged with the audit of that sheet. **The order has been placed and arrives on 9 Oct 2026.**
+> Status: **reference** (reviewed 5 Oct 2026). Written from the owner's parts sheet (Triplex_Flight_Computer_Parts_v4, prices checked 2026-09-29) plus the decisions of 4 and 5 Oct, and merged with the audit of that sheet. **The order has been placed and arrives on 9 Oct 2026; the passive parts, the hub, the cables and the USB-CAN adapter arrived early, on 5 Oct (section 2.6).**
 > Prices are the sheet's unless marked **n/c** (not checked). **Status:** *ordered* = in the order the owner placed; *check* = decided on 4 Oct and to be confirmed against the order confirmation (the second Pico 2, the TCXO module, the third relay module);
 > *owned* = the owner has it; *not ordered* = decided, not in the order (the override parts, section 4). Nothing was bought or measured by this document.
 
@@ -63,6 +63,29 @@ PC (Ubuntu) --USB hub--+-- Nucleo A, B, C (flight computers)  --- CAN Pal --+
 ### 2.5 Mechanical (3D prints and hardware)
 M3 and M2 screw kits, brass heat-set inserts, M3 standoffs (the third relay module needs **4 more M3 screws and standoffs**), 623ZZ bearings, rubber feet, PLA filament (owned printer): all on the sheet, unchanged. The third relay module needs a place in the injector box print (`3D Prints` sheet, 72 x 51.7 mm, holes 65.9 x 45 mm apart).
 
+### 2.6 Received so far (5 Oct 2026)
+Listed by the owner on 5 Oct, before the main shipment. None of it has been inspected or measured yet: "received" means the box is here (P-M1-01 step 1 turns it into "checked").
+
+| Received | Qty | Fills row | Notes |
+|---|---|---|---|
+| USB-CAN adapter **SH-C31A**, based on Cannable 2.0 | 1 | 2.1 #5 | The model is now known (audit finding 4). **Measured 5 Oct** (`ip -details link show can0`): enumerates as `1d50:606f` "SH-C31x" (gs_usb); `can0` up at 1 Mbit/s, state ERROR-ACTIVE, sample point 0.747; the driver reports a **170 MHz** controller clock and **data-phase timing limits (dtseg, dbrp)**, so it is a CAN FD device, as the owner said (my earlier guess that Cannable is classic-only was wrong for this unit). The repository still runs classic CAN. The driver **refuses the automatic bus-off restart** (`restart-ms` stays 0): `can_up.sh` falls back without it, and a bus-off needs `ip link set can0 down; ip link set can0 up`. It first came up in the ST DFU bootloader (`0483:df11`) when its BOOT setting was on. Not isolated |
+| 7-port USB 3.0 hub with per-port switches | 1 | 2.4 | Seven of seven ports are used in the plan (2.4) |
+| Micro-USB cables | 5 | 2.4 | **5 of the 6 wanted** (the supervisor's Pico 2 needs the sixth) |
+| 5 x 7 cm double-sided prototype boards | 10 | 2.2 | The sheet wanted one pack; ten is plenty (backbone, Pico carrier, supervisor board, spares) |
+| Cat 6 UTP 24 AWG patch cable, 25 ft | 1 | 2.2 | Twisted-pair stubs: cut and strip, keep the pair twisted to the terminal |
+| 120 ohm resistors | 100 | 2.2 | Two are the bus terminations. Measure a few with the meter: the 60 ohm check of audit section 7 starts with them |
+| Wire kit (sleeves, zip ties) | 1 | 2.2 (22 AWG hook-up wire) | **Confirm the gauge and the colours**: the plan assumed 22 AWG, six colours |
+| Compact wire connector assortment | 12 | 2.3 (WAGO 221 levers) | **Confirm it is the lever type and the sizes**: the star grounds and rail splits need 3 and 5 way connectors rated for the servo rail's 5 A |
+| Zip ties / cable ties | 1 | 2.2 | |
+| M2 hex socket head bolt assortment | 1200 | 2.5 | |
+| M3 hex socket head assortment | 750 | 2.5 | |
+| M2 to M5 threaded inserts kit | 320 | 2.5 | **Check they are the knurled heat-set type** for the PLA prints, not tapping inserts |
+| M3 hex male-female brass spacers assortment | 1 | 2.5 | Covers the 4 extra standoffs of the third relay module |
+
+**Not in the 5 Oct list, so not here yet:** the four Nucleos, the four CAN Pals, the three IMUs, the Pico 2s, the relay modules, the servos, the logic analyzer, the two 5 V adapters, the DC jacks, the capacitors, the fuse, the E-stop, the 3 pin terminals, the Dupont kits, the header strips, heat shrink and solder, the TCXO module.
+
+**What can be checked now, with only these parts** (each is a step of `P-M1-01`; log it in `BENCH_LOG.md`): the hub on the PC with a cable (`lsusb`, step 4); the adapter enumerating as `gs_usb` and `can0` coming up with `tools/bench/can_up.sh` (step 5; with nothing on the bus, a loopback test: `ip link set can0 type can bitrate 1000000 loopback on`); the resistance of a handful of the 120 ohm resistors and of two in parallel (60 ohm).
+
 ## 3. Added by the decisions of 4 Oct 2026 (to confirm against the order)
 | Part | Qty | Price | Why |
 |---|---|---|---|
@@ -99,7 +122,7 @@ TS-17's paper part chose option **O3** (`TRADE_STUDIES.md` section 9c, `HARDWARE
 2. **The override parts** (section 4): buy before `P-HWO-01`.
 3. Whether the injector box print is redrawn for three relay modules.
 4. The USB hub is full (section 2.4): decide whether a second hub is wanted for later.
-5. The CAN adapter's exact model on arrival (the owner reports FD support; the sheet's own text is inconsistent), and whether to take the isolated model because the bus-stub relays are for shorting the bus.
+5. The CAN adapter is an SH-C31A on Cannable 2.0 (section 2.6). FD support is confirmed (section 2.6); the repository does not need it. Whether to take the isolated model (SH-C30G) because the bus-stub relays are for shorting the bus is still open.
 6. An oscilloscope to borrow for the rail and servo-current measurements (section 5).
 
 ## 7. Audit of the parts sheet (4 Oct 2026)
