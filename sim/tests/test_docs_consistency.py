@@ -2,6 +2,7 @@
 """The documentation hangs together: every link and every `docs/...` path in the repository points at a file that exists, every document is reachable from the index (docs/README.md), every
 design, decision, verification and hardware document opens with a status line, and every "FILE.md section N" in the docs names a section that exists."""
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -113,6 +114,34 @@ class Sections(unittest.TestCase):
                 if name in by_name and sec not in headings(by_name[name]):
                     bad.append(f"{p.relative_to(ROOT)}: {name} section {sec}")
         self.assertEqual(sorted(set(bad)), [])
+
+
+class Numbers(unittest.TestCase):
+    """The headline numbers are quoted in several pages (README, STATUS, PROOF, the standard, the register); they must not drift apart from their source."""
+
+    def test_the_campaign_total_quoted_anywhere_is_the_one_in_the_generated_table(self):
+        text = (DOCS / "verification" / "FAULT_CAMPAIGN.md").read_text()
+        m = re.search(r"\| \*\*total\*\* \| \*\*([\d,]+)\*\* \| \*\*([\d,]+)\*\* \|", text)
+        self.assertIsNotNone(m, "the generated total row is missing from FAULT_CAMPAIGN.md")
+        scenarios = m.group(1)
+        bad = []
+        for p in doc_files() + [ROOT / "README.md"]:
+            for q in re.finditer(r"(\d{1,3}(?:,\d{3})+) (?:fault )?scenarios", p.read_text()):
+                if q.group(1) != scenarios:
+                    bad.append(f"{p.relative_to(ROOT)}: {q.group(0)} (the table says {scenarios})")
+        self.assertEqual(bad, [])
+
+    def test_the_mutant_count_quoted_anywhere_is_the_number_of_mutants(self):
+        sys.path.insert(0, str(ROOT / "tools" / "mutation"))
+        import mutations
+
+        n = len(mutations.MUTATIONS)
+        bad = []
+        for p in doc_files() + [ROOT / "README.md", ROOT / "sim" / "README.md"]:
+            for q in re.finditer(r"(\d{3}) (?:mutants|injected bugs|deliberate bugs)", p.read_text()):
+                if int(q.group(1)) != n:
+                    bad.append(f"{p.relative_to(ROOT)}: {q.group(0)} (there are {n})")
+        self.assertEqual(bad, [])
 
 
 if __name__ == "__main__":

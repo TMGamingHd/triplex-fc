@@ -1,6 +1,6 @@
 # Status
 
-> Status: **reference**, the page to read first. Reviewed 5 Oct 2026. The parts arrive on **9 Oct 2026**. Numbers on this page are the output of the commands in section 7; nothing is typed in from memory.
+> Status: **reference**, the page to read first. Reviewed 5 Oct 2026. The parts arrive on **9 Oct 2026**. The numbers in section 3 are the output of the commands next to them (section 7 has the rest).
 
 ## 1. In one paragraph
 
@@ -47,7 +47,7 @@ Each row is a thing that cannot be settled without the parts. "Where" is the pro
 | 1 | Frame jitter (p99 at most 100 us), WCET of the step and the vote, bus load (SYS-001 to 003) | Needs the target and a logic analyzer; the firmware's status line already prints `wcet_step`, `wcet_vote`, `wcet_frame` | `P-S1-01`, `tools/bench/frame_jitter.py` |
 | 2 | **The real bus loss rate** | It sets the resync period, the digest persistence and the manager's command tolerance (TS-23, `RESYNC.md` 6b); nothing simulates real CAN | `tools/bench/bus_loss.py` |
 | 3 | Sensor self-test limits (FDIR-036), arrival-margin telemetry (FDIR-037) | The part and the board | `FUTURE_WORK.md` 1.1, 1.2 |
-| 4 | The supervisor on its board: `KICK`, `FRAME`, `NRST` and `PWR` against real nodes; the `T0` pin; the RTC and the TCXO's drift | The second Pico 2, the TCXO module and the third relay module arrive with the order | `P-S2-03`, `MISSION_CLOCK.md` |
+| 4 | The supervisor on its board: `KICK`, `FRAME`, `NRST` and `PWR` against real nodes; the `T0` pin; the RTC and the TCXO's drift | The second Pico 2, the TCXO module and the third relay module should arrive with the order (check the confirmation) | `P-S2-03`, `MISSION_CLOCK.md` |
 | 5 | The Pico: USB enumeration, servo pulse and jitter, relays at 3.3 V drive, what the servo does with no signal | The board and the servos | `P-M1-01`, `PICO_TESTS.md` |
 | 6 | The platform: the shock at the E-stop, stall current, the platform's bandwidth against the time-scaled vehicle | Mechanics | `PICO_TESTS.md` E1 to E6, `SIM_FIDELITY.md` |
 | 7 | **The hardware overrides** | TS-17 chose the set (O3: H1 to H5, about 12 USD of parts, none priced); **the parts are not in the order**: buy them before `P-HWO-01` | `HARDWARE_OVERRIDE.md`, `procedures/P-HWO-01-overrides.md` |
