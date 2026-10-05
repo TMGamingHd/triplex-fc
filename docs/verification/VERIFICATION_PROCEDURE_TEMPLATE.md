@@ -1,5 +1,7 @@
 # Verification procedure: template
 
+> Status: **template** (the form every file in `../procedures/` follows).
+
 For hardware and hardware-in-the-loop tests that no automated test replaces (the "M" entries of `REQUIREMENTS.md`). The outline follows
 the verification-procedure format shown in the ASTE-331 lecture: description, what is verified, set-up, numbered steps that say who does
 what and how, shutdown, and an *as-run* copy kept with the data. Copy this file to `docs/procedures/<id>-<name>.md` for each test.

@@ -4,8 +4,8 @@
 |---|---|
 | `tfc_peers/`: **virtual peers**, fake flight computers that put real, fault-injectable traffic on the flight bus | Done |
 | `../tools/replay`: `tfc_replay`, runs recorded traffic through the real `core/` redundancy code | Done |
-| Vehicle simulator (6-DOF ascent, platform model, SocketCAN gateway) | **Done**: `../sim/vehicle` (the C++ model, the runner, the closed loop), `../tools/sim/tfc_simd` (on SocketCAN, with `--pico`), `../tools/sim/tfc_sens` (sensitivity). See `../docs/VEHICLE_SIM.md` and `../docs/SIM_FIDELITY.md` |
-| Pico client (`tfc_peers pico`, `pico_link.py`) | Done, not run on a board (`../docs/PICO.md`) |
+| Vehicle simulator (6-DOF ascent, platform model, SocketCAN gateway) | **Done**: `../sim/vehicle` (the C++ model, the runner, the closed loop), `../tools/sim/tfc_simd` (on SocketCAN, with `--pico`), `../tools/sim/tfc_sens` (sensitivity). See `../docs/design/VEHICLE_SIM.md` and `../docs/design/SIM_FIDELITY.md` |
+| Pico client (`tfc_peers pico`, `pico_link.py`) | Done, not run on a board (`../docs/design/PICO.md`) |
 | Fault-campaign runner (`campaign/`) | Done |
 
 Contents: [What the virtual peers are](#what-the-virtual-peers-are) ·
@@ -176,7 +176,7 @@ computer keeps running, restart it or pass `--counter` above its last one. It is
 `--command` when the command must land in an exact frame.
 
 ### `python3 -m tfc_peers launch`: the launch checklist, automated
-Watches the bus (the flight computers' heartbeats, ACT's output, SYNC's mission frame), shows the go/no-go once a second, and when every item holds sends the launch (an authenticated ARM, then the EXECUTE) and runs the countdown. It exits **0 at T-zero**, 1 on a no-go or `--check`, 2 on a scrub, 3 if the command was not accepted, 4 if the countdown never completed. It asks you to type `LAUNCH` first unless `--yes`. The human checklist that goes with it is `docs/procedures/P-S2-02-launch-checklist.md`; the design is `docs/LAUNCH_SEQUENCE.md`.
+Watches the bus (the flight computers' heartbeats, ACT's output, SYNC's mission frame), shows the go/no-go once a second, and when every item holds sends the launch (an authenticated ARM, then the EXECUTE) and runs the countdown. It exits **0 at T-zero**, 1 on a no-go or `--check`, 2 on a scrub, 3 if the command was not accepted, 4 if the countdown never completed. It asks you to type `LAUNCH` first unless `--yes`. The human checklist that goes with it is `docs/procedures/P-S2-02-launch-checklist.md`; the design is `docs/design/LAUNCH_SEQUENCE.md`.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -189,7 +189,7 @@ Watches the bus (the flight computers' heartbeats, ACT's output, SYNC's mission 
 A scrub is `python3 -m tfc_peers command scrub` (before T-zero only); `command launch --arm` sends the launch by hand.
 
 ### `python3 -m tfc_peers pico OP [OPERANDS]`: the Pico (platform driver and fault injector) over USB serial
-Talks to the board of `docs/PICO.md`; needs `pyserial` (`pip install pyserial`) and a Pico running `firmware/pico`. Each call sends one command and prints the board's status.
+Talks to the board of `docs/design/PICO.md`; needs `pyserial` (`pip install pyserial`) and a Pico running `firmware/pico`. Each call sends one command and prints the board's status.
 
 | Operation | Operands | Meaning |
 |---|---|---|
@@ -213,10 +213,10 @@ Feeds each 10 ms frame of the log to `tfc::RedundancyManager`, the same class th
 | `--t0 SECONDS` | Subtract this from every timestamp before grouping (for logs that do not start at 0). May be negative, so that frame 0 starts before the first line of a log that begins mid-run. |
 | `--startup-grace N` | Frames during which a peer that has never been seen is not judged (default 0, as in a `record` log, where every node is present from frame 0). A live log needs it: the peers join some frames after the flight computer starts (FC-A uses 500). |
 | `--first-frame N` | The frame number of the first 10 ms frame, for a log of a **live** bus that starts at a SYNC frame number other than 0 (the frames carry SYNC's number, ADR-018, and the phase check compares against it). Without it frames are numbered 0, 1, 2... as in a `record` log. `tools/bench/log_t0.py` prints the `--t0` and `--first-frame` that line a live log up. |
-| `--dump FILE` | Write one CSV row per 10 ms frame: mode, healthy count, masks (valid/latched/probation/disabled/held), Safe and bus-alarm flags, the nodes newly latched and newly on probation, the integrity mask, per-node reason bits, and all 8 voted outputs. Used by the fault campaign (`docs/FAULT_CAMPAIGN.md`) to check safety properties, e.g. that the output never follows a faulty node. |
+| `--dump FILE` | Write one CSV row per 10 ms frame: mode, healthy count, masks (valid/latched/probation/disabled/held), Safe and bus-alarm flags, the nodes newly latched and newly on probation, the integrity mask, per-node reason bits, and all 8 voted outputs. Used by the fault campaign (`docs/verification/FAULT_CAMPAIGN.md`) to check safety properties, e.g. that the output never follows a faulty node. |
 | `--vote-us MICROSECONDS` | Where in the 10 ms frame the flight computer votes (default 7000, as FC-A). A frame received after it belongs to the *next* frame, so a late frame is judged stale. |
 | `--release A=ID,B=ID,C=ID` | The release each computer reports in its heartbeat (ADR-021; a live bus carries it in the heartbeat, a recorded log does not). When two computers share a release and the third does not, the lone computer's commands are compared with the pair's within the version tolerance (1.5 times the vote tolerance), its digest is not compared with theirs, and a disagreement beyond the tolerance isolates nobody: the outputs are held and Safe is requested. The campaign group `common_mode` runs with it. |
-| `--phases` | Keep the mission phase and the WARM role (ADR-023, `docs/MISSION_PHASES.md`): the manager starts in power-up, `phase` changes it (refused if fewer computers vote than the new phase's minimum), `warm` rests a computer, and the `disable` tiers follow the phase (plain above the nominal, an ARM below it, refused below the minimum). Below the minimum is reported, never acted on. The summary then prints `phase`, `warm` and `below_minimum_frames`. |
+| `--phases` | Keep the mission phase and the WARM role (ADR-023, `docs/design/MISSION_PHASES.md`): the manager starts in power-up, `phase` changes it (refused if fewer computers vote than the new phase's minimum), `warm` rests a computer, and the `disable` tiers follow the phase (plain above the nominal, an ARM below it, refused below the minimum). Below the minimum is reported, never acted on. The summary then prints `phase`, `warm` and `below_minimum_frames`. |
 | `--sensor-split` | Judge each IMU's gyro and accelerometer pair apart from its computer (ADR-020 case 1, TS-15): a bad IMU is excluded from the sensor consensus and its computer stays in the command vote. The summary then also prints `slatch.X`, `sstate.X` and `sstrikes.X` per IMU channel, and the `--dump` CSV carries `s_*` columns (valid, latched, probation, disabled, healthy, mode, newly latched, reason per channel). Operator commands address an IMU channel by node 4 to 6. The campaign groups `split_sensor`, `split_command`, `split_pairs` and `split_all` run with it; `python3 -m campaign.ts15` is the TS-15 comparison with and without. |
 | `--policy manual\|auto` | Reintegration policy (default `manual`: only an operator command readmits a node). `auto` also readmits, after the dwell, a node whose first latch looked transient. See [Recovery](#recovery-latch-probation-readmission-and-disabling). |
 | `--expect-latch NODE:FRAME` or `NODE:MIN-MAX` | Node (A/B/C) must have latched at exactly that frame, or within the range (inclusive). Repeatable. |
@@ -283,7 +283,7 @@ from `start` (so `B:corrupt:start=100,period=3,duty=1` damages one frame in thre
 | `jitter` | F44 | Random timing jitter | `us` (1500) | Every frame leaves up to +-`us` microseconds from its slot, random but fixed by `--seed` (1-9000) |
 | `clockdrift` | F45 | A drifting clock | `us_per_frame` (20) | Frames leave `us_per_frame` later each frame, cumulatively (negative = earlier; 1-1000) |
 
-The first twelve kinds are the original set; `scale` onward come from the FMEA gap analysis (`docs/FMEA.md`). Bad values are rejected
+The first twelve kinds are the original set; `scale` onward come from the FMEA gap analysis (`docs/verification/FMEA.md`). Bad values are rejected
 with a message (a NaN, a bit number above 15, `age=0`, an axis of 3, ...) rather than becoming a silent no-op. Bit faults act on the
 16-bit sample before the CRC is computed, which is how a real upset in a sensor register looks: the frame is valid, the data are wrong.
 
@@ -324,7 +324,7 @@ harm, bus load and arbitration starvation, only shows on real CAN hardware.
 | `duplicate` | 102 | sequence errors (the second copy repeats a number) | duplex |
 | `replay` (age 3) | 102 | stale data: vote + digest | duplex |
 | `seqstuck` | 103 | sequence errors | duplex |
-| `early` (6000 us) | 101 | the gyro and accel frames arrive in the *previous* frame's window carrying the next frame's number: sequence errors (this used to be invisible; ADR-018). Up to about 4.5 ms early (e.g. `us=4500`) the frame is still in its own window with the right number: not detected until arrival times are checked (`docs/DEFERRED.md`) | duplex |
+| `early` (6000 us) | 101 | the gyro and accel frames arrive in the *previous* frame's window carrying the next frame's number: sequence errors (this used to be invisible; ADR-018). Up to about 4.5 ms early (e.g. `us=4500`) the frame is still in its own window with the right number: not detected until arrival times are checked (`docs/design/FUTURE_WORK.md`) | duplex |
 | `jitter` (3000 us) | 106 | missing frames (some frames miss the 7 ms vote) | duplex |
 | `clockdrift` (+40 us/frame) | 144 | the command frame crosses the 7 ms vote deadline once the drift reaches about 1.7 ms: vote + digest | duplex |
 | `corrupt` at 1 frame in 3 (`period=3,duty=1`) | 112 | the leaky count ("intermittent fault"); 3-of-5 alone never fills | duplex |
@@ -344,7 +344,7 @@ A Safe request is *sticky*: it stays until an operator clears it (`clear_safe_re
 
 ## Recovery: latch, probation, readmission and disabling
 A node that latches is out of the vote, but it is not necessarily gone for good. The life cycle (ADR-010; state diagram
-in `docs/ARCHITECTURE.md`) is **Healthy → Latched → Probation → Healthy**, or **→ Disabled**:
+in `docs/design/ARCHITECTURE.md`) is **Healthy → Latched → Probation → Healthy**, or **→ Disabled**:
 
 1. **Latched:** excluded from the vote; a *strike* is counted against it. It must wait out a **dwell**: 50 frames (0.5 s) after a first, transient-looking latch (missing or damaged frames, one vote episode), 200 frames (2 s) after a digest mismatch, a stuck or intermittent node, and after every repeat latch.
 2. **Probation:** starts when the dwell is over *and* it is asked: by an operator command (default), or automatically
@@ -379,7 +379,7 @@ A frame with a wrong tag, or a counter that is not 1 to 32 ahead of the last acc
 | `disable B` | Exclude B for the rest of the run. **Plain** while it leaves at least two healthy nodes (Triplex to Duplex) or if B is not voting; **needs an ARM** to leave one voter (Duplex to Simplex); removing the **last voter** needs an ARM and is reported `CRITICAL` | `needs an ARM frame first` |
 | `clear-disabled B` | Maintenance: disabled → latched, strikes cleared. **Always needs an ARM** | B is not disabled; no ARM |
 | `clear-safe` | Lift a sticky Safe request. **Always needs an ARM** | (`already done` if none); no ARM |
-| `warm B` | Rest B as WARM (docs/MISSION_PHASES.md): it leaves the vote, is judged by the shadow vote every frame and stays ready; `reintegrate B` promotes it by the probation criteria. Same tiers as `disable` (with `--phases` those of the phase) | B is not a healthy voter; the phase minimum; no ARM below the nominal |
+| `warm B` | Rest B as WARM (docs/design/MISSION_PHASES.md): it leaves the vote, is judged by the shadow vote every frame and stays ready; `reintegrate B` promotes it by the probation criteria. Same tiers as `disable` (with `--phases` those of the phase) | B is not a healthy voter; the phase minimum; no ARM below the nominal |
 | `phase ascent` | Change the mission phase (only with `--phases` / `CONFIG_TFC_PHASES`). Never needs an ARM | fewer healthy voters than the new phase's minimum (`the mission phase needs more computers`) |
 | `noop` | Changes nothing and needs no ARM; it is answered like any command, to test the command path end to end | (never; a stale counter is dropped as a replay) |
 
@@ -645,7 +645,7 @@ Same traffic generator, same faults, same `core/` decision code. The differences
 ## Fault campaign: every fault, many inputs, safety properties checked on every frame
 `campaign/` (this directory) runs thousands of scenarios through the real `core/` code and checks properties that must
 always hold. The methodology, the properties, the measured response of every fault kind and the edge cases found are in
-[`docs/FAULT_CAMPAIGN.md`](../docs/FAULT_CAMPAIGN.md). In short: a *scenario* is a set of faults (kind, node, start frame,
+[`docs/verification/FAULT_CAMPAIGN.md`](../docs/verification/FAULT_CAMPAIGN.md). In short: a *scenario* is a set of faults (kind, node, start frame,
 magnitude, duration, intermittency), operator commands, a redundancy context (Triplex, or Duplex/Simplex made by dropping
 nodes) and a seed; an *oracle* is a property checked on the per-frame CSV from `tfc_replay --dump`.
 
@@ -655,7 +655,7 @@ export TFC_REPLAY_BIN=$PWD/../build/rel/tfc_replay
 python3 -m campaign.run --list                                   # the groups and their sizes
 python3 -m campaign.run --out /tmp/campaign.jsonl                # everything (about 11,300 scenarios, 2 minutes on 12 cores)
 python3 -m campaign.run --group bias_gyro --group phase_sweep    # only some groups (repeatable); --limit N for a quick look
-python3 -m campaign.report /tmp/campaign.jsonl bias_gyro drift   # the Markdown tables of docs/FAULT_CAMPAIGN.md, plus response curves
+python3 -m campaign.report /tmp/campaign.jsonl bias_gyro drift   # the Markdown tables of docs/verification/FAULT_CAMPAIGN.md, plus response curves
 python3 -m campaign.mutate                                       # does the campaign notice deliberate bugs in core/? (about 90 minutes)
 ```
 | Flag | Meaning |
@@ -669,8 +669,8 @@ python3 -m campaign.mutate                                       # does the camp
 | `--strict` | Exit status 1 if any anomaly was raised (CI uses this). Without it the status is 0 and the anomalies are only printed and stored. |
 
 With `--strict` the exit status is 1 if any scenario raised an anomaly. Two further tools prove the *tests* can fail:
-`python3 tools/mutation/run_unit.py` (72 deliberate bugs in `core/`, each must be caught by the C++ tests) and
-`python3 -m campaign.mutate` (the same bugs against this campaign). The decision hash in the results makes a refactor
+`python3 tools/mutation/run_unit.py` (390 deliberate bugs in `core/` and `supervisor/`, each must be caught by the C++ tests) and
+`python3 -m campaign.mutate` (the 58 of them that this campaign can see, against this campaign). The decision hash in the results makes a refactor
 provable: run the campaign before and after, and the hashes of every scenario must be identical.
 
 ## Tests
@@ -683,14 +683,16 @@ python3 -m unittest tests.test_live_fc -v                   # only the live FC-A
 |---|---|
 | `tests/test_protocol.py` | CRC, golden frames generated by the C++ code (incl. SYNC), every single-bit flip detected, decode |
 | `tests/test_peers.py` | Healthy traffic and schedule, every fault's effect on the wire, fault-spec parsing, logs, follow-SYNC logic |
-| `tests/test_replay.py` | Peers -> log -> **C++ `tfc_replay`**: every fault kind through the real `core/` code against the requirements; the node life cycle (`NodeLifeCycle`): readmission, refusal by shadow vote, strikes and disabling, auto policy, `reboot`, `late`, intermittent (leaky count) |
-| `tests/test_faults_fmea.py` | The 19 fault kinds added by the FMEA gap analysis: what each puts on the wire, every bad parameter rejected, `record` ordering and truncation, and a hash proving the first thirteen kinds' traffic did not change |
-| `tests/test_replay_fmea.py` | The same 19 kinds through the real `core/` code (latch frames, reasons, modes), total-loss recovery, the Duplex frozen-command case and the three-way digest split |
-| `tests/test_live_fc.py` | The **real FC-A firmware** against the peers on `vcan0`: healthy run with no latch and no CRC/sequence/vote/digest alarms, bias isolated at about fault+2, digest and command faults labelled, babble raises the bus alarm without blaming a node, a transient fault followed by an operator reintegration end to end, a still-faulty node failing probation, an intermittent node isolated by the leaky count, silence within 3 frames (tolerant of timing jitter on busy machines) |
-| `tests/test_docs.py` | Fails if this README stops documenting a flag, fault kind or fault option |
+| `tests/test_replay.py`, `tests/test_replay_fmea.py`, `tests/test_faults_fmea.py` | Peers -> log -> **C++ `tfc_replay`**: every fault kind through the real `core/` code against the requirements; the node life cycle; the phases and the WARM role (`ReplayPhases`) |
+| `tests/test_live_fc.py`, `test_live_triplex.py`, `test_live_closed_loop.py` | The **real firmware** on `vcan0`: one flight computer against the peers; three computers with the sync master killed; the closed loop with the simulator and ACT through max-Q |
+| `tests/test_live_resync.py`, `test_live_split.py`, `test_live_release.py` | State resynchronisation after withheld frames, the sensor split with a biased IMU, mixed releases (hold and ask) |
+| `tests/test_live_launch.py`, `test_live_phases.py`, `test_live_act_safe.py`, `test_live_simd_edges.py`, `test_live_pico_stream.py` | The launch sequence (scrub, dying master, the `T0` edge), phases and WARM, ACT's hardware Safe line, the simulator's edge cases, the platform stream |
+| `tests/test_launch_cli.py`, `test_pico_link.py`, `test_timecorr.py`, `test_bench_tools.py`, `test_compat_gate.py`, `test_release_record.py` | The launch checklist with a scripted bus, the Pico link, time correlation, the bench tools (bus loss, jitter, clock correlation), the compatibility gate, the release record |
+| `tests/test_ts17.py` | The arithmetic behind the TS-17 decision |
+| `tests/test_docs.py`, `tests/test_docs_consistency.py` | Fails if this README stops documenting a flag, fault kind or fault option; fails on a broken link, a document missing from the index, a missing status line or a wrong section number in `docs/` |
 
 `ctest --test-dir ../build/host` runs the same suite (`peers_e2e`). Replay tests skip if `tfc_replay` is not
-built; live tests skip unless `vcan0` exists and `build/native_sim/zephyr/zephyr.exe` is built (or `TFC_FC_BIN`).
+built; live tests skip unless `vcan0` exists and their images are built (`tools/bench/sil_triplex.sh`; `firmware/README.md`).
 
 ## Using it as a library
 ```python
@@ -709,20 +711,9 @@ bus = B.SocketCanBus("vcan0"); B.run_realtime(Scenario([1, 2]), bus, 100)   # or
 `Scenario.frames(k)` returns frame `k`'s traffic; requesting a later frame fast-forwards deterministically,
 going backwards needs `reset()`.
 
-## Limits and what is not covered
+## Limits of these tools
+The system's limits are in `docs/LIMITATIONS.md`; these are the tools'.
 - **Not real-time:** Python on desktop Linux gives no latency guarantee; the lateness it prints is for information.
-- **Synthetic digest:** the peers' estimator-state digest is a function of the command and frame number (FC-A's
-  simulated IMU computes the same function in C++ bit for bit). Checking a real estimator's digest needs M3.
-- **Undefined payloads:** heartbeat (`0x400+n`) and actuator-output (`0x300`) frames are not defined in
-  `protocol.hpp` yet, so the peers do not send them.
-- **Every flight computer decides alone:** there is no agreement between flight computers on a node's state, so two of
-  them could hold different views (membership agreement is later work). FC-A also keeps judging if *it* is the one voted out.
-- **The leaky-count constants are tuned on a simulation** of frame-level faults (ADR-013); real error rates will differ and
-  must be re-tuned from measurements on the rig. Sparse trouble (one bad frame in 5 or fewer) is deliberately left alone.
-- **Total loss is recoverable, with at least two candidates** (ADR-014): when no node is healthy the probationers judge each other,
-  which needs two of them to agree. A single surviving candidate has no reference and waits; that case needs a restart.
-- **Ground-command security is bench-grade** (ADR-019): the default key is the public SipHash test key, there is no key provisioning, the tag comparison is not constant-time and the uplink itself is not modelled; fine for a bench, not for a flight uplink (`docs/DEFERRED.md`).
-- **A frame a few milliseconds early inside its own window is not seen**: frames carry SYNC's frame number, so whole-frame phase errors are, but the arrival-time check against the slot is deferred until the board exists (`docs/DEFERRED.md`).
+- **Synthetic digest:** the peers' estimator-state digest is a function of the command and frame number (a scripted firmware image computes the same function in C++ bit for bit). Checking a real estimator's digest is the closed loop's job (three firmware images with the flight function).
+- **The peers send sensor and command frames only:** no heartbeat, state share or resync frames, so a flight computer listening to them sees no release, no shares and no resync (the live tests with several firmware images do).
 - **Bus effects:** arbitration, bus load, babbling's real harm, bus-off and wiring faults need hardware.
-- **FC-A only:** the firmware implements node A, the sync master. Firmware for B and C and sync-master takeover
-  (F15) are not built; until then B and C are always the virtual peers.

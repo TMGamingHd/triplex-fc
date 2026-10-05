@@ -1,7 +1,7 @@
-# Supervisor ("lizard brain"): proposal
+# Supervisor ("lizard brain")
 
-> Status: **accepted 4 Oct 2026 as SUP-Lite** (ADR-022); SUP-Full stays an upgrade. Nothing here is built. Every number is a proposal to be confirmed on the rig.
-> The order must include a second Pico 2, a TCXO clock module and resistors before it closes (M0, 6 Oct 2026); see section 9.
+> Status: **built on the host and in a Pico 2 application, not run on a board** (ADR-022, SUP-Lite; reviewed 5 Oct 2026). The decision logic is `supervisor/include/sup/` (host-tested, mutation-tested, 100 % line coverage) and `firmware/supervisor` builds for `rpi_pico2/rp2350a/m33`;
+> the parts arrive on 9 Oct. SUP-Full stays an upgrade. Every number is a proposal to be confirmed on the rig. Section 12 says what is built where.
 
 ## 1. What it is and why
 
@@ -46,7 +46,7 @@ are marked as Full-only. The Pico 2 has no CAN controller, which is why Lite has
 parts sheet means every input line needs an external pull-down of 8.2 kOhm or less.
 
 ## 3a. Clock
-> Extended 4 Oct 2026 (ADR-029, `docs/design/MISSION_CLOCK.md`): the supervisor keeps the **clock of record**, mission elapsed time across resets and years, on a battery-backed oscillator, correlated against the PC's UTC, and gives time to the nodes by a pulse per second and a one-way serial line. The paragraph below is the original frame-clock check.
+> Extended 4 Oct 2026 (ADR-029, `docs/design/MISSION_CLOCK.md`): the supervisor keeps the **clock of record**, mission elapsed time across resets and years, on a battery-backed oscillator, correlated against the PC's UTC. (The first idea, giving time to the nodes by a pulse per second and a one-way serial line, is outside v1: ADR-029 as amended.) The paragraph below is the frame-clock check.
 
 The supervisor's reference needs to be better than the nodes' (the Nucleo's crystal is in the tens of ppm). A TCXO real-time-clock
 module such as a DS3231 (specified at about 2 ppm at room temperature, with a 32.768 kHz output; **price and exact figures not checked**,
@@ -67,18 +67,20 @@ Per flight computer (A, B, C) and for ACT:
 
 For each IMU, in the stretch of ADR-020 (ring re-homing, after S4): one `ADOPT` line (SUP -> the IMU's bus switch and its backup host). Not built in v1; the pins are reserved.
 
-For the launch sequence (ADR-028, proposed): one `T0` line from the supervisor to every flight computer, asserted when the supervisor decides T-zero; the sync master latches it. The supervisor also keeps a mission clock from that edge and checks the system's mission time against it. It is not the runtime source of mission time (`LAUNCH_SEQUENCE.md` section 3).
+For the launch sequence (ADR-028): one `T0` line from the supervisor to every flight computer, a 50 ms pulse asserted when the supervisor reaches T-zero; the sync master takes a debounced rising edge in the last second of its own countdown as T-zero (`SyncClock::t0_line`; the Nucleo overlay puts the input on PC5, CN10 pin 6, to be checked against ST's user manual before wiring). The supervisor also keeps a mission clock from that edge and checks the system's mission time against it. It is not the runtime source of mission time (`LAUNCH_SEQUENCE.md` section 3).
+
+For the hardware overrides (ADR-027): six read-only **sense inputs** (H1 E-stop, H2 FORCE-SAFE, H3 PLATFORM-LEVEL, H4 INJECTOR-DISARM, H5 SUPERVISOR-DISARM, H6/H7 any node power-kill), debounced for 50 ms. A sense line is never an input to a decision about a unit; its only effect is that `launch` and `t0` are refused while an override is engaged until the operator types `override-ok` (the guard against mode confusion, G5), and that the overrides not yet seen engaged and released this session are listed when a countdown starts (HWO-007). `CONFIG_TFC_OVERRIDE_LINES_FITTED` says which are wired.
 
 For ACT, two more: `SAFE` (SUP -> ACT, a hardware "enter Safe now") and, only if a second ACT is built (ADR-023), `SEL` (SUP -> the
 output selector). To the PC: one USB serial port (the hardware commands, section 6, and telemetry).
 
-About 17 of the Pico's 26 GPIO. The 4 spare channels of the second relay module in the parts list (8 channels bought, 4 used for the
+All 26 of the Pico's GPIO are used (4 `FRAME`, 4 `KICK`, 4 `NRST`, 4 `PWR`, `SAFE`, `T0`, two for the RTC's I2C, six override sense inputs): GP2 to GP5, GP6 to GP9, GP10 to GP13, GP14 to GP17, GP18, GP19, GP20 and GP21, GP22, GP26, GP27, GP28, GP0 and GP1. The 4 spare channels of the second relay module in the parts list (8 channels bought, 4 used for the
 injector) can carry the `PWR` lines, so no relay parts are added. The ELEGOO module's inputs are active-low and a floating pin must not
 pull a relay in: the supervisor's `PWR` pins need external pull-ups to 3.3 V (and the check at 3.3 V drive in the compatibility audit,
 item 7, applies).
 
-**Channel allocation (decided 4 Oct 2026, ADR-026; `HARDWARE_PARTS.md` item 1).** The two relay modules give 8 channels: 4 for the injector's power cuts (A, B, C, ACT) and 4 for these `PWR`
-lines. The parts sheet also counts those four as the injector's sensor-line and bus-stub faults; both uses cannot have them, so a **third relay module** (6.99 USD) is proposed for the sensor
+**Channel allocation (decided 4 Oct 2026, ADR-026; `HARDWARE_PARTS.md` section 7, item 1).** The two relay modules give 8 channels: 4 for the injector's power cuts (A, B, C, ACT) and 4 for these `PWR`
+lines. The parts sheet also counts those four as the injector's sensor-line and bus-stub faults; both uses cannot have them, so a **third relay module** (6.99 USD, added to the order: check the confirmation) carries the sensor
 and bus faults. Each relay bank's coil supply gets a disarm switch (`HARDWARE_OVERRIDE.md`, H4 and H5), so no program can cut a node when the switch is open.
 
 The fault injector keeps its own relays. Injected power cuts therefore stay a test action, and the supervisor's actions stay a protection
@@ -100,8 +102,7 @@ will try its resets and power-cycles, and will give up after the limit in sectio
 
 ## 6. Hardware commands (USB serial, executed without any flight computer)
 
-`reset X`, `cycle X`, `hold X`, `release X` (X is A, B, C or ACT), `safe-now` (asserts the `SAFE` line), `sel 1|2` (only with a second ACT), `adopt X` / `unadopt X` (only with the ring re-homing: hold the computer that hosts IMU X in reset, then assert or release its `ADOPT` line),
-`status`. Each is answered and logged with the supervisor's time. There is no authentication: the supervisor's USB port is a physical
+`reset X`, `cycle X`, `hold X`, `release X` (X is A, B, C or ACT), `safe-now` and `safe-clear` (assert and release the `SAFE` line), `launch` and `scrub` (the supervisor's own countdown), `t0` (T-zero now, a bench shortcut), `override-ok` (accept the overrides that are engaged), `time` (the counter, the RTC and MET, for the PC's correlation), `status`. (`sel` and `adopt` exist only with a second ACT and the ring re-homing, which are outside v1.) Each is answered and logged with the supervisor's time. There is no authentication: the supervisor's USB port is a physical
 port on the bench, and the PC is a trusted peer (ADR-019's key protects the bus, not this). This is the rig's equivalent of the hardware
 commands in the lecture that bypass flight software.
 
@@ -127,10 +128,10 @@ All prices are from the parts sheet (checked 2026-09-29) unless marked.
 
 | Change | Cost | Note |
 |---|---|---|
-| Second Pico 2 (SUP-Lite) | 6.00 | **Added to the order 4 Oct 2026.** The existing Pico is the fault injector and must stay separate |
-| TCXO RTC module | not checked, small | **Added to the order 4 Oct 2026**; DS3231 or similar; confirm the output and the price |
+| Second Pico 2 (SUP-Lite) | 6.00 | **Ordered (check the confirmation).** The existing Pico is the fault injector and must stay separate |
+| TCXO RTC module | not checked, small | **Ordered (check the confirmation)**; DS3231 or similar; confirm the output and the price |
 | Resistors (pull-ups, pull-downs) | owned (owner, 4 Oct 2026) | |
-| Relay channels | 6.99 | the 4 spare channels of module 2; **a third module is added** for the injector's sensor and bus faults (ADR-026) |
+| Relay channels | 6.99 | the 4 spare channels of module 2; **a third module** (check the order) for the injector's sensor and bus faults (ADR-026) |
 | **SUP-Full instead of Lite** | +18.08 (Nucleo 20.13 + CAN Pal 3.95, in place of the 6.00 Pico) | Needs a CAN tap on the backbone board |
 
 The sheet's budget page already reads 677.81 USD (with the 8% allowance) against a 600 USD ceiling, over by 77.81. Anything added widens
@@ -138,10 +139,8 @@ that gap; the decision on what to cut is yours. The cost of this item is small, 
 
 ## 10. Build and test plan
 
-Stage S2b (after FC-A and ACT work): the supervisor on a perfboard with the lines to FC-A and ACT. Then each node as it joins. Tests: F57
-(partial hang), F58 (a hung node), F66 (the supervisor failing), F67 (a slowly drifting node clock), F68 (a loop of resets). The
-supervisor firmware is separately built, separately tested on the host (its decision table is plain logic and is tested like `core/`),
-and its source is kept out of `core/`.
+Stage S2b (after FC-A and ACT work): the supervisor on a perfboard with the lines to FC-A and ACT (`procedures/P-S2-03-supervisor.md`). Then each node as it joins. The tests that exist are on the host (the rows F57, F58, F66, F67 and F68 of the fault matrix); the
+rig repeats them with the real lines. The supervisor's firmware is built and tested separately, and its source is kept out of `core/`.
 
 ## 11. What was deliberately left out
 
@@ -150,3 +149,13 @@ and its source is kept out of `core/`.
 - **Transmitting on the bus** (a TIME frame, health frames). Would make it able to babble. Revisit once it has run for a while.
 - **Authenticated hardware commands.** Not needed on a bench.
 - **Redundant supervisors.** The supervisor is fail-passive by design.
+
+## 12. What is built where
+| Part | File | Tested by |
+|---|---|---|
+| The decision logic (ladder, boot sequencing, period and phase checks, T-zero, countdown, status text) | `supervisor/include/sup/supervisor.hpp` | `tests/test_supervisor.cpp` (the `sup_*` tests) with a model of four units that boot, hang and obey `NRST` and the relay |
+| The command parser | `supervisor/include/sup/commands.hpp` | `sup_parse_every_command_unit_and_error` |
+| The mission clock, its record and the plausibility check | `supervisor/include/sup/mission_clock.hpp` | `tests/test_supervisor_clock.cpp` |
+| The DS3231 conversion | `supervisor/include/sup/rtc.hpp` | `sup_rtc_converts_the_seven_registers_to_seconds_since_2000` |
+| The override sense lines | `supervisor/include/sup/overrides.hpp` | `overrides_*` in `tests/test_supervisor.cpp` |
+| The Pico 2 application (GPIO edges, USB console, RTC on I2C, the flash record, the watchdog) | `firmware/supervisor` | Builds; `tools/check_elf.sh`; not run on a board |

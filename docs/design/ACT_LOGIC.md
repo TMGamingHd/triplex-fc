@@ -1,8 +1,7 @@
 # Actuator node logic
 
-> Status: **built and tested on the host** (`core/include/tfc/act.hpp`, `act_ground.hpp`, `tests/test_act.cpp`, `tests/test_act_ground.cpp`) **and running as an application**
-> (`firmware/act`, Zephyr; native_sim on `vcan0` and the Nucleo; `sim/tests/test_live_triplex.py`). Per ADR-024, ACT has **no servo output**: its output is the voted gimbal command on the bus (`0x300`),
-> and its Safe action is the value of that command.
+> Status: **built** (reviewed 5 Oct 2026): the logic is `core/include/tfc/act.hpp`, `act_ground.hpp` (host-tested with a fuzz and mutants) and the application is `firmware/act` (Zephyr: `native_sim` on `vcan0` and the Nucleo; live tests with real instances). Per ADR-024, ACT has **no servo output**: its output is the voted gimbal command on the bus (`0x300`),
+> and its Safe action is the value of that command. **Not run on a board.**
 
 ## What it does, each frame
 1. **Votes** the three flight computers' commands (frames `0x200+n`), pitch and yaw separately, with `vote3` (mid-value select, tolerance 0.05 degree). A node counts only if
@@ -44,7 +43,14 @@ Ground commands go through `ActGround`: the same tag, counter window and ARM-the
 no-init RAM (`ActRecord`). Live, with three flight-computer instances: Standby goes to Nominal after 100 good frames (frame 103), a computer that dies is excluded at the same frame the flight computers latch it,
 ACT keeps flying on two and then on one, and with none it enters Safe on lost votes.
 
+## The pad against flight
+With `CONFIG_TFC_LAUNCH_SEQUENCE` ACT reads the mission frame in SYNC every frame (`SyncClock`, observer) and tells `ActLogic` whether the vehicle is on the pad (not launched, or in the countdown): a Safe entered there goes to neutral in the frame of entry; in flight it freezes, holds and ramps. The flag is read when Safe is entered, not afterwards. Without the option ACT treats the vehicle as always in flight (the flight computers then send mission frame 0 for ever, which would otherwise read as the pad).
+
+## The supervisor's lines
+The application drives `FRAME` (rises at the start of every frame) and `KICK` (rises only from the end-of-frame path, after the vote ran, at the one place the watchdog is serviced: `tfc::ProgressMonitor`, TFC-FDIR-038) and reads `SAFE`, the hardware "enter Safe now" from the supervisor or the FORCE-SAFE switch
+(`design/SUPERVISOR.md`, `design/HARDWARE_OVERRIDE.md`). On the Nucleo they are PC8, PC9 and PC6 (the harness's pins, to check against ST's user manual: `firmware/act/boards/nucleo_g474re.overlay`); on `native_sim` there are no lines, and `CONFIG_TFC_TEST_SAFE_LINE_AT_FRAME` stands in for the SAFE line in the live test
+`sim/tests/test_live_act_safe.py` (ACT goes from NOMINAL to SAFE by itself with the cause "the SAFE line", holds, and ramps to neutral).
+
 ## Not yet
-The supervisor's `KICK`, `FRAME` and `SAFE` lines in the app (`hardware_safe()` is wired to nothing); the hardware test of a real ACT reset (F17); an oracle S5 for the campaign (the output step bound) once the
-campaign drives ACT; a live test of the heartbeat-driven Safe request and of `clear-safe` (needs a fault that makes the firmware's flight computers request Safe: fault injection in the firmware or the Pico, P1-5 and later;
-the logic is covered on the host).
+The hardware test of a real ACT reset (F17: the servo's behaviour with no signal decides what ACT's output should be after one, `P-M1-01` step 10); an oracle S5 for the campaign (the output step bound) once the campaign drives ACT; a live test of the heartbeat-driven Safe request and of `clear-safe` with
+the firmware's flight computers (needs a fault that makes them request Safe: fault injection in the firmware or the Pico; the logic is covered on the host); the coast phase's "freeze only" (`MISSION_PHASES.md` section 5).

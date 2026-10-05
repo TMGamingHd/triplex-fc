@@ -1,6 +1,7 @@
-# Trade studies: plan
+# Trade studies
 
-> Status: **plan**. None of the studies below is done except where a section says what already exists. Numbers are proposals. The point of
+> Status: **plan, with results where a study is done** (reviewed 5 Oct 2026). Done: TS-0, TS-15, TS-16, TS-17 (the paper part), TS-23; TS-18 is partly done (its host levels). Every other study is a plan whose data the rig or the closed loop will provide, and **none of them blocks a
+> decision**: every ADR is accepted, and the studies tune parameters (TS-1, TS-4), compare options on the rig (TS-5, TS-8, TS-9) or are short write-ups. Numbers are proposals. The point of
 > this page is to choose studies that (a) the repository can answer with its own data, (b) end in a decision someone could disagree with,
 > and (c) are things an avionics or flight-software interviewer will want to argue about.
 
@@ -30,32 +31,32 @@ hypothesis, if there is one.
 Appeal: how likely an avionics interviewer is to want to discuss it (3 = very). Needs: SIL means it can run now on the simulator and the
 campaign; HIL needs the rig.
 
-| ID | Study | Question | Needs | Appeal | Effort |
-|---|---|---|---|---|---|
-| TS-0 | Supervisor build: Lite or Full | Which supervisor do we order by 6 Oct? | analysis | 2 | small, **urgent** |
-| TS-1 | Persistence and detection tuning | What M-of-N and leaky-count settings give the best detection time for an acceptable false-isolation rate? | SIL, then HIL timing data | 3 | medium |
-| TS-2 | Redundancy architecture, availability against coverage | Which architecture (simplex with cold spare, duplex, triplex, triplex plus monitor, self-checking pairs) loses the output least, once coverage and common cause are counted? | model + campaign | 3 | medium |
-| TS-3 | Release diversity: how to arbitrate between releases | Vote only, hold and ask, or automatic takeover? | SIL (new fault group) | 3 | medium |
-| TS-4 | Safe action in the closed loop | Hold, null, null after a hold, depower: which keeps the vehicle recoverable? | SIL toy model now, 6-DOF sim later | 3 | medium |
-| TS-5 | Bus transport | Classic CAN, CAN FD, a second bus, or Ethernet for the exchange? | analysis + HIL | 3 | medium |
-| TS-6 | Reintegration policy | Manual, automatic for transients, or automatic for all; dwell and probation lengths? | SIL | 2 | small |
-| TS-7 | Sensor strapping | None, health split, ring re-homing, smart IMU nodes? | model | 2 | small |
-| TS-8 | Time and schedule | Where to place the vote deadline and the slots; how much slack? | HIL | 3 | medium |
-| TS-9 | Watchdog and supervision coverage | Which hang and reset faults does each watchdog arrangement catch? | HIL | 3 | medium |
-| TS-10 | Digest and tag design | How many bits for the state digest and the command tag? | analysis | 1 | small |
-| TS-11 | Duplex attribution | How should a Duplex disagreement be attributed (continuity, analytical redundancy, none)? | SIL, estimator | 2 | large |
-| TS-12 | Autonomy against ground command | Which responses are autonomous and which need the operator? | analysis | 2 | small |
-| TS-13 | Toolchain and RTOS | C++17 subset against C or Rust; Zephyr against bare metal | analysis (partly decided in ADR-001, ADR-002) | 2 | small |
-| TS-15 | Sensor and compute health split: the degradation rule | Once a sensor channel is excluded, how should the computer degrade, and what does the split buy? | SIL (campaign groups, after the split) | 3 | medium, **before S3** |
-| TS-16 | Keeping replicated estimators together on a lossy bus | When two nodes receive different sets of sensor frames in one frame their estimators diverge for good: agree on inputs, resynchronise state, or tolerate the digest mismatch? | SIL, live triplex | 3 | medium, **before the closed loop is relied on** |
-| TS-17 | Hardware overrides: how many switches, which, and what can go wrong | When every program is down or wrong, which manual hardware overrides are worth their cost and their own failure modes? | paper FMEA, then HIL on the rig | 3 | medium, **before the override parts are ordered** |
-| TS-18 | Testing hardware-facing firmware without the hardware | Fake board under the real loop, the host emulation of the board's drivers, an instruction-set emulator, or the board only: which finds how many bugs per hour of work, and where does each go blind? | seeded bugs and mutation scores | 3 | small, **data already exists** |
-| TS-19 | The injector's cut semantics | A cut that ends by itself (today), a latched cut with an explicit restore, or a cut that needs a heartbeat: which is safest when the PC dies and still allows the long outages the supervisor's tests need? | HIL scenarios | 2 | small, before the supervisor tests |
-| TS-20 | The platform's behaviour when commands stop | Hold then level (today), hold for ever, level at once, stop the pulse and go limp, hold then stop: which has the smallest mechanical shock and the least confusing view for the IMUs and the flight computers? | rig measurements | 2 | medium, after E1 to E6 of `PICO_TESTS.md` |
-| TS-21 | Where the mission clock lives | The supervisor as the continuous source, the supervisor deciding T-zero with the flight computers as the clock (hybrid), mission time in SYNC from the sync master alone, or each computer counting for itself: which survives a failure of the supervisor, of the sync master and of a node's link, and keeps every computer on the same schedule? | SIL with fault injection, live triplex | 3 | medium, before the mission time goes into SYNC |
-| TS-22 | The independent time reference | A TCXO RTC, an oven crystal, a GPS-disciplined oscillator, a chip-scale atomic clock, with or without correlation against the PC's UTC: what error does each leave over a run, what does it cost, and what happens when it fails? | bench measurement (Allan variance, drift against NTP and GPS) | 3 | small to medium, after the parts arrive |
-| TS-23 | How often the replicas resynchronise (the period) | Every 10, 20, 50, 100, 200, 500 or 1000 frames: what does the period change in flight survival, the digest check, healing and rejoin time, bus load and the detection of a failing state? | SIL closed loop (`tfc_resync`) | 3 | medium, **before the firmware default is fixed** |
-| TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `FUTURE_WORK.md` section 7 |
+| ID | Study | Question | Needs | Appeal | Effort | Status |
+|---|---|---|---|---|---|---|
+| TS-0 | Supervisor build: Lite or Full | Which supervisor do we order by 6 Oct? | analysis | 2 | small, **urgent** | **Done** (Lite) |
+| TS-1 | Persistence and detection tuning | What M-of-N and leaky-count settings give the best detection time for an acceptable false-isolation rate? | SIL, then HIL timing data | 3 | medium | Plan (SIL now, rig data later) |
+| TS-2 | Redundancy architecture, availability against coverage | Which architecture (simplex with cold spare, duplex, triplex, triplex plus monitor, self-checking pairs) loses the output least, once coverage and common cause are counted? | model + campaign | 3 | medium | Plan |
+| TS-3 | Release diversity: how to arbitrate between releases | Vote only, hold and ask, or automatic takeover? | SIL (new fault group) | 3 | medium | Plan (decides only whether an automatic takeover is added) |
+| TS-4 | Safe action in the closed loop | Hold, null, null after a hold, depower: which keeps the vehicle recoverable? | SIL toy model now, 6-DOF sim later | 3 | medium | Plan (tunes the Safe hold time) |
+| TS-5 | Bus transport | Classic CAN, CAN FD, a second bus, or Ethernet for the exchange? | analysis + HIL | 3 | medium | Plan (rig, after S3) |
+| TS-6 | Reintegration policy | Manual, automatic for transients, or automatic for all; dwell and probation lengths? | SIL | 2 | small | Plan |
+| TS-7 | Sensor strapping | None, health split, ring re-homing, smart IMU nodes? | model | 2 | small | Settled by ADR-020 and TS-15 |
+| TS-8 | Time and schedule | Where to place the vote deadline and the slots; how much slack? | HIL | 3 | medium | Plan (rig) |
+| TS-9 | Watchdog and supervision coverage | Which hang and reset faults does each watchdog arrangement catch? | HIL | 3 | medium | Plan (rig) |
+| TS-10 | Digest and tag design | How many bits for the state digest and the command tag? | analysis | 1 | small | Plan |
+| TS-11 | Duplex attribution | How should a Duplex disagreement be attributed (continuity, analytical redundancy, none)? | SIL, estimator | 2 | large | Plan (`FUTURE_WORK.md` 2.1) |
+| TS-12 | Autonomy against ground command | Which responses are autonomous and which need the operator? | analysis | 2 | small | Plan |
+| TS-13 | Toolchain and RTOS | C++17 subset against C or Rust; Zephyr against bare metal | analysis (partly decided in ADR-001, ADR-002) | 2 | small | Decided in ADR-001 and ADR-002 |
+| TS-15 | Sensor and compute health split: the degradation rule | Once a sensor channel is excluded, how should the computer degrade, and what does the split buy? | SIL (campaign groups, after the split) | 3 | medium, **before S3** | **Done** (option B) |
+| TS-16 | Keeping replicated estimators together on a lossy bus | When two nodes receive different sets of sensor frames in one frame their estimators diverge for good: agree on inputs, resynchronise state, or tolerate the digest mismatch? | SIL, live triplex | 3 | medium, **before the closed loop is relied on** | **Done** (option C) |
+| TS-17 | Hardware overrides: how many switches, which, and what can go wrong | When every program is down or wrong, which manual hardware overrides are worth their cost and their own failure modes? | paper FMEA, then HIL on the rig | 3 | medium, **before the override parts are ordered** | **Paper part done** (option O3); the measured part is on the rig |
+| TS-18 | Testing hardware-facing firmware without the hardware | Fake board under the real loop, the host emulation of the board's drivers, an instruction-set emulator, or the board only: which finds how many bugs per hour of work, and where does each go blind? | seeded bugs and mutation scores | 3 | small, **data already exists** | Host levels done (mutation score); the board levels wait |
+| TS-19 | The injector's cut semantics | A cut that ends by itself (today), a latched cut with an explicit restore, or a cut that needs a heartbeat: which is safest when the PC dies and still allows the long outages the supervisor's tests need? | HIL scenarios | 2 | small, before the supervisor tests | Plan (rig) |
+| TS-20 | The platform's behaviour when commands stop | Hold then level (today), hold for ever, level at once, stop the pulse and go limp, hold then stop: which has the smallest mechanical shock and the least confusing view for the IMUs and the flight computers? | rig measurements | 2 | medium, after E1 to E6 of `PICO_TESTS.md` | Plan (rig) |
+| TS-21 | Where the mission clock lives | The supervisor as the continuous source, the supervisor deciding T-zero with the flight computers as the clock (hybrid), mission time in SYNC from the sync master alone, or each computer counting for itself: which survives a failure of the supervisor, of the sync master and of a node's link, and keeps every computer on the same schedule? | SIL with fault injection, live triplex | 3 | medium, before the mission time goes into SYNC | Settled by ADR-028 (the hybrid); the SIL data are the live launch tests |
+| TS-22 | The independent time reference | A TCXO RTC, an oven crystal, a GPS-disciplined oscillator, a chip-scale atomic clock, with or without correlation against the PC's UTC: what error does each leave over a run, what does it cost, and what happens when it fails? | bench measurement (Allan variance, drift against NTP and GPS) | 3 | small to medium, after the parts arrive | Plan (after the parts arrive) |
+| TS-23 | How often the replicas resynchronise (the period) | Every 10, 20, 50, 100, 200, 500 or 1000 frames: what does the period change in flight survival, the digest check, healing and rejoin time, bus load and the detection of a failing state? | SIL closed loop (`tfc_resync`) | 3 | medium, **before the firmware default is fixed** | **Done** (period 100) |
+| TS-14 | Learned against deterministic anomaly detection | Does a learned detector, run in shadow mode on the telemetry, beat the 3-of-5 plus leaky-count design on detection time or false alarms, and what does it cost to verify? | SIL, later HIL (after the telemetry exists) | 3 | medium; **later step**, `FUTURE_WORK.md` section 5 | Plan (`FUTURE_WORK.md` 5) |
 
 Recommended order, by value and by when the data exist: **TS-0** now; **TS-1, TS-2, TS-3, TS-4** on the simulator in October and
 November, while the hardware is built; **TS-5, TS-8, TS-9** on the rig after S3; the others as short write-ups.
@@ -312,7 +313,7 @@ What it shows: (1) **a handful of lost frames in a flight makes the digests diff
 
 **Decision (5 Oct 2026, owner: option C with persistence-based detection; ADR-030).** Built on the host and measured (`docs/design/RESYNC.md`): with the resync every 100 frames the 60 s flight that was lost at 1 % frame loss flies (max error 0.55 degree), and still flies at 10 %; a 2 degree state corruption in one computer is healed and reported as one large correction; the digest check counts a mismatch only after a configured persistence. Not yet in the firmware, so not yet on the bus. The expected finding (D with E is not enough for the controller's integrator) was not tested separately: option D alone is ruled out by the first measurement.
 
-**Dependencies and timing.** Needs the fault injector on the bus (P1-5, the Pico, or a host injector) and the runner's closed loop (P1-4d). Before the closed loop is used for the demonstration.
+**Dependencies and timing.** Needs the fault injector on the bus (the Pico, or a host injector) and the runner's closed loop (both built). Before the closed loop is used for the demonstration.
 
 **Talking point.** "I found that replicated estimators diverge permanently on a single lost frame, measured it, and compared four ways of keeping them together."
 
@@ -366,7 +367,55 @@ failures, and every switch is itself a part that can fail to act (a latent loss 
 Expected finding, to be shown or refuted: **O2 + H4** covers every scenario that a person can reach at the bench, and the per-node kill switches of O4 add demonstration and a way to cause F01 without the Pico, but cover no scenario that
 the Nucleo reset buttons, the pluggable stubs and H4 do not already cover; and **testing** the overrides is a larger part of their value than counting them.
 
-**Dependencies and timing.** The paper part needs only `HARDWARE_OVERRIDE.md` and can be done now; it decides the parts to order. The measured part needs the platform, the injector (P1-5) and the supervisor (S2b). Before the override parts are bought.
+
+**Results (5 Oct 2026; the paper part, `cd sim && python3 -m campaign.ts17`).** The judgments of the coverage matrix (which override reaches which scenario, in full or in part) are in `sim/campaign/ts17.py` where they can be argued with; the arithmetic is mechanical (independent overrides, each acting with probability r, a partial cover counting half). SD9, a failing adapter, has no full cover in any option: nothing but a better adapter removes it.
+
+| Scenario | H1 | F | H2 | H3 | H4 | H5 | H6 | H7 |
+|---|---|---|---|---|---|---|---|---|
+| SD1 the PC or simulator hangs | full |  |  | full |  |  |  |  |
+| SD2 the Pico platform driver hangs or runs away | full |  |  | full |  |  |  |  |
+| SD3 ACT hangs or votes wrong | full |  | part | full |  |  |  |  |
+| SD4 all flight computers wrong the same way (a common bug) | full |  | full | full |  |  |  |  |
+| SD5 the supervisor resets a healthy node again and again |  |  |  |  |  | full |  | part |
+| SD6 the injector's relay stays on (a crashed Pico, a failed driver) |  |  |  |  | full |  |  |  |
+| SD7 a node babbles on the bus or hangs it |  | full |  |  |  |  | full |  |
+| SD8 a servo stalls or runs to its stop | full |  |  | part |  |  |  |  |
+| SD9 the node rail droops (relay coils, a failing adapter) |  |  |  |  | part | part |  | part |
+
+| Option | overrides | new cost (USD, unpriced) | full covers per scenario (SD1..SD9) | scenarios with no full cover |
+|---|---|---|---|---|
+| O0 | none | 0 | 0 0 0 0 0 0 0 0 0 | SD1, SD2, SD3, SD4, SD5, SD6, SD7, SD8, SD9 |
+| O1 | H1, F | 0 | 1 1 1 1 0 0 1 1 0 | SD5, SD6, SD9 |
+| O2 | H1, F, H2, H3 | 10 | 2 2 2 3 0 0 1 1 0 | SD5, SD6, SD9 |
+| O3 | H1, F, H2, H3, H4, H5 | 12 | 2 2 2 3 1 1 1 1 0 | SD9 |
+| O4 | H1, F, H2, H3, H4, H5, H6, H7 | 17 | 2 2 2 3 1 1 2 1 0 | SD9 |
+
+P(safe state reached), each override acting with probability r = 0.95:
+
+| Option | SD1 | SD2 | SD3 | SD4 | SD5 | SD6 | SD7 | SD8 | SD9 | mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| O0 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| O1 | 0.95 | 0.95 | 0.95 | 0.95 | 0.00 | 0.00 | 0.95 | 0.95 | 0.00 | 0.63 |
+| O2 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 0.00 | 0.95 | 0.97 | 0.00 | 0.66 |
+| O3 | 1.00 | 1.00 | 1.00 | 1.00 | 0.95 | 0.95 | 0.95 | 0.97 | 0.72 | 0.95 |
+| O4 | 1.00 | 1.00 | 1.00 | 1.00 | 0.97 | 0.95 | 1.00 | 0.97 | 0.86 | 0.97 |
+
+P(safe state reached), each override acting with probability r = 0.5:
+
+| Option | SD1 | SD2 | SD3 | SD4 | SD5 | SD6 | SD7 | SD8 | SD9 | mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| O0 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| O1 | 0.50 | 0.50 | 0.50 | 0.50 | 0.00 | 0.00 | 0.50 | 0.50 | 0.00 | 0.33 |
+| O2 | 0.75 | 0.75 | 0.81 | 0.88 | 0.00 | 0.00 | 0.50 | 0.62 | 0.00 | 0.48 |
+| O3 | 0.75 | 0.75 | 0.81 | 0.88 | 0.50 | 0.50 | 0.50 | 0.62 | 0.44 | 0.64 |
+| O4 | 0.75 | 0.75 | 0.81 | 0.88 | 0.62 | 0.50 | 0.75 | 0.62 | 0.58 | 0.70 |
+
+**Reading.** O1 (what the parts list already has) covers every platform-motion scenario with the E-stop and the babbler with the unpluggable stub, and covers nothing that can cut power wrongly. **O2 adds two overrides and no new scenario**: H2 and H3 are a second and gentler cover of SD1 to SD4 (H3 does not drop the platform limp: the harm of the E-stop, G1), which raises P(safe) from 0.95 to 1.00 there and from 0.50 to 0.75 at a tenth of the reliability. **SD5 and SD6 (the layers that can cut power) need H5 and H4**: only O3 covers them. O4 (the per-node kills and the master switch) raises the mean P(safe) by 0.02 at r = 0.95 and covers nothing that the reset buttons, the stubs and H4 do not.
+
+**Decision (5 Oct 2026): O3**, the smallest option with a program-free full cover of every scenario but SD9: **H1 (the E-stop, on the sheet), H2 FORCE-SAFE, H3 PLATFORM-LEVEL, H4 INJECTOR-DISARM, H5 SUPERVISOR-DISARM**, plus the free controls. About 12 USD of parts (a guarded toggle and two diodes, two DPDT switches and a servo-tester board, two key switches), none priced on a listing and **none in the order placed for 9 Oct**. The expected finding stated before the data ("O2 plus H4 covers every scenario that a person can reach at the bench") was **refuted in one respect**: the supervisor stuck in a reset loop (SD5) needs its own disarm, H5, which O2 plus H4 does not give. H6 and H7 are not built; their sense line is reserved (bit 5 of the supervisor's sense inputs) and unfitted.
+**What stays for the rig:** each override's own failure rate (operated 20 times), the timing from the action to the safe state, the platform's shock at the E-stop and at H3 (G1, G2), a broken wire in turn (`P-HWO-01`). The weights of the criteria (harm, latent failure, independence) were applied as stated above; **testing the overrides matters more than counting them**, which is why the supervisor reports the untested ones.
+
+**Dependencies and timing.** The paper part needed only `HARDWARE_OVERRIDE.md` and is done; it decides the parts to order. The measured part needs the platform, the injector (the Pico) and the supervisor (S2b). Before the override parts are bought.
 
 **Talking point.** "I asked what the system does when all the software is wrong, listed the ways the safety switches could themselves fail, and chose how many to build from that."
 
@@ -522,7 +571,7 @@ The time-error budget is then extrapolated to five years with the measured aging
 
 **Decision rule.** The *longest* period for which (a) no flight is lost at 1 % loss, (b) a digest persistence of 2P + 50 never false-flags at 0.1 % loss and (c) a lost frame is healed, and a restarted computer rejoins, within one probation (1 s). That is **period 100**: (a) holds up to period 1000, (b) holds up to 1000 at 0.1 % (0 of 32), (c) fails from 200 up. If the rig measures a loss rate near 1 % the digest check is only usable at period 20 or below and the rule's (b) should be re-run at that rate; the choice then trades 0.8 % of the bus for a usable digest.
 
-**Decision (5 Oct 2026, proposed): default period 100 frames and a digest persistence of 2P + 50 = 250 frames, both configurable in the firmware (`TFC_RESYNC_PERIOD`), to be revisited with the measured loss of the real bus.** What would change it: a measured loss above about 0.3 % (shorten to 20 to 50); a frame budget on the target that cannot take the burst every second (lengthen); a failing-state fault that drifts rather than jumps (needs a second rule, below).
+**Decision (5 Oct 2026): default period 100 frames and a digest persistence of 2P + 50 = 250 frames, both configurable in the firmware (`TFC_RESYNC_PERIOD`), to be revisited with the measured loss of the real bus.** What would change it: a measured loss above about 0.3 % (shorten to 20 to 50); a frame budget on the target that cannot take the burst every second (lengthen); a failing-state fault that drifts rather than jumps (needs a second rule, below).
 
 **Open question this exposed: slow drift.** Resynchronisation heals a drift below `large_limit / period` per second without a report. A cheap second rule would count how many resyncs *in a row* changed the same computer's state while the others' did not (on a bus with a loss of 0.1 % or less this is rare for a healthy computer, and a drifting one is changed every time), and report it as a bad frame. It was not built: the measured loss rate is needed to set its count. Recorded as a follow-up with the real-bus measurement.
 
@@ -534,13 +583,9 @@ The time-error budget is then extrapolated to five years with the measured aging
 
 | When | Study | Why then |
 |---|---|---|
-| Done 4 Oct | TS-0 | Decided: Lite |
-| Late October, with the split (before S3, 3 Nov) | TS-15 | Chooses the degradation rule that the split implements |
-| October, on the simulator | TS-1, TS-3, TS-6 | Everything they need exists or is a small campaign group; hardware is on order |
-| October to November | TS-2, TS-4 | The model and the toy vehicle are independent of the hardware; TS-4 is re-run on the 6-DOF simulator at M3 |
-| Now (paper), then with the injector and supervisor | TS-17 | The paper part decides which override parts to order; the measured part needs P1-5 and S2b |
-| After S3 (Nov) | TS-5, TS-8, TS-9 | Need the rig |
-| As time allows | TS-7, TS-10 to TS-13 | Short write-ups |
+| Done | TS-0, TS-15, TS-16, TS-17 (paper), TS-23 | Their decisions are in `DECISIONS.md` |
+| October, on the simulator, if time allows | TS-1, TS-3, TS-6 | Everything they need exists or is a small campaign group; they tune parameters and decide nothing structural |
+| On the rig, after S3 (Nov) | TS-5, TS-8, TS-9, TS-17 (measured), TS-4 re-run on the real platform | Need the rig |
+| As time allows | TS-2, TS-7, TS-10 to TS-14, TS-19 to TS-22 | Short write-ups |
 
-M4 (17 Nov to 1 Dec) and M5 (write-up) are where these become the project's argument. Each finished study is one page in `docs/`, one figure,
-and one line in the write-up; **if time runs short, finish fewer studies completely** rather than starting all.
+M4 (17 Nov to 1 Dec) and M5 (write-up) are where these become the project's argument. Each finished study is one page here, one figure, and one line in the write-up; **if time runs short, finish fewer studies completely** rather than starting all.

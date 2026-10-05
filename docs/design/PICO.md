@@ -1,6 +1,6 @@
 # The Pico: platform driver and fault injector
 
-> Status: **built and tested on the host, builds for the board, not run on a board** (P1-5, ADR-026). The logic is in `core/` (`pico_link.hpp`, `platform_driver.hpp`,
+> Status: **built and tested on the host, builds for the board, not run on a board** (ADR-026; reviewed 5 Oct 2026). The logic is in `core/` (`pico_link.hpp`, `platform_driver.hpp`,
 > `injector.hpp`) with host tests; the application is `firmware/pico` (Zephyr, `rpi_pico2/rp2350a/m33`, 59 kB of 4 MB flash, UF2 output); the PC side is
 > `sim/tfc_peers/pico_link.py` and `python3 -m tfc_peers pico`. This is the Pico of the parts sheet (row 4), **not** the supervisor's (a second Pico, `SUPERVISOR.md`).
 
@@ -55,7 +55,7 @@ The numbers are Kconfig options (`firmware/pico/Kconfig`) so a bench measurement
 | GP10, GP11, GP12, GP13 | relay inputs for nodes A, B, C, ACT | active low; **external pull-up to 3.3 V on each**; relay module `VCC` from the Pico's 3V3, `JD-VCC` from the 5 V node rail, jumper removed (parts check item 7) |
 | USB | serial to the PC (CDC ACM, vendor id 0x1209 and product id 0x0001: the open pid.codes ids, for a private bench) | |
 
-Not yet wired: the read-only sense lines of the hardware overrides (HWO-005), which need 4.7 kOhm pull-downs (erratum E9).
+The read-only sense lines of the hardware overrides (HWO-005) are the supervisor's, not this Pico's (`SUPERVISOR.md` section 4).
 
 ## 6. Build, flash, first use
 

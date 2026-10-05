@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Trajectory and gain design for the 6-DOF vehicle (docs/VEHICLE_SIM.md section 7): the nominal ascent with the attitude forced to follow a
+// Trajectory and gain design for the 6-DOF vehicle (docs/design/VEHICLE_SIM.md section 7): the nominal ascent with the attitude forced to follow a
 // pitch program, the program found by iterating until the angle of attack is small (a gravity turn), and the controller gains for each instant
 // from the local divergence a(t) and control effectiveness b(t).
 #pragma once

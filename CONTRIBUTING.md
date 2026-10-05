@@ -35,12 +35,12 @@ Keep branches short-lived (days, not weeks) and scoped to one concern. If a bran
 Imperative, specific, under ~70 characters, optionally prefixed with the area: `core: add slow-drift detector`, `docs: record CAN pin choice`. Because we squash-merge, the **PR title becomes the commit on `main`**, so make it read well.
 
 ## Project-specific rules
-These come from `docs/REQUIREMENTS.md` and are what reviewers check:
-- **`core/` stays portable and follows `docs/CODING_STANDARD.md`:** no heap, no exceptions, no RTTI, no `while`/`goto`/recursion/macros/globals, functions of at most 60 lines, warnings as errors, no `-ffast-math` (TFC-SW-001/002/007/008).
-- **New behaviour needs a test, written first;** a fault-matrix row only moves to *Passing* when its test exists and passes (`docs/FAULT_MATRIX.md`). A change to `core/` must leave the campaign's per-frame decision hashes unchanged unless it is meant to change behaviour (then an ADR says so).
+These come from `docs/verification/REQUIREMENTS.md` and are what reviewers check:
+- **`core/` stays portable and follows `docs/verification/CODING_STANDARD.md`:** no heap, no exceptions, no RTTI, no `while`/`goto`/recursion/macros/globals, functions of at most 60 lines, warnings as errors, no `-ffast-math` (TFC-SW-001/002/007/008).
+- **New behaviour needs a test, written first;** a fault-matrix row only moves to *Passing* when its test exists and passes (`docs/verification/FAULT_MATRIX.md`). A change to `core/` must leave the campaign's per-frame decision hashes unchanged unless it is meant to change behaviour (then an ADR says so).
 - **Measured numbers only.** Anything marked *target* stays a target until a measurement is logged. Never paste a number into the README or write-up that has no log behind it.
-- **Design changes get an ADR** in `docs/DECISIONS.md`; requirement changes update `docs/REQUIREMENTS.md` in the same PR.
-- **Hardware findings** (measured voltages, mounting holes, relay and servo checks) go in `docs/BENCH_CHECKS.md` with the date and the part's lot/source.
+- **Design changes get an ADR** in `docs/decisions/DECISIONS.md`; requirement changes update `docs/verification/REQUIREMENTS.md` in the same PR.
+- **Hardware findings** (measured voltages, mounting holes, relay and servo checks) go in `docs/hardware/BENCH_LOG.md` with the date and the part's lot/source.
 
 ## Before you push a change to `core/`
 ```bash

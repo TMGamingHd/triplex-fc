@@ -70,7 +70,7 @@ The manager votes the commands with a tolerance of 0.01 degree (ACT's is 0.05), 
 
 So the resync is what keeps the manager's command vote from latching healthy computers at a realistic loss rate (0.1 % and below: no run of three in 16 flights, against every flight without it). At 1 % it is not enough, at any period, because what exceeds the tolerance is the immediate effect of a lost frame, not an accumulated difference; at that loss rate the command tolerance (or the agreement of inputs, TS-16 option B) is what has to change. Recorded as an open point of TS-23.
 
-## 7. Requirements (proposed)
+## 7. Requirements (statuses in `../verification/REQUIREMENTS.md`)
 | ID | Requirement |
 |---|---|
 | TFC-FDIR-044 | The replicated flight computers shall exchange their estimator and controller state every N frames (proposal 100) and each shall adopt the mid-value of the states of the healthy computers when it has all of them, and nothing otherwise, so that a computer that missed or received late a sensor frame is brought back to the same state as the others within N frames. |

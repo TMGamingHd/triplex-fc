@@ -1,7 +1,7 @@
 # The control loop: consensus, estimator, controller, and the model it is tested against
 
-> Status: **built and tested on the host** (P1, first increment). Not yet in the firmware, not yet on the bus: `core/` has the pieces and
-> `tests/test_loop.cpp` closes them around a vehicle model. The numbers below are from those tests (`TFC_LOOP_VERBOSE=1 build/host/tfc_tests`).
+> Status: **built** (reviewed 5 Oct 2026): `core/` has the pieces (`FlightFunction`), the firmware runs them in the frame (`CONFIG_TFC_FLIGHT_FUNCTION`), and the closed loop runs against the 6-DOF simulator on the host and live on `vcan0` with real firmware instances. **Not run on a board.**
+> The numbers in section 4 are from `tests/test_loop.cpp`, a two-plane test model (`TFC_LOOP_VERBOSE=1 build/host/tfc_tests`); the 6-DOF ascent is `VEHICLE_SIM.md`.
 
 ## 1. The chain
 
@@ -52,13 +52,11 @@ In every scenario the three replicas' commands and digests were bit-identical on
 
 One thing the tests found: with the integrator limited to 3 degrees the vehicle sat 0.7 degree off the program, because holding 20 degrees against the divergence needs 4.4 degrees of gimbal. The limit is now 6 degrees. A steady offset like that is what a closed-loop test exists to find.
 
-## 5. What this is not (yet)
-- **Not wired in.** The firmware's command is still the fixed function of the frame number (`sim_imu.hpp`). Wiring needs: the consensus at about 3 ms in the frame, the estimator and controller at 3 to 5 ms, the command frame from their output, and the guidance table in configuration.
-- **No actuator node.** The test's ACT is a `vote3` of the three commands, with a hold when they cannot be voted. The real ACT (SW-08, SW-09) adds the output latch, the step bound and the Safe sequence.
-- **No vehicle-simulator gateway** between the host model and the nodes on the bus (SW-06, SW-07); the model here lives in the tests.
-- **A linear-ish plant.** The model is two decoupled planes with a sine on the gimbal; it is the controller's test bench, not a 6-DOF ascent. The 6-DOF model comes with the simulator (SW-06), and the controller gains will be re-tuned there.
-- **The accelerometer gate.** On the real vehicle in ascent, thrust makes the accelerometer unusable as a gravity reference for most of the flight; the estimator then coasts on the gyro and the bias estimate stops improving. That is a property of the idea (and an argument for the analytical-redundancy item in `FUTURE_WORK.md`), and the rig, whose platform does not accelerate, does not show it.
-- **Timing.** Execution time on the board is not measured (the cost of one step on the host is small; the figure that matters is the Cortex-M4's, measured at S1/S2 with the cycle counter).
+## 5. Limits
+- **The model of section 4 is a test bench, not an ascent:** two decoupled planes with a sine on the gimbal. The 6-DOF vehicle, its gain schedule and the closed loop with ACT and the bus are `VEHICLE_SIM.md`; the controller's gains are tuned there.
+- **The accelerometer gate.** On the real vehicle in ascent, thrust makes the accelerometer unusable as a gravity reference for most of the flight; the estimator then coasts on the gyro and the bias estimate stops improving (the correction is off in flight, and the pad calibration of `LAUNCH_SEQUENCE.md` removes each gyro's bias before it). A two-position accelerometer calibration is a rig procedure, not built (`FUTURE_WORK.md` section 4).
+- **Timing.** Execution time on the board is not measured (the cost of one step on the host is small; the figure that matters is the Cortex-M4's, measured at S1 with the cycle counter: the firmware's status line prints `wcet_step`).
+- **Bit-identical replicas** are verified on the host (the same compiler flags, `-ffp-contract=off`); that the target's FPU gives the same bits as the host's is the first thing `P-S1-01` checks.
 
 ## 6. Requirements and tests
-TFC-LOOP-001 to 006 (`REQUIREMENTS.md`). Tests: `consensus_*`, `estimator_*`, `controller_*`, `guidance_*`, `atan2_*`, `loop_*` in `tests/test_loop.cpp`.
+TFC-LOOP-001 to 007 (`../verification/REQUIREMENTS.md`). Tests: `consensus_*`, `estimator_*`, `controller_*`, `guidance_*`, `atan2_*`, `loop_*` in `tests/test_loop.cpp`.

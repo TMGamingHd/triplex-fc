@@ -1,9 +1,7 @@
 # Fault response: what the flight computers do, and what the vehicle does
 
-> Status: **proposed; the open questions of section 6 were answered on 4 Oct 2026**. It joins the fault matrix (`FAULT_MATRIX.md`: what is detected and how) with the vehicle's side: what the
-> output does, who acts, what the operator does, and how it ends. Rows marked "today" describe the current software; everything else
-> is the intended behaviour and needs the Safe action, the supervisor or the phases (`SAFE_MODE.md`, `SUPERVISOR.md`,
-> `MISSION_PHASES.md`). Detection times are those of the matrix (10 ms frames). Numbers are proposals.
+> Status: **reference** (reviewed 5 Oct 2026; the open questions of section 6 were answered on 4 Oct 2026). It joins the fault matrix (`../verification/FAULT_MATRIX.md`: what is detected and how) with the vehicle's side: what the output does, who acts, what the operator does, and how it ends. The software behaviour it describes
+> is built (the manager, ACT, the supervisor's logic, the phases); what is the rig's to confirm is marked "rig pending" in the matrix. Detection times are those of the matrix (10 ms frames). Numbers are proposals.
 
 ## 1. The principle: respond to the consequence, not the cause
 
@@ -145,7 +143,7 @@ These are the properties the responses exist to protect; the campaign oracles ch
 6. Move on the pad (phase P2).
 7. Run away while in Safe: freeze, then a rate-limited ramp, never a step (SAFE-001).
 
-A new oracle is proposed for the campaign once the Safe action exists: **S5, the output step per frame stays within the rate limit in
+A new oracle is proposed for the campaign (the Safe action exists in ACT, but the campaign does not yet drive ACT): **S5, the output step per frame stays within the rate limit in
 Safe and within SYS-004 for the loss of one computer.** The per-frame dump (`tfc_replay --dump`) already carries the voted output and the
 held and Safe flags.
 

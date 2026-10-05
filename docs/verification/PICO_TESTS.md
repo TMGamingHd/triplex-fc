@@ -1,6 +1,6 @@
 # Tests for the Pico: the options
 
-> Status: **a catalogue and a recommendation**, written 4 Oct 2026. Part of it is done (section 2); the rest needs the board, the relay modules or the rig. The Pico is
+> Status: **a catalogue and a recommendation** (written 4 Oct 2026; reviewed 5 Oct 2026). Part of it is done (section 2); the rest needs the board, the relay modules or the rig. The Pico is
 > `firmware/pico` (`PICO.md`): a platform driver (two servos) and a fault injector (relays). The question is what to test, with what, in which order, and what counts as a pass.
 
 ## 1. What can go wrong, which is what the tests are for
@@ -14,10 +14,10 @@
 | Relay safety | Boot, reset and a crash leave every relay off (nodes powered); a cut ends by itself; a quiet PC releases everything | ADR-026, F75 |
 | Link | Garbage, a split frame, a flood, a pulled cable never wedge the board or move the platform | `pico_link.hpp` |
 | Watchdog | A hung loop resets the Pico and the relays release | PICO.md section 4 |
-| The relay module | Each channel really switches at 3.3 V drive with the jumper removed; the contacts are the normally-closed ones | PARTS_CHECK item 7 |
+| The relay module | Each channel really switches at 3.3 V drive with the jumper removed; the contacts are the normally-closed ones | HARDWARE_PARTS.md section 7, item 7 |
 | The rail | Twelve coils switching do not reset a healthy node | G7, F80 |
 | A cut node | A cut node's pins sit at zero, not half-powered through a signal line | G8, F79 |
-| The servo | What it does with no pulse; its stall current; the platform's shock when levelled or limp | PARTS_CHECK items 5, 6; G1, G2; F78 |
+| The servo | What it does with no pulse; its stall current; the platform's shock when levelled or limp | HARDWARE_PARTS.md section 7, items 5, 6; G1, G2; F78 |
 | The whole chain | The platform follows the simulated ascent with a latency and an error that are small enough for the IMUs to see a true attitude | VEHICLE_SIM section 6 |
 
 ## 2. Options that need no hardware (A)
@@ -87,7 +87,7 @@ Needs the servos, their rail and the platform. Do these with the E-stop in reach
 |---|---|---|---|
 | E1 | **The servo with no pulse** (Pico unplugged, or a watchdog reset) | Holds, drifts or goes limp | Recorded: sets whether PLAT-002's "hold" needs a pulse |
 | E2 | **Does the servo follow a 3.3 V signal** | Motion against command | Else the 74AHCT125 |
-| E3 | **Stall current** at the hard stops, both axes | Peak and sustained, against the 4 A adapter and 5 A fuse | Under the adapter's limit (PARTS_CHECK item 5) |
+| E3 | **Stall current** at the hard stops, both axes | Peak and sustained, against the 4 A adapter and 5 A fuse | Under the adapter's limit (section 7, item 5) |
 | E4 | **Step and ramp**: command 0 to 30 degrees | Measured angle against the Pico's output, with a camera or the IMU | Follows the rate limit; no overshoot beyond the servo's own |
 | E5 | **Saturation**: command 60 degrees | The platform stops at 45 and the status flags it | PLAT-004 |
 | E6 | **Timeout on the real platform**: stop the stream | Holds at 100 ms, goes level in 1 s at 30 degrees per second | PLAT-002 |

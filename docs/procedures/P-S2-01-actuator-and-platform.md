@@ -1,7 +1,6 @@
-# P-S2-01: stage S2, the actuator node and the platform (outline)
+# P-S2-01: stage S2, the actuator node and the platform
 
-**Outline only.** It cannot be completed until the actuator node's firmware (SW-08, SW-09), the Pico firmware (SW-20) and the vehicle simulator (SW-06) exist;
-the steps below fix what has to be shown, so those pieces are built towards it. Follows `docs/verification/VERIFICATION_PROCEDURE_TEMPLATE.md`.
+**Procedure, to be run when the parts arrive.** The actuator node's firmware, the Pico firmware and the vehicle simulator it needs are built and tested against fakes and on the virtual rig; the steps below fix what is to be shown on the real platform. Follows `docs/verification/VERIFICATION_PROCEDURE_TEMPLATE.md`.
 
 | Field | Entry |
 |---|---|

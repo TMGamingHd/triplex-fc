@@ -1,8 +1,8 @@
 # Simulator fidelity: how close to real life, and where it is not
 
-> Written 4 Oct 2026 after an audit of the whole chain. It lists what each part of the simulator models, what the real thing does that it does not, how much that matters (measured by
-> `tools/sim/tfc_sens.cpp`, which flies the whole software chain with one departure at a time scaled up until the flight is lost), and what to do about it. The vehicle is invented, so "real life" here means
-> *the behaviour a real vehicle and a real IMU have*, not agreement with a particular rocket (VEHICLE_SIM.md section 10).
+> Status: **measured** (written 4 Oct 2026 after an audit of the whole chain; reviewed 5 Oct 2026). The page lists what each part of the simulator models, what the real thing does that it does not, how much that matters (measured by
+> `tools/sim/tfc_sens.cpp`, which flies the whole software chain with one departure at a time scaled up until the flight is lost), and what to do about it. Nothing has been compared with the real platform or a real IMU. The vehicle is invented, so "real life" here means
+> *the behaviour a real vehicle and a real IMU have*, not agreement with a particular rocket (`VEHICLE_SIM.md` section 10).
 
 ## 1. Model by model
 

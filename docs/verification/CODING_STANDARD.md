@@ -1,6 +1,6 @@
 # Coding standard for the flight core
 
-> Status: in force for everything under `core/` (the portable flight logic) and the firmware's use of it. Sources: JPL
+> Status: **in force** (reviewed 5 Oct 2026) for everything under `core/` (the portable flight logic) and the firmware's use of it. Sources: JPL
 > "The Power of Ten: Rules for Developing Safety-Critical Code" (G. Holzmann, 2006, used on JPL flight software),
 > NASA-STD-8719.13 (software safety) and NPR 7150.2 (software engineering requirements), the MISRA C++ and CERT C++
 > principles that the clang-tidy `cert-*` and `bugprone-*` families implement, and DO-178C structural-coverage practice.
@@ -44,8 +44,8 @@
 | Mechanical rules | No `goto`/`while`/heap/macros/exceptions/RTTI/globals in the core | `python3 tools/check_standard.py` | every PR |
 | Target binary scan | The ARM binary has no heap, exception, RTTI or vtable symbols | `tools/check_elf.sh build/nucleo_g474re/zephyr/zephyr.elf` | every PR |
 | Structural coverage | Which lines and branches of the core the tests execute | `python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98` | every PR |
-| Fault campaign | Safety properties on every frame of 11,263 scenarios covering all 32 fault kinds | `python3 -m campaign.run --strict` | every PR |
-| Mutation: unit tests | 72 deliberate bugs in the core; every one must be caught by the C++ tests | `python3 tools/mutation/run_unit.py` | weekly |
+| Fault campaign | Safety properties on every frame of 12,362 scenarios covering all 32 fault kinds, the sensor split and mixed releases | `python3 -m campaign.run --strict` | every PR |
+| Mutation: unit tests | 390 deliberate bugs in the core and the supervisor; every one must be caught by the C++ tests (the equivalent ones are listed in the file with the reason) | `python3 tools/mutation/run_unit.py` | weekly |
 | Mutation: campaign | The same bugs against the campaign's oracles | `python3 -m campaign.mutate` | weekly |
 
 Mutation testing is the check on the checks: a test suite that cannot tell a deliberately broken core from the real one is not
@@ -59,7 +59,7 @@ bus-alarm boundary nobody had tested), each now closed.
 | 5 (two assertions per function) | Assertions are placed at safety-decision points, not in every function | A check that cannot fail in any reachable state is dead code, and dead code cannot be covered or mutation-tested. Many functions here are pure and total (every input maps to an output) | checks at every external boundary; a periodic scrub of the state that matters; `static_assert` for the tables |
 | 1 / 3 (stack, heap) | `std::array`, `<cmath>` and `<cstring>` come from the C++ library | They are header-only use of fixed-size types and `memcpy`/`fabs`, with no allocation | the ELF scan proves no heap or exception machinery is linked |
 | 9 (pointers) | `crc8`, `fnv1a`, `format_reasons` and the payload `memcpy` take pointers | They are the interfaces of byte-oriented operations | each takes its length; covered by the fuzz and decoder tests |
-| Branch coverage 100% | Line coverage is 100%; branch coverage is 98.6% (823 of 835 compiler branches) | The twelve untaken branches are sub-conditions of compound tests that cannot be separated (for example `i < npending_ && i < kMaxCommandsPerFrame`, whose second half is a guard that `scrub` makes redundant) and the compiler's own short-circuit edges; each is listed by `core_coverage.py --list` | the gate is set at the measured value and may only rise |
+| Branch coverage 100% | Line coverage is 100 % (3,490 lines of the core and the supervisor); branch coverage is 98.4 % (2,707 of 2,752 compiler branches) | The untaken branches are sub-conditions of compound tests that cannot be separated (for example `i < npending_ && i < kMaxCommandsPerFrame`, whose second half is a guard that `scrub` makes redundant) and the compiler's own short-circuit edges; each is listed by `core_coverage.py --list` | the gate is 100 % of lines and 98 % of branches and may only rise |
 | Worst-case execution time | Measured on the host only | The target is not here yet | `tools/bench` runs on the board in milestone M2 using the DWT cycle counter |
 
 ## 5. Measured cost
@@ -75,9 +75,9 @@ Host (desktop CPU, `-O2`, 400,000 frames each; 9 `on_frame` calls plus `end_fram
 The worst single sample in each run is 17-47 us and is the operating system preempting the benchmark, not the code: there is
 no allocation, no loop over unbounded data and no I/O in the path. A frame is 10,000,000 ns.
 
-Object sizes: `RedundancyManager` 1,080 bytes, `FrameReport` 152, `RedundancyConfig` 100, `Counters` 100.
-Cortex-M4F (`-Os`, `arm-zephyr-eabi-g++`): the deepest function uses 120 bytes of stack (`sanitize_config`, at construction only; on the per-frame path SipHash, run only for a ground frame, uses 96), all statically known (`-fstack-usage` reports `static`); the whole core is about 9 KB of
-code. The full firmware for the Nucleo-G474RE is 46.5 KB of its 512 KB flash and 6.3 KB (6,464 bytes) of its 128 KB RAM.
+Object sizes: `RedundancyManager` 1,432 bytes, `FrameReport` 176, `RedundancyConfig` 112, `Counters` 120, the supervisor's `Supervisor` 1,104.
+Stack: the strict build bounds every function of the core at 2 KB (`-Wstack-usage=2048`, which is why the check harness splits its exercise into functions); the deepest library function on the host (x86-64, `-Os`, `-fstack-usage`) is `RedundancyManager::scrub` at 320 bytes, all statically known. The Cortex-M4F figure is read
+from the target build at S1. Firmware sizes (`nucleo_g474re`, 5 Oct 2026): the flight computer 59.1 KB of its 512 KB flash and 10.0 KB of 128 KB RAM (60.5 KB and 11.1 KB with the flight function), the actuator node 39.5 KB and 8.9 KB; the Pico 58.8 KB and the supervisor 69.1 KB of 4 MB.
 
 These are *host* and *size* figures. A desktop executes this code perhaps a hundred times faster than a 170 MHz Cortex-M4,
 so the estimate on the target is in the tens of microseconds, a fraction of a percent of the 10 ms frame, to be confirmed

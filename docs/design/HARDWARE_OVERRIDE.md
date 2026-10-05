@@ -1,6 +1,6 @@
 # Hardware override: switches that work when every program is down
 
-> Status: **proposed** (ADR-027; trade study TS-17 decides how many and which). Nothing here is built. Every number is a proposal to be confirmed on the rig.
+> Status: **decided (TS-17: option O3), the software side built, the hardware not ordered or built** (ADR-027; reviewed 5 Oct 2026). The set is H1 (the E-stop, on the parts sheet) and H2 to H5; H6 and H7 are not built (`../decisions/TRADE_STUDIES.md` section 9c). The supervisor's sense inputs and the launch guard are built (`SUPERVISOR.md`); the parts are about 12 USD and are **not in the order placed for 9 Oct**. Every number is a proposal to be confirmed on the rig.
 > Written after the owner's question of 4 Oct 2026: *"How do we have a hardware relay that can override the software and make a command to the hardware itself, and how many of those are needed?"*
 
 ## 1. What it is, and how it differs from the supervisor
@@ -57,6 +57,8 @@ Costs are rough. None of these has been priced on a listing; each is a common pa
 | **H6** | **Per-node POWER-KILL** (four, one per node) | A switch in series with each node's feed, after the relays | A manual node loss, independent of the Pico and the supervisor; the hardware way to cause F01 and F15 | 4 USD |
 | **H7** | **MASTER-POWER** | A switch in the node rail feed | Everything on the node rail at once | 1 USD |
 
+**Decided (TS-17, 5 Oct 2026): build H1 to H5, not H6 and H7.** H1 is on the parts sheet; H2 to H5 are about 12 USD. The per-node kills and the master switch cover no scenario that the Nucleos' reset buttons, the unpluggable CAN stubs and H4 do not already cover (the coverage matrix and the model are in `../decisions/TRADE_STUDIES.md` section 9c, `python3 -m campaign.ts17`). The supervisor's sense input bit 5 ("any node power-kill") is reserved for them and unfitted.
+
 Two ideas that were considered and not proposed:
 - **A bypass switch that closes a relay's contacts by hand** to force a node on. It defeats the protection it bypasses and can power a node
   the supervisor is holding in reset on purpose. H4 and H5 reach the same goal (everything powered) in the safe direction, by removing the cause.
@@ -88,8 +90,8 @@ that is the designed degradation, not a hazard to the rig. The servo case matter
 
 The reverse holds for restoring: a manual cut is lifted only by hand. The supervisor sees a node it did not cut go dead, tries its resets and
 power-cycles, gives up after its limit, and reports `DEAD` (`SUPERVISOR.md` section 5): the report is correct, the node *is* dead, and the
-operator knows why. To avoid a confusing report, each override has a **read-only sense line** to the PC (an input with an external 4.7 kOhm
-pull-down, the RP2350 erratum E9) so the run can be marked "override engaged". The sense line is never an input to any control decision.
+operator knows why. To avoid a confusing report, each override has a **read-only sense line** to the supervisor (an input with an external 4.7 kOhm
+pull-down, the RP2350 erratum E9; six inputs on GP22, GP26, GP27, GP28, GP0 and GP1), which reports its changes to the PC, refuses a `launch` while one is engaged until the operator types `override-ok`, and lists the overrides not yet seen engaged and released this session when a countdown starts. The sense line is never an input to any control decision (TFC-HWO-005; a test runs two supervisors with and without every override engaged and compares their outputs step by step).
 
 ## 6. What could go wrong
 
@@ -130,10 +132,8 @@ Each result is a log line with a date. An override that has not been tested in a
 
 ## 8. Cost and parts
 
-H4, H5 and H7 need a toggle or a key switch each (1 USD); H2 two diodes and a guarded toggle; H6 four rocker switches; H3 a double-pole
-double-throw switch per servo and a no-code neutral source (a servo-tester board costs a few dollars; **not priced on a listing**). The whole
-set is about 25 USD, against a budget that is already 77.81 USD over its ceiling (parts sheet, Budget). TS-17 is where the count is decided,
-so the order for these parts waits for it; **none of them is in the parts list yet**.
+H4 and H5 need a toggle or a key switch each (1 USD); H2 two diodes and a guarded toggle (2 USD); H3 a double-pole double-throw switch per servo and a no-code neutral source (a servo-tester board costs a few dollars; 8 USD in all, **not priced on a listing**). The decided set (O3) is about 12 USD of new parts,
+against a budget that is already 77.81 USD over its ceiling (parts sheet, Budget). H6 and H7 (about 5 USD) are not built. **None of these parts is in the order placed for 9 Oct**: see `../hardware/HARDWARE_PARTS.md` section 4.
 
 ## 9. Relation to other documents
 

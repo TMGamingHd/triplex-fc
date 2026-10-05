@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // The simulator's side of the frame loop, without a socket: the vehicle and the platform advance one frame at a time, and each step returns the frames the
-// simulator publishes on the flight bus (docs/VEHICLE_SIM.md section 6, docs/PROTOCOL.md). tools/sim/tfc_simd.cpp puts it on SocketCAN; the host tests put the real
+// simulator publishes on the flight bus (docs/design/VEHICLE_SIM.md section 6, docs/design/PROTOCOL.md). tools/sim/tfc_simd.cpp puts it on SocketCAN; the host tests put the real
 // flight computers and ACT on the other end of the same frames.
 //
 // The sensor inputs are published one frame ahead: when ACT's output for frame k arrives, the vehicle is stepped over frame k with that command and the sensor frames

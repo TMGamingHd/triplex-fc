@@ -1,6 +1,6 @@
 # Fault coverage: an FMEA-style gap analysis
 
-> Status: working document, last updated with the campaign run recorded in `docs/verification/FAULT_CAMPAIGN.md`. "Modelled" means the virtual peers can inject it; "Covered"
+> Status: **reference** (reviewed 5 Oct 2026), updated with the campaign run recorded in `docs/verification/FAULT_CAMPAIGN.md`. "Modelled" means the virtual peers can inject it; "Covered"
 > means a test checks the response. SpaceX-related statements are from public material or inference.
 
 ## 1. How real programs think about this
@@ -70,6 +70,9 @@ Response gaps found by the campaign and fixed (details: `docs/verification/FAULT
 | **Ground commands could be forged, replayed, or issued without a deliberate second step; nothing stopped disabling every node** | F52-F55, E10 | SipHash tag, counter window, ARM/EXECUTE, interlock tiers (ADR-019) |
 | The Duplex decision band moved after the E16 fix (isolate-or-Safe threshold 2.0x to 2.3x on the gyro channels) | E19 | the motion reference is used only where the signal moves more than a tolerance per frame (ADR-017 amended) |
 | Any CAN id above 0x500 counted as "known" (a babbler there was invisible) | F49 | only the ids in the schedule are known |
+| **One lost frame at one computer made the replicated estimators diverge for good** (at 1 % loss the flight was lost) | F88 to F91, TS-16 | periodic resynchronisation to the mid-value, with a large-correction report and a persistence-based digest check (ADR-030) |
+| **A bad IMU made its whole computer useless** | F65, F92 to F95, TS-15 | the sensor/compute split: the IMU channel is isolated, the computer keeps voting commands (ADR-020 case 1) |
+| **A regression common to two nodes isolated the healthy third** | F63, F64 | release awareness: a lone computer of another release is held to a version tolerance, and beyond it nobody is isolated, the output is held and the operator asked (ADR-021) |
 
 ## 4. Known classes that cannot be modelled in software alone (need the rig)
 
@@ -79,5 +82,5 @@ Response gaps found by the campaign and fixed (details: `docs/verification/FAULT
 | Inconsistent frame omission (one receiver misses a frame others got) | Needs more than one receiver; FC-A is the only receiver in the model |
 | Bus-off, short, open circuit, ground offsets | Electrical |
 | Real latency and jitter, WCET | Measured on the target, never from Python on a desktop |
-| Common-mode software bug in all replicas | Voting cannot see it; needs design diversity (see ARCHITECTURE section 7) |
+| Common-mode software bug in all replicas | Voting cannot see it; only design diversity helps, and the golden release (ADR-021) protects against a regression, not against a bug present in both releases (`docs/LIMITATIONS.md` section 2) |
 | SEU in the manager's own memory | Modelled by corrupting the manager's state in a unit test (`seu_*`), not by a bus fault; the repair is ADR-015. Protection of the *code* (flash ECC, watchdogs) is hardware |

@@ -1,6 +1,6 @@
 # Flight-bus protocol, version 2
 
-> Source of truth: `core/include/tfc/protocol.hpp`. The Python mirror is `sim/tfc_peers/protocol.py`; the golden bytes below are pinned in both
+> Status: **built** (reviewed 5 Oct 2026; every frame below is implemented in C++ and in the Python mirror, and the golden examples are pinned in both). Source of truth: `core/include/tfc/protocol.hpp`. The Python mirror is `sim/tfc_peers/protocol.py`; the golden bytes below are pinned in both
 > (`tests/test_protocol_v2.cpp`, `sim/tests/test_protocol.py`), so a change on one side fails a test until both agree.
 > Classic CAN, 1 Mbit/s. Every payload is **8 bytes: 6 data bytes, a sequence byte (the low byte of the frame number of the cycle, ADR-018), and a CRC-8**
 > (SAE J1850, polynomial 0x1D). Multi-byte fields are little endian. A lower id wins arbitration.
@@ -49,13 +49,26 @@ simulation time in 10 ms frames (32 bits). Their timing and use: `VEHICLE_SIM.md
 
 **The node field of a ground command** is 0 to 2 for a flight computer; **with the sensor split (ADR-020), 4 to 6 address IMU channel 0 to 2** for `reintegrate`, `disable` and `clear-disabled` (any other value is refused as a bad node, and without the split so is 4 to 6). The ARM code of a command is its operation and the whole node field, so an ARM for computer B does not cover IMU B.
 
-**Ground commands** gained two operations: `launch` (5; always needs an ARM) and `scrub` (6; plain); the node field is ignored. Examples: SYNC frame 0x01020304, seq 9, mission 1001: `04030201e90309d2`; mission 65535, frame 0, seq 0: `00000000ffff0045`. Heartbeat B, mode 3, ready, resets 5, hash 0xBEEF, seq 4: `02830005efbe048c`.
+**Ground commands.** The opcode byte carries the operation (low 7 bits) and the ARM flag (bit 7); the node field is as above except where stated:
+
+| Op | Name | Node field | ARM |
+|---|---|---|---|
+| 1 | `reintegrate` | the computer (or, with the split, 4 to 6: an IMU channel) | never |
+| 2 | `disable` | the computer or IMU | without phases: when it would leave fewer than two voters; with phases: when it would leave fewer than the phase's nominal number, and refused below its minimum |
+| 3 | `clear-disabled` | the computer or IMU | always |
+| 4 | `clear-safe` | ignored | always |
+| 5 | `launch` | ignored | always (the sync master acts, after the go/no-go) |
+| 6 | `scrub` | ignored | never; only before T-zero |
+| 7 | `phase` | **the phase number 0 to 7**, not a node (docs/design/MISSION_PHASES.md) | never; refused if fewer computers vote than the new phase's minimum; needs `phases` on |
+| 8 | `noop` | ignored | never; changes nothing and is answered like any command |
+| 9 | `warm` | the computer (not an IMU) | as `disable`; rests a voting computer as WARM, `reintegrate` promotes it |
+
+The answers (`accepted`, `already done`, `refused: <reason>`, with `RefusedPhase` and `RefusedNotHealthy` for the new operations) are in the frame report and on the console. Examples: SYNC frame 0x01020304, seq 9, mission 1001: `04030201e90309d2`; mission 65535, frame 0, seq 0: `00000000ffff0045`. Heartbeat B, mode 3, ready, resets 5, hash 0xBEEF, seq 4: `02830005efbe048c`.
 
 ## Rules
 - A decoder checks the CRC and the id range, never trusts a field wider than its bits (a wider value is masked, not spilled into the next field: tested), and a node number outside 0 to 2 is not a node.
 - A quantity that does not fit saturates; NaN becomes zero (an unsigned quantity: a negative number is zero too).
 - A frame that does not decode is a bad frame and costs its sender one bad sample (ADR-007), exactly like a corrupted sensor frame.
 
-## Not yet
-The `noop` and `phase` ground opcodes (FDIR-043, PHASE-004), which touch the fault manager; the state share (`0x410+n`) and the release hash in the heartbeat (the flight computers send heartbeats since P1-4c,
-with the release hash zero).
+## Not defined
+Telemetry and event records in a fixed format and a machine-readable command dictionary (IF-004 to IF-006): today the report struct, the counters and the console lines carry the information (`docs/design/FUTURE_WORK.md` section 2.2). The supervisor's USB commands are a separate, human-typed interface (`docs/design/SUPERVISOR.md` section 6).

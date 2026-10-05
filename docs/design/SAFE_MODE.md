@@ -1,8 +1,6 @@
 # Safe mode: research and proposal
 
-> Status: **accepted for Safe mode, 4 Oct 2026** (the open questions in section 10 were answered by the owner); the phase table it refers to is still a proposal (resolves the "define the Safe action" item of `FUTURE_WORK.md` section 3 as far as it can be resolved before the
-> actuator node exists). All numbers are proposals. Sources were read as search summaries, not in full; check them before quoting them in
-> the write-up (section 9).
+> Status: **built for ACT** (reviewed 5 Oct 2026; the owner answered the open questions of section 10 on 4 Oct 2026). The Safe sequence is `core/include/tfc/act.hpp` and runs in the actuator node (`firmware/act`), including the hardware `SAFE` line; the **Safe action per mission phase** (section 5) is built for the pad against flight only (ACT reads the mission frame in SYNC; the coast phase's "freeze only" and the Pico's depower are not built, section 5). All numbers are proposals. Sources were read as search summaries, not in full; check them before quoting them in the write-up (section 9).
 
 ## 1. What Safe means today
 
@@ -48,7 +46,7 @@ decision, and (c) end in a position everyone agrees on.
 | Option | What the output does | For | Against |
 |---|---|---|---|
 | S0 hold forever (today) | Last good command, indefinitely | No motion at all | A held off-centre command can be wrong for long on a real vehicle; no defined end |
-| **S1 hold, then null (proposed)** | Freeze at once; after `T_hold`, ramp to neutral at a limited rate; hold neutral | No step; gives a transient and the operator time; ends in a known position | A frozen command costs `T_hold` of wrong steering if the last value was bad |
+| **S1 hold, then null (chosen, built in ACT)** | Freeze at once; after `T_hold`, ramp to neutral at a limited rate; hold neutral | No step; gives a transient and the operator time; ends in a known position | A frozen command costs `T_hold` of wrong steering if the last value was bad |
 | S2 null at once | Ramp to neutral immediately | Shortest exposure to a bad held value | A fast move can itself be a disturbance; loses the chance that a transient clears |
 | S3 stop the platform | The Pico holds the platform level or depowers it | Simplest, nothing can run away | Not a flight-computer action: it is the Pico's and the E-stop's; the platform goes where gravity and friction take it if depowered |
 | S4 abort the run | Tell the simulator to end the scenario | Matches range-safety logic | Not a flight-computer decision; a message to the simulator |
@@ -61,6 +59,8 @@ decision, and (c) end in a position everyone agrees on.
 | Ascent (all three hot) | Freeze, then null after `T_hold` at the rate limit; message to the simulator |
 | Coast / burn-free | Freeze; null only on operator command (no steering needed) |
 | Recovery after a Safe | The operator clears Safe (ARM) once the exit conditions hold |
+
+**Built (5 Oct 2026): the pad against flight.** ACT takes the vehicle's place from the mission frame in SYNC (`CONFIG_TFC_LAUNCH_SEQUENCE` on ACT and on the flight computers; `ActLogic::set_on_pad`, read when Safe is entered): **on the pad** (not launched, or in the countdown) Safe goes **to neutral in the frame of entry**, with no hold and no ramp, because the vehicle is clamped and there is nothing to freeze for (ACT has no power output, so a neutral command is the actuator at rest: the owner's "depower on the pad"); **in flight** it freezes, holds `T_hold` and ramps, as before. The output frame names the stage (state 2 hold, 3 ramp, 4 neutral, `PROTOCOL.md`). **Not built:** the coast phase's "freeze, null only on operator command" (ACT does not know the manager's phase, which the heartbeat does not carry), and the Pico depowering the platform on a Safe on the pad (the Pico does not read ACT's state; whether a depowered platform is better than a level one is for the rig, `PICO_TESTS.md` E1 to E6).
 
 ## 6. Safe configuration (parameters, not code)
 

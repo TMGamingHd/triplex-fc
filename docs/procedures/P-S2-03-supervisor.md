@@ -34,7 +34,8 @@ P-S1-01 and P-S2-01 passed. Supervisor wiring checked with a meter (no input flo
 | 11 | Operator | Skew FC-A's clock by 300 ppm: `-DCONFIG_TFC_TEST_CLOCK_PPM=300` (FC-A is the sync master) | `PERIOD A out of limit (+300 ppm)` after about 10 s and nothing else: A is not reset (F67) | | |
 | 12 | Operator | `launch`, then at T-5 s `scrub`; `launch` again and wait | `countdown: T-10 s`; `countdown scrubbed`; then `T-ZERO` after 10 s and the T0 pulse (50 ms) on the line | | |
 | 13 | Operator | After T-zero unplug the supervisor's USB power for 30 s and restore it | `T-zero record found: the mission clock is resumed from the RTC (good to a second)`; `status` shows launched | | |
-| 14 | Operator | Over a night: every 60 s record (supervisor ticks, PC UTC) pairs; fit with `tfc_peers.timecorr.Correlator` | The oscillator's drift in ppm with its error bound (the first data of MISSION_CLOCK.md section 2) | | |
+| 13b | Operator | With the `T0` line wired to FC-A's input (PC5, CN10 pin 6, checked against ST's manual): type `launch` on the supervisor, then within one second send the flight computers' authenticated `launch` (`python3 -m tfc_peers launch`) | The supervisor's T0 pulse arrives in the last second of FC-A's countdown: `T0 LINE: the supervisor's T-zero; the next frame is T-zero` on FC-A, and every computer's `T-ZERO` is the same frame. If the supervisor is more than a second late, FC-A's own countdown runs out first (the fallback): no harm, note it | | |
+| 14 | Operator | Over a night: `python3 tools/bench/clock_corr.py --port /dev/ttyACM0 --interval 10 --duration 28800 --out logs/clock.csv` (it asks `time` and stamps each answer with the PC's UTC) | The oscillator's drift in ppm with its error bound now and five years out (the first data of MISSION_CLOCK.md section 2); `time` also shows `met_us` after T-zero | | |
 
 ## 4. Shutdown
 Nodes off first, supervisor last; relays released; the coin cell left in. Keep the console text, the analyser captures and the correlation pairs.
@@ -43,4 +44,4 @@ Nodes off first, supervisor last; relays released; the coin cell left in. Keep t
 This file as run; the console log; the analyser captures; rows F57 to F59, F66 to F68 of `docs/verification/FAULT_MATRIX.md` updated with this test id; the measured drift into `docs/design/MISSION_CLOCK.md`.
 
 ## 6. Not covered here
-The `T0` line into the flight computers (the node firmware reads it in the launch increment of P-S4-01); the hardware overrides (P-HWO-01); the supervisor as a power-cycle of the *real* injector's cut (the two are in series, check P-HWO-01 step 4).
+The hardware overrides and their sense lines (P-HWO-01); the launch sequence on the whole rig (P-S2-02); the supervisor as a power-cycle of the *real* injector's cut (the two are in series, check P-HWO-01 step 4).

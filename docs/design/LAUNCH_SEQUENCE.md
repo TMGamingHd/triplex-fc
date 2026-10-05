@@ -1,6 +1,6 @@
 # Launch sequence: the pad, the countdown and T-zero
 
-> Status: **built and tested on the host and live on the virtual rig** (the pad calibration, the mission clock in SYNC, the launch and scrub commands, the go/no-go, the firmware, the simulator's hold and release, the automated checklist). Not built: the supervisor's part and the real rig. The design is
+> Status: **built and tested on the host and live on the virtual rig** (reviewed 5 Oct 2026: the pad calibration, the mission clock in SYNC, the launch and scrub commands, the go/no-go, the firmware, the simulator's hold and release, the automated checklist, the supervisor's countdown and its `T0` line taken by the sync master). Not run on the real rig. The design is
 > accepted by the owner (4 Oct 2026: schedule time in the flight computers, the supervisor the independent authority for T-zero and the clock of record, `MISSION_CLOCK.md`).
 > Decided by the owner (4 Oct 2026): the sync master acts on the launch command; a 10 s countdown; a 10 s pad calibration; scrub only (no hold).
 
@@ -29,7 +29,7 @@ A platform that is being moved on the pad is therefore **not ready** (a no-go), 
 What the pad does *not* remove: the IMU's **mounting** error. The estimator aligns to gravity on the pad, so a mounting error is imported as a pointing error of the same size (the sweep shows the flight lost at about 2.7 degrees of
 misalignment with a pad, where without one the estimator started at the true vertical by luck). A real vehicle aligns the IMU to its frame at integration; the rig does it by levelling the platform and measuring.
 
-## 3. Where the mission clock lives (ADR-028, TS-21: **owner to confirm**)
+## 3. Where the mission clock lives (ADR-028, TS-21: accepted)
 
 The owner's proposal: the supervisor ("lizard brain") holds the mission time, because it is independent and cannot be impacted by the rest of the system.
 
@@ -40,7 +40,7 @@ out because it makes the supervisor a single point of failure for time. If the g
 The Lite supervisor also has no bus tap and cannot send a countdown number; it has discrete lines.
 
 **Recommended: a hybrid, which keeps the supervisor as the authority and the flight computers as the clock:**
-1. **The supervisor decides and signals T-zero**, with a discrete **`T0` line** to each node (like a launch vehicle's liftoff discrete). Until it exists (the parts are not ordered), the authenticated `launch` command from the PC plays that role through the same interface.
+1. **The supervisor decides and signals T-zero**, with a discrete **`T0` line** to each node (like a launch vehicle's liftoff discrete). Without the supervisor (or while its pin is not wired), the authenticated `launch` command from the PC and the countdown running out play that role through the same interface.
 2. **The sync master latches the frame of the `T0` edge and distributes mission time in SYNC** (two currently unused bytes: frames since T-zero offset by the countdown; 0xFFFF = not launched). Every follower takes it from SYNC exactly as it takes the frame number, counts through a gap, and the takeover master continues it. All computers therefore agree on T by construction (without it, nodes that saw the command one frame apart would index their schedules one frame apart, and the replicas would diverge: TS-16).
 3. **The supervisor keeps its own mission clock from the `T0` edge** and compares it, through the master's `FRAME` pulses, with the system's: a drift or a jump is reported (and is the supervisor's evidence of a SYNC fault). It never overrides the computers' mission time, in line with "never takes a voting decision".
 4. After T-zero the system **does not need** the supervisor to keep flying.
@@ -63,7 +63,7 @@ Alternatives (TS-21): the supervisor as the continuous time source (rejected abo
 Each computer reports `ready` in its heartbeat (a bit that is free): its IMU calibration is ready (10 s of rest, plausible bias), its consensus is trustworthy, its attitude is valid, no Safe request. And: three healthy computers (Triplex), ACT Nominal,
 no digest disagreement. The command is an authenticated ARM then EXECUTE (ADR-019), so two deliberate steps. During the countdown the same list is watched; a failure scrubs.
 
-## 6. The interfaces (to build)
+## 6. The interfaces
 | Where | Change |
 |---|---|
 | `SYNC` (`0x010`) | The two reserved bytes carry the mission frame (offset), 0xFFFF = not launched. Python mirror and golden bytes with it |
@@ -72,7 +72,7 @@ no digest disagreement. The command is an authenticated ARM then EXECUTE (ADR-01
 | `SyncClock` | Carries the mission frame, counts through a gap, continues on takeover |
 | Firmware | The calibrator between the IMU read and the gyro frame; the flight function given the pad flag and the flight frame |
 | Simulator | `tfc_simd` clamps the vehicle on the pad and releases it when the mission frame passes T-zero; its time becomes mission time |
-| Supervisor (later) | The `T0` line out, the mission clock check |
+| Supervisor | The `T0` line out (a 50 ms pulse at its T-zero) and the mission clock check; the sync master takes a debounced rising edge in the last second of its own countdown as T-zero (`SyncClock::t0_line`), and the countdown running out is the fallback |
 | The checklist | `docs/procedures/` (the human steps) and `tfc_peers launch` (polls readiness, runs the countdown, scrubs on a no-go) |
 
 ## 7. What is built (host, tested)
@@ -83,8 +83,9 @@ no digest disagreement. The command is an authenticated ARM then EXECUTE (ADR-01
 
 - **Firmware (this increment):** `CONFIG_TFC_LAUNCH_SEQUENCE`: the calibrator between the IMU read and the gyro frame; the flight function given the pad flag and the flight frame; the mission frame in SYNC (the master sends it and acts on a launch that passes the go/no-go, scrubs on a failure in the countdown); the heartbeat's ready bit; the console says `COUNTDOWN`, `T-n s`, `T-ZERO`, `SCRUB`, `LAUNCH REFUSED, no-go: ...`.
 - **Simulator:** `tfc_simd --hold` clamps the vehicle until the mission frame passes T-zero; a simulator started after T-zero joins the flight at its age.
+- **The `T0` line (ADR-028):** `SyncClock::t0_line(level)`, called once per frame by every computer and acted on by the sync master only: an edge (its second high sample in a row, after the line has been seen low) in the last `kT0Window` = 100 frames of the countdown makes the next frame the T-zero frame; an edge earlier than that is refused and reported, a line stuck high from the start is never an edge, one noisy sample is ignored, and a master that took over late and finds the line already high does not take it for an edge. 10 mutants; fault-matrix row F96.
 - **Operator:** `python3 -m tfc_peers launch` (the checklist, automated) and `docs/procedures/P-S2-02-launch-checklist.md` (the human steps and the cases).
 - **Live tests** (`sim/tests/test_live_launch.py`, five real processes plus the simulator): a launch before the calibration is ready is refused and nothing moves; a go launch counts down 10 s, releases at T-zero on every computer and flies the program within 1.5 degrees; a scrub returns to the pad and a second launch works; the loss of the sync master or of a follower in the countdown scrubs it (the design: three healthy computers are part of the go/no-go). **Owner's decision, 4 Oct 2026: strict three at launch**, with no Duplex tolerance in the countdown; a computer lost between the go and T-zero scrubs, and the crew (the operator) launches again once three are healthy.
 
 ## 8. Still to do
-The supervisor's `T0` line and its mission clock check (waits for the supervisor and its parts); the clock of record (`MISSION_CLOCK.md`: the supervisor, its correlation against UTC, the pulse and the serial line); a hold in the countdown (decided against for now); accelerometer calibration and the IMU's mounting alignment on the pad; the launch sequence on the real rig (P-S2-02 with hardware).
+The `T0` line is built (the sync master's side in the firmware, `CONFIG_TFC_TEST_T0_AT_FRAMES_TO_ZERO` standing in for the supervisor's pin in the live test `test_live_launch.py::LiveLaunchT0Line`; the supervisor's side in its application) and so is the clock of record on the host (`MISSION_CLOCK.md`). What remains: the launch sequence on the real rig with the supervisor wired (`P-S2-02`, `P-S2-03`); a hold in the countdown (decided against: scrub only); and the accelerometer calibration and the IMU's mounting alignment, which are rig procedures (`FUTURE_WORK.md` section 4).

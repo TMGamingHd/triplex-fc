@@ -1,7 +1,7 @@
 # Mission phases: which computers run, and how (hot, warm, cold)
 
-> Status: **proposed** (ADR-023). Nothing here is built; the phase table is a design for the manager and the simulator to share. Numbers
-> are proposals.
+> Status: **built on the host and in the firmware, not run on a board** (ADR-023; reviewed 5 Oct 2026). The phase table, the `phase`, `warm` and `noop` commands, the WARM role and the phase-aware interlock are in the fault manager (`RedundancyConfig::phases`; `CONFIG_TFC_PHASES` in the
+> firmware); the Safe action per phase and automatic cold standby are not built (section 5). Numbers are proposals.
 
 ## 1. Why phases
 
@@ -22,8 +22,8 @@ show the system bringing the others in.
 
 **Role is separate from health.** Health (Healthy, Latched, Probation, Disabled; ADR-010) is what the fault manager decides. Role is what
 the mission phase decides. A WARM node is not faulty. The existing probation, a node judged every frame by a shadow vote against the
-healthy nodes, **is** the WARM state, entered for a different reason; promoting WARM to HOT is the existing probation criterion (100
-agreeing frames), so a promoted node has proved itself on live data. The supervisor (`SUPERVISOR.md`) is what makes COLD real: it holds a
+healthy nodes, **is** the WARM state, entered for a different reason (the `warm` command) and *held* there until promoted; promoting WARM to HOT is the existing probation criterion (100
+agreeing frames, 300 after a repeat latch), so a promoted node has proved itself on live data. A WARM computer that fails the shadow vote is a faulty one: it is latched like any other. The supervisor (`SUPERVISOR.md`) is what makes COLD real: it holds a
 node in reset or opens its power relay.
 
 The **mode** (Triplex, Duplex, Simplex) stays the number of healthy HOT nodes. A system with two HOT nodes and one WARM node is Duplex by
@@ -49,22 +49,27 @@ protects against that. (c) Which node rests in P4 should be chosen so that the g
 
 ## 4. Rules for changing roles
 
-- **Promoting WARM to HOT** uses the probation criteria (FDIR-006, FDIR-020, FDIR-021). One at a time.
-- **Demoting HOT to WARM or COLD** follows the `disable` interlock tiers (ADR-019): plain while the phase minimum is still met, an ARM
-  below the phase's nominal count, and refused below its minimum.
-- **A phase change that cannot meet its minimum is refused** and the system holds in the current phase (P2 to P3 with two healthy nodes,
-  for example).
-- **Who changes phase:** an authenticated `phase` command (a new ground-command opcode, ADR-019's rules), sent by the operator or by the
-  simulator at a scripted event. A flight computer never changes phase on its own; it can only refuse.
-- **Phase and Safe:** entering Safe does not change the phase; the phase decides what Safe does (`SAFE_MODE.md` section 5).
+- **Promoting WARM to HOT** (`reintegrate` on a WARM computer) uses the probation criteria (FDIR-006, FDIR-020, FDIR-021). One at a time. A computer that has just been rested and is promoted again must prove itself again from the start.
+- **Demoting HOT to WARM** (`warm`) or **disabling** follows the interlock tiers (ADR-019) *of the phase*, with `n` the number of healthy voters after the command: plain while `n` is at least the phase's nominal count; an ARM when `n` is below the nominal count but at least the minimum;
+  **refused** (`RefusedPhase`) below the minimum. Without phases the tiers of ADR-019 apply (plain while two or more voters are left) and a WARM rest never takes the last voter. Commands that take no voter away (a computer that is already latched) are not held to the tiers.
+- **A phase change that cannot meet its minimum is refused** and the system holds in the current phase (P2 to P3 with two healthy nodes is fine, P2 to P5 with two is not).
+- **Who changes phase:** an authenticated `phase` command (ground opcode 7; its node field is the phase number 0 to 7; no ARM), sent by the operator or by the simulator at a scripted event. A flight computer never changes phase on its own; it can only refuse.
+- **Phase and Safe:** entering Safe does not change the phase; the phase decides what Safe does (`SAFE_MODE.md` section 5; not built, section 5 below).
+- **Below the minimum is an alert, never an action.** With fewer healthy voters than the phase's minimum the manager sets `below_minimum` in the report and counts the frames; it does not request Safe or abort (owner's decision, 4 Oct 2026: Simplex in ascent alerts only).
+- **`noop`** (opcode 8) changes nothing, needs no ARM and is answered like any command, so the operator can test the command path end to end (TFC-FDIR-043).
 
-## 5. What this needs
+## 5. What is built, and what is not
 
-- A phase and role field in the manager (`core/`), a phase table as parameters, and the `phase` command. Needs the estimator and the
-  simulator's scenario events to be useful, hence deferred (`FUTURE_WORK.md`).
-- Supervisor `hold`, `release` and boot sequencing for COLD (`SUPERVISOR.md`).
-- Events and telemetry for every role change (IF-005, IF-006).
-- Tests: F71 (a phase change refused for lack of nodes) and F72 (a promotion that fails probation).
+| Built | Where |
+|---|---|
+| The phase table (nominal and minimum voters per phase) and `RedundancyConfig::phases` (off by default: the manager then knows no phase and nothing changes) | `core/include/tfc/redundancy_types.hpp` |
+| `phase`, `warm`, `noop` ground operations, the WARM role (the probation held until promoted), the phase-aware tiers, `below_minimum`, a guarded phase byte that fails to the safest phase and is reported, a scrubbed WARM mask | `core/include/tfc/redundancy.hpp`, `protocol.hpp` |
+| Console and status line (`w` for a resting computer; `phase=` and `warm=` at the end), `CONFIG_TFC_PHASES` | `firmware/app` |
+| Replay and scripted commands (`tfc_replay --phases`; `--command 100:phase:coast`, `150:warm:C`), a live test on `vcan0` | `tools/replay`, `sim/tfc_peers`, `sim/tests/test_live_phases.py` |
+| Tests: `tests/test_phases.cpp` (the tiers per phase, the minimums' edges, WARM, promotion, noop), 32 mutants | |
+
+**Not built:** the **Safe action per manager phase**: ACT tells the pad from flight by the mission frame in SYNC (Safe on the pad goes to neutral at once, in flight it freezes, holds and ramps: `SAFE_MODE.md` section 5), but it does not know the manager's phase, which the heartbeat does not carry, so the coast phase's "freeze only" is not built; **COLD as an automatic standby**: a cold node is one the operator told the supervisor to
+`hold` (`SUPERVISOR.md`); events and telemetry for every role change beyond the console lines (IF-005, IF-006, `FUTURE_WORK.md` 2.2).
 
 ## 6. Sources
 

@@ -1,7 +1,6 @@
 # Vehicle simulator: a 6-DOF ascent, the platform, and the bus
 
-> Status: **accepted 4 Oct 2026; the model, the platform, the design and the closed loop are built and tested on the host** (`sim/vehicle/`, `tests/test_vehicle.cpp`);
-> the runner on the bus and the Pico are not (section 6, PRs P1-4 and P1-5). Owner's choices: the servos are the platform driven by the Pico; the simulator is a C++
+> Status: **built** (accepted 4 Oct 2026; reviewed 5 Oct 2026): the model, the platform, the closed loop on the host and live on `vcan0`, the bus runner `tfc_simd` and the Pico link are built and tested; **nothing has run on the real platform**. Owner's choices: the servos are the platform driven by the Pico; the simulator is a C++
 > library plus a runner; the physics is a full 6-DOF ascent, not the two-plane test model of `CONTROL_LOOP.md`. The numbers are those of a generic small launch
 > vehicle, chosen to be plausible, not to copy any real one.
 
@@ -69,7 +68,7 @@ heard (the world is brought to that frame with the gimbal neutral) and starts ov
 | `0x503` | Simulator state: altitude, speed, mass | every 10 frames |
 | `0x504` | Simulator telemetry: dynamic pressure, attitude error in the two planes (against the pitch program) | every 10 frames |
 | `0x505` | Simulator flags (safed, platform saturated, engine out, command held, aborted), engines on, time in frames | every 10 frames |
-USB, to the Pico, at 100 Hz: the platform angles (pitch plane, yaw plane) and a sequence number; the Pico returns its own status (position, saturation, watchdog state). Not built yet (P1-5).
+USB, to the Pico, at 100 Hz: the platform angles (pitch plane, yaw plane) and a sequence number; the Pico returns its own status (position, saturation, watchdog state). Built: `tfc_simd --pico PORT` streams it, and the Pico firmware and its PC client (`python3 -m tfc_peers pico`) are `PICO.md`; not run on a board.
 Each node's simulated IMU (`CONFIG_TFC_SIM_BUS_IMU`) takes `0x501` and `0x502`, adds its own noise, and sends its own gyro and accelerometer frames as before.
 
 **Results.** On the host with no sockets (`tests/test_runner.cpp`: the runner, three `FlightFunction`s, the real `ActLogic`, every frame through pack and unpack): the nominal 100 s ascent holds the attitude with an RMS error of
@@ -143,4 +142,4 @@ until its body-fixed gimbal planes were no longer the pad's planes and control w
 drifts without the option). It is stated plainly in section 3 because it is an assumption that flatters the result. Earlier, a fixed-point iteration for the gravity turn converged to the trivial vertical flight; the pitch program is now computed causally (the attitude follows the velocity vector as it flies).
 
 **Limits.** The reference vehicle's parameters are mine; max-Q and the pitch history are plausible, not matched to any real vehicle. The aerodynamic model is a normal-force slope with a transonic axial-force bump, not a table from a wind tunnel. Closed-loop numbers are for one set of gains designed for `wn` 2.5 rad/s and damping 0.8; the margins
-(how much the gains or the delay can change before the loop is lost) are not yet measured and should be, as a trade study.
+(how much the gains or the delay can change before the loop is lost) are measured by `tools/sim/tfc_sens.cpp`, one departure at a time scaled up until the flight is lost (`SIM_FIDELITY.md`).

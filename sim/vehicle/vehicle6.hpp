@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// A 6-DOF launch-vehicle model for the simulator (host only, double precision). See docs/VEHICLE_SIM.md.
+// A 6-DOF launch-vehicle model for the simulator (host only, double precision). See docs/design/VEHICLE_SIM.md.
 //
 // Frames. Inertial: non-rotating, centred on a spherical Earth, with the launch point on +X (local vertical), downrange +Y, crossrange +Z (right-handed).
 // Body: X along the long axis (nose forward), Y and Z lateral; at lift-off the body axes coincide with the inertial ones (the vehicle stands on the pad).
