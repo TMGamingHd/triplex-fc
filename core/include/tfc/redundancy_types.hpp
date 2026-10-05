@@ -207,6 +207,14 @@ struct RedundancyConfig {
   // agree, and only a disagreement of its commands (or its digest, or its command frames) removes it from the command vote. Operator commands address a sensor channel
   // by node number 4 to 6.
   bool sensor_split = false;
+
+  // ---- computers of different releases (ADR-021) ----
+  // The release id each computer reports in its heartbeat (a hash of its source, 0 meaning "not reported"). When the three computers are all known and two share a release that the third does
+  // not, the lone one is the computer on the other release (the golden release, or the current one beside it). Its commands are then compared with the pair's within `version_tol_factor` times
+  // the vote tolerance, its state digest is not compared with theirs (different code does not have the same estimator state), and a disagreement beyond the version tolerance for M of N
+  // frames **isolates nobody**: the outputs are held and a Safe request is raised, because nothing in the data says which release is right (the operator names the side to trust).
+  bool release_aware = true;
+  float version_tol_factor = 1.5F;
 };
 
 // One frame's verdict on a unit on probation (a computer, or with the sensor split a sensor channel).

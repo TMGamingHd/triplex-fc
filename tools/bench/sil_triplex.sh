@@ -6,6 +6,8 @@
 #   tools/bench/sil_triplex.sh --build-drop                     one more flight image, build/flight_b_drop: node B withholds every sensor frame from its flight function in
 #                                                               frames 370 to 398, so the replicas diverge deterministically (the live resync test)
 #   tools/bench/sil_triplex.sh --build-bias                     one more flight image, build/flight_b_bias: node B's gyro reads 3 dps too much (the live sensor-split test)
+#   tools/bench/sil_triplex.sh --build-mixed                    the mixed-release set (ADR-021): build/mixed_a, _b (release 0xA001), mixed_c (release 0xB002, commands 0.05 degree off) and
+#                                                               mixed_c_near (release 0xB002, commands 0.012 degree off, inside the version tolerance)
 #   tools/bench/sil_triplex.sh --test                           run the live test (sim/tests/test_live_triplex.py) against them
 #   tools/bench/sil_triplex.sh --closed-loop [seconds]          the closed loop: the loop_* images, ACT and the vehicle simulator (build/host/tfc_simd) on vcan0
 #   tools/bench/sil_triplex.sh --run [seconds]                  run the four for a while and print each node's console (default 10 s)
@@ -45,12 +47,19 @@ case "$mode" in
     # shellcheck disable=SC1091
     . firmware/env.sh
     west build -p auto -b native_sim/native/64 firmware/app -d build/flight_b_drop -- -DCONFIG_TFC_NODE_ID=1 -DCONFIG_TFC_FLIGHT_FUNCTION=y -DCONFIG_TFC_TEST_DROP_PEERS_FIRST=370 -DCONFIG_TFC_TEST_DROP_PEERS_FRAMES=29 ;;
+  --build-mixed)
+    # shellcheck disable=SC1091
+    . firmware/env.sh
+    for spec in "a 0 0xA001 0" "b 1 0xA001 0" "c 2 0xB002 50" "c_near 2 0xB002 12"; do
+      set -- $spec
+      west build -p auto -b native_sim/native/64 firmware/app -d "build/mixed_$1" -- -DCONFIG_TFC_NODE_ID="$2" -DCONFIG_TFC_FLIGHT_FUNCTION=y -DCONFIG_TFC_RELEASE_ID="$3" -DCONFIG_TFC_TEST_CMD_OFFSET_MDEG="$4"
+    done ;;
   --build-bias)
     # shellcheck disable=SC1091
     . firmware/env.sh
     west build -p auto -b native_sim/native/64 firmware/app -d build/flight_b_bias -- -DCONFIG_TFC_NODE_ID=1 -DCONFIG_TFC_FLIGHT_FUNCTION=y -DCONFIG_TFC_TEST_GYRO_BIAS_MDPS=3000 ;;
   --test)
-    (cd sim && python3 -m unittest tests.test_live_triplex tests.test_live_closed_loop tests.test_live_resync tests.test_live_split -v) ;;
+    (cd sim && python3 -m unittest tests.test_live_triplex tests.test_live_closed_loop tests.test_live_resync tests.test_live_split tests.test_live_release -v) ;;
   --closed-loop)
     tmp="$(mktemp -d)"
     trap 'kill $(jobs -p) 2>/dev/null || true' EXIT

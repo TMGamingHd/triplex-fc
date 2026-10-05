@@ -43,6 +43,7 @@ BUILD_ASSERT(kNodeId <= 2U, "the node id is 0 (A), 1 (B) or 2 (C)");
 constexpr bool kFlightFunction = IS_ENABLED(CONFIG_TFC_FLIGHT_FUNCTION);
 constexpr bool kSimBusImu = IS_ENABLED(CONFIG_TFC_SIM_BUS_IMU);
 constexpr bool kLaunch = IS_ENABLED(CONFIG_TFC_LAUNCH_SEQUENCE);
+constexpr uint16_t kReleaseId = static_cast<uint16_t>(CONFIG_TFC_RELEASE_ID != 0 ? CONFIG_TFC_RELEASE_ID : TFC_RELEASE_HASH_AUTO);  // what this image reports in its heartbeat
 constexpr uint32_t kResyncPeriod = CONFIG_TFC_RESYNC_PERIOD;  // frames between state resynchronisations (docs/RESYNC.md)
 constexpr uint8_t kResyncGroup = static_cast<uint8_t>(CONFIG_TFC_RESYNC_GROUP & 0x07U);
 constexpr bool kResync = kFlightFunction && kResyncPeriod != 0U && ((kResyncGroup >> CONFIG_TFC_NODE_ID) & 1U) != 0U;  // this computer takes part
@@ -248,6 +249,7 @@ int main() {
     printk("CONFIG ERROR: TFC_GROUND_KEY must be exactly 32 hex digits; using the PUBLIC bench key\n");
   }
   tfc::RedundancyManager mgr(cfg);
+  mgr.set_release(kNodeId, kReleaseId);  // (the peers' releases come from their heartbeats)
   if (mgr.config_errors() != 0U) {  // a bad configuration is replaced by defaults, never run silently
     printk("CONFIG ERROR: invalid fields (mask 0x%x) replaced by defaults\n", static_cast<unsigned>(mgr.config_errors()));
   }
@@ -305,6 +307,7 @@ int main() {
     g_flight = tfc::FlightFunction(gains, guidance);
   }
 
+  printk("release 0x%04x\n", static_cast<unsigned>(kReleaseId));
   printk("FC-%c (node %u): %s, 100 Hz frame loop%s%s.\n", 'A' + static_cast<char>(kNodeId), kNodeId,
          sync_start == tfc::SyncStart::Listen ? "listens for a master, then claims SYNC" : "following SYNC",
          kFlightFunction ? ", flight function on" : "", kSimBusImu ? ", sensors from the simulator" : "");
@@ -564,6 +567,7 @@ int main() {
         hb.node_state[n] = (rep.disabled_mask & bit) != 0U ? 3U : ((rep.probation_mask & bit) != 0U ? 2U : ((rep.latched_mask & bit) != 0U ? 1U : 0U));
       }
       hb.reset_count = static_cast<uint8_t>(resets.boots() > 255U ? 255U : resets.boots());
+      hb.release_hash = kReleaseId;
       own_ready = kLaunch && kFlightFunction && g_flight.sensors_ok() && g_cal.ready() && !rep.safe_request;
       hb.ready = own_ready;
       tx_errors += send(tfc::pack_heartbeat(kNodeId, hb, seq)) ? 0U : 1U;

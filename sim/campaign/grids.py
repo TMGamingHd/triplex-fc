@@ -790,6 +790,27 @@ def split_all() -> list[Scenario]:
         out.append(_split("split_all", [tmpl.format(n=N[node], s=s)], context=c, frames=s + 80, tag=dict(kind=kind, start=s, node=N[node])))
     return out
 
+
+# ------------------------------------------------------------------ computers of different releases (ADR-021, F63, F64)
+VERSION_TOL_DEG = 1.5 * CMD_TOL
+
+
+def common_mode() -> list[Scenario]:
+    """Two computers of one release and a third of another (`--release`). A command fault common to the pair (a regression they share), or a fault of the lone computer: beyond the version
+    tolerance nobody is isolated and Safe is requested; within it nothing happens. The same scenarios without `--release` are the weakness the rule is for (the healthy computer is latched)."""
+    out = []
+    for odd, mag, start, who in itertools.product(range(3), (0.005, 0.012, 0.02, 0.05, 1.0), (60, 100, 140), ("pair", "lone")):
+        rel = ",".join(f"{N[n]}={2 if n == odd else 1}" for n in range(3))
+        pair = [n for n in range(3) if n != odd]
+        victims = pair if who == "pair" else [odd]
+        faults = [f"{N[n]}:cmd_offset:start={start},mag={mag}" for n in victims]
+        exp = "conflict" if mag > VERSION_TOL_DEG else "none"
+        out.append(_sc("common_mode", faults, "any", release=rel, frames=start + 120, tag=dict(release_expect=exp, odd=N[odd], mag=mag, who=who, start=start)))
+    for odd, mag in itertools.product(range(3), (0.05, 1.0)):  # the weakness without the release information: the healthy computer is latched
+        faults = [f"{N[n]}:cmd_offset:start=100,mag={mag}" for n in range(3) if n != odd]
+        out.append(_sc("common_mode", faults, "any", frames=240, tag=dict(kind="unreported", odd=N[odd], mag=mag)))
+    return out
+
 def all_groups() -> dict:
     return {
         "dropout": dropout, "stuck": stuck, "bias_gyro": lambda: _bias("gyro"), "bias_accel": lambda: _bias("accel"),
@@ -800,5 +821,5 @@ def all_groups() -> dict:
         "contexts": contexts, "new_sensor": new_sensor_faults, "new_bits": new_bit_faults, "new_command": new_command_faults,
         "new_frame": new_frame_faults, "new_timing": new_timing_faults, "new_intermittent": new_intermittent, "new_pairs": new_pairs,
         "cascades": cascades, "ground_security": ground_security, "duplex_boundary": duplex_boundary, "total_loss": total_loss, "long_run": long_run, "phase_sweep": phase_sweep, "recovery_edges": recovery_edges,
-        "split_sensor": split_sensor, "split_command": split_command, "split_pairs": split_pairs, "split_all": split_all,
+        "split_sensor": split_sensor, "split_command": split_command, "split_pairs": split_pairs, "split_all": split_all, "common_mode": common_mode,
     }

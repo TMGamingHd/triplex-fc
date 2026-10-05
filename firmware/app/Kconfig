@@ -81,6 +81,14 @@ config TFC_TEST_DROP_PEERS_FRAMES
 	int "Test knob: how many frames the peers' sensor frames are withheld"
 	default 0
 
+config TFC_RELEASE_ID
+	hex "The release this image reports in its heartbeat (0: the first four hex digits of the git hash)"
+	default 0x0
+	range 0 0xFFFF
+	help
+	  Computers on different releases are compared with the version tolerance and not blamed for differing from each other (ADR-021, docs/RESYNC.md section 6). The default
+	  makes every image built from a different commit a different release. Set it by hand to build two releases from one tree (the live mixed-release test does).
+
 config TFC_TEST_HANG_AT_FRAME
 	int "Test knob: from this frame the end-of-frame KICK stops (0: off)"
 	default 0

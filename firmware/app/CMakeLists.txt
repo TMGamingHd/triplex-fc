@@ -6,5 +6,14 @@ project(tfc_app LANGUAGES C CXX)
 target_include_directories(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../core/include ${CMAKE_CURRENT_LIST_DIR}/../common)
 target_sources(app PRIVATE src/main.cpp)
 
+# The release this image is (ADR-021): the first four hex digits of the source's git hash, unless CONFIG_TFC_RELEASE_ID names one. Two images built from different commits report
+# different releases in their heartbeat; the golden release is simply the image built from an older tagged commit. Outside a git checkout it is 0, "not reported".
+execute_process(COMMAND git rev-parse --short=4 HEAD WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR} OUTPUT_VARIABLE TFC_GIT_SHORT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE TFC_GIT_RC)
+if(TFC_GIT_RC EQUAL 0 AND TFC_GIT_SHORT MATCHES "^[0-9a-f][0-9a-f][0-9a-f][0-9a-f]$")
+  target_compile_definitions(app PRIVATE TFC_RELEASE_HASH_AUTO=0x${TFC_GIT_SHORT})
+else()
+  target_compile_definitions(app PRIVATE TFC_RELEASE_HASH_AUTO=0)
+endif()
+
 # Replicas must compute the same bits as each other and as the host (ADR-006): no fused multiply-add (-ffast-math stays off).
 target_compile_options(app PRIVATE -ffp-contract=off)

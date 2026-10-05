@@ -19,6 +19,7 @@ class Scenario:
     frames: int = 500
     seed: int = 1
     policy: str = "manual"
+    release: str = ""              # the releases the computers report, `--release` (e.g. "A=1,B=1,C=2"; empty: not reported)
     split: bool = False             # the manager judges each IMU channel apart from its computer (ADR-020 case 1, tfc_replay --sensor-split)
     context: str = "triplex"        # triplex | duplex-X | simplex-XY (the named nodes are dropped at frame 5)
     rest: bool = False              # vehicle at rest (constant truth)
@@ -36,7 +37,7 @@ class Scenario:
         return specs
 
     def key(self) -> str:
-        return f"{self.group}|{','.join(self.faults)}|{','.join(self.commands)}|{self.context}|s{self.seed}|f{self.frames}|{self.policy}|rest={self.rest}" + ("|split" if self.split else "")
+        return f"{self.group}|{','.join(self.faults)}|{','.join(self.commands)}|{self.context}|s{self.seed}|f{self.frames}|{self.policy}|rest={self.rest}" + ("|split" if self.split else "") + (f"|rel={self.release}" if self.release else "")
 
 
 @dataclass

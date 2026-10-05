@@ -61,6 +61,8 @@ def execute(sc: Sc, tmp: str, want_dump: bool = True) -> tuple[dict, list[dict],
     cmd = [REPLAY, log, "--policy", sc.policy]
     if sc.split:
         cmd.append("--sensor-split")
+    if sc.release:
+        cmd += ["--release", sc.release]
     if want_dump:
         cmd += ["--dump", csvp]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -207,7 +209,25 @@ def evaluate(sc: Sc, tmp: str) -> Result:
         res.anomalies.append(("E_STATE", f"node {'ABC'[node]} final state {res.final_state.get(node)}, expected {tag['final_state']}"))
     if sc.split:
         res.anomalies += split_checks(sc, res, rows, tmp)
+    if "release_expect" in sc.tag:
+        if sc.tag["release_expect"] == "conflict":  # a Safe request after a single fault is the design here: nothing in the data says which release is right (ADR-021), so S3 does not apply
+            res.anomalies = [a for a in res.anomalies if a[0] != "S3"]
+        res.anomalies += release_checks(sc, res)
     return res
+
+
+def release_checks(sc: Sc, res: Result) -> list[tuple[str, str]]:
+    """ADR-021: with the releases reported and two sharing one, a disagreement between the lone computer and the pair beyond the version tolerance isolates nobody and requests Safe;
+    within it, nothing happens at all. (Without `--release` the same faults isolate the odd computer: that is the weakness the rule is for, F63.)"""
+    out: list[tuple[str, str]] = []
+    safe = res.metrics.get("safe_ever", False)
+    if res.latch:
+        out.append(("E_REL_ISOLATED", f"a computer was latched ({res.latch}) although the evidence is a disagreement between releases"))
+    if sc.tag["release_expect"] == "conflict" and not safe:
+        out.append(("E_REL_NO_SAFE", "the releases disagreed beyond the version tolerance and no Safe request was raised"))
+    if sc.tag["release_expect"] == "none" and safe:
+        out.append(("E_REL_SAFE", "a difference within the version tolerance raised a Safe request"))
+    return out
 
 
 def split_checks(sc: Sc, res: Result, rows: list[dict], tmp: str) -> list[tuple[str, str]]:

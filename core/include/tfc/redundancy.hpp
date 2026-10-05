@@ -62,6 +62,7 @@ constexpr uint32_t kAlpha = 1U << 3;         // leaky-count constants out of ran
 constexpr uint32_t kArbitration = 1U << 4;   // duplex arbitration factor neither 0 (off) nor >= 1
 constexpr uint32_t kLifeCycle = 1U << 5;     // probation / strike limits that contradict each other
 constexpr uint32_t kGroundAuth = 1U << 6;    // authentication on with an all-zero key, or a zero counter / arm window
+constexpr uint32_t kRelease = 1U << 7;       // a version tolerance factor below 1 (the other release would be held to a tighter limit than its own) or not a number
 }  // namespace cfgerr
 
 namespace detail {
@@ -101,6 +102,9 @@ namespace detail {
   }
   if ((c.ground_auth && key_zero) || c.command_window < 1U || c.command_window > 127U || c.arm_window_frames < 1U) {
     e |= cfgerr::kGroundAuth;
+  }
+  if (!(c.version_tol_factor >= 1.0F) || !(c.version_tol_factor <= 1.0e6F)) {  // false for NaN
+    e |= cfgerr::kRelease;
   }
   return e;
 }
@@ -146,6 +150,9 @@ namespace detail {
       c.min_dwell_frames_transient = c.min_dwell_frames;
     }
   }
+  if ((errors & cfgerr::kRelease) != 0U) {
+    c.version_tol_factor = def.version_tol_factor;
+  }
   if ((errors & cfgerr::kGroundAuth) != 0U) {  // the public bench key is better than a key of zeros, and the error is reported
     bool key_zero = true;
     for (const uint8_t b : c.ground_key) {
@@ -184,6 +191,8 @@ namespace detail {
   mix(c.persist_m);
   mix(c.persist_n);
   mix(c.digest_persist_frames);
+  mix(c.release_aware ? 1U : 0U);
+  mix(bits(c.version_tol_factor));
   mix(c.stuck_limit);
   mix(bits(c.alpha_k));
   mix(bits(c.alpha_threshold));
@@ -219,6 +228,7 @@ struct Counters {
   uint32_t stuck_flags = 0;
   uint32_t digest_flags = 0;
   uint32_t state_corrections = 0;   // computers whose state the resynchronisation found far from the vote (reported by the firmware)
+  uint32_t release_split_frames = 0;  // frames in which two releases disagreed beyond the version tolerance
   uint32_t vote_disagreements = 0;  // frames where any channel vote blamed a node
   uint32_t unresolved_frames = 0;   // frames with a disagreement nobody could be blamed for
   uint32_t held_frames = 0;         // frames in which some output channel held its last good value
@@ -281,6 +291,8 @@ struct FrameReport {
   uint8_t sensor_newly_reintegrated = 0U;
   unsigned sensor_healthy = 0U;                  // IMU channels that have been seen and are Healthy
   Mode sensor_mode = Mode::Safe;                 // from the number of healthy IMU channels (never Safe on a request: that is the computers' mode)
+  // ---- releases (ADR-021) ----
+  bool release_split = false;                    // the lone computer of another release disagreed with the pair beyond the version tolerance in this frame (nobody is blamed)
 };
 
 class RedundancyManager {
@@ -320,6 +332,14 @@ class RedundancyManager {
   }
   [[nodiscard]] uint32_t frame_number() const noexcept { return frame_no_; }
 
+  // The release a computer runs (its heartbeat carries it; the firmware also sets its own). 0 means not reported.
+  void set_release(unsigned node, uint16_t id) noexcept {
+    if (node < kNodes) {
+      release_[node] = id;
+    }
+  }
+  [[nodiscard]] uint16_t release_of(unsigned node) const noexcept { return node < kNodes ? release_[node] : 0U; }
+
   // Offer one received frame. Returns false if its ID is not part of the flight-bus schedule
   // (it is then only counted). SYNC, actuator, heartbeat and sim frames are accepted and ignored;
   // ground commands are queued and applied at the end of the frame.
@@ -334,6 +354,12 @@ class RedundancyManager {
       const bool known = f.id == id::kSync || f.id == id::kActOut || (f.id >= id::kSim && f.id <= id::kSimLast) ||
                          (f.id >= id::kHeartbeat && f.id < id::kHeartbeat + kNodes) || (f.id >= id::kState && f.id < id::kState + kNodes) ||
                          (f.id >= id::kResync && f.id < id::kResync + kResyncIds);
+      if (f.id >= id::kHeartbeat && f.id < id::kHeartbeat + kNodes) {  // the heartbeat names the release the sender runs
+        const DecodedHeartbeat hb = unpack_heartbeat(f);
+        if (hb.ok) {
+          release_[f.id - id::kHeartbeat] = hb.hb.release_hash;
+        }
+      }
       if (!known) {
         ++counters_.out_of_schedule;
         ++oos_in_frame_;
@@ -356,14 +382,18 @@ class RedundancyManager {
 
     std::array<bool, kNodes> good{};
     const uint8_t valid = judge_arrivals(rep, good);
+    release_split_now_ = false;
     const VoteSummary vs = vote_channels(rep, valid);
-    DigestVerdict dv = digest_outliers(valid);
+    rep.release_split = release_split_now_;
+    counters_.release_split_frames += release_split_now_ ? 1U : 0U;
+    const unsigned lone = lone_release(valid);  // the computer alone on its release, if three are voting and two share one (ADR-021)
+    DigestVerdict dv = digest_outliers(lone < kNodes ? static_cast<uint8_t>(valid & ~(1U << lone)) : valid);  // a state digest is only comparable between computers of one release
     digest_run_ = (dv.blame != 0U || dv.unresolved) ? (digest_run_ < 0xFFFFU ? static_cast<uint16_t>(digest_run_ + 1U) : digest_run_) : uint16_t{0};
     if (digest_run_ < cfg_.digest_persist_frames) {
       dv = DigestVerdict{};  // not yet: a mismatch that the resynchronisation may still heal
     }
     tally_votes(vs, dv);
-    update_safe(rep, vs.unresolved || dv.unresolved);
+    update_safe(rep, vs.unresolved || dv.unresolved || release_split_now_);  // a disagreement between releases is one nobody can be blamed for
     report_bus(rep);
 
     std::array<bool, kNodes> stuck_now{};
@@ -905,9 +935,27 @@ class RedundancyManager {
     }
   }
 
+  // The computer that runs a release of its own while the other two share one (ADR-021), or `kNodes`. Needs all three voting and every release reported.
+  [[nodiscard]] unsigned lone_release(uint8_t valid) const noexcept {
+    if (!cfg_.release_aware || (valid & 0x07U) != 0x07U || release_[0] == 0U || release_[1] == 0U || release_[2] == 0U) {
+      return kNodes;
+    }
+    const bool ab = release_[0] == release_[1];
+    const bool ac = release_[0] == release_[2];
+    const bool bc = release_[1] == release_[2];
+    if (ab && !ac) {
+      return 2U;
+    }
+    if (ac && !ab) {
+      return 1U;
+    }
+    return (bc && !ab) ? 0U : kNodes;
+  }
+
   // Vote the 8 channels; fills rep.votes / output / held_mask.
   VoteSummary vote_channels(FrameReport& rep, uint8_t valid) noexcept {
     VoteSummary s;
+    const unsigned lone = lone_release(valid);
     const bool safe_now = safe_requested();  // the flag as of the end of the previous frame
     for (unsigned ch = 0; ch < kVoteChannels; ++ch) {
       const std::array<float, kNodes> x = {rx_[0].x[ch], rx_[1].x[ch], rx_[2].x[ch]};
@@ -916,6 +964,15 @@ class RedundancyManager {
       const VoteResult v = vote3(x, mask, cfg_.tol[ch]);
       rep.votes[ch] = v;
       uint8_t blame = v.disagree_mask;
+      if (lone < kNodes && ch >= kChPitch && blame == static_cast<uint8_t>(1U << lone)) {
+        // The computer on the other release is the odd one out of a command vote. Within the version tolerance of the pair it is simply a different release; beyond it the
+        // releases disagree and nobody can say which is right. Either way it is not blamed (it is not faulty by this evidence), and the second case holds and asks.
+        const unsigned p = lone == 0U ? 1U : 0U;
+        const unsigned q = lone == 2U ? 1U : 2U;
+        const float pair_mid = 0.5F * (x[p] + x[q]);
+        release_split_now_ = release_split_now_ || std::fabs(x[lone] - pair_mid) > (cfg_.version_tol_factor * cfg_.tol[ch]);
+        blame = 0U;
+      }
       bool trusted = true;
       float out = v.value;
       switch (v.status) {
@@ -1400,6 +1457,8 @@ class RedundancyManager {
   std::array<bool, kVoteChannels> ref_fresh_{};    // last_good_ was set by the previous frame's trusted vote
   uint16_t digest_run_ = 0U;                       // consecutive frames with a digest disagreement
   uint8_t resync_large_ = 0U;                      // computers reported far from the resync vote, for this frame
+  std::array<uint16_t, kNodes> release_{};         // the release id each computer reported (0: not reported)
+  bool release_split_now_ = false;                 // this frame: the releases disagree beyond the version tolerance
   uint32_t unres_hist_ = 0U;                       // 1 bit per frame: an unresolved disagreement
   uint32_t oos_in_frame_ = 0U;
   Counters counters_{};

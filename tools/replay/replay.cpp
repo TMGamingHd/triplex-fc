@@ -12,6 +12,7 @@
 // cross-checks the state digest, runs the stuck detector, and feeds one 3-of-5 ChannelMonitor
 // per node (docs/ARCHITECTURE.md sections 4-5). This tool only reads the log and reports.
 //              [--sensor-split]   judge each IMU's gyro and accelerometer pair apart from its computer (ADR-020 case 1); the summary and the dump then also carry the IMU channels' verdicts
+//              [--release A=ID,B=ID,C=ID]   the release each computer reports (ADR-021): two that share one and a third that does not make the lone computer's commands subject to the version tolerance
 // Exit status: 0 ok, 1 an --expect-* failed, 2 usage/input error.
 #include <array>
 #include <cstdint>
@@ -124,7 +125,7 @@ bool parse_node(const std::string& s, unsigned& node) {
 
 int usage() {
   (void)std::fprintf(stderr,
-               "usage: tfc_replay LOG [--t0 SECONDS] [--first-frame N] [--startup-grace N] [--vote-us US] [--policy manual|auto] [--sensor-split] [--verbose] [--dump CSV]\n"
+               "usage: tfc_replay LOG [--t0 SECONDS] [--first-frame N] [--startup-grace N] [--vote-us US] [--policy manual|auto] [--sensor-split] [--release A=ID,B=ID,C=ID] [--verbose] [--dump CSV]\n"
                "                      [--expect-latch NODE:FRAME|NODE:MIN-MAX]\n"
                "                      [--expect-no-latch NODE] [--expect-state NODE:STATE] [--expect-mode MODE]\n"
                "                      [--expect-min STAT:N]\n");
@@ -144,6 +145,7 @@ int main(int argc, char** argv) {
   uint32_t first_frame = 0U;
   uint64_t vote_us = kDefaultVoteUs;
   std::string dump_path;
+  std::string release_spec;  // --release A=1,B=1,C=2
   tfc::RedundancyConfig cfg;
   Expect ex;
   for (int i = 2; i < argc; ++i) {
@@ -165,6 +167,8 @@ int main(int argc, char** argv) {
       }
     } else if (a == "--sensor-split") {
       cfg.sensor_split = true;
+    } else if (a == "--release" && has_val) {
+      release_spec = argv[++i];
     } else if (a == "--dump" && has_val) {
       dump_path = argv[++i];
     } else if (a == "--policy" && has_val) {
@@ -266,6 +270,17 @@ int main(int argc, char** argv) {
 
   // ---- feed the log to the redundancy manager, one 10 ms frame at a time ----
   tfc::RedundancyManager mgr(cfg);
+  for (std::size_t pos = 0; pos < release_spec.size();) {  // "A=1,B=1,C=2"
+    const std::size_t comma = release_spec.find(',', pos);
+    const std::string item = release_spec.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+    if (item.size() >= 3U && item[1] == '=' && item[0] >= 'A' && item[0] <= 'C') {
+      mgr.set_release(static_cast<unsigned>(item[0] - 'A'), static_cast<uint16_t>(std::strtoul(item.c_str() + 2, nullptr, 0)));
+    } else {
+      (void)std::fprintf(stderr, "tfc_replay: bad --release item '%s' (expected A=ID)\n", item.c_str());
+      return 2;
+    }
+    pos = comma == std::string::npos ? release_spec.size() : comma + 1U;
+  }
   std::array<long, tfc::kNodes> latch_frame{-1, -1, -1};
   std::array<long, tfc::kNodes> sensor_latch_frame{-1, -1, -1};  // the IMU channels (with --sensor-split; otherwise they mirror the computers)
   tfc::Mode mode = tfc::Mode::Triplex;

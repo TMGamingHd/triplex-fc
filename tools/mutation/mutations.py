@@ -303,13 +303,39 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "su_command_line_length": ("sup/commands.hpp", "  if (len > 40U) {", "  if (len > 400U) {"),
     "su_command_extra_words_ignored": ("sup/commands.hpp", "    c.parse = words == 1U ? Parse::Ok : Parse::ExtraWords;", "    c.parse = Parse::Ok;"),
     "su_command_two_words_for_a_unit": ("sup/commands.hpp", "  if (words > 2U) {\n    c.kind = Kind::Unknown;\n    c.parse = Parse::ExtraWords;", "  if (false) {\n    c.kind = Kind::Unknown;\n    c.parse = Parse::ExtraWords;"),
+    # ---- computers of different releases (ADR-021): names start with "rel_" ----
+    "rel_awareness_cannot_be_switched_off": ("redundancy.hpp", "if (!cfg_.release_aware || (valid & 0x07U) != 0x07U", "if ((valid & 0x07U) != 0x07U"),
+    "rel_judged_with_fewer_than_three_voting": ("redundancy.hpp", "if (!cfg_.release_aware || (valid & 0x07U) != 0x07U ||", "if (!cfg_.release_aware ||"),
+    "rel_unreported_release_counts": ("redundancy.hpp", "release_[0] == 0U || release_[1] == 0U || release_[2] == 0U", "false"),
+    "rel_lone_c_taken_for_b": ("redundancy.hpp", "    if (ab && !ac) {\n      return 2U;", "    if (ab && !ac) {\n      return 1U;"),
+    "rel_lone_b_taken_for_c": ("redundancy.hpp", "    if (ac && !ab) {\n      return 1U;", "    if (ac && !ab) {\n      return 2U;"),
+    "rel_lone_a_never_found": ("redundancy.hpp", "return (bc && !ab) ? 0U : kNodes;", "return kNodes;"),
+    "rel_version_tolerance_ignored": ("redundancy.hpp", "> (cfg_.version_tol_factor * cfg_.tol[ch]);", "> cfg_.tol[ch];"),
+    "rel_lone_computer_still_blamed": ("redundancy.hpp", "release_split_now_ = release_split_now_ || std::fabs(x[lone] - pair_mid) > (cfg_.version_tol_factor * cfg_.tol[ch]);\n        blame = 0U;", "release_split_now_ = release_split_now_ || std::fabs(x[lone] - pair_mid) > (cfg_.version_tol_factor * cfg_.tol[ch]);"),
+    "rel_conflict_not_a_safe_request": ("redundancy.hpp", "update_safe(rep, vs.unresolved || dv.unresolved || release_split_now_);", "update_safe(rep, vs.unresolved || dv.unresolved);"),
+    "rel_digest_compared_across_releases": ("redundancy.hpp", "digest_outliers(lone < kNodes ? static_cast<uint8_t>(valid & ~(1U << lone)) : valid)", "digest_outliers(valid)"),
+    "rel_split_frames_not_counted": ("redundancy.hpp", "    counters_.release_split_frames += release_split_now_ ? 1U : 0U;\n", ""),
+    "rel_split_not_reported": ("redundancy.hpp", "    rep.release_split = release_split_now_;\n", ""),
+    "rel_only_the_yaw_channel_judged": ("redundancy.hpp", "if (lone < kNodes && ch >= kChPitch && blame ==", "if (lone < kNodes && ch >= kChYaw && blame =="),
+    "rel_heartbeat_release_ignored": ("redundancy.hpp", "          release_[f.id - id::kHeartbeat] = hb.hb.release_hash;", "          (void)hb;"),
+    "rel_damaged_heartbeat_read": ("redundancy.hpp", "        if (hb.ok) {\n          release_[f.id", "        if (true) {\n          release_[f.id"),
+    "rel_set_release_unbounded": ("redundancy.hpp", "    if (node < kNodes) {\n      release_[node] = id;", "    if (true) {\n      release_[node] = id;"),
+    "rel_version_factor_below_one_allowed": ("redundancy.hpp", "if (!(c.version_tol_factor >= 1.0F) ||", "if (!(c.version_tol_factor >= 0.0F) ||"),
+    "rel_config_digest_ignores_the_factor": ("redundancy.hpp", "  mix(bits(c.version_tol_factor));\n", ""),
+    "su_rtc_century_leap_rule": ("sup/rtc.hpp", "return (y % 4U == 0U && y % 100U != 0U) || y % 400U == 0U;", "return y % 4U == 0U;"),
+    "su_rtc_oscillator_stop_ignored": ("sup/rtc.hpp", "if ((status & 0x80U) != 0U) {", "if (false) {"),
+    "su_rtc_twelve_hour_mode_accepted": ("sup/rtc.hpp", "if ((r[2] & 0x40U) != 0U) {", "if (false) {"),
+    "su_rtc_century_bit_ignored": ("sup/rtc.hpp", "((r[5] & 0x80U) != 0U ? 100U : 0U)", "0U"),
+    "su_rtc_every_month_has_31_days": ("sup/rtc.hpp", "date > detail::days_in_month(year, month)", "date > 31U"),
+    "su_rtc_hour_24_allowed": ("sup/rtc.hpp", "hour > 23U", "hour > 24U"),
+    "su_rtc_bcd_high_nibble_unchecked": ("sup/rtc.hpp", "(v >> 4U) <= 9U", "true"),
 }
 
 # Mutants that only the C++ unit tests can see, with the reason: the campaign's peers cannot produce the input that
 # distinguishes them from the real code.
 CAMPAIGN_SKIP = {
     # the supervisor's code is not in the campaign's reach (the campaign drives the flight bus)
-    *(n for n in MUTATIONS if n.startswith(("sup_", "rs_", "sh_", "split_", "su_"))),  # the supervisor, the resynchronisation and the sensor split are not in the campaign's reach (it runs the manager with the split off)
+    *(n for n in MUTATIONS if n.startswith(("sup_", "rs_", "sh_", "split_", "su_", "rel_"))),  # the supervisor, the resynchronisation and the sensor split are not in the campaign's reach (it runs the manager with the split off)
     # the launch sequence is not in the campaign's reach (its peers send no mission frame and no launch command)
     "mission_follower_ignores_sync_before_t_zero", "mission_flying_follower_adopts_sync", "mission_disagreement_not_reported", "mission_not_counted_through_a_gap", "mission_count_wraps_at_the_largest_value", "launch_by_a_follower", "launch_twice", "scrub_after_t_zero", "scrub_by_a_follower", "mission_countdown_boundary", "mission_flight_frames_off_by_one", "gate_accepts_two_healthy_nodes", "gate_accepts_a_node_not_ready", "gate_ignores_the_safe_request", "gate_ignores_act", "launch_needs_no_arm", "heartbeat_ready_not_packed",
     # the pad phase is not in the campaign's reach (its peers do not run the flight function)
