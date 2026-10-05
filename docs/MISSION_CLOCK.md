@@ -47,3 +47,29 @@ Time-tag every event and telemetry frame with MET when they have it (age flagged
 | TFC-SUP-012 | The supervisor shall record correlation pairs (its counter against the PC's UTC) and the fitted drift and offset, so that its time converts to UTC with a stated error. |
 | TFC-SUP-013 | The supervisor shall distribute time to the flight computers and ACT by a pulse per second and a one-way serial message, not by the flight bus; a node that loses either shall flag the age of its time and carry on. |
 | TFC-SUP-014 | No control decision of any node shall depend on the supervisor's time (TFC-SUP-007). |
+
+## 6. What is built (4 Oct 2026, host only)
+The logic that does not need the supervisor's hardware is written and tested on the PC; nothing runs on a supervisor yet.
+
+| Piece | Where | What it does | Tests |
+|---|---|---|---|
+| MET on the supervisor's ticks | `supervisor/include/sup/mission_clock.hpp` (`MissionClock`, `TickExtender`) | Integer-only: 64-bit ticks from a 32-bit timer, T-zero latched once (a repeat changes nothing), MET in ticks, microseconds and frames with no overflow over five years | `tests/test_supervisor_clock.cpp` |
+| The battery-backed record | same (`MetRecord`, CRC-16) | The RTC seconds at T-zero, with a magic number and a CRC; after a reset `resume` rebuilds T-zero's tick from the RTC, **to a second** (`MetSource::Recovered`), and refuses a corrupt record or a T-zero in the RTC's future | same, plus a test that every single-bit corruption of the seconds is caught |
+| The plausibility check (TFC-SUP-009) | same (`MissionWatch`) | Compares the SYNC mission field a node reports with MET: allows a few frames plus 200 ppm of the elapsed time plus the second of uncertainty of a recovered T-zero, saturates at 65 535 like SYNC, flags after 3 bad checks in a row, reports only | same |
+| Correlation with the PC (TFC-SUP-012) | `sim/tfc_peers/timecorr.py` (`Correlator`) | Fits the supervisor's counter against PC UTC; gives the oscillator's drift in ppm, a conversion to UTC and an error bound that grows with the distance from the data (an hour of pairs says little about year five) plus a stated latency allowance; throws out a stalled stamp; starts a new run when the counter goes backwards (a supervisor restart); keeps a bounded record that still covers the whole baseline | `sim/tests/test_timecorr.py` |
+
+The supervisor shares no code with `core/` (TFC-SUP-001): `sup::` restates the frame period, the first flight value of the mission field and its saturation value, and
+`sup_clock_restated_protocol_facts_match_the_flight_protocol` is the only place that includes both and checks that they still agree. The mechanical coding-standard check
+(`tools/check_standard.py`) now covers `supervisor/include` too, and 20 mutants (`sup_*`) check the tests.
+
+What the measurements say, from the correlator's own tests (a simulated 20 ppm oscillator, 2 ms of Gaussian scatter on the PC's stamps, a pair every minute): an **hour of pairs
+measures the drift to well under 1 ppm** (the test's limit; the standard error is about 0.25 ppm), and the converted time stays **inside its own error bound** at 5 years
+out, where the bound is tens of seconds because the line was fitted on one hour; ten days of pairs tighten it by a factor of more than ten. That is the honest way to read the
+table of section 2: the oscillator alone is minutes off in five years, and the correlation turns it into a time with a *stated* error, which is only as good as the baseline.
+
+**Not done, and why.** (1) The supervisor's firmware, the USB report of its counter, the RTC driver and the pulse and serial lines wait for the supervisor's parts (second Pico 2,
+TCXO module and battery-backed RTC are decided, not ordered). (2) The check as written compares against the SYNC mission field, which the supervisor can read only if it listens
+to the bus (the Full supervisor, TFC-SUP-009's frame-number half); the Lite supervisor would compare the count of a node's FRAME pulses since T-zero instead, and the same
+function would serve with that count converted to the field's encoding. (3) The oscillator's *aging and temperature* behaviour is not modelled: the fit assumes a constant rate over the
+record, and a real crystal's rate changes, so the error bound understates the far extrapolation for a real part; a windowed fit and a measured temperature coefficient are the fix
+(on the desk, a thermal chamber is not needed: a hair dryer and a logged temperature are enough for a first look).
