@@ -305,7 +305,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "su_command_two_words_for_a_unit": ("sup/commands.hpp", "  if (words > 2U) {\n    c.kind = Kind::Unknown;\n    c.parse = Parse::ExtraWords;", "  if (false) {\n    c.kind = Kind::Unknown;\n    c.parse = Parse::ExtraWords;"),
     # ---- computers of different releases (ADR-021): names start with "rel_" ----
     "rel_awareness_cannot_be_switched_off": ("redundancy.hpp", "if (!cfg_.release_aware || (valid & 0x07U) != 0x07U", "if ((valid & 0x07U) != 0x07U"),
-    "rel_judged_with_fewer_than_three_voting": ("redundancy.hpp", "if (!cfg_.release_aware || (valid & 0x07U) != 0x07U ||", "if (!cfg_.release_aware ||"),
+    # (no mutant for the all-three-voting condition of lone_release: with fewer voting, vote3 blames only a non-finite value, which the int16 wire cannot carry, so the branch is unreachable: equivalent)
     "rel_unreported_release_counts": ("redundancy.hpp", "release_[0] == 0U || release_[1] == 0U || release_[2] == 0U", "false"),
     "rel_lone_c_taken_for_b": ("redundancy.hpp", "    if (ab && !ac) {\n      return 2U;", "    if (ab && !ac) {\n      return 1U;"),
     "rel_lone_b_taken_for_c": ("redundancy.hpp", "    if (ac && !ab) {\n      return 1U;", "    if (ac && !ab) {\n      return 2U;"),

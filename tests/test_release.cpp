@@ -247,6 +247,27 @@ TFC_TEST(release_the_digest_of_the_lone_computer_is_not_compared_with_the_pairs)
   CHECK(b.mgr.counters().digest_flags == 0U && c.mgr.counters().digest_flags > 0U && rep.safe_request);  // two comparable computers that differ cannot be told apart: unresolved
 }
 
+TFC_TEST(release_the_family_needs_all_three_voting_so_with_one_out_the_odd_one_is_blamed_by_continuity_and_a_set_release_outside_the_nodes_is_ignored) {
+  Rig d;  // A disabled: B and C are left, of different releases. The release rule needs all three voting, so C, which steps away from its own earlier values, is latched as always
+  two_releases(d, 2U);
+  (void)d.run(20U);
+  Frame f = d.cmd(GroundOp::Disable, 0U);
+  (void)d.step(&f);
+  d.cmd_offset[2] = 0.05F;
+  const uint32_t before = d.mgr.counters().vote_disagreements;
+  (void)d.step();  // the first frames after the step: continuity singles out C, which is blamed (the vote's disagreement is counted), although it is the lone release
+  CHECK(d.mgr.counters().vote_disagreements > before);
+  CHECK(!d.run(10U).release_split);
+  RedundancyManager m;  // a node number outside the three is not a place to write
+  m.set_release(0U, 7U);
+  m.set_release(kNodes, 9U);
+  m.set_release(200U, 9U);
+  CHECK(m.release_of(0U) == 7U && m.release_of(1U) == 0U && m.release_of(2U) == 0U && m.release_of(kNodes) == 0U);
+  m.begin_frame(0U);
+  m.set_release(kNodes, 0xFFFFU);  // the next member of the manager is the "split now" flag
+  CHECK(!m.end_frame().release_split);
+}
+
 TFC_TEST(release_the_split_is_judged_only_while_all_three_vote_and_with_the_sensor_split_too) {
   Rig r;
   two_releases(r, 2U);
