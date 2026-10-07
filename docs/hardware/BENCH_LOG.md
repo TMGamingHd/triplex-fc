@@ -53,7 +53,7 @@ Notes: the step's load is 100 ohm (50 mA); five 120 ohm resistors were used, whi
 ### 2026-10-06  P-M1-01 step 3 (jack polarity)   T. Nardelli
 Item: both DC jack to screw terminal adapters, with the supply's plug
 Measured: with the supply on, the sign of the meter reading across the two screws, to find the centre-pin terminal of each adapter
-Limit: centre positive (the usual barrel-plug convention; the polarity of this supply's plug was not recorded)   Verdict: pass (reported by the operator; the sign was not recorded)
+Limit: the screws' polarity matches the + and - marked on the supply's plug   Verdict: pass (reported by the operator; the sign was not recorded)
 Notes: the polarity matters because the 1000 uF capacitors are polarised. Record which screw is the centre pin on each adapter (and mark it) before the first node is wired.
 
 ### 2026-10-06  P-M1-01 step 1 (6 Oct parts: terminal blocks, headers, IMUs)   T. Nardelli
