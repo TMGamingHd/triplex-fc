@@ -1,6 +1,6 @@
 # Hardware parts: everything the setup needs
 
-> Status: **reference** (reviewed 5 Oct 2026). Written from the owner's parts sheet (Triplex_Flight_Computer_Parts_v4, prices checked 2026-09-29) plus the decisions of 4 and 5 Oct, and merged with the audit of that sheet. **The order has been placed and arrives on 9 Oct 2026; the passive parts, the hub, the cables and the USB-CAN adapter arrived early, on 5 Oct (section 2.6).**
+> Status: **reference** (reviewed 5 Oct 2026). Written from the owner's parts sheet (Triplex_Flight_Computer_Parts_v4, prices checked 2026-09-29) plus the decisions of 4 and 5 Oct, and merged with the audit of that sheet. **The order has been placed and arrives on 9 Oct 2026; the passive parts, the hub, the cables and the USB-CAN adapter arrived early, on 5 Oct, and the first power parts, the three IMUs and the headers on 6 Oct, all checked on 6 Oct (section 2.6).**
 > Prices are the sheet's unless marked **n/c** (not checked). **Status:** *ordered* = in the order the owner placed; *check* = decided on 4 Oct and to be confirmed against the order confirmation (the second Pico 2, the TCXO module, the third relay module);
 > *owned* = the owner has it; *not ordered* = decided, not in the order (the override parts, section 4). Nothing was bought or measured by this document.
 
@@ -63,8 +63,10 @@ PC (Ubuntu) --USB hub--+-- Nucleo A, B, C (flight computers)  --- CAN Pal --+
 ### 2.5 Mechanical (3D prints and hardware)
 M3 and M2 screw kits, brass heat-set inserts, M3 standoffs (the third relay module needs **4 more M3 screws and standoffs**), 623ZZ bearings, rubber feet, PLA filament (owned printer): all on the sheet, unchanged. The third relay module needs a place in the injector box print (`3D Prints` sheet, 72 x 51.7 mm, holes 65.9 x 45 mm apart).
 
-### 2.6 Received so far (5 Oct 2026)
-Listed by the owner on 5 Oct, before the main shipment. None of it has been inspected or measured yet: "received" means the box is here (P-M1-01 step 1 turns it into "checked").
+### 2.6 Received so far (5 and 6 Oct 2026)
+Listed by the owner on 5 and 6 Oct, before the main shipment. Of the 5 Oct parts, the USB-CAN adapter, the hub and the 120 ohm resistors have been checked (`BENCH_LOG.md`); the rest is received and not yet inspected (P-M1-01 step 1 turns "received" into "checked"). The 6 Oct batch is the second table below, and it **was checked on 6 Oct** (`BENCH_LOG.md`).
+
+**5 Oct**
 
 | Received | Qty | Fills row | Notes |
 |---|---|---|---|
@@ -82,9 +84,23 @@ Listed by the owner on 5 Oct, before the main shipment. None of it has been insp
 | M2 to M5 threaded inserts kit | 320 | 2.5 | **Check they are the knurled heat-set type** for the PLA prints, not tapping inserts |
 | M3 hex male-female brass spacers assortment | 1 | 2.5 | Covers the 4 extra standoffs of the third relay module |
 
-**Not in the 5 Oct list, so not here yet:** the four Nucleos, the four CAN Pals, the three IMUs, the Pico 2s, the relay modules, the servos, the logic analyzer, the two 5 V adapters, the DC jacks, the capacitors, the fuse, the E-stop, the 3 pin terminals, the Dupont kits, the header strips, heat shrink and solder, the TCXO module.
+**6 Oct** (as the owner listed it)
 
-**What can be checked now, with only these parts** (each is a step of `P-M1-01`; log it in `BENCH_LOG.md`): the hub on the PC with a cable (`lsusb`, step 4); the adapter enumerating as `gs_usb` and `can0` coming up with `tools/bench/can_up.sh` (step 5; with nothing on the bus, a loopback test: `ip link set can0 type can bitrate 1000000 loopback on`); the resistance of a handful of the 120 ohm resistors and of two in parallel (60 ohm).
+| Received | Qty | Fills row | Notes |
+|---|---|---|---|
+| 5 V 4 A switching power supply | 1 | 2.3 (5 V 4 A adapter) | **One of the two wanted** (node rail and servo rail); used as the node rail's adapter until the second arrives. **Measured 6 Oct** (P-M1-01 step 3, on both jack adapters): **5.3 V with nothing connected** (above the 5.25 V limit of the Nucleo's `E5V`) and **5.06 V with five 120 ohm resistors in parallel** (23 ohm measured, about 0.22 A), inside 4.75 to 5.25 V. A Nucleo is never on an unloaded rail (the Picos and relay coils are always on it, and the Nucleo itself draws current), so this is judged usable **without a series diode**: a diode's 0.3 to 0.4 V would take the loaded 5.06 V down to about 4.7 V, below the window. **To measure on 9 Oct:** the voltage at a Nucleo's `E5V` pin with the real load on the rail (four Nucleos, both Picos, the relay coils), and with the coils switching (G7). Add a diode or a buck module only if that reads above 5.25 V (G7 decides the other end). The second adapter gets the same step-3 test before it is used |
+| Female DC jack, 2.1 mm, to screw terminal | 2 | 2.3 (DC jack to screw terminal) | The sheet's two, one per rail. **Checked 6 Oct:** both pass the supply's voltage to their screw terminals (the 5.3 V and 5.06 V above are the same on both), and the polarity of the screws was checked with the meter against the + and - marked on the supply's plug (reported by the operator; mark the centre-pin screw on each adapter before wiring) |
+| 3-pin 3.5 mm terminal blocks, pack of 5 | **2 packs, 10** (confirmed by the owner) | 2.2 (terminals, 2 packs) | Complete. These are the CAN taps (CANH, CANL, GND) and the manual bus isolation of `HARDWARE_OVERRIDE.md`. **Checked 6 Oct** (reported by the operator, no values recorded): count, that they plug and unplug, that a stripped Cat6 conductor clamps and gives continuity through the plugged block and an open circuit unplugged, and how they sit on the prototype board (their pitch is 3.5 mm against the board's 2.54 mm grid) |
+| Break-away 0.1 in male header strips, 36 pin | 10 | 2.2 (header strips) | **360 pins against the 80 the two Picos need** (section 3), and the CAN Pals and IMUs. Enough, with spares. **Checked 6 Oct** (reported by the operator): the count, that a strip breaks cleanly and that it fits an IMU's holes. **Soldering is assumed necessary** for the IMUs, CAN Pals and Pico headers; it is done when each part is wired in its hardware stage |
+| ISM330DHCX 6-DOF IMU | 3 | 2.1 #3 | **Row complete.** One per flight computer, on SPI2. **Checked 6 Oct** (reported by the operator, no values recorded): the boards, their silkscreen and pin labels against the sheet, no bridges or damage, no short between 3V3 and GND with the meter on ohms, and the board size and mounting holes (P-M1-01 steps 1 and 11). No spare: the sheet's optional spare IMU (section 5) is **not** here. Not powered yet: P-M1-01 step 12 (the high level of `MISO` at 3.3 V and at 5 V) needs a Pico, which is not here |
+| Heat-shrink assortment, several colours and diameters | 1 | 2.2 (heat shrink) | Optional row, complete. Needs a heat source |
+
+**Not in the 5 and 6 Oct lists, so not here yet:** the four Nucleos, the four CAN Pals, the Pico 2s, the relay modules, the servos, the logic analyzer, **the second 5 V adapter**, the capacitors, the fuse, the E-stop, the Dupont kits, solder, the TCXO module. The sheet's 22 AWG hook-up wire has an unconfirmed stand-in (the "wire kit" of 5 Oct).
+
+**What has been checked, and what needs a board** (each is a step of `P-M1-01`; the values are in `BENCH_LOG.md`):
+- 5 Oct: the hub on the PC with a cable (step 4), the adapter on `can0` and its loopback (step 5), a sample of the 120 ohm resistors.
+- **6 Oct:** the 5 V adapter on both jacks, no load and loaded (step 3); the jacks' polarity; the terminal blocks; the IMUs, including the unpowered short check and the board dimensions (step 11); the headers.
+- **Still needs a board:** the IMU's logic levels (step 12), the supply's voltage at a Nucleo's `E5V` pin under the real load, the CAN stubs and the 60 ohm bus check (the backbone is not built), the relays (steps 7 and 8), the servos (steps 9 and 10).
 
 ## 3. Added by the decisions of 4 Oct 2026 (to confirm against the order)
 | Part | Qty | Price | Why |
@@ -124,6 +140,7 @@ TS-17's paper part chose option **O3** (`TRADE_STUDIES.md` section 9c, `HARDWARE
 4. The USB hub is full (section 2.4): decide whether a second hub is wanted for later.
 5. The CAN adapter is an SH-C31A on Cannable 2.0 (section 2.6). FD support is confirmed (section 2.6); the repository does not need it. Whether to take the isolated model (SH-C30G) because the bus-stub relays are for shorting the bus is still open.
 6. An oscilloscope to borrow for the rail and servo-current measurements (section 5).
+7. **The node-rail adapter reads 5.3 V unloaded** (section 2.6). The decision is no diode, to be confirmed at a Nucleo's `E5V` pin on 9 Oct; the second adapter needs the same step-3 test first.
 
 ## 7. Audit of the parts sheet (4 Oct 2026)
 The sheet has six tabs (Parts List, 3D Prints, Budget, Compatibility, Compatibility Audit, Notes). **What matches the plan:** three flight computers and ACT on Nucleo-G474RE (4 boards); one CAN transceiver per node (TJA1051T/3, terminations off, two 120 ohm on the
