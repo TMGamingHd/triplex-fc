@@ -38,7 +38,7 @@
 ## Decisions: why (`decisions/`)
 | Page | Covers |
 |---|---|
-| [DECISIONS.md](decisions/DECISIONS.md) | The 32 ADRs, with a register of what is built and what each waits for |
+| [DECISIONS.md](decisions/DECISIONS.md) | The 33 ADRs, with a register of what is built and what each waits for |
 | [TRADE_STUDIES.md](decisions/TRADE_STUDIES.md) | The studies behind them, with results where they are done |
 
 ## Verification: how we know (`verification/`)

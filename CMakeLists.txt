@@ -47,6 +47,8 @@ add_executable(tfc_tests
   tests/test_vehicle_refusals.cpp
   tests/test_environment.cpp
   tests/test_dynamics.cpp
+  tests/test_slosh.cpp
+  tests/test_flex.cpp
   tests/test_pad.cpp
   tests/test_launch.cpp
   tests/test_supervisor_clock.cpp

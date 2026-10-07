@@ -522,7 +522,7 @@ TFC_TEST(aero_the_scale_factors_the_running_engines_the_table_and_the_fairing_ac
   CHECK(l1.f_aero.y < 1.4 * l0.f_aero.y && l1.f_aero.y > 1.5 * l0.f_aero.y);  // the linear part is 1.5 times, the cross-flow part is not scaled: between 1 and 1.5 (both are negative)
   // power fraction is weighted by the thrust of the engines that run: 3000 N and 1000 N, the small one fails
   sim::Params p = shaped_body();
-  p.spec.stages[0].tanks.push_back(sim::TankSpec{2.0, 0.1, 0.04, 1000.0});
+  p.spec.stages[0].tanks.push_back(sim::TankSpec{2.0, 0.1, 0.04, 1000.0, {}});
   sim::EngineSpec big;
   big.thrust_vac = 3000.0;
   big.exit_area = 0.0;

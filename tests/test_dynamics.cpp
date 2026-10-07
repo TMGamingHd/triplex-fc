@@ -11,6 +11,7 @@
 
 #include "tfc_test.hpp"
 
+#include "closed_loop.hpp"
 #include "spec_io.hpp"
 #include "vehicle6.hpp"
 
@@ -199,7 +200,7 @@ TFC_TEST(dynamics_jet_damping_slows_a_turning_vehicle_by_the_exhaust_it_throws_o
   const auto turned = [&](bool jet) {
     sim::Params p = bare();
     p.spec.jet_damping = jet;
-    p.spec.stages[0].tanks.push_back(sim::TankSpec{2000.0, 0.5, 0.5, 900.0});
+    p.spec.stages[0].tanks.push_back(sim::TankSpec{2000.0, 0.5, 0.5, 900.0, {}});
     sim::EngineSpec e;
     e.thrust_vac = 200000.0;
     e.exit_area = 0.0;
@@ -232,7 +233,7 @@ TFC_TEST(dynamics_jet_damping_slows_a_turning_vehicle_by_the_exhaust_it_throws_o
 
 TFC_TEST(dynamics_jet_damping_off_by_default_changes_nothing_and_acts_only_on_a_turning_vehicle) {
   sim::Params p = bare();
-  p.spec.stages[0].tanks.push_back(sim::TankSpec{2000.0, 0.5, 0.5, 900.0});
+  p.spec.stages[0].tanks.push_back(sim::TankSpec{2000.0, 0.5, 0.5, 900.0, {}});
   sim::EngineSpec e;
   e.thrust_vac = 200000.0;
   e.exit_area = 0.0;
@@ -501,6 +502,24 @@ TFC_TEST(dynamics_a_roll_controller_is_limited_in_torque_and_holds_the_angle_wit
     }
     CHECK(at_sep < 0.2 * 0.5 && near_abs(v.state().w.x, at_sep, 1e-9));  // slowed before, constant after
   }
+}
+
+// ---- a closed loop may be given the tables it flies ----
+
+TFC_TEST(dynamics_a_closed_loop_flies_the_same_flight_with_tables_it_is_given_as_with_tables_it_designs) {
+  sim::Loop a;
+  a.frames = 1500U;
+  const sim::Result ra = sim::run(a);
+  const sim::FlightTables tables = sim::flight_tables(a.cfg.design, a.cfg.plan);
+  sim::Loop b = a;
+  b.cfg.tables = &tables;
+  const sim::Result rb = sim::run(b);
+  CHECK(ra.max_deg == rb.max_deg && ra.rms_deg == rb.rms_deg && ra.safe_frames == rb.safe_frames && ra.finite && rb.finite && ra.max_deg > 0.0);
+  // and the runner says which tables it flies
+  sim::RunnerConfig cfg;
+  cfg.tables = &tables;
+  const sim::SimRunner r(cfg);
+  CHECK(&r.tables() != &tables && r.tables().gains.size() == tables.gains.size() && r.tables().guidance.size(1U) == tables.guidance.size(1U));
 }
 
 // ---- the files ----

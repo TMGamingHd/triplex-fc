@@ -220,6 +220,14 @@ inline void read_tank(const Json& j, const std::string& path, TankSpec& t, std::
   o.num("x_bottom_m", t.x_bottom);
   o.num("radius_m", t.radius);
   o.num("density_kg_m3", t.density);
+  if (const Json* sl = o.get("slosh")) {  // present: this tank sloshes
+    ObjectReader so(*sl, child(path, "slosh"), errors);
+    t.slosh.enabled = true;
+    so.num("damping", t.slosh.damping);
+    so.num("mass_scale", t.slosh.mass_scale);
+    so.num("frequency_scale", t.slosh.frequency_scale);
+    so.finish();
+  }
   o.finish();
 }
 
@@ -613,6 +621,20 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
     o.num("kd_nm_s_per_rad", r.kd);
     o.finish();
   }
+  if (const Json* v = top.get("flex")) {
+    ObjectReader o(*v, "flex", errors);
+    FlexSpec& f = p.spec.flex;
+    f.enabled = true;
+    o.integer("stage", f.stage);
+    o.num("frequency_hz", f.frequency_hz);
+    o.num("damping", f.damping);
+    o.num("generalized_mass_kg", f.generalized_mass);
+    o.num("phi_engine", f.phi_engine);
+    o.num("slope_engine_per_m", f.slope_engine);
+    o.num("phi_imu", f.phi_imu);
+    o.num("slope_imu_per_m", f.slope_imu);
+    o.finish();
+  }
   top.flag("jet_damping", p.spec.jet_damping);
   if (const Json* v = top.get("scenario")) {
     ObjectReader o(*v, "scenario", errors);
@@ -791,7 +813,10 @@ inline std::string write_vehicle(const VehicleFile& v) {
     for (std::size_t k = 0; k < st.tanks.size(); ++k) {
       const TankSpec& t = st.tanks[k];
       o += std::string(k == 0U ? "" : ", ") + "{\"propellant_kg\": " + num_text(t.propellant) + ", \"x_bottom_m\": " + num_text(t.x_bottom) + ", \"radius_m\": " + num_text(t.radius) +
-           ", \"density_kg_m3\": " + num_text(t.density) + "}";
+           ", \"density_kg_m3\": " + num_text(t.density) +
+           (t.slosh.enabled ? ", \"slosh\": {\"damping\": " + num_text(t.slosh.damping) + ", \"mass_scale\": " + num_text(t.slosh.mass_scale) + ", \"frequency_scale\": " + num_text(t.slosh.frequency_scale) + "}"
+                            : std::string()) +
+           "}";
     }
     o += "], \"sequential_drain\": " + std::string(st.sequential_drain ? "true" : "false") + ",\n";
     if (!st.sections.empty()) {
@@ -871,6 +896,11 @@ inline std::string write_vehicle(const VehicleFile& v) {
   if (g.roll.enabled) {
     o += ",\n  \"roll_control\": {\"stage\": " + std::to_string(g.roll.stage) + ", \"torque_max_nm\": " + num_text(g.roll.torque_max) + ", \"kp_nm_per_rad\": " + num_text(g.roll.kp) +
          ", \"kd_nm_s_per_rad\": " + num_text(g.roll.kd) + "}";
+  }
+  if (g.flex.enabled) {
+    o += ",\n  \"flex\": {\"stage\": " + std::to_string(g.flex.stage) + ", \"frequency_hz\": " + num_text(g.flex.frequency_hz) + ", \"damping\": " + num_text(g.flex.damping) +
+         ", \"generalized_mass_kg\": " + num_text(g.flex.generalized_mass) + ", \"phi_engine\": " + num_text(g.flex.phi_engine) + ", \"slope_engine_per_m\": " + num_text(g.flex.slope_engine) +
+         ", \"phi_imu\": " + num_text(g.flex.phi_imu) + ", \"slope_imu_per_m\": " + num_text(g.flex.slope_imu) + "}";
   }
   if (g.jet_damping) {
     o += ",\n  \"jet_damping\": true";

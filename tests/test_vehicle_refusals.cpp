@@ -119,7 +119,7 @@ TFC_TEST(refusals_every_check_of_the_description_names_its_field) {
     st.dry_mass = 1000.0;
     st.length = 6.0;
     st.radius = 0.5;
-    st.tanks.push_back(sim::TankSpec{4000.0, 0.5, 0.5, 1000.0});
+    st.tanks.push_back(sim::TankSpec{4000.0, 0.5, 0.5, 1000.0, {}});
     s.stages.push_back(st);
     s.engines.push_back(sim::EngineSpec{});
     return s;
