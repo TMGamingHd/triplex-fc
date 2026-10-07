@@ -27,18 +27,23 @@ flexibility are not modelled, and **roll is held by an ideal roll controller** (
 - Translation: `m a = F_thrust + F_aero + m g` (inertial).
 - Rotation: `I w' = M - w x (I w) - I' w`, with the inertia `I(t)` and the centre of gravity moving as propellant burns; `q' = (1/2) q * (0, w)`.
 - **Propulsion:** `N` engines on a gimbal a distance `L_g` aft of the CG; thrust `T = T_vac - p_a A_e` per engine (so it rises with altitude), mass flow
-  `T / (Isp g0)`. The gimbal angles (pitch plane, yaw plane) come from ACT's command through an actuator model with a limit and a rate limit.
+  the constant `T_vac / (Isp_vac g0)` (it does not depend on the ambient pressure, so the sea-level Isp is derived: 269 s). The gimbal angles (pitch plane, yaw plane) come from ACT's command through an actuator model with a limit and a rate limit.
   Thrust acts along the gimbaled direction at the nozzle: force and moment about the CG.
 - **Aerodynamics:** US Standard Atmosphere 1976 to 86 km (exponential above), relative wind = velocity - wind, angle of attack and sideslip from the
   body-axis relative velocity, axial force `C_A(Mach) q S` (with a transonic rise), normal force `C_Nalpha alpha q S` at a centre of pressure **ahead of the CG**,
   which makes the vehicle aerodynamically unstable and the TVC necessary.
+  The force is linear in the angle of attack at any angle and **is zero while the vehicle flies tail-first** (relative velocity along the body's -X, an angle of attack past 90 degrees): there is no drag and no restoring moment then. This matters only for
+  a vehicle that tumbles after a total loss of control, not for any flight that stays recoverable (`SIM_FIDELITY.md`).
 - **Wind:** a mean profile (jet-stream peak) plus scripted 1-cosine gusts and shears.
 - **Engine-out:** one engine's thrust goes to zero at a set time; its moment about the CG remains (a steady disturbance torque) and the control
   authority falls by `(N-1)/N`.
 
-**Reference vehicle** (all parameters in one table in the code): liftoff mass 30,000 kg with 24,000 kg of propellant; 5 engines, sea-level thrust
-500 kN in total (thrust-to-weight 1.7), Isp 280 s at sea level and 310 s in vacuum; diameter 1.8 m, length 20 m; `L_g` about 8 m; gimbal limit 8 degrees at 60 degrees/s.
-At liftoff the control effectiveness `b = T L_g / I` is about 4 per second squared; around max-Q the aerodynamic divergence is about 1.4 per second squared.
+**Reference vehicle** (all parameters in one table in the code, `Params` in `vehicle6.hpp`): liftoff mass 30,000 kg with 24,000 kg of propellant (dry mass 6,000 kg); 5 engines of 92 kN vacuum thrust each, so **460 kN in vacuum and 399.2 kN at sea level** (the exit area of 0.12 m^2 per engine costs 12.2 kN of ambient pressure each),
+a liftoff **thrust-to-weight of 1.357** (1.564 in vacuum); Isp 310 s in vacuum, which is **269 s at sea level** (it is derived: constant mass flow of 151.3 kg/s, 30.26 kg/s per engine, with the thrust falling as the ambient pressure rises), so the propellant lasts **158.6 s**;
+diameter 1.8 m, length 20 m; the gimbal sits at the engines' exit plane, so the arm `L_g` from the centre of gravity is 7.8 m at liftoff and grows to 10.0 m as the tanks empty; gimbal limit 8 degrees at 60 degrees/s.
+At liftoff the control effectiveness `b = T L_g / I` is **8.2 per second squared** and rises to 11.1 by 100 s; the aerodynamic divergence `a` peaks at **4.4 per second squared at 65 s** (max-Q). These figures are pinned by a test
+(`reference_vehicle_figures_are_the_documented_ones` in `tests/test_vehicle.cpp`), so this paragraph cannot drift from the code again. (Until 6 Oct 2026 this paragraph quoted 500 kN, a thrust-to-weight of 1.7, 280 s, `b` of about 4 and `a` of about 1.4: they were the first
+sketch of the vehicle and did not match the code, which every other number on this page and every test uses.)
 
 ## 4. The platform and what it can show
 The platform has two tilt axes about horizontal axes. It shows the vehicle's **long axis relative to the pad vertical**, as two angles: the pitch
@@ -81,7 +86,9 @@ Run it: `tools/bench/sil_triplex.sh --build --flight --sim-imu`, then `tools/ben
 The plant's parameters change by a large factor through the ascent (thrust, mass, inertia, dynamic pressure), so fixed gains cannot serve. The simulator's nominal
 run produces a **trajectory table**: the pitch program (the reference angle and rate of each plane, up to 16 points) and a **gain schedule** (`kp`, `kd`, `ki` against time) designed from the
 local `a(t)` and `b(t)` for a chosen natural frequency and damping. Both go to the flight computers as configuration (`Guidance`, and a new `GainSchedule` in `core/`), and the
-controller interpolates them each frame. The open-loop reference is the **gravity turn**: a short vertical rise, a small pitch kick, then attitude following the velocity vector (zero angle of attack).
+controller interpolates them each frame.
+The schedule holds at most 16 points (`GainSchedule::kMaxPoints`). Designing a gain every 6 s over 100 s gives 17, and **the last one (96 s) is dropped on purpose**: the 90 s gains are held to the end of the flight (kp 0.753 instead of 0.689, 9 % higher, in the last
+4 s). `flight_tables()` does not report the drop; a test pins it (`reference_vehicle_figures_are_the_documented_ones`) so that a change of the design interval or the horizon that moves it is noticed. The open-loop reference is the **gravity turn**: a short vertical rise, a small pitch kick, then attitude following the velocity vector (zero angle of attack).
 
 ## 8. Scenarios
 Nominal ascent; wind shear and a gust at max-Q; engine-out at a chosen time (before, at and after max-Q); a mass or centre-of-gravity offset; a sensor fault is not a scenario of the vehicle but of the nodes (the fault
