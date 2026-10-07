@@ -46,12 +46,21 @@ These come from `docs/verification/REQUIREMENTS.md` and are what reviewers check
 ```bash
 cmake -S . -B build -G Ninja -DTFC_SANITIZE=ON && cmake --build build && ctest --test-dir build --output-on-failure
 python3 tools/check_standard.py                                   # mechanical coding-standard rules
-python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98
+python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98 --sim-min-line 99 --sim-min-branch 93
 cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/rel --target tfc_replay
 (cd sim && TFC_REPLAY_BIN=$PWD/../build/rel/tfc_replay python3 -m campaign.run --strict)   # about 2-4 minutes
 python3 tools/mutation/run_unit.py                                # deliberate bugs must still be caught (weekly in CI)
 ```
 A new check or fallback in `core/` comes with a mutant in `tools/mutation/mutations.py` that removes it.
+
+## Before you push a change to the vehicle simulator (`sim/vehicle/`)
+```bash
+ctest --test-dir build --output-on-failure                         # the whole suite, with -Werror
+python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 93
+python3 tools/mutation/run_sim.py                                  # deliberate bugs in the simulator must still be caught (weekly in CI; about 15 minutes)
+```
+`a_controlled_flight_of_the_reference_vehicle_is_unchanged_by_changes_to_the_model` (`tests/test_vehicle.cpp`) must still pass without edits: the reference vehicle's flight is the contract of every change. A new
+model, option or guard comes with a test that fails without it, and a mutant in `tools/mutation/sim_mutations.py` that removes it.
 
 ## Milestones, stages and tags
 - Each staged-build stage (S1-S4) and each milestone (M0-M5) ends with a **tag on `main`** and a short log or video: `git tag -a s1-single-fc -m "..." && git push origin s1-single-fc`.

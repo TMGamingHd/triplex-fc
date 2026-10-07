@@ -40,6 +40,7 @@ add_executable(tfc_tests
   tests/test_pico_app.cpp
   tests/test_pico_fuzz.cpp
   tests/test_realism.cpp
+  tests/test_sim_model.cpp
   tests/test_pad.cpp
   tests/test_launch.cpp
   tests/test_supervisor_clock.cpp

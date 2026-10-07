@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Sensitivity of the closed loop: for each departure from the nominal (a sensor error, a dispersed vehicle, a late frame) how large can it grow before the flight is lost?
 // The whole software chain is flown (sim/vehicle/closed_loop.hpp: the simulated vehicle, three flight functions with their IMU models, the real ACT logic) with one departure
-// scaled up until the flight fails, found by bisection. A flight FAILS if, after the first 3 s, the attitude strays more than `--limit` degrees from the pitch program (the lift-off transient is reported separately), the platform saturates, ACT enters
+// scaled up until the flight fails, found by bisection. A flight FAILS if, after the first 3 s, the attitude strays more than `--limit` degrees from the pitch program (the lift-off transient is reported separately), the platform saturates, the vehicle is still on the ground at 3 s or is destroyed, ACT enters
 // Safe, or a value is not finite. Run it twice, with the platform's sensors (the rig) and with the vehicle's own (a real vehicle): gravity is observable on the platform and not on
 // a vehicle under thrust, which changes what a gyro bias does.
 //   tfc_sens [--mode platform|vehicle] [--no-accel] [--pad FRAMES] [--frames N] [--limit DEG] [--only NAME] [--list]
@@ -38,7 +38,9 @@ Verdict fly(const sim::Loop& base, const Departure& d, double v, double limit_de
   d.apply(lp, v);
   Verdict out;
   out.r = sim::run(lp);
-  out.ok = out.r.finite && out.r.max_deg_settled <= limit_deg && out.r.safe_frames == 0U && out.r.platform_saturated == 0U;
+  // A flight that never rose is not a flight (found 6 Oct 2026: with 30% less thrust the vehicle stayed on the pad, or before the ground model sank through it, and "flew"
+  // with a small attitude error): it must be off the ground by 3 s, and must not have been destroyed.
+  out.ok = out.r.finite && out.r.max_deg_settled <= limit_deg && out.r.safe_frames == 0U && out.r.platform_saturated == 0U && !out.r.crashed && out.r.liftoff_frame <= 300U;
   return out;
 }
 
@@ -108,7 +110,7 @@ int main(int argc, char** argv) {
   base.estimator.use_accel = !no_accel;
   base.pad_frames = pad_frames;
   const Verdict nominal = fly(base, deps[0], 0.0, limit_deg);
-  std::printf("Mode: %s sensors%s%s; %u frames; a flight fails if, after 3 s, it is more than %.1f degrees from the program, or on platform saturation, Safe or a non-finite value.\n",
+  std::printf("Mode: %s sensors%s%s; %u frames; a flight fails if, after 3 s, it is more than %.1f degrees from the program, or on platform saturation, Safe or a non-finite value, or if the vehicle is still on the ground at 3 s or is destroyed.\n",
               vehicle_true ? "vehicle" : "platform", no_accel ? ", accelerometer correction off" : "", pad_frames > 0U ? ", with a pad phase" : "", static_cast<unsigned>(frames), limit_deg);
   std::printf("Nominal: %s (max error %.2f deg after 3 s and %.2f in the first 3 s, rms %.3f deg)\n\n", nominal.ok ? "flies" : "FAILS", nominal.r.max_deg_settled, nominal.r.max_deg_liftoff, nominal.r.rms_deg);
   std::printf("| Departure | Largest value that still flies | Unit | Max error there after 3 s (deg) | Lift-off transient there (deg) |\n|---|---|---|---|---|\n");

@@ -201,7 +201,9 @@ TFC_TEST(edge_a_flight_past_burnout_stays_finite_and_ends_with_the_engines_off) 
   lp.frames = 30000U;  // 300 s: the 24 t of propellant burn out at about 158 s; the tables stop at 100 s and hold their last values
   const sim::Result r = sim::run(lp);
   CHECK(r.finite);
-  sim::SimRunner runner;  // and the vehicle itself, flown with the gimbal neutral to the end of the propellant
+  sim::RunnerConfig bare;  // and the vehicle itself, flown with the gimbal neutral to the end of the propellant. The bare equations: unguided, this vehicle tumbles
+  bare.params.ground_contact = false;  // at max-Q and comes back down (with the ground it lands or is destroyed before it burns out), and the point here is the burnout
+  sim::SimRunner runner(bare);
   (void)runner.start(0U);
   tfc::ActFrame neutral;
   for (uint32_t k = 0; k < 30000U; ++k) {

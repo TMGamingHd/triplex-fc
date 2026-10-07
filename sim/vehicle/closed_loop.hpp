@@ -51,6 +51,9 @@ struct Result {
   uint32_t runs_of_three_over_manager_tol = 0U;  // ... and how many times that lasted three frames in a row (what its 3-of-5 detector needs)
   double max_spread_ab_deg = 0.0;         // the largest command difference between computers A and B in a frame
   double max_spread_c_deg = 0.0;          // ... between C and either of them (what a version tolerance for a diverse computer C has to absorb)
+  uint32_t liftoff_frame = 0xFFFFFFFFU;   // the first frame after T-zero on which the vehicle was off the ground (0xFFFFFFFF: it never left it)
+  bool crashed = false;                   // the vehicle reached the ground faster than the crash speed
+  double min_altitude = 0.0;              // the lowest altitude reached after T-zero (never below 0 with the ground model: the vehicle cannot sink through the pad)
 };
 
 struct Loop {
@@ -239,6 +242,11 @@ inline Result run(const Loop& lp) {
     if (pad_now) {
       continue;  // nothing flies on the pad
     }
+    if (r.liftoff_frame == 0xFFFFFFFFU && !runner.vehicle().on_ground() && runner.vehicle().altitude() > 0.0) {
+      r.liftoff_frame = fk;
+    }
+    r.crashed = r.crashed || runner.vehicle().crashed();
+    r.min_altitude = std::fmin(r.min_altitude, runner.vehicle().altitude());
     const tfc::Reference ref = tables.guidance.at(fk + 1U);
     const double ep = t.y_deg - static_cast<double>(ref.tilt_y_deg);
     const double ey = t.x_deg - static_cast<double>(ref.tilt_x_deg);

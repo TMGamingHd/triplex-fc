@@ -75,8 +75,8 @@ jobs:
         run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr --language=c++ --std=c++17 -I core/include -I supervisor/include core/include/tfc/*.hpp supervisor/include/sup/*.hpp
       - name: Coding standard (mechanical rules of docs/verification/CODING_STANDARD.md)
         run: python3 tools/check_standard.py
-      - name: Structural coverage of core/ (gate may only be raised)
-        run: python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98
+      - name: Structural coverage of core/ and of the vehicle simulator (gates may only be raised)
+        run: python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98 --sim-min-line 99 --sim-min-branch 93
       - name: Fault campaign (safety properties on every frame; fails on any anomaly; a sample on pull requests, everything on main)
         run: |
           cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release

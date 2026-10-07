@@ -45,6 +45,11 @@ struct Params {
   // flight computers' two-plane gimbal does not provide it), which is not modelled; without it an engine-out's roll torque, acting on an inertia 40 times
   // smaller than the pitch inertia, would turn the vehicle's gimbal planes away from the pad's and end the flight for a reason that is not the subject.
   bool ideal_roll_control = true;
+  // The ground. The pad (and the Earth's surface below it) holds the vehicle up, so that a vehicle whose thrust-to-weight is under 1 stands on the pad (burning
+  // propellant, until it is light enough to rise) instead of sinking through it, and a vehicle that comes back down lands or is destroyed. A vehicle that flies from the first step
+  // is not touched by it. `false` is for tests that want the bare equations.
+  bool ground_contact = true;
+  double crash_speed_ms = 5.0;  // a vehicle that reaches the ground faster than this is destroyed: the run stops there (`crashed()`)
   // tests only: 0 switches gravity off, so that the rocket equation can be checked exactly
   double gravity_scale = 1.0;
   // the largest integration substep, s (tests lower it to check that the answer has converged)
@@ -123,6 +128,10 @@ class Vehicle6 {
       }
       gimbal_p_ = slew(gimbal_p_, cmd_pitch_deg, h);
       gimbal_y_ = slew(gimbal_y_, cmd_yaw_deg, h);
+      if (p_.ground_contact && held_by_ground(h)) {
+        t_ += h;
+        continue;
+      }
       rk4(h);
       t_ += h;
     }
@@ -137,6 +146,8 @@ class Vehicle6 {
   [[nodiscard]] double gimbal_yaw_deg() const { return gimbal_y_; }
   [[nodiscard]] const Params& params() const { return p_; }
   [[nodiscard]] bool burning() const { return s_.m > p_.m_dry + 1e-6; }
+  [[nodiscard]] bool on_ground() const { return grounded_; }  // standing on the pad (or landed): held there by the ground
+  [[nodiscard]] bool crashed() const { return crashed_; }     // reached the ground faster than `crash_speed_ms`: the state is frozen where it hit
   [[nodiscard]] int engines_on() const {
     int n = 0;
     for (const bool on : engine_on_) {
@@ -272,6 +283,43 @@ class Vehicle6 {
     return cur + d;
   }
 
+  // The ground, for one substep of h seconds. A vehicle that is at the surface and not moving away from it, with no net force lifting it, stays where it is (position and attitude held,
+  // no velocity or rotation) while its engines burn propellant; it is released the moment the net force along the local vertical is upward. One that arrives moving down is landed,
+  // or destroyed above `crash_speed_ms`. Returns true while the ground holds the vehicle (the equations of motion are not integrated). Nothing here changes the state of a vehicle
+  // that is flying, or that is at the surface with a net upward force and no downward speed (a normal lift-off), so the nominal flight is arithmetic for arithmetic what it was.
+  bool held_by_ground(double h) {
+    if (crashed_) {
+      return true;
+    }
+    const double rn = norm(s_.r);
+    if (!grounded_ && rn > kEarthR + 1e-6) {
+      return false;  // in the air: the common case, no extra work
+    }
+    const V3 up = s_.r / rn;
+    const double vr = dot(s_.v, up);
+    if (vr > 0.0) {
+      grounded_ = false;  // moving away from the surface
+      return false;
+    }
+    const Loads l = loads(s_, t_);
+    const double a_up = dot(rotate(s_.q, l.f_thrust + l.f_aero) / s_.m, up) - (p_.gravity_scale * kEarthMu / (rn * rn));
+    if (vr == 0.0 && a_up > 0.0) {
+      grounded_ = false;  // lifting off
+      return false;
+    }
+    if (-vr > p_.crash_speed_ms) {
+      crashed_ = true;
+    }
+    grounded_ = true;
+    s_.r = up * kEarthR;
+    s_.v = V3{};
+    s_.w = V3{};
+    if (!crashed_ && burning()) {
+      s_.m = std::max(s_.m - (l.mdot * h), p_.m_dry);
+    }
+    return true;
+  }
+
   struct Deriv {
     V3 r{};
     V3 v{};
@@ -339,6 +387,8 @@ class Vehicle6 {
   double t_ = 0.0;
   double gimbal_p_ = 0.0;
   double gimbal_y_ = 0.0;
+  bool grounded_ = false;
+  bool crashed_ = false;
   std::vector<bool> engine_on_;
 };
 
