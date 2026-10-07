@@ -9,7 +9,7 @@
 | Id | Name | From | Content | Version |
 |---|---|---|---|---|
 | `0x010` | SYNC | the sync master | 32-bit frame number and the 16-bit mission frame (0 = not launched, 1 to 1000 the countdown, 1001 T-zero, then flight; `docs/design/LAUNCH_SEQUENCE.md`) | 1, mission frame added (old senders put 0 there) |
-| `0x100+n` | GYRO | node n | three axes, 0.125 dps per count | 1 |
+| `0x100+n` | GYRO | node n | three axes, **1/32 dps per count** (range +-1024 dps; it was 0.125 and +-4096 until 7 Oct 2026, ADR-032) | 1, scale changed |
 | `0x110+n` | ACCEL | node n | three axes, 1/2048 g per count | 1 |
 | `0x200+n` | CMD | node n | pitch and yaw gimbal command, 0.001 degree; a 16-bit state digest | 1 |
 | `0x300` | ACT out | ACT | the voted gimbal command and the vote status | **2** |

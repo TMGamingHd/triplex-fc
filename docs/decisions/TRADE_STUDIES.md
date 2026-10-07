@@ -309,6 +309,8 @@ What it shows. (1) For a fault of one IMU, **B keeps all three computers voting 
 
 What it shows: (1) **a handful of lost frames in a flight makes the digests differ for the rest of it** (4 losses, 82 % of the frames, one run of 4 873 frames), so the permanent divergence of the question is confirmed and is not a rare corner; (2) the *commands* stay within 0.2 degree of each other, so the damage is the digest mismatch and what the manager and ACT do with it, not a control error: the digest is a fingerprint of quantised state, so any difference, however small, persists; (3) at 1 % loss the flight is lost. This loop has no fault manager and no state-share frames (it was built to test the control chain and the vehicle, and the manager lives in the node firmware: a gap in the loop, not a design choice), so the Safe at 1 % is ACT's own response, and it is now explained: `SafeCause::LostVotes`. ACT accepts three commands as agreeing if they are within `tol_deg` = 0.05 degree; at 1 % loss the replicas' commands differ by more than that on 1 408 frames (28 at 0.3 %, 8 at 0.1 %, 1 at 0.01 %), and three such frames in a row (`lost_votes` = 3) enter Safe, at the first time with a spread of 0.075 degree. The step from 28 to 1 408 over-tolerance frames between 0.3 % and 1 % shows the difference **growing** with each further loss and not just persisting, which is the controller-integrator case the expected finding predicted. The real system adds the manager's reaction to the digest mismatch on top of this.
 
+*Re-measured on 7 Oct 2026 (ADR-032).* That table has the gyro frames at 0.125 dps per count. With them at 1/32 the same loop at 1 % loss survives its 60 s without the resync (largest error 0.16 degree, no Safe), and the flight is lost at 2 % (TS-23 has the 32-pattern version: 4 of 32 patterns lost at 1 %, 23 of 32 at 5 %). Part of the loss of the flight at 1 % was the rounding bias of the coarse gyro adding to the divergence; the divergence itself, 2 800 frames over ACT's tolerance and digests unequal in 99 % of the frames, is unchanged in kind.
+
 *Caveat on the loss model.* The drops here are independent at each receiver. Classic CAN is built so that a frame damaged at one node is flagged and re-sent for all (an atomic broadcast, with a known exception for errors in the last bits of a frame), so a lost frame at one node and not the others is **not** the likely cause on a healthy wired bus. The likely causes are local: a receive FIFO that overflows, a frame that arrives after the node has already run its step (late, in a time-triggered frame), a node that was reset and rejoined, or a software drop. The model stands for those; the rate to use for them is a measurement still to be made on the rig (the live triplex with a counter of frames each node used in each frame). Consequence for the options: **D alone (tolerate with persistence) cannot work**, because the mismatch does not decay inside any persistence window; the digest must either compare something that converges (E) or the states must be pulled together (C) or the inputs agreed (B). The bus loss rate this needs to survive is also now a number to ask for: the CAN fault campaign should say what loss a real bus shows, since a good wired bus loses far fewer than 0.01 %.
 
 **Decision (5 Oct 2026, owner: option C with persistence-based detection; ADR-030).** Built on the host and measured (`docs/design/RESYNC.md`): with the resync every 100 frames the 60 s flight that was lost at 1 % frame loss flies (max error 0.55 degree), and still flies at 10 %; a 2 degree state corruption in one computer is healed and reported as one large correction; the digest check counts a mismatch only after a configured persistence. Not yet in the firmware, so not yet on the bus. The expected finding (D with E is not enough for the controller's integrator) was not tested separately: option D alone is ruled out by the first measurement.
@@ -530,7 +532,7 @@ The time-error budget is then extrapolated to five years with the measured aging
 
 **Method.** `tools/sim/tfc_resync.cpp`: the closed loop of the 60 s ascent (three flight functions, the real ACT logic, the simulated vehicle) for each period and each frame-loss rate, 32 independent random loss patterns per cell (the loss is independent at each receiver for every sensor frame and every resync chunk, the pessimistic model of TS-16). A flight is lost if ACT enters Safe or the attitude strays more than 5 degrees from the program after 3 s. "Digest persistence P + 50 / 2P + 50" counts the seeds in which a digest mismatch lasted longer than that, i.e. in which a manager set to that persistence would have counted it.
 
-**Results** (`./build/rel/tfc_resync --seeds 32`; the numbers are means over the 32 patterns unless a longest value or a count is named).
+**Results** (`./build/rel/tfc_resync --seeds 32`; the numbers are means over the 32 patterns unless a longest value or a count is named). **Re-measured on 7 Oct 2026**, after the gyro frames were made four times finer (ADR-032, `SIM_FIDELITY.md` 3.4): the first measurement (5 Oct) had the flight lost in 11 of 32 patterns at 1 % loss and 28 of 32 at 5 % without the resync, and 21 seeds flagged by a 2P + 50 persistence at 1 % and period 100; the coarse gyro's rounding bias was adding to the divergence. The tables below are the new ones.
 
 *Flights lost, of 32:*
 | Loss per frame | none | 10 | 20 | 50 | 100 | 200 | 500 | 1000 |
@@ -538,30 +540,30 @@ The time-error budget is then extrapolated to five years with the measured aging
 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | 0.01 % | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | 0.1 % | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 1 % | **11** | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 5 % | **28** | 0 | 0 | 1 | 1 | 1 | 2 | 3 |
+| 1 % | **4** | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 5 % | **23** | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
 
 *Share of the frames in which the three digests are not all equal (the lower, the more useful the digest check):*
 | Loss per frame | none | 10 | 20 | 50 | 100 | 200 | 500 | 1000 |
 |---|---|---|---|---|---|---|---|---|
-| 0.01 % | 69 % | 0.5 % | 0.7 % | 1.3 % | 2.3 % | 3.9 % | 10.5 % | 20.1 % |
-| 0.1 % | 95 % | 4.1 % | 5.7 % | 10.5 % | 17.7 % | 29 % | 56 % | 75 % |
-| 1 % | 99 % | 34 % | 44 % | 63 % | 77 % | 87 % | 95 % | 97 % |
-| 5 % | 99.9 % | 86 % | 92 % | 96 % | 98 % | 99 % | 99 % | 99.7 % |
+| 0.01 % | 70 % | 0.5 % | 0.6 % | 1.3 % | 2.2 % | 4.0 % | 9.8 % | 20 % |
+| 0.1 % | 95 % | 4.1 % | 5.7 % | 10 % | 17 % | 29 % | 55 % | 74 % |
+| 1 % | 99 % | 35 % | 44 % | 62 % | 76 % | 87 % | 94 % | 97 % |
+| 5 % | 99.9 % | 86 % | 92 % | 96 % | 98 % | 99 % | 99.6 % | 99.7 % |
 
 *Seeds (of 32) in which a digest persistence of 2P + 50 would have counted a mismatch (a false flag: nothing was wrong that the resync had not healed):*
 | Loss per frame | 10 | 20 | 50 | 100 | 200 | 500 | 1000 |
 |---|---|---|---|---|---|---|---|
 | 0.01 % and 0.1 % | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 1 % | 0 | 3 | 9 | 21 | 16 | 8 | 4 |
-| 5 % | 32 | 32 | 32 | 32 | 32 | 32 | 30 |
+| 1 % | 1 | 5 | 8 | 17 | 20 | 5 | 3 |
+| 5 % | 32 | 32 | 32 | 32 | 32 | 32 | 28 |
 
 (With persistence P + 50 instead, the 0.1 % row already flags 1 seed at period 100, 2 at 200 and 6 at 500: one skipped resync makes a mismatch two periods long, so **2P + 50 is the persistence to use**.) The resyncs a computer skips (a chunk of a peer's state lost) are a property of the loss and not of the period: 0.1 % at 0.8 %, 1 % at 7.8 %, 5 % at 33 %. The command difference between computers and the frames beyond ACT's agreement tolerance (about 5 at 0.1 % and 48 at 1 %) also do not depend on the period, and the flight's attitude error stays at 0.4 to 0.65 degree: over minutes, not seconds, is when an unhealed difference grows enough to matter, which is why even a period of 1000 flies at 1 %.
 
 *Bus load* (analytic): the burst is 1.6 ms at every period; the average added load is 1.6 % at period 10, 0.8 % at 20, 0.31 % at 50, 0.16 % at 100, 0.08 % at 200 and below 0.03 % beyond 500.
 
 **What the table says.**
-- *Flight survival* is flat up to 1 % loss at every period, because a divergence has to grow over many seconds to matter; only at 5 % loss does a long period lose flights (1 to 3 of 32 beyond 50).
+- *Flight survival* is flat up to 5 % loss for every period but the longest, because a divergence has to grow over many seconds to matter (period 1000 loses 1 of 32 at 5 %). Without the resync, 4 of 32 flights are lost at 1 % and 23 of 32 at 5 %.
 - *The digest check* is where the period matters. At a realistic loss (0.1 % and below) period 100 leaves the digests equal 82 % of the time and a persistence of 2P + 50 = 250 never false-flags; at 1 % loss only periods up to 20 keep the digest check mostly clean, and at 5 % none does.
 - *Healing and rejoin time* scale directly with the period: 0.1 s at 10, 1 s at 100, 10 s at 1000 (twice that if a resync is skipped).
 - *The cost* is small everywhere; period 10 is the only one that adds more than 1 % average bus load.

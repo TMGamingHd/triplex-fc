@@ -115,7 +115,7 @@ class SensorFaults(unittest.TestCase):
         for a, b in zip(self.base, t):
             diffs = [abs(y - x) for x, y in zip(gyro(a)[0].values, gyro(b)[0].values)]
             self.assertEqual(sum(1 for d in diffs if d > 1.0), 1)  # exactly one axis hit
-            self.assertAlmostEqual(max(diffs), 4096 * 0.125, delta=0.5)  # 512 dps
+            self.assertAlmostEqual(max(diffs), 4096 * P.GYRO_LSB_DPS, delta=0.5)  # 128 dps
 
     def test_stuckbit_forces_the_bit_on_every_axis(self):
         t = run(["B:stuckbit:start=0,bit=12,value=1"], frames=40)
@@ -321,7 +321,7 @@ class Validation(unittest.TestCase):
             for k in range(80):
                 for tf in sc.frames(k):
                     h.update(repr((tf.t_us, tf.frame.id, tf.frame.data)).encode())
-        self.assertEqual(h.hexdigest(), "ebf635695b6384cfcf53f9a1e88b8ac73d373648d046c93b0a8a1620a0f7e79d")
+        self.assertEqual(h.hexdigest(), "cd67ada9fce9a851fc854f12aee390fadb840e36b36c4664de6dd4730f2d73d3")  # re-pinned when the gyro frames went to 1/32 dps per count (ADR-032): the same faults, the same random streams, finer gyro bytes
 
 
 if __name__ == "__main__":

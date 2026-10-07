@@ -186,7 +186,7 @@ TFC_TEST(ts16_a_clean_bus_keeps_the_three_state_digests_equal_and_a_lossy_one_me
   CHECK(b.lost_frames > 100U && b.lost_frames < 500U);  // 6 frames x 2 receivers x 3000 frames x 1% (the own frames are never lost) = 240 expected
   CHECK(b.digest_mismatch_frames > 0U && b.longest_mismatch_run >= 1U);  // TS-16: the replicated estimators drift apart
   sim::Loop heavy = clean;
-  heavy.frame_loss_prob = 0.01F;
+  heavy.frame_loss_prob = 0.02F;  // (at 1 % the flight survives 60 s since the gyro frames were made 4 times finer: the divergence is there, 2800 frames over the tolerance, but small; at 2 % it is lost)
   heavy.frames = 6000U;
   heavy.estimator.use_accel = false;  // as flown under thrust (the estimator's accelerometer gate mistakes thrust for gravity)
   const sim::Result h = sim::run(heavy);

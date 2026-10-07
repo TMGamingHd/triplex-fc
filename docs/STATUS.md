@@ -34,7 +34,7 @@ bus, the real IMUs, the servos, the relays and the supervisor's lines. Nothing i
 
 ## 3a. The decisions
 
-All 31 ADRs are accepted (ten on 5 Oct 2026, one on 6 Oct 2026) and none is open. [`decisions/DECISIONS.md`](decisions/DECISIONS.md) opens with a register: for each one, whether it is built, what it still waits for, and where. In short: every ADR is built on the host and
+All 32 ADRs are accepted (ten on 5 Oct 2026, two on 6 and 7 Oct 2026) and none is open. [`decisions/DECISIONS.md`](decisions/DECISIONS.md) opens with a register: for each one, whether it is built, what it still waits for, and where. In short: every ADR is built on the host and
 in the firmware; the ones that need the hardware to be *confirmed* are listed below; two are stretch goals outside v1 (the ring that re-homes an orphaned IMU, ADR-020 case 2; a second ACT, ADR-023). Trade studies: TS-0, TS-15, TS-16, TS-17 (paper part) and
 TS-23 are done; the rest are plans that the rig or the closed loop will feed (`decisions/TRADE_STUDIES.md` section 2 has the status of each). No ADR waits for one of those, except that the Safe hold time and the persistence constants are
 *parameters* that TS-4 and TS-1 tune on the rig.

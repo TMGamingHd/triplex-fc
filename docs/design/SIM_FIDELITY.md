@@ -89,17 +89,21 @@ expected thrust acceleration subtracted.
 - A vehicle with thrust-to-weight under 1 (6 Oct 2026): it stands on the pad and burns propellant until it is light enough to rise; an unguided one turns over at about 30 s, falls back and is destroyed at 41.8 s (the run stops, `crashed()`).
 - Dispersions at their defaults change nothing: the nominal flight is bit for bit the same as before the model was extended.
 
-### 3.4 The gyro frames are too coarse for a slowly turning vehicle (found 6 Oct 2026, by the two-stage launcher of `vehicles/`)
-The protocol carries a gyro rate as a 16-bit count of **0.125 degrees per second** (`tfc::kGyroLsbDps`, range +-4096 dps). The ISM330DHCX itself resolves about 0.009 dps per count at +-250 dps (the 8.75 mdps class of figure, datasheet **not checked**): the bus throws away about four bits. For a vehicle that turns slowly
-the rounding is a bias, and with the accelerometer off (a vehicle under thrust) nothing corrects what it integrates. The launcher's pitch program turns at 0.19 dps, one and a half counts, and the flight computers' attitude estimate **drifts 9 degrees in 400 s** with the loop apparently satisfied (the command is about zero while the true attitude walks away):
-| Run (the two-stage launcher, vehicle sensors, accelerometer off) | Attitude error at 100 / 200 / 300 / 400 s |
-|---|---|
-| the bus as it is, 0.125 dps per count, noise on | 0.25 / 2.70 / 5.75 / 8.89 degrees |
-| the same with the sensor noise off | 0.26 / 2.20 / 5.37 / 8.66 |
-| the same with the gimbal lag off | 0.08 / 2.49 / 5.53 / 8.66 |
-| **0.0078 dps per count (1/128), everything else the same** | **0.02 / 0.11 / 0.16 / 0.19** |
-The noise and the actuator are not the cause; the pad phase does not remove it (8.9 degrees with 15 s of pad calibration: a bias that is not constant, so it cannot be calibrated away). On the rig it does not show: in platform mode the accelerometer reads gravity and corrects the estimate, and the reference vehicle's 100 s in vehicle mode has 0.75 degree of it. It would show on any real vehicle that turns slowly and is under thrust.
-*Not decided.* It is a change to the protocol (`core/include/tfc/protocol.hpp`, the firmware's IMU scaling, `sim/tfc_peers`, the tests and `PROTOCOL.md`), so it is the owner's: **1/32 dps per count** (range +-1024 dps, four times finer: about 2 degrees in 400 s) keeps room for the platform's 300 dps rate limit and for a gross fault; **1/128** (range +-256 dps) removes the drift but would saturate a fast platform move and the large jumps that the fault campaign injects. Measured here by changing the constant in a scratch copy of the header and flying the same file.
+### 3.4 The gyro frames were too coarse for a slowly turning vehicle (found 6 Oct 2026 by the two-stage launcher of `vehicles/`; **fixed 7 Oct 2026, ADR-032**)
+The protocol carried a gyro rate as a 16-bit count of **0.125 degrees per second** (range +-4096 dps). The ISM330DHCX itself resolves about 0.009 dps per count at +-250 dps (the 8.75 mdps class of figure, datasheet **not checked**): the bus threw away about four bits. For a vehicle that turns slowly
+the rounding is a bias, and with the accelerometer off (a vehicle under thrust) nothing corrects what it integrates. The launcher's pitch program turns at 0.19 dps, one and a half counts, and the flight computers' attitude estimate drifted 9 degrees in 400 s with the loop apparently satisfied (the command is about zero while the true attitude walks away). The first sweep (6 Oct, the first two rows and the 1/128 row of the old table) found it; on 7 Oct, the owner chose **1/32 dps per count** (range +-1024 dps) and the change was made and measured with one command on the three scales (the two-stage launcher, `tfc_fly vehicles/two_stage_launcher.json --sensors vehicle --no-accel --frames 40000`, the attitude error against the program at 100 / 200 / 300 / 390 s):
+| Gyro scale on the bus | Attitude error (degrees) | Worst / rms over the flight |
+|---|---|---|
+| 0.125 dps per count (until 7 Oct) | 1.47 / 2.56 / 4.69 / 7.66 | 7.06 / 2.62 |
+| **1/32 dps per count (now)** | **0.25 / 0.39 / 0.56 / 0.70** | **0.61 / 0.37** |
+| 1/128 (tried, not chosen) | 0.06 / 0.21 / 0.35 / 0.47 | 0.48 / 0.21 |
+**What is left** (0.7 degree at 390 s) is the same mechanism at a smaller size, four times smaller: a rate of 0.19 dps is six counts at 1/32. It is not removed; the thrust-aware estimator of section 4 item 2 is what removes it. 1/128 (range +-256 dps) would have been a little better but would saturate a fast platform move and the large jumps that the fault campaign injects; 1/32 keeps room for the platform's 300 dps rate limit and for a gross fault (a sensor pinned at full scale reads 1024 dps, five times what the platform can do, so it still votes out).
+**What it changed in the rest of the system**, all measured:
+- Protocol (`core/include/tfc/protocol.hpp`, `sim/tfc_peers/protocol.py`, `PROTOCOL.md`): the same bytes mean four times less; the golden frames of the Python and C++ tests were recomputed and are pinned on both sides (the Python made them and the C++ agrees, CRC included). The heartbeat's protocol version stays 2: nothing reads it. A computer on the old scale among computers on the new one would read every rate four times too large and its sensor would be voted out as faulty, which is the safe outcome (nothing here is flown with mixed images; the release-aware vote of the manager widens a tolerance, it is not a guard against a scale error).
+- The fault campaign (12,362 scenarios, `--strict`): no anomaly. Its bit-fault grids are computed from the protocol's scale, so some expectations moved (a flip of bit 12 is now 128 dps, not 512) and the response curves moved with the finer sensor (`FAULT_CAMPAIGN.md` is regenerated).
+- **TS-16 is less severe than it was measured** (`TRADE_STUDIES.md`, `RESYNC.md`): a closed loop whose replicas lose 1 % of the frames used to lose the flight, because the replicas' attitude estimates diverged; with the finer gyro a part of that divergence, the rounding bias, is gone, and the flight survives 60 s at 1 % without any resynchronisation (largest error 0.16 degree), is lost at 2 %, and the resync still heals every case (TS-23 re-measured: 4 of 32 lost at 1 % and 23 of 32 at 5 % without it, none or one with it). The digests still differ in 99 % of the frames, so the resync stays: the divergence is as real as before, only less likely to be fatal.
+- Two closed-loop tests had to change because the flight they showed lost is no longer lost at 1 %: they now use 2 % loss.
+- The platform rig's IMU range (the ISM330DHCX driver proposes +-500 dps) is unaffected.
 
 ## 4. What to do next, in order of what it would change
 
@@ -110,5 +114,5 @@ The noise and the actuator are not the cause; the pad phase does not remove it (
 5. **A servo and platform model from measurements**: the lag, rate limit and backlash from PICO_TESTS E4 to E9 replace the assumed ones.
 6. **Timing in the closed loop**: jitter and a late frame in the live closed-loop test (the campaign has them on the bus; the loop does not).
 7. **Fidelity items that matter for a real vehicle, not the rig**: slosh, a bending mode, a roll controller, a moving centre of pressure. Each is a modelling project of its own; worth doing only if the write-up claims the result carries over to a vehicle.
-8. **The gyro resolution on the bus** (3.4): 0.125 dps per count is too coarse for a slowly turning vehicle; a decision for the owner (1/32 dps per count recommended), then a protocol change.
+8. ~~The gyro resolution on the bus~~ (3.4): **done 7 Oct 2026**, 1/32 dps per count (ADR-032).
 9. **General vehicles** (`VEHICLE_SPEC.md`): built on 6 Oct 2026; its section 8 lists the fidelity items still to build in order (shape-based aerodynamics, the environment, slosh, bending, actuator and roll dynamics, jet damping).

@@ -43,7 +43,7 @@ def f32(x: float) -> float:
 
 
 # Fixed-point scales (protocol.hpp)
-GYRO_LSB_DPS = f32(0.125)
+GYRO_LSB_DPS = f32(1 / 32)
 ACCEL_LSB_G = f32(1.0 / 2048)
 CMD_LSB_DEG = f32(0.001)
 

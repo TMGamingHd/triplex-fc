@@ -141,11 +141,11 @@ column is the outcome with only two nodes alive (isolated / Safe requested / nei
 | Kind | Scenarios | Detect-class: isolated | Latency, frames after start (min / median / p95 / max) | Ignore-class: falsely isolated | Gray: isolated | Caught by | Duplex: isolated / Safe / neither |
 |---|---|---|---|---|---|---|---|
 | `dropout` | 192 | 72/72 | 2 / 2 / 2 / 2 | 0/24 | 0/0 | missing | 72 / 0 / 24 |
-| `stuck` | 264 | 12/12 | 6 / 6 / 7 / 7 | 0/0 | 48/54 | vote | 36 / 24 / 6 |
-| `bias_gyro` | 414 | 144/144 | 2 / 2 / 2 / 2 | 0/90 | 76/90 | vote, vote+intermittent | 25 / 41 / 24 |
+| `stuck` | 264 | 12/12 | 5 / 6 / 7 / 7 | 0/0 | 48/54 | vote | 36 / 24 / 6 |
+| `bias_gyro` | 414 | 144/144 | 2 / 2 / 2 / 2 | 0/90 | 89/90 | vote, vote+intermittent | 25 / 44 / 21 |
 | `bias_accel` | 414 | 144/144 | 2 / 2 / 2 / 2 | 0/90 | 90/90 | vote, vote+intermittent | 24 / 46 / 20 |
-| `drift` | 150 | 84/84 | 2 / 13 / 105 / 112 | 0/24 | 12/12 | vote, vote+intermittent | 4 / 20 / 6 |
-| `spike` | 864 | 144/144 | 2 / 2 / 7 / 7 | 0/288 | 204/432 | vote, vote+intermittent | - |
+| `drift` | 150 | 84/84 | 2 / 12 / 105 / 108 | 0/24 | 12/12 | vote, vote+intermittent | 4 / 20 / 6 |
+| `spike` | 864 | 144/144 | 2 / 2 / 7 / 7 | 0/288 | 216/432 | vote, vote+intermittent | - |
 | `saturate` | 90 | 27/27 | 2 / 2 / 2 / 2 | 0/18 | 0/0 | vote | 27 / 0 / 18 |
 | `corrupt` | 198 | 54/54 | 2 / 2 / 2 / 2 | 0/18 | 104/126 | crc, crc+intermittent | - |
 | `cmd_offset` | 180 | 42/42 | 2 / 2 / 2 / 2 | 0/24 | 18/24 | vote, vote+intermittent | 0 / 60 / 30 |
@@ -154,16 +154,16 @@ column is the outcome with only two nodes alive (isolated / Safe requested / nei
 | `seqgap` | 123 | 48/48 | 2 / 2 / 3 / 3 | 0/75 | 0/0 | seq | - |
 | `reboot` | 180 | 84/84 | 2 / 2 / 2 / 2 | 0/6 | 0/0 | missing, seq | 84 / 0 / 6 |
 | `late` | 108 | 40/40 | 2 / 2 / 2 / 2 | 0/14 | 0/0 | seq | 40 / 0 / 14 |
-| `scale` | 336 | 102/102 | 2 / 2 / 2 / 48 | 0/108 | 16/42 | vote, vote+intermittent | 45 / 15 / 24 |
-| `noise` | 120 | 18/18 | 2 / 2 / 2 / 3 | 0/18 | 18/24 | vote, vote+intermittent | 13 / 24 / 23 |
+| `scale` | 336 | 102/102 | 2 / 2 / 2 / 48 | 0/108 | 18/42 | vote, vote+intermittent | 45 / 15 / 24 |
+| `noise` | 120 | 18/18 | 2 / 2 / 2 / 3 | 0/18 | 18/24 | vote, vote+intermittent | 14 / 24 / 22 |
 | `invert` | 24 | 18/18 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | vote | 6 / 0 / 0 |
 | `swap` | 36 | 36/36 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | vote | - |
 | `zero` | 12 | 3/3 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | vote | 3 / 0 / 0 |
 | `clip` | 78 | 42/42 | 2 / 2 / 2 / 2 | 0/33 | 0/3 | vote | - |
-| `oscillate` | 660 | 240/240 | 2 / 3 / 12 / 15 | 0/312 | 75/108 | vote, vote+intermittent | - |
+| `oscillate` | 660 | 240/240 | 2 / 3 / 12 / 15 | 0/312 | 95/108 | vote, vote+intermittent | - |
 | `repeat` | 36 | 21/21 | 7 / 7 / 7 / 7 | 0/3 | 9/12 | vote, vote+intermittent | - |
-| `bitflip` | 256 | 44/44 | 2 / 2 / 2 / 2 | 0/108 | 92/104 | vote, vote+intermittent | - |
-| `stuckbit` | 192 | 90/90 | 2 / 2 / 2 / 2 | 0/48 | 48/54 | vote, vote+intermittent | - |
+| `bitflip` | 256 | 40/40 | 2 / 2 / 2 / 2 | 0/120 | 84/96 | vote, vote+intermittent | - |
+| `stuckbit` | 192 | 78/78 | 2 / 2 / 2 / 2 | 0/60 | 48/54 | vote, vote+intermittent | - |
 | `cmdstuck` | 9 | 3/3 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | vote | 0 / 3 / 0 |
 | `cmdinvert` | 9 | 3/3 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | vote | 3 / 0 / 0 |
 | `partial` | 42 | 21/21 | 2 / 2 / 2 / 2 | 0/0 | 0/0 | missing | 21 / 0 / 0 |
@@ -185,7 +185,7 @@ the vehicle to move away from its frozen value).
 **Gyro bias step** (units of the vote tolerance; negative = opposite sign; 9 = 3 nodes x 3 axes; a 1- or 2-frame window is ignored
 by design, which is why some rows show fewer isolations than scenarios). The threshold sits where it should: nothing below 0.8x is
 touched, 1.2x and above is isolated within 4 frames, and in between the outcome depends on the noise (sensor quantisation of a
-real ISM330DHCX is about 0.125 dps, an eighth of the tolerance).
+real ISM330DHCX is about 0.009 dps; the bus carries 1/32 dps per count, a thirty-second of the tolerance. Until 7 Oct 2026 it carried 0.125, an eighth of it: the campaign's bit-fault expectations are computed from the protocol's scale, so they changed with it, and its 12,362 scenarios still have no anomaly).
 
 <!-- campaign:curve-bias_gyro:begin -->
 | `rel` | Scenarios | Isolated | Latency, frames (min / median / max) | Caught by |
@@ -196,11 +196,11 @@ real ISM330DHCX is about 0.125 dps, an eighth of the tolerance).
 | -3 | 9 | 9 | 2 / 2 / 2 | vote |
 | -2 | 9 | 9 | 2 / 2 / 2 | vote |
 | -1.5 | 9 | 9 | 2 / 2 / 2 | vote |
-| -1.2 | 9 | 9 | 2 / 3 / 4 | vote |
-| -1.05 | 9 | 9 | 2 / 10 / 30 | vote, vote+intermittent |
-| -1.0 | 9 | 9 | 7 / 20 / 146 | vote+intermittent, vote |
-| -0.95 | 9 | 9 | 12 / 109 / 214 | vote+intermittent, vote |
-| -0.9 | 9 | 2 | 26 / 121 / 216 | vote+intermittent |
+| -1.2 | 9 | 9 | 2 / 2 / 4 | vote |
+| -1.05 | 9 | 9 | 2 / 6 / 14 | vote, vote+intermittent |
+| -1.0 | 9 | 9 | 3 / 19 / 50 | vote, vote+intermittent |
+| -0.95 | 9 | 9 | 5 / 29 / 111 | vote+intermittent, vote |
+| -0.9 | 9 | 9 | 5 / 113 / 249 | vote+intermittent, vote |
 | -0.8 | 9 | 0 | - | - |
 | -0.5 | 9 | 0 | - | - |
 | -0.2 | 9 | 0 | - | - |
@@ -209,10 +209,10 @@ real ISM330DHCX is about 0.125 dps, an eighth of the tolerance).
 | 0.2 | 9 | 0 | - | - |
 | 0.5 | 9 | 0 | - | - |
 | 0.8 | 9 | 0 | - | - |
-| 0.9 | 9 | 3 | 23 / 202 / 207 | vote |
-| 0.95 | 9 | 8 | 4 / 53 / 201 | vote, vote+intermittent |
-| 1.0 | 9 | 9 | 4 / 25 / 75 | vote+intermittent, vote |
-| 1.05 | 9 | 9 | 4 / 13 / 47 | vote, vote+intermittent |
+| 0.9 | 9 | 8 | 23 / 135 / 269 | vote+intermittent, vote |
+| 0.95 | 9 | 9 | 4 / 22 / 77 | vote+intermittent, vote |
+| 1.0 | 9 | 9 | 4 / 12 / 25 | vote, vote+intermittent |
+| 1.05 | 9 | 9 | 2 / 5 / 12 | vote, vote+intermittent |
 | 1.2 | 9 | 9 | 2 / 3 / 4 | vote |
 | 1.5 | 27 | 21 | 2 / 2 / 2 | vote |
 | 2 | 9 | 9 | 2 / 2 / 2 | vote |
@@ -230,11 +230,11 @@ and a drift slower than about 0.002 tolerance/frame does not cross it within the
 |---|---|---|---|---|
 | 0.0005 | 12 | 0 | - | - |
 | 0.001 | 12 | 0 | - | - |
-| 0.003 | 12 | 12 | 307 / 328 / 354 | vote+intermittent, vote |
-| 0.01 | 12 | 12 | 96 / 104 / 112 | vote, vote+intermittent |
-| 0.02 | 12 | 12 | 48 / 54 / 61 | vote, vote+intermittent |
-| 0.05 | 12 | 12 | 21 / 23 / 27 | vote |
-| 0.1 | 12 | 12 | 11 / 13 / 14 | vote |
+| 0.003 | 12 | 12 | 307 / 325 / 345 | vote+intermittent, vote |
+| 0.01 | 12 | 12 | 96 / 102 / 108 | vote, vote+intermittent |
+| 0.02 | 12 | 12 | 48 / 53 / 59 | vote, vote+intermittent |
+| 0.05 | 12 | 12 | 21 / 23 / 25 | vote |
+| 0.1 | 12 | 12 | 10 / 12 / 13 | vote |
 | 0.5 | 12 | 12 | 3 / 4 / 4 | vote |
 | 2 | 12 | 12 | 2 / 2 / 2 | vote |
 | 10 | 12 | 12 | 2 / 2 / 2 | vote |
@@ -351,15 +351,15 @@ while on a gyro axis the error follows the signal and larger factors are needed)
 | -1.0 | 18 | 18 | 2 / 2 / 2 | vote |
 | 0.0 | 18 | 18 | 2 / 2 / 2 | vote |
 | 0.5 | 18 | 15 | 2 / 2 / 69 | vote |
-| 0.9 | 18 | 5 | 2 / 2 / 245 | vote, vote+intermittent |
+| 0.9 | 18 | 6 | 2 / 61 / 180 | vote, vote+intermittent |
 | 0.95 | 18 | 3 | 2 / 2 / 2 | vote |
 | 0.98 | 18 | 3 | 5 / 8 / 30 | vote+intermittent, vote |
 | 0.99 | 18 | 0 | - | - |
 | 1.01 | 18 | 0 | - | - |
 | 1.02 | 18 | 3 | 3 / 17 / 18 | vote, vote+intermittent |
 | 1.05 | 18 | 3 | 2 / 2 / 2 | vote |
-| 1.1 | 18 | 5 | 2 / 2 / 246 | vote |
-| 1.2 | 18 | 9 | 2 / 2 / 9 | vote, vote+intermittent |
+| 1.1 | 18 | 6 | 2 / 29 / 126 | vote, vote+intermittent |
+| 1.2 | 18 | 9 | 2 / 2 / 4 | vote |
 | 2.0 | 18 | 18 | 2 / 2 / 48 | vote |
 | 10.0 | 18 | 18 | 2 / 2 / 2 | vote |
 <!-- campaign:curve-scale:end -->
@@ -373,9 +373,9 @@ while on a gyro axis the error follows the signal and larger factors are needed)
 | 2.0 | 6 | 0 | - | - |
 | 3.0 | 6 | 0 | - | - |
 | 5.0 | 6 | 0 | - | - |
-| 8.0 | 6 | 6 | 2 / 12 / 19 | vote, vote+intermittent |
+| 8.0 | 6 | 6 | 2 / 9 / 19 | vote, vote+intermittent |
 | 10.0 | 6 | 6 | 2 / 6 / 6 | vote |
-| 15.0 | 6 | 6 | 2 / 3 / 4 | vote |
+| 15.0 | 6 | 6 | 2 / 3 / 3 | vote |
 | 20.0 | 6 | 6 | 2 / 2 / 3 | vote |
 | 50.0 | 6 | 6 | 2 / 2 / 2 | vote |
 | 200.0 | 6 | 6 | 2 / 2 / 2 | vote |
@@ -390,9 +390,9 @@ tolerance and ignored by design).
 | 0 | 16 | 0 | - | - |
 | 1 | 16 | 0 | - | - |
 | 2 | 16 | 0 | - | - |
-| 3 | 16 | 4 | 22 / 26 / 98 | vote, vote+intermittent |
-| 4 | 16 | 6 | 2 / 9 / 138 | vote, vote+intermittent |
-| 5 | 16 | 6 | 2 / 9 / 138 | vote, vote+intermittent |
+| 3 | 16 | 0 | - | - |
+| 4 | 16 | 0 | - | - |
+| 5 | 16 | 4 | 24 / 26 / 70 | vote |
 | 6 | 16 | 12 | 2 / 9 / 138 | vote, vote+intermittent |
 | 7 | 16 | 12 | 2 / 9 / 138 | vote, vote+intermittent |
 | 8 | 16 | 12 | 2 / 9 / 138 | vote, vote+intermittent |
@@ -520,8 +520,8 @@ Each open item is either built since or waits for a trigger; the designs and the
 | Group | Scenarios | Frames simulated | Ended in triplex / duplex / simplex / safe | Safe requested at some point | Nodes disabled (total) | Anomalies |
 |---|---|---|---|---|---|---|
 | `pairs` | 702 | 316,008 | 9 / 135 / 320 / 238 | 232 | 0 | none |
-| `new_pairs` | 855 | 384,944 | 0 / 0 / 558 / 297 | 293 | 0 | none |
-| `correlated` | 108 | 43,200 | 24 / 60 / 18 / 6 | 6 | 0 | none |
+| `new_pairs` | 855 | 384,944 | 0 / 0 / 560 / 295 | 291 | 0 | none |
+| `correlated` | 108 | 43,200 | 21 / 63 / 18 / 6 | 6 | 0 | none |
 | `cascades` | 231 | 254,133 | 32 / 169 / 0 / 30 | 30 | 0 | none |
 | `contexts` | 108 | 42,309 | 0 / 0 / 75 / 33 | 18 | 0 | none |
 | `startup_edges` | 152 | 6,327 | 8 / 120 / 24 / 0 | 0 | 0 | none |

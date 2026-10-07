@@ -6,9 +6,9 @@ from tfc_peers import protocol as P
 # Frames produced by the C++ implementation (core/include/tfc/protocol.hpp) for these inputs.
 # If protocol.hpp changes, regenerate these from C++ first, then fix protocol.py to match.
 GOLDEN = [
-    ("gyro B {1,-2,3} seq5", P.pack_gyro(1, (1.0, -2.0, 3.0), 5), 0x101, "0800f0ff18000590"),
+    ("gyro B {1,-2,3} seq5", P.pack_gyro(1, (1.0, -2.0, 3.0), 5), 0x101, "2000c0ff60000546"),
     ("accel C {0,.5,1} seq255", P.pack_accel(2, (0.0, 0.5, 1.0), 255), 0x112, "000000040008ffda"),
-    ("gyro A saturating", P.pack_gyro(0, (9999.0, -9999.0, 0.06), 0), 0x100, "ff7f008000000063"),
+    ("gyro A saturating", P.pack_gyro(0, (9999.0, -9999.0, 0.06), 0), 0x100, "ff7f008002000060"),
     ("cmd B", P.pack_cmd(1, 1.234, -5.678, 0xBEEF, 7), 0x201, "d204d2e9efbe07bd"),
     ("cmd C saturating", P.pack_cmd(2, -40.0, 40.0, 1, 128), 0x202, "0080ff7f0100807f"),
     ("sync 0x01020304 seq9", P.pack_sync(0x01020304, 9), 0x010, "0403020100000915"),
@@ -31,7 +31,7 @@ GOLDEN = [
     ("heartbeat A defaults", P.pack_heartbeat(0, P.Heartbeat(), 0), 0x400, "02000000000000b0"),
     ("state share C", P.pack_state_share(2, P.StateShare((1, 15, 2), 200), 6), 0x412, "f102c800000006f7"),
     ("state resync B chunk 2", P.pack_resync(1, 2, (0x0102, -2, 0x7FFF), 0x55), 0x426, "0201feffff7f55e4"),   # tests/test_resync.cpp pins the same bytes
-    ("sim rates", P.pack_sim_rates((1.5, -2.0, 0.125), 3), 0x501, "0c00f0ff0100032c"),
+    ("sim rates", P.pack_sim_rates((1.5, -2.0, 0.125), 3), 0x501, "3000c0ff040003e7"),
     ("sim accel", P.pack_sim_accel((0.0, 0.5, 1.0), 255), 0x502, "000000040008ffda"),
     ("sim state", P.pack_sim_state(P.SimState(31963.0, 995.4, 14869.0), 17), 0x503, "7c0ce303153a118d"),
     ("sim state saturating", P.pack_sim_state(P.SimState(1.0e9, -5.0, 70000.0), 0), 0x503, "ffff0000ffff00b9"),

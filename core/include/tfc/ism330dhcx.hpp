@@ -44,7 +44,7 @@ enum class Status : uint8_t { Ok = 0, BusError, WrongId, ResetTimeout, ConfigMis
 
 struct Config {
   AccelRange accel_range = AccelRange::G16;  // the protocol carries +-16 g (kAccelLsbG)
-  GyroRange gyro_range = GyroRange::Dps500;  // a proposal for the rig; the protocol carries up to +-4096 dps
+  GyroRange gyro_range = GyroRange::Dps500;  // a proposal for the rig; the protocol carries up to +-1024 dps (ADR-032)
   uint8_t odr_code = 7U;                     // ST's code for both sensors: 7 = 833 Hz, 8 = 1666 Hz
   uint32_t reset_poll_us = 1000U;
   uint8_t reset_polls = 20U;

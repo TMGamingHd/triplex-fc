@@ -37,8 +37,8 @@ struct Frame {
   std::array<uint8_t, 8> data{};
 };
 
-// Fixed-point scales (chosen to cover the ISM330DHCX ranges used: +-2000 dps, +-16 g).
-constexpr float kGyroLsbDps = 0.125F;      // int16 -> +-4095.9 dps
+// Fixed-point scales (gyro: the platform's 300 dps limit with room for a gross fault; accel: +-16 g).
+constexpr float kGyroLsbDps = 1.0F / 32;      // int16 -> +-1024 dps (was 0.125, +-4096: too coarse for a slowly turning vehicle, SIM_FIDELITY 3.4, ADR-032)
 constexpr float kAccelLsbG = 1.0F / 2048;  // int16 -> +-16 g
 constexpr float kCmdLsbDeg = 0.001F;       // int16 -> +-32.767 deg
 

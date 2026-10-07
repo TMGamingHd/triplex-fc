@@ -113,8 +113,8 @@ class FaultEffects(unittest.TestCase):
     def test_saturate_pins_outputs_to_full_scale(self):
         t = traffic([1], ["B:saturate:start=5"], 8)
         # sign alternates with frame parity: odd frames negative, even frames positive
-        self.assertEqual(self.gyro(t[5], 1), (-4096.0, -4096.0, -4096.0))
-        self.assertEqual(self.gyro(t[6], 1), (4095.875, 4095.875, 4095.875))
+        self.assertEqual(self.gyro(t[5], 1), (-1024.0, -1024.0, -1024.0))
+        self.assertEqual(self.gyro(t[6], 1), (1023.96875, 1023.96875, 1023.96875))
 
     def test_spike_is_sparse_and_large(self):
         healthy = traffic([1], [], 400)
