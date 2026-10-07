@@ -508,6 +508,38 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
     }
     o.finish();
   }
+  if (const Json* v = top.get("planet")) {  // a preset ("earth", "moon", "mars", "reference") and any field overriding it
+    ObjectReader o(*v, "planet", errors);
+    PlanetSpec& pl = p.spec.planet;
+    std::string preset;
+    if (o.str("preset", preset) && !planet_preset(preset, pl)) {
+      o.error(*o.get("preset"), "preset", "expected \"reference\", \"earth\", \"moon\" or \"mars\"");
+    }
+    o.num("radius_m", pl.radius);
+    o.num("mu_m3_s2", pl.mu);
+    o.num("rotation_rate_rad_s", pl.rotation_rate);
+    o.num("j2", pl.j2);
+    std::string kind;
+    if (o.str("atmosphere", kind)) {
+      if (kind == "us1976") {
+        pl.atmosphere = AtmosphereKind::Us1976;
+      } else if (kind == "exponential") {
+        pl.atmosphere = AtmosphereKind::Exponential;
+      } else if (kind == "none") {
+        pl.atmosphere = AtmosphereKind::None;
+      } else {
+        o.error(*o.get("atmosphere"), "atmosphere", "expected \"us1976\", \"exponential\" or \"none\"");
+      }
+    }
+    o.num("surface_density_kg_m3", pl.surface_density);
+    o.num("scale_height_m", pl.scale_height);
+    o.num("temperature_k", pl.temperature);
+    o.num("gas_constant", pl.gas_constant);
+    o.num("gamma", pl.gamma);
+    o.num("density_scale", pl.density_scale);
+    o.num("temperature_offset_k", pl.temperature_offset);
+    o.finish();
+  }
   std::vector<const Json*> list;
   if (top.list("stages", list)) {
     for (std::size_t i = 0; i < list.size(); ++i) {
@@ -564,6 +596,23 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
     o.num("wind_scale", sc.wind_scale);
     o.vec3("wind_direction", sc.wind_dir);
     o.num("dry_cg_shift_m", sc.dry_cg_shift);
+    if (const Json* st = o.get("site")) {
+      ObjectReader si(*st, "scenario.site", errors);
+      si.num("latitude_deg", sc.site.latitude_deg);
+      si.num("azimuth_deg", sc.site.azimuth_deg);
+      si.finish();
+    }
+    if (const Json* tb = o.get("turbulence")) {
+      ObjectReader tr(*tb, "scenario.turbulence", errors);
+      tr.num("sigma_ms", sc.turbulence.sigma_ms);
+      tr.num("scale_length_m", sc.turbulence.scale_length_m);
+      int seed = 1;
+      if (tr.integer("seed", seed)) {
+        sc.turbulence.seed = static_cast<uint32_t>(seed);
+      }
+      tr.finish();
+    }
+    o.pairs("wind_profile", sc.wind_profile);
     std::vector<const Json*> gl;
     if (o.list("gusts", gl)) {
       for (std::size_t i = 0; i < gl.size(); ++i) {
@@ -593,12 +642,12 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
       bool circular = false;
       s.num("altitude_m", altitude);
       s.flag("circular_orbit", circular);
-      V3 pos{kEarthR + altitude, 0.0, 0.0};
+      V3 pos{p.spec.planet.radius + altitude, 0.0, 0.0};
       V3 vel{};
       s.vec3("position_m", pos);
       s.vec3("velocity_ms", vel);
       if (circular) {
-        vel = V3{0.0, std::sqrt(kEarthMu / norm(pos)), 0.0};
+        vel = V3{0.0, std::sqrt(p.spec.planet.mu / norm(pos)), 0.0};
       }
       V3 rates{};
       s.vec3("rates_dps", rates);
@@ -702,6 +751,14 @@ inline std::string write_vehicle(const VehicleFile& v) {
     o += "]";
   }
   o += "},\n";
+  {
+    const PlanetSpec& pl = g.planet;
+    const char* atm = pl.atmosphere == AtmosphereKind::Exponential ? "exponential" : (pl.atmosphere == AtmosphereKind::None ? "none" : "us1976");
+    o += "  \"planet\": {\"radius_m\": " + num_text(pl.radius) + ", \"mu_m3_s2\": " + num_text(pl.mu) + ", \"rotation_rate_rad_s\": " + num_text(pl.rotation_rate) + ", \"j2\": " + num_text(pl.j2) +
+         ", \"atmosphere\": \"" + atm + "\", \"surface_density_kg_m3\": " + num_text(pl.surface_density) + ", \"scale_height_m\": " + num_text(pl.scale_height) + ", \"temperature_k\": " +
+         num_text(pl.temperature) + ", \"gas_constant\": " + num_text(pl.gas_constant) + ", \"gamma\": " + num_text(pl.gamma) + ", \"density_scale\": " + num_text(pl.density_scale) +
+         ", \"temperature_offset_k\": " + num_text(pl.temperature_offset) + "},\n";
+  }
   o += "  \"stages\": [\n";
   for (std::size_t s = 0; s < g.stages.size(); ++s) {
     const StageSpec& st = g.stages[s];
@@ -780,7 +837,10 @@ inline std::string write_vehicle(const VehicleFile& v) {
          ", \"full_cmd_deg\": " + num_text(g.wheels.full_cmd_deg) + "}";
   }
   const Scenario& sc = v.scenario;
-  o += ",\n  \"scenario\": {\"wind_scale\": " + num_text(sc.wind_scale) + ", \"wind_direction\": " + vec_text(sc.wind_dir) + ", \"dry_cg_shift_m\": " + num_text(sc.dry_cg_shift) + ", \"gusts\": [";
+  o += ",\n  \"scenario\": {\"wind_scale\": " + num_text(sc.wind_scale) + ", \"wind_direction\": " + vec_text(sc.wind_dir) + ", \"dry_cg_shift_m\": " + num_text(sc.dry_cg_shift) +
+       ", \"site\": {\"latitude_deg\": " + num_text(sc.site.latitude_deg) + ", \"azimuth_deg\": " + num_text(sc.site.azimuth_deg) + "}, \"turbulence\": {\"sigma_ms\": " + num_text(sc.turbulence.sigma_ms) +
+       ", \"scale_length_m\": " + num_text(sc.turbulence.scale_length_m) + ", \"seed\": " + std::to_string(sc.turbulence.seed) + "}" +
+       (sc.wind_profile.empty() ? std::string() : ", \"wind_profile\": " + pairs_text(sc.wind_profile)) + ", \"gusts\": [";
   for (std::size_t i = 0; i < sc.gusts.size(); ++i) {
     o += std::string(i == 0U ? "" : ", ") + "{\"t0_s\": " + num_text(sc.gusts[i].t0) + ", \"duration_s\": " + num_text(sc.gusts[i].duration) + ", \"peak_ms\": " + vec_text(sc.gusts[i].peak) + "}";
   }

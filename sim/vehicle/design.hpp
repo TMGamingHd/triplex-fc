@@ -129,7 +129,7 @@ inline std::vector<NominalPoint> nominal_trajectory(const Params& p, const Desig
     NominalPoint np;
     np.t = t;
     np.theta_deg = theta * kRad2Deg;
-    np.altitude = norm(s.r) - kEarthR;
+    np.altitude = v.altitude();
     np.speed = speed;
     np.mass = s.m;
     np.thrust = l.thrust;

@@ -3,6 +3,7 @@
   "description": "The reference vehicle of docs/design/VEHICLE_SIM.md: five engines, 30 t, a 100 s gravity-turn ascent through max-Q. The other files in vehicles/ are not this one.",
   "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 60, "gimbal_lag_s": 0, "ideal_roll_control": true, "ground_contact": true, "crash_speed_ms": 5, "max_substep_s": 0.002, "thrust_scale": 1, "cd_scale": 1, "cn_scale": 1, "thrust_misalign_pitch_deg": 0, "thrust_misalign_yaw_deg": 0},
   "aero": {"diameter_m": 1.8, "c_n_alpha": 2.5, "x_cp_m": 12.5, "reference_diameter_m": 0, "crossflow_cd": 1.2, "crossflow_eta": 0.7, "rear_axial": 1.1, "power_on_base": 0.7, "roughness": 1, "full_angle": true},
+  "planet": {"radius_m": 6378137, "mu_m3_s2": 3.986004418e+14, "rotation_rate_rad_s": 0, "j2": 0, "atmosphere": "us1976", "surface_density_kg_m3": 1.225, "scale_height_m": 8500, "temperature_k": 288.15, "gas_constant": 287.053, "gamma": 1.4, "density_scale": 1, "temperature_offset_k": 0},
   "stages": [
     {"name": "stage 1", "dry_mass_kg": 6000, "x_start_m": 0, "length_m": 20, "radius_m": 0.9, "inertia_factor": 0.6, "x_cg_dry_m": 10,
      "tanks": [{"propellant_kg": 24000, "x_bottom_m": 2, "radius_m": 0.9, "density_kg_m3": 900}], "sequential_drain": false,
@@ -18,6 +19,6 @@
   ],
   "payloads": [],
   "fins": [],
-  "scenario": {"wind_scale": 1, "wind_direction": [0, 0, 1], "dry_cg_shift_m": 0, "gusts": [], "engine_failures": []},
+  "scenario": {"wind_scale": 1, "wind_direction": [0, 0, 1], "dry_cg_shift_m": 0, "site": {"latitude_deg": 28.5, "azimuth_deg": 90}, "turbulence": {"sigma_ms": 0, "scale_length_m": 533, "seed": 1}, "gusts": [], "engine_failures": []},
   "design": {"t_end_s": 100, "dt_s": 0.01, "vertical_s": 8, "kick_ramp_s": 4, "kick_deg": 1, "follow_from_s": 16, "blend_s": 4, "gains": {"every_s": 6, "wn": 2.5, "zeta": 0.8, "ki_over_kp": 0.2, "kp_max": 1e+30, "b_min": 0.001, "tolerance": 0.1}}
 }

@@ -159,6 +159,63 @@ struct PayloadSpec {
   std::vector<SectionSpec> sections;  // its outer shape (a fairing), which goes with it
 };
 
+// The world the vehicle flies in (docs/design/ENVIRONMENT.md). The default is the reference model's: a spherical, non-rotating Earth with the 1976 standard atmosphere, which is what every earlier
+// flight and every documented number used. "earth", "moon" and "mars" are presets with their rotation, flattening (J2) and atmosphere.
+enum class AtmosphereKind : int { Us1976 = 0, Exponential = 1, None = 2 };
+
+struct PlanetSpec {
+  std::string name = "reference";
+  double radius = 6378137.0;          // m
+  double mu = 3.986004418e14;         // m^3/s^2
+  double rotation_rate = 0.0;         // rad/s about the pole (the pole's direction is set by the launch site)
+  double j2 = 0.0;                    // the oblateness term of the gravity field
+  AtmosphereKind atmosphere = AtmosphereKind::Us1976;
+  double surface_density = 1.225;     // exponential atmosphere: kg/m^3 at the surface
+  double scale_height = 8500.0;       // m
+  double temperature = 288.15;        // K, constant
+  double gas_constant = 287.053;      // J/(kg K)
+  double gamma = 1.4;
+  double density_scale = 1.0;         // a dispersion of any atmosphere: its density and pressure times this
+  double temperature_offset = 0.0;    // and its temperature plus this (a hot or a cold day), at the same pressure
+};
+
+// The presets, from the standard values of each body (written from memory of the usual references; they are not checked against a source here).
+inline bool planet_preset(const std::string& name, PlanetSpec& p) {
+  PlanetSpec q;
+  if (name == "reference") {
+    p = q;
+    return true;
+  }
+  if (name == "earth") {
+    q.name = "earth";
+    q.rotation_rate = 7.2921159e-5;
+    q.j2 = 1.08263e-3;
+  } else if (name == "moon") {
+    q.name = "moon";
+    q.radius = 1737400.0;
+    q.mu = 4.9028e12;
+    q.rotation_rate = 2.6617e-6;
+    q.j2 = 2.034e-4;
+    q.atmosphere = AtmosphereKind::None;
+  } else if (name == "mars") {
+    q.name = "mars";
+    q.radius = 3396200.0;
+    q.mu = 4.282837e13;
+    q.rotation_rate = 7.0882e-5;
+    q.j2 = 1.96045e-3;
+    q.atmosphere = AtmosphereKind::Exponential;
+    q.surface_density = 0.020;
+    q.scale_height = 11100.0;
+    q.temperature = 210.0;
+    q.gas_constant = 188.9;
+    q.gamma = 1.29;
+  } else {
+    return false;
+  }
+  p = q;
+  return true;
+}
+
 struct VehicleSpec {
   std::vector<StageSpec> stages;
   std::vector<EngineSpec> engines;
@@ -166,6 +223,7 @@ struct VehicleSpec {
   std::vector<FinSpec> fins;
   WheelSpec wheels;
   AeroSpec aero;
+  PlanetSpec planet;
   [[nodiscard]] bool empty() const { return stages.empty(); }
 };
 
@@ -324,6 +382,15 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
     }
     if (any_section && !a.table.empty()) {
       fail("aero: give the shape (stage sections) or a table by Mach, not both");
+    }
+  }
+  {
+    const PlanetSpec& pl = v.planet;
+    if (!(pl.radius > 0.0) || !(pl.mu > 0.0) || pl.rotation_rate < 0.0 || !(pl.scale_height > 0.0) || !(pl.gas_constant > 0.0) || !(pl.gamma > 1.0) || !(pl.density_scale > 0.0) || !(pl.surface_density >= 0.0)) {
+      fail("planet: radius_m, mu, scale_height_m, gas_constant and density_scale must be positive, gamma above 1, rotation_rate_rad_s not negative");
+    }
+    if (pl.atmosphere != AtmosphereKind::None && !(pl.temperature + pl.temperature_offset > 50.0)) {
+      fail("planet: the atmosphere's temperature (with the offset) must be above 50 K");
     }
   }
   if (v.fins.size() > kMaxFins) {
