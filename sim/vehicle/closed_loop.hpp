@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 #include "design.hpp"
 #include "imu_model.hpp"
@@ -56,6 +57,27 @@ struct Result {
   double min_altitude = 0.0;              // the lowest altitude reached after T-zero (never below 0 with the ground model: the vehicle cannot sink through the pad)
 };
 
+// One row of the record of a flight (see Loop::trace): what the vehicle and the loop were doing at a frame.
+struct TraceRow {
+  double t = 0.0;            // s since T-zero
+  double altitude = 0.0;     // m
+  double speed = 0.0;        // m/s
+  double mach = 0.0;
+  double dynamic_pressure = 0.0;  // Pa
+  double mass = 0.0;         // kg
+  double thrust = 0.0;       // N
+  double tilt_y_deg = 0.0;   // the pitch plane tilt of the long axis from the pad vertical
+  double tilt_x_deg = 0.0;   // and the yaw plane
+  double err_y_deg = 0.0;    // against the pitch program
+  double err_x_deg = 0.0;
+  double cmd_pitch_deg = 0.0;  // ACT's voted command
+  double cmd_yaw_deg = 0.0;
+  unsigned stages_active = 0U;   // a bit per stage still on the vehicle
+  unsigned stages_ignited = 0U;  // and per stage that has ignited
+  int engines_on = 0;
+  int act_mode = 0;
+};
+
 struct Loop {
   RunnerConfig cfg;
   SensorErrors sensors;
@@ -73,13 +95,15 @@ struct Loop {
   tfc::resync::Config resync;
   uint8_t resync_nodes = 0x07U;              // the computers that take part in the resync (send their state, vote, adopt); the others never adopt: the diverse computer of ADR-021 is left out with 0x03
   uint32_t corrupt_b_at = 0xFFFFFFFFU;       // at this frame (after its step) node B's attitude state is corrupted by about 2 degrees: a real estimator fault
+  std::vector<TraceRow>* trace = nullptr;    // if set, a row is appended every `trace_every` frames after T-zero (a record of the flight for tools and plots)
+  uint32_t trace_every = 10U;
 };
 
 inline Result run(const Loop& lp) {
   RunnerConfig rcfg = lp.cfg;
   rcfg.start_held = lp.pad_frames > 0U;
   SimRunner runner(rcfg);
-  const FlightTables tables = flight_tables(lp.cfg.design);
+  const FlightTables tables = flight_tables(lp.cfg.design, lp.cfg.plan);
   std::array<tfc::FlightFunction, 3> ff{tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator), tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator),
                                         tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator)};
   std::array<tfc::ImuCalibrator, 3> cal{};  // each computer calibrates its own IMU on the pad and subtracts the bias before it sends
@@ -244,6 +268,32 @@ inline Result run(const Loop& lp) {
     }
     if (r.liftoff_frame == 0xFFFFFFFFU && !runner.vehicle().on_ground() && runner.vehicle().altitude() > 0.0) {
       r.liftoff_frame = fk;
+    }
+    if (lp.trace != nullptr && lp.trace_every != 0U && fk % lp.trace_every == 0U) {
+      const Vehicle6& veh = runner.vehicle();
+      const Loads ld = veh.current_loads();
+      TraceRow row;
+      row.t = static_cast<double>(fk) * 0.01;
+      row.altitude = veh.altitude();
+      row.speed = veh.speed();
+      row.mach = ld.mach;
+      row.dynamic_pressure = ld.dynamic_pressure;
+      row.mass = veh.mass();
+      row.thrust = ld.thrust;
+      row.tilt_y_deg = t.y_deg;
+      row.tilt_x_deg = t.x_deg;
+      const tfc::Reference rf = tables.guidance.at(fk + 1U);
+      row.err_y_deg = t.y_deg - static_cast<double>(rf.tilt_y_deg);
+      row.err_x_deg = t.x_deg - static_cast<double>(rf.tilt_x_deg);
+      row.cmd_pitch_deg = static_cast<double>(out.pitch_deg);
+      row.cmd_yaw_deg = static_cast<double>(out.yaw_deg);
+      for (std::size_t sg = 0; sg < veh.spec().stages.size(); ++sg) {
+        row.stages_active |= veh.stage_active(sg) ? (1U << sg) : 0U;
+        row.stages_ignited |= veh.stage_ignited(sg) ? (1U << sg) : 0U;
+      }
+      row.engines_on = veh.engines_on();
+      row.act_mode = static_cast<int>(out.mode);
+      lp.trace->push_back(row);
     }
     r.crashed = r.crashed || runner.vehicle().crashed();
     r.min_altitude = std::fmin(r.min_altitude, runner.vehicle().altitude());

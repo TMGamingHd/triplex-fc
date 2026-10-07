@@ -1,0 +1,27 @@
+// A small spacecraft already in a circular 500 km orbit, invented for the simulator: it points where the flight computers tell it to, with reaction wheels for fine control and
+// cold-gas thrusters for large corrections. Nothing here is a rocket: there is no main engine, no atmosphere to speak of and no ground. The pitch program is a slew of 30 degrees and back.
+{
+  "name": "spacecraft",
+  "description": "800 kg, 2.5 m long, in a 500 km orbit; eight cold-gas thrusters (4 N) in four couples and two reaction wheels; a 30 degree slew and back in 5 minutes.",
+  "vehicle": {"ground_contact": false, "gimbal_limit_deg": 8},
+  "aero": {"diameter_m": 1.5, "c_n_alpha": 0, "x_cp_m": 1.25},
+  "stages": [
+    {"name": "bus", "dry_mass_kg": 760, "x_start_m": 0, "length_m": 2.5, "radius_m": 0.75, "inertia_factor": 0.6, "x_cg_dry_m": 1.25,
+     "tanks": [{"propellant_kg": 40, "x_bottom_m": 0.4, "radius_m": 0.3, "density_kg_m3": 1000}]}
+  ],
+  "engines": [
+    // pitch plus: a couple that turns the nose toward downrange (aft thruster pushes -Y, forward thruster pushes +Y); pitch minus is the reverse; yaw likewise about Y
+    {"stage": 0, "position_m": [0, 0, 0],   "direction": [0, -1, 0], "gimbal": false, "control": "pitch+", "full_cmd_deg": 2, "thrust_vac_n": 4, "exit_area_m2": 0, "isp_vac_s": 70, "rise_s": 0.02, "tail_s": 0.02},
+    {"stage": 0, "position_m": [2.5, 0, 0], "direction": [0, 1, 0],  "gimbal": false, "control": "pitch+", "full_cmd_deg": 2, "thrust_vac_n": 4, "exit_area_m2": 0, "isp_vac_s": 70, "rise_s": 0.02, "tail_s": 0.02},
+    {"stage": 0, "position_m": [0, 0, 0],   "direction": [0, 1, 0],  "gimbal": false, "control": "pitch-", "full_cmd_deg": 2, "thrust_vac_n": 4, "exit_area_m2": 0, "isp_vac_s": 70, "rise_s": 0.02, "tail_s": 0.02},
+    {"stage": 0, "position_m": [2.5, 0, 0], "direction": [0, -1, 0], "gimbal": false, "control": "pitch-", "full_cmd_deg": 2, "thrust_vac_n": 4, "exit_area_m2": 0, "isp_vac_s": 70, "rise_s": 0.02, "tail_s": 0.02},
+    {"stage": 0, "position_m": [0, 0, 0],   "direction": [0, 0, 1],  "gimbal": false, "control": "yaw+",   "full_cmd_deg": 2, "thrust_vac_n": 4, "exit_area_m2": 0, "isp_vac_s": 70, "rise_s": 0.02, "tail_s": 0.02},
+    {"stage": 0, "position_m": [2.5, 0, 0], "direction": [0, 0, -1], "gimbal": false, "control": "yaw+",   "full_cmd_deg": 2, "thrust_vac_n": 4, "exit_area_m2": 0, "isp_vac_s": 70, "rise_s": 0.02, "tail_s": 0.02},
+    {"stage": 0, "position_m": [0, 0, 0],   "direction": [0, 0, -1], "gimbal": false, "control": "yaw-",   "full_cmd_deg": 2, "thrust_vac_n": 4, "exit_area_m2": 0, "isp_vac_s": 70, "rise_s": 0.02, "tail_s": 0.02},
+    {"stage": 0, "position_m": [2.5, 0, 0], "direction": [0, 0, 1],  "gimbal": false, "control": "yaw-",   "full_cmd_deg": 2, "thrust_vac_n": 4, "exit_area_m2": 0, "isp_vac_s": 70, "rise_s": 0.02, "tail_s": 0.02}
+  ],
+  "wheels": {"stage": 0, "torque_max_nm": 0.2, "momentum_max_nms": 4, "full_cmd_deg": 1},
+  "scenario": {"wind_scale": 0, "start": {"altitude_m": 500000, "circular_orbit": true}},
+  "design": {"t_end_s": 300, "program": [[0, 0], [30, 0], [90, 30], [180, 30], [240, 0], [300, 0]],
+             "gains": {"every_s": 0, "wn": 0.5, "zeta": 0.9, "ki_over_kp": 0.1}}
+}

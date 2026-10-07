@@ -28,13 +28,14 @@
 | [HARDWARE_OVERRIDE.md](design/HARDWARE_OVERRIDE.md) | The manual switches below the supervisor; their own failure modes |
 | [PICO.md](design/PICO.md) | The Pico: platform driver and fault injector |
 | [VEHICLE_SIM.md](design/VEHICLE_SIM.md) | The 6-DOF ascent simulator, the platform and the bus runner |
+| [VEHICLE_SPEC.md](design/VEHICLE_SPEC.md) | Describing any vehicle (stages, tanks, engines, effectors) as a file; the tools; the examples; what the flight computers can do with it |
 | [SIM_FIDELITY.md](design/SIM_FIDELITY.md) | How close the simulator is to real life, measured |
 | [FUTURE_WORK.md](design/FUTURE_WORK.md) | Designs written down and not built, with their triggers |
 
 ## Decisions: why (`decisions/`)
 | Page | Covers |
 |---|---|
-| [DECISIONS.md](decisions/DECISIONS.md) | The 30 ADRs, with a register of what is built and what each waits for |
+| [DECISIONS.md](decisions/DECISIONS.md) | The 31 ADRs, with a register of what is built and what each waits for |
 | [TRADE_STUDIES.md](decisions/TRADE_STUDIES.md) | The studies behind them, with results where they are done |
 
 ## Verification: how we know (`verification/`)

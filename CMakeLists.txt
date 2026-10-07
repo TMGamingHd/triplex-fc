@@ -41,6 +41,8 @@ add_executable(tfc_tests
   tests/test_pico_fuzz.cpp
   tests/test_realism.cpp
   tests/test_sim_model.cpp
+  tests/test_vehicle_general.cpp
+  tests/test_vehicle_files.cpp
   tests/test_pad.cpp
   tests/test_launch.cpp
   tests/test_supervisor_clock.cpp
@@ -52,6 +54,7 @@ add_executable(tfc_tests
   tests/test_state_share.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
 target_include_directories(tfc_tests PRIVATE tests tools/vehicle sim/vehicle firmware/app/src supervisor/include)
+target_compile_definitions(tfc_tests PRIVATE TFC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")  # the vehicle description tests read vehicles/*.json
 target_compile_options(tfc_tests PRIVATE
   -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror
   -fno-exceptions -fno-rtti)
@@ -89,6 +92,12 @@ add_executable(tfc_sens tools/sim/tfc_sens.cpp)
 target_link_libraries(tfc_sens PRIVATE tfc_core Threads::Threads)
 target_include_directories(tfc_sens PRIVATE sim/vehicle)
 target_compile_options(tfc_sens PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
+
+# Fly any vehicle description with the real flight software (tools/sim/tfc_fly.cpp, docs/design/VEHICLE_SPEC.md).
+add_executable(tfc_fly tools/sim/tfc_fly.cpp)
+target_link_libraries(tfc_fly PRIVATE tfc_core)
+target_include_directories(tfc_fly PRIVATE sim/vehicle)
+target_compile_options(tfc_fly PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
 
 # How often should the replicas resynchronise? (tools/sim/tfc_resync.cpp, TS-23)
 add_executable(tfc_resync tools/sim/tfc_resync.cpp)

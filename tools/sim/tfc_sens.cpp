@@ -4,7 +4,8 @@
 // scaled up until the flight fails, found by bisection. A flight FAILS if, after the first 3 s, the attitude strays more than `--limit` degrees from the pitch program (the lift-off transient is reported separately), the platform saturates, the vehicle is still on the ground at 3 s or is destroyed, ACT enters
 // Safe, or a value is not finite. Run it twice, with the platform's sensors (the rig) and with the vehicle's own (a real vehicle): gravity is observable on the platform and not on
 // a vehicle under thrust, which changes what a gyro bias does.
-//   tfc_sens [--mode platform|vehicle] [--no-accel] [--pad FRAMES] [--frames N] [--limit DEG] [--only NAME] [--list]
+//   tfc_sens [--vehicle FILE] [--mode platform|vehicle] [--no-accel] [--pad FRAMES] [--frames N] [--limit DEG] [--only NAME] [--list]
+// --vehicle sweeps the vehicle described in FILE (docs/design/VEHICLE_SPEC.md) instead of the reference vehicle, with its own design (its flight time, its pitch program); --frames then defaults to its flight.
 // --pad FRAMES puts a pad phase before T-zero (the vehicle clamped, the estimators calibrating their gyros, ACT going Nominal); 1500 is 15 s.
 // --no-accel switches the estimator's accelerometer correction off (EstimatorConfig::use_accel), which is what a vehicle under thrust needs.
 #include <algorithm>
@@ -17,6 +18,7 @@
 #include <vector>
 
 #include "closed_loop.hpp"
+#include "spec_io.hpp"
 
 namespace {
 
@@ -54,9 +56,21 @@ int main(int argc, char** argv) {
   bool list = false;
   bool no_accel = false;
   uint32_t pad_frames = 0U;
+  sim::VehicleFile vf;
+  bool have_vehicle = false;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
-    if (a == "--mode" && i + 1 < argc) {
+    if (a == "--vehicle" && i + 1 < argc) {
+      std::vector<std::string> errors;
+      if (!sim::load_vehicle_file(argv[++i], vf, errors)) {
+        for (const std::string& e : errors) {
+          std::fprintf(stderr, "%s\n", e.c_str());
+        }
+        return 1;
+      }
+      have_vehicle = true;
+      frames = static_cast<uint32_t>(vf.plan.trajectory.t_end / 0.01);
+    } else if (a == "--mode" && i + 1 < argc) {
       vehicle_true = std::string(argv[++i]) == "vehicle";
     } else if (a == "--frames" && i + 1 < argc) {
       frames = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
@@ -71,7 +85,7 @@ int main(int argc, char** argv) {
     } else if (a == "--list") {
       list = true;
     } else {
-      std::fprintf(stderr, "usage: tfc_sens [--mode platform|vehicle] [--no-accel] [--pad FRAMES] [--frames N] [--limit DEG] [--only NAME] [--list]\n");
+      std::fprintf(stderr, "usage: tfc_sens [--vehicle FILE] [--mode platform|vehicle] [--no-accel] [--pad FRAMES] [--frames N] [--limit DEG] [--only NAME] [--list]\n");
       return 2;
     }
   }
@@ -105,6 +119,12 @@ int main(int argc, char** argv) {
     return 0;
   }
   sim::Loop base;
+  if (have_vehicle) {
+    base.cfg.params = vf.params;
+    base.cfg.design = vf.params;
+    base.cfg.scenario = vf.scenario;
+    base.cfg.plan = vf.plan;
+  }
   base.frames = frames;
   base.cfg.vehicle_true = vehicle_true;
   base.estimator.use_accel = !no_accel;

@@ -89,6 +89,18 @@ expected thrust acceleration subtracted.
 - A vehicle with thrust-to-weight under 1 (6 Oct 2026): it stands on the pad and burns propellant until it is light enough to rise; an unguided one turns over at about 30 s, falls back and is destroyed at 41.8 s (the run stops, `crashed()`).
 - Dispersions at their defaults change nothing: the nominal flight is bit for bit the same as before the model was extended.
 
+### 3.4 The gyro frames are too coarse for a slowly turning vehicle (found 6 Oct 2026, by the two-stage launcher of `vehicles/`)
+The protocol carries a gyro rate as a 16-bit count of **0.125 degrees per second** (`tfc::kGyroLsbDps`, range +-4096 dps). The ISM330DHCX itself resolves about 0.009 dps per count at +-250 dps (the 8.75 mdps class of figure, datasheet **not checked**): the bus throws away about four bits. For a vehicle that turns slowly
+the rounding is a bias, and with the accelerometer off (a vehicle under thrust) nothing corrects what it integrates. The launcher's pitch program turns at 0.19 dps, one and a half counts, and the flight computers' attitude estimate **drifts 9 degrees in 400 s** with the loop apparently satisfied (the command is about zero while the true attitude walks away):
+| Run (the two-stage launcher, vehicle sensors, accelerometer off) | Attitude error at 100 / 200 / 300 / 400 s |
+|---|---|
+| the bus as it is, 0.125 dps per count, noise on | 0.25 / 2.70 / 5.75 / 8.89 degrees |
+| the same with the sensor noise off | 0.26 / 2.20 / 5.37 / 8.66 |
+| the same with the gimbal lag off | 0.08 / 2.49 / 5.53 / 8.66 |
+| **0.0078 dps per count (1/128), everything else the same** | **0.02 / 0.11 / 0.16 / 0.19** |
+The noise and the actuator are not the cause; the pad phase does not remove it (8.9 degrees with 15 s of pad calibration: a bias that is not constant, so it cannot be calibrated away). On the rig it does not show: in platform mode the accelerometer reads gravity and corrects the estimate, and the reference vehicle's 100 s in vehicle mode has 0.75 degree of it. It would show on any real vehicle that turns slowly and is under thrust.
+*Not decided.* It is a change to the protocol (`core/include/tfc/protocol.hpp`, the firmware's IMU scaling, `sim/tfc_peers`, the tests and `PROTOCOL.md`), so it is the owner's: **1/32 dps per count** (range +-1024 dps, four times finer: about 2 degrees in 400 s) keeps room for the platform's 300 dps rate limit and for a gross fault; **1/128** (range +-256 dps) removes the drift but would saturate a fast platform move and the large jumps that the fault campaign injects. Measured here by changing the constant in a scratch copy of the header and flying the same file.
+
 ## 4. What to do next, in order of what it would change
 
 1. **A launch sequence**: the pad phase, the `phase` and launch commands, T-zero, gyro calibration on the pad, and flight computers that start the guidance schedule at T-zero (3.1, 3.2). The largest gap between the simulator and a real launch, and the largest effect on the results.
@@ -98,3 +110,5 @@ expected thrust acceleration subtracted.
 5. **A servo and platform model from measurements**: the lag, rate limit and backlash from PICO_TESTS E4 to E9 replace the assumed ones.
 6. **Timing in the closed loop**: jitter and a late frame in the live closed-loop test (the campaign has them on the bus; the loop does not).
 7. **Fidelity items that matter for a real vehicle, not the rig**: slosh, a bending mode, a roll controller, a moving centre of pressure. Each is a modelling project of its own; worth doing only if the write-up claims the result carries over to a vehicle.
+8. **The gyro resolution on the bus** (3.4): 0.125 dps per count is too coarse for a slowly turning vehicle; a decision for the owner (1/32 dps per count recommended), then a protocol change.
+9. **General vehicles** (`VEHICLE_SPEC.md`): built on 6 Oct 2026; its section 8 lists the fidelity items still to build in order (shape-based aerodynamics, the environment, slosh, bending, actuator and roll dynamics, jet damping).

@@ -5,7 +5,7 @@
 ## 1. In one paragraph
 
 Everything that can be built and checked without the hardware is built and checked: a three-computer fault-tolerant flight computer (the voter, the fault manager, the estimator and controller, the actuator node), its simulator and virtual peers, the
-supervisor, the Pico platform driver and fault injector, the bench tools and the first-hardware-days procedures. All 30 design decisions (ADRs) are accepted and every one that can be built is built. What is left is **measurement**: timing, the real
+supervisor, the Pico platform driver and fault injector, the bench tools and the first-hardware-days procedures. All 31 design decisions (ADRs) are accepted and every one that can be built is built. What is left is **measurement**: timing, the real
 bus, the real IMUs, the servos, the relays and the supervisor's lines. Nothing in this repository has run on a board yet, and nothing here claims it has.
 
 ## 2. What is built, and how it is checked
@@ -14,7 +14,7 @@ bus, the real IMUs, the servos, the relays and the supervisor's lines. Nothing i
 |---|---|---|
 | **Flight core** (`core/`, 26 headers, about 6,200 lines, header-only, no heap, no exceptions, no RTTI) | Voter, `RedundancyManager` (FDIR: 3-of-5 and leaky count, probation, strikes, sticky Safe, authenticated ground commands, releases, phases and roles, state share), sensor/compute health split, state resynchronisation, sync clock, launch gate, estimator, controller, ACT logic | The C++ suite, the campaign, mutation testing, the coverage gate (section 3) |
 | **Supervisor logic** (`supervisor/`, 5 headers) | KICK/FRAME watchdog and the reset, power-cycle and DEAD ladder, boot sequencing, T-zero and the `T0` line, mission clock and its record, the RTC conversion, the override sense lines | Same, and 100 % line coverage of the supervisor headers |
-| **Simulator** (`sim/vehicle`, `tools/sim`) | 6-DOF ascent with dispersions and IMU error models, the platform model, the bus runner `tfc_simd`, the closed loop; sensitivity and resync studies | Host tests; a live closed loop on `vcan0` with six processes |
+| **Simulator** (`sim/vehicle`, `tools/sim`) | 6-DOF flight of **any vehicle** read from a file (stages, tanks, engines at positions, staging, throttle, fins, thrusters, wheels, a start in orbit: `vehicles/`, `tfc_fly`), with dispersions and IMU error models, the platform model, the bus runner `tfc_simd`, the closed loop; sensitivity and resync studies | Host tests; a live closed loop on `vcan0` with six processes |
 | **Virtual peers and campaign** (`sim/tfc_peers`, `sim/campaign`) | Fake FC-B and FC-C with 32 fault kinds, scripted commands, record and replay through the real `core/`; the campaign with oracles; the TS-15 and TS-17 studies | 297 Python tests; the campaign (section 3) |
 | **Firmware** (`firmware/`: `app`, `act`, `pico`, `supervisor`) | Four Zephyr applications: the flight computer (node A, B or C from the build), the actuator node, the Pico (platform driver and injector), the supervisor (Pico 2). They build for `native_sim`, `nucleo_g474re` and `rpi_pico2`, and pass the ELF check (no heap, exceptions, RTTI or vtables) | CI builds all four; live tests with real firmware instances on `vcan0` (triplex, closed loop, resync, split, release, launch, T0, phases; run locally, CI runs the triplex test) |
 | **Bench tools and procedures** (`tools/bench`, `docs/procedures`) | USB-CAN bring-up, logger, jitter and bus-loss measurement, golden-run check, the golden-release record and compatibility gate; ten procedures | Tested against `vcan0` and recorded logs; **not run on the adapter or a board** |
@@ -28,13 +28,13 @@ bus, the real IMUs, the servos, the relays and the supervisor's lines. Nothing i
 | Structural coverage of `core/` and `supervisor/` | 100 % of lines, 98.4 % of branches (the gate: 100 and 98) | `python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98` |
 | Fault campaign: every fault kind over its input range, safety properties on every frame | 12,362 scenarios, 4,900,623 frames, **no property violated, no anomaly** | `cd sim && python3 -m campaign.run --strict` |
 | Mutation testing (deliberate bugs the tests must catch) | 390 mutants, every one killed (the equivalent ones, changes that cannot alter behaviour, are not listed; `tools/mutation/mutations.py` records each with its reason) | `python3 tools/mutation/run_unit.py` |
-| Structural coverage and mutation testing of the vehicle simulator (`sim/vehicle`) | 99.7 % of lines, 94.0 % of branches (gate 99 and 93); 76 simulator mutants, every one killed (one equivalent mutant is documented). Its first sweep found 13 gaps in the tests, now closed | `python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 93`; `python3 tools/mutation/run_sim.py` |
+| Structural coverage and mutation testing of the vehicle simulator (`sim/vehicle`) | 99.7 % of lines, 94.0 % of branches (gate 99 and 93); 118 simulator mutants, every one killed (one equivalent mutant is documented). Its first sweep found 13 gaps in the tests, now closed | `python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 93`; `python3 tools/mutation/run_sim.py` |
 | Static analysis and the flight-code standard | clang-tidy, cppcheck and `tools/check_standard.py` clean; strict warnings as errors, 2 KB stack bound | CI; `docs/verification/CODING_STANDARD.md` |
 | Live tests with real firmware on `vcan0` | triplex, closed loop through max-Q, resync, sensor split, mixed releases, launch, T0 line, phases, ACT's hardware Safe line (in flight and on the pad) | `tools/bench/sil_triplex.sh --test` |
 
 ## 3a. The decisions
 
-All 30 ADRs are accepted (the last ten on 5 Oct 2026) and none is open. [`decisions/DECISIONS.md`](decisions/DECISIONS.md) opens with a register: for each one, whether it is built, what it still waits for, and where. In short: every ADR is built on the host and
+All 31 ADRs are accepted (ten on 5 Oct 2026, one on 6 Oct 2026) and none is open. [`decisions/DECISIONS.md`](decisions/DECISIONS.md) opens with a register: for each one, whether it is built, what it still waits for, and where. In short: every ADR is built on the host and
 in the firmware; the ones that need the hardware to be *confirmed* are listed below; two are stretch goals outside v1 (the ring that re-homes an orphaned IMU, ADR-020 case 2; a second ACT, ADR-023). Trade studies: TS-0, TS-15, TS-16, TS-17 (paper part) and
 TS-23 are done; the rest are plans that the rig or the closed loop will feed (`decisions/TRADE_STUDIES.md` section 2 has the status of each). No ADR waits for one of those, except that the Safe hold time and the persistence constants are
 *parameters* that TS-4 and TS-1 tune on the rig.

@@ -58,5 +58,10 @@ One thing the tests found: with the integrator limited to 3 degrees the vehicle 
 - **Timing.** Execution time on the board is not measured (the cost of one step on the host is small; the figure that matters is the Cortex-M4's, measured at S1 with the cycle counter: the firmware's status line prints `wcet_step`).
 - **Bit-identical replicas** are verified on the host (the same compiler flags, `-ffp-contract=off`); that the target's FPU gives the same bits as the host's is the first thing `P-S1-01` checks.
 
+### 5a. The gains of a vehicle that is not the reference (6 Oct 2026)
+The gains are designed from the local `a(t)` and `b(t)` of the nominal flight, `kp = (wn^2 + a) / b`, `kd = 2 zeta wn / b`, every few seconds (`design.hpp`). Two things go wrong when `b` is small or changes fast, both found by flying vehicles that are not the reference (`VEHICLE_SPEC.md`):
+- **`b` near zero.** A fin-steered rocket has no authority at lift-off, a spacecraft after staging has none during a coast: `kp` and `kd` come out in the thousands, and when the effectiveness arrives the loop rings at the actuator's limit (the sounding rocket: +-8 degrees for 3 s). The design now takes **`b_min`**, the least effectiveness it designs for, and `kp_max`.
+- **16 points are not enough, spread evenly.** The flight computers carry 16 points of gain; a gain that changes a hundredfold in 4 s gets two of them in a 60 s flight with a gain every 4 s. **`every_s: 0` is an adaptive schedule**: it starts from the two ends and keeps adding the sample whose gain is furthest from the straight line, until the error is under `tolerance` or the 16 are used. The reference vehicle keeps its uniform schedule (a gain every 6 s: 17 designed, 16 held), so its tables, and the firmware's, are unchanged.
+
 ## 6. Requirements and tests
 TFC-LOOP-001 to 007 (`../verification/REQUIREMENTS.md`). Tests: `consensus_*`, `estimator_*`, `controller_*`, `guidance_*`, `atan2_*`, `loop_*` in `tests/test_loop.cpp`.
