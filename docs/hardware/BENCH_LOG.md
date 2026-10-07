@@ -43,3 +43,21 @@ Item: 120 ohm resistors (100-piece pack): a sample, then two in parallel
 Measured: with the multimeter on ohms, a sample of the resistors and two in parallel; the operator reports them good (values not recorded)
 Limit: about 120 ohm each (within 5 %), about 60 ohm for two in parallel   Verdict: pass (reported by the operator)
 Notes: the numbers were not written down. The 60 ohm check of the finished bus (power off, between CANH and CANL) is repeated when the backbone is built.
+
+### 2026-10-06  P-M1-01 step 3 (5 V adapter, jacks A and B)   T. Nardelli
+Item: 5 V 4 A switching supply (node-rail adapter), with each of the two 2.1 mm DC jack to screw terminal adapters
+Measured: multimeter on DC volts, probes on the heads of the two terminal screws. No load: **5.3 V**. Load of five 120 ohm resistors in parallel (measured 23 ohm with the supply unplugged, about 0.22 A): **5.06 V**. The same on jack A and jack B
+Limit: 4.75 to 5.25 V (the `E5V` window), at no load and at 50 mA   Verdict: **fail at no load (5.3 V); pass under load (5.06 V)**
+Notes: the step's load is 100 ohm (50 mA); five 120 ohm resistors were used, which is a heavier load (about 0.22 A) and so a stricter test of the sag. A Nucleo is never on an unloaded rail (the Picos and relay coils are always on it, and the Nucleo itself draws current), so the supply is judged usable without a series diode. A diode drops 0.3 to 0.4 V and would take the loaded 5.06 V to about 4.7 V, under the 4.75 V floor. Not settled: the voltage at a Nucleo's `E5V` pin with the whole rail loaded and the coils switching. That is measured on 9 Oct; add a diode or a buck module only if it reads above 5.25 V. The second adapter gets this test before use. Measuring tip: read the voltage on the screw heads, with the meter on DC volts (red lead in the V socket); a load clamped badly in the terminal gives a falsely low reading.
+
+### 2026-10-06  P-M1-01 step 3 (jack polarity)   T. Nardelli
+Item: both DC jack to screw terminal adapters, with the supply's plug
+Measured: with the supply on, the sign of the meter reading across the two screws, to find the centre-pin terminal of each adapter
+Limit: centre positive (the usual barrel-plug convention; the polarity of this supply's plug was not recorded)   Verdict: pass (reported by the operator; the sign was not recorded)
+Notes: the polarity matters because the 1000 uF capacitors are polarised. Record which screw is the centre pin on each adapter (and mark it) before the first node is wired.
+
+### 2026-10-06  P-M1-01 step 1 (6 Oct parts: terminal blocks, headers, IMUs)   T. Nardelli
+Item: ten 3-pin 3.5 mm terminal blocks (two packs of five); ten 36-pin 0.1 in header strips; three ISM330DHCX IMU boards
+Measured: terminal blocks: count, plug and unplug, a stripped Cat6 conductor clamped (continuity through the plugged block, open when unplugged), fit on the prototype board. Headers: count, clean break, fit in an IMU's holes. IMUs: identity and silkscreen against the sheet, visual inspection, 3V3 to GND with the meter on ohms (unpowered), board size and mounting holes (step 11)
+Limit: every row present and as listed; no short; the parts fit   Verdict: pass (reported by the operator)
+Notes: the values (the ohm reading, the hole spacing, the IMU maker and pin labels) were not recorded; write them in when the IMU is wired to a Nucleo. Soldering is expected to be needed for the IMU, CAN Pal and Pico headers, and will be done at those hardware stages. The IMU's logic level (step 12) waits for a Pico.
