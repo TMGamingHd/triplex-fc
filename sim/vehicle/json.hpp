@@ -326,6 +326,7 @@ class JsonParser {
 
 // Parse `text` into `out`; on failure return false with the reason (and where) in `error`.
 inline bool parse_json(const std::string& text, Json& out, std::string& error) {
+  out = Json{};  // whatever it held before is gone
   detail::JsonParser p(text);
   return p.parse(out, error);
 }

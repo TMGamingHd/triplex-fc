@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <vector>
 
+#include "aero.hpp"
 #include "atmosphere.hpp"
 #include "math3.hpp"
 #include "spec.hpp"
@@ -315,7 +316,11 @@ class Vehicle6 {
     l.mach = v_abs / air.sound;
     l.dynamic_pressure = 0.5 * air.density * v_abs * v_abs;
     const double area = kPi * 0.25 * p_.diameter * p_.diameter;
-    if (v_abs > 1.0 && vrel.x > 0.0) {
+    if (shaped_) {
+      if (v_abs > 1.0) {
+        shape_forces(l, air, vrel, v_abs, mp);
+      }
+    } else if (v_abs > 1.0 && vrel.x > 0.0) {
       const double lat = std::hypot(vrel.y, vrel.z);
       l.alpha = std::atan2(lat, vrel.x);
       l.f_aero.x = -l.dynamic_pressure * area * p_.cd_scale * axial_coefficient(l.mach);
@@ -426,7 +431,7 @@ class Vehicle6 {
         // a thruster: the torque about Z of its full thrust, per radian of command (it is on in proportion, fully at full_cmd_deg)
         const double ti = std::max(0.0, (p_.thrust_scale * en.thrust_vac) - (air.pressure * en.exit_area));
         const V3 d = normalized(en.dir);
-        const double mz = std::fabs(((en.pos.x - mp.x_cg) * d.y * ti) - (en.pos.y * d.x * ti));
+        const double mz = ((en.pos.x - mp.x_cg) * d.y * ti) - (en.pos.y * d.x * ti);  // signed: a thruster wired the wrong way makes the vehicle's control effectiveness negative, and the validity check says so
         num += mz / (en.full_cmd_deg * kDeg2Rad);
         thrust += ti;
       }
@@ -448,8 +453,42 @@ class Vehicle6 {
   [[nodiscard]] double divergence() const {
     const Loads l = current_loads();
     const MassProps mp = mass_props();
+    if (shaped_) {
+      double cn_alpha = 0.0;
+      double moment_slope = 0.0;
+      double ca = 0.0;
+      double s_ref = kPi * 0.25 * p_.diameter * p_.diameter;
+      if (geo_.ready()) {
+        s_ref = geo_.reference_area();
+        geo_.slopes(l.mach, mp.x_cg, cn_alpha, moment_slope);
+      } else {
+        table_lookup(l.mach, ca, cn_alpha, moment_slope, mp.x_cg);
+      }
+      return l.dynamic_pressure * s_ref * moment_slope / mp.i_t;
+    }
     const double area = kPi * 0.25 * p_.diameter * p_.diameter;
     return l.dynamic_pressure * area * p_.c_n_alpha * (p_.x_cp - mp.x_cg) / mp.i_t;
+  }
+
+  // The aerodynamics of the vehicle as it is now, at Mach `mach`: the slope of the normal force (per radian, on `s_ref`), where its centre of pressure is (m from the aft end) and the
+  // axial coefficient flying nose first at sea-level density and 1e7 Reynolds. For the reference model's fixed numbers, those. For tools that describe a vehicle and for the tests.
+  void aero_summary(double mach, double& cn_alpha, double& x_cp, double& ca, double& s_ref) const {
+    double moment_slope = 0.0;
+    if (geo_.ready()) {
+      s_ref = geo_.reference_area();
+      geo_.slopes(mach, 0.0, cn_alpha, moment_slope);
+      ca = geo_.axial(mach, 1.0e7, power_fraction(), g_.aero) * p_.cd_scale;
+      x_cp = cn_alpha != 0.0 ? moment_slope / cn_alpha : 0.0;
+    } else if (shaped_) {
+      s_ref = kPi * 0.25 * p_.diameter * p_.diameter;
+      table_lookup(mach, ca, cn_alpha, moment_slope, 0.0);
+      x_cp = cn_alpha != 0.0 ? moment_slope / cn_alpha : 0.0;
+    } else {
+      s_ref = kPi * 0.25 * p_.diameter * p_.diameter;
+      cn_alpha = p_.c_n_alpha;
+      x_cp = p_.x_cp;
+      ca = axial_coefficient(mach) * p_.cd_scale;
+    }
   }
 
   // The mean wind plus gusts, inertial frame, m/s.
@@ -563,7 +602,10 @@ class Vehicle6 {
   }
 
   // The mass that is not propellant (the structure of the stages and the payloads still on the vehicle): it changes only at a separation or a jettison.
-  void refresh_fixed() { fixed_ = total_mass(std::array<double, kMaxStages>{}); }
+  void refresh_fixed() {
+    fixed_ = total_mass(std::array<double, kMaxStages>{});
+    rebuild_aero();
+  }
 
   // The mass, centre of gravity and inertias of the vehicle with the given propellant in each stage: the sum over its parts (each stage's structure, each tank's propellant column,
   // each payload) with the parallel-axis terms, in the order stage by stage, so that the reference vehicle's sums are those of the single-vehicle model it replaced.
@@ -664,6 +706,106 @@ class Vehicle6 {
         s_.m = total_mass(s_.prop);
       }
     }
+  }
+
+  // The aerodynamic force and moment from the shape (or a table by Mach): the normal force of the slender parts, the cross-flow force of the body in the flow across it, the axial force
+  // flying nose first or tail first, each at any angle of attack when `full_angle` (otherwise as the reference model: linear in the angle, none past 90 degrees).
+  void shape_forces(Loads& l, const Air& air, const V3& vrel, double v_abs, const MassProps& mp) const {
+    const AeroSpec& a = g_.aero;
+    const double lat = std::hypot(vrel.y, vrel.z);
+    const double alpha = std::atan2(lat, vrel.x);
+    l.alpha = alpha;
+    const double sa = std::sin(alpha);
+    const double ca = std::cos(alpha);
+    double s_ref = 0.0;
+    double cn_alpha = 0.0;
+    double moment_slope = 0.0;
+    double axial_front = 0.0;
+    double plan_ratio = 0.0;
+    double x_cf = mp.x_cg;
+    if (geo_.ready()) {
+      s_ref = geo_.reference_area();
+      geo_.slopes(l.mach, mp.x_cg, cn_alpha, moment_slope);
+      const double re = air.density * v_abs * geo_.length() / aero::viscosity(air.temperature);
+      axial_front = geo_.axial(l.mach, re, power_fraction(), a);
+      plan_ratio = geo_.plan_area() / s_ref;
+      x_cf = geo_.plan_centroid();
+    } else {
+      s_ref = kPi * 0.25 * p_.diameter * p_.diameter;
+      table_lookup(l.mach, axial_front, cn_alpha, moment_slope, mp.x_cg);
+    }
+    const double q_s = l.dynamic_pressure * s_ref;
+    const bool forward = vrel.x > 0.0;
+    const double lin = a.full_angle ? sa * ca : (forward ? alpha : 0.0);
+    const double crossflow = a.full_angle ? a.crossflow_eta * a.crossflow_cd * plan_ratio * sa * sa : 0.0;
+    const double n_total = (p_.cn_scale * cn_alpha * lin) + crossflow;
+    const double arm_sum = (p_.cn_scale * moment_slope * lin) + (crossflow * (x_cf - mp.x_cg));
+    if (a.full_angle) {
+      l.f_aero.x = -q_s * p_.cd_scale * (ca >= 0.0 ? axial_front : a.rear_axial) * ca;
+    } else if (forward) {
+      l.f_aero.x = -q_s * p_.cd_scale * axial_front;
+    }
+    if (lat > 1e-9) {
+      const V3 n{0.0, vrel.y / lat, vrel.z / lat};  // the lateral direction of the relative wind: the normal force opposes it
+      l.f_aero.y = -q_s * n_total * n.y;
+      l.f_aero.z = -q_s * n_total * n.z;
+      l.m_aero = cross(V3{-q_s * arm_sum, 0.0, 0.0}, n);
+    }
+  }
+
+  // The fraction of the main engines' rated thrust that is running (the plume fills the wake and takes drag off the base).
+  [[nodiscard]] double power_fraction() const {
+    double running = 0.0;
+    double rated = 0.0;
+    for (std::size_t e = 0; e < g_.engines.size(); ++e) {
+      const EngineSpec& en = g_.engines[e];
+      if (en.control == Control::None && active_[static_cast<std::size_t>(en.stage)]) {
+        running += frac_[e] * en.thrust_vac;
+        rated += en.thrust_vac;
+      }
+    }
+    return rated > 0.0 ? running / rated : 0.0;
+  }
+
+  // A table by Mach (aero.table): linear between its points, held beyond them.
+  void table_lookup(double mach, double& ca, double& cn_alpha, double& moment_slope, double x_cg) const {
+    const std::vector<AeroTablePoint>& t = g_.aero.table;
+    AeroTablePoint p = t.front();
+    if (mach >= t.back().mach) {
+      p = t.back();
+    } else if (mach > t.front().mach) {
+      for (std::size_t i = 1; i < t.size(); ++i) {
+        if (mach <= t[i].mach) {
+          const double f = (mach - t[i - 1].mach) / (t[i].mach - t[i - 1].mach);
+          p.ca = t[i - 1].ca + (f * (t[i].ca - t[i - 1].ca));
+          p.cn_alpha = t[i - 1].cn_alpha + (f * (t[i].cn_alpha - t[i - 1].cn_alpha));
+          p.x_cp = t[i - 1].x_cp + (f * (t[i].x_cp - t[i - 1].x_cp));
+          break;
+        }
+      }
+    }
+    ca = p.ca;
+    cn_alpha = p.cn_alpha;
+    moment_slope = p.cn_alpha * (p.x_cp - x_cg);
+  }
+
+  // The aerodynamic geometry of the stages that are on the vehicle: rebuilt whenever one leaves.
+  void rebuild_aero() {
+    std::vector<SectionSpec> sections;
+    std::vector<FinPlanform> fins;
+    for (std::size_t s = 0; s < g_.stages.size(); ++s) {
+      if (active_[s]) {
+        sections.insert(sections.end(), g_.stages[s].sections.begin(), g_.stages[s].sections.end());
+        fins.insert(fins.end(), g_.stages[s].stabilizers.begin(), g_.stages[s].stabilizers.end());
+      }
+    }
+    for (std::size_t i = 0; i < g_.payloads.size(); ++i) {
+      if (payload_active_[i]) {
+        sections.insert(sections.end(), g_.payloads[i].sections.begin(), g_.payloads[i].sections.end());
+      }
+    }
+    geo_.build(sections, fins, g_.aero.reference_diameter_m);
+    shaped_ = geo_.ready() || !g_.aero.table.empty();
   }
 
   // Could engine e fire now (its stage is on the vehicle, lit and has propellant, and the engine has not failed)?
@@ -887,6 +1029,8 @@ class Vehicle6 {
   VehicleSpec g_;
   State s_{};
   double t_ = 0.0;
+  AeroGeometry geo_;
+  bool shaped_ = false;  // the aerodynamics follow the shape (or a table), not the reference model's fixed numbers
   double fixed_ = 0.0;  // the mass that is not propellant
   std::array<double, kMaxStages> cap_{};
   std::array<double, kMaxStages> gimbal_p_{};

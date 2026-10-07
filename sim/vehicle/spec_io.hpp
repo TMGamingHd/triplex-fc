@@ -223,6 +223,68 @@ inline void read_tank(const Json& j, const std::string& path, TankSpec& t, std::
   o.finish();
 }
 
+inline bool read_nose_shape(const std::string& s, NoseShape& n) {
+  if (s == "cone") {
+    n = NoseShape::Cone;
+  } else if (s == "ogive") {
+    n = NoseShape::TangentOgive;
+  } else if (s == "parabola") {
+    n = NoseShape::Parabola;
+  } else if (s == "ellipse") {
+    n = NoseShape::Ellipse;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+inline const char* nose_shape_name(NoseShape n) {
+  switch (n) {
+    case NoseShape::TangentOgive: return "ogive";
+    case NoseShape::Parabola: return "parabola";
+    case NoseShape::Ellipse: return "ellipse";
+    case NoseShape::Cone: break;
+  }
+  return "cone";
+}
+
+inline void read_section(const Json& j, const std::string& path, SectionSpec& sec, std::vector<std::string>& errors) {
+  ObjectReader o(j, path, errors);
+  std::string kind;
+  if (o.str("kind", kind)) {
+    if (kind == "nose") {
+      sec.kind = SectionKind::Nose;
+    } else if (kind == "tube") {
+      sec.kind = SectionKind::Tube;
+    } else if (kind == "transition") {
+      sec.kind = SectionKind::Transition;
+    } else {
+      o.error(*o.get("kind"), "kind", "expected \"nose\", \"tube\" or \"transition\"");
+    }
+  }
+  o.num("x_start_m", sec.x_start);
+  o.num("length_m", sec.length);
+  o.num("d_aft_m", sec.d_aft);
+  o.num("d_fore_m", sec.d_fore);
+  std::string shape;
+  if (o.str("shape", shape) && !read_nose_shape(shape, sec.nose)) {
+    o.error(*o.get("shape"), "shape", "expected \"cone\", \"ogive\", \"parabola\" or \"ellipse\"");
+  }
+  o.finish();
+}
+
+inline void read_stabilizer(const Json& j, const std::string& path, FinPlanform& f, std::vector<std::string>& errors) {
+  ObjectReader o(j, path, errors);
+  o.integer("count", f.count);
+  o.num("x_le_root_m", f.x_le_root);
+  o.num("root_chord_m", f.root_chord);
+  o.num("tip_chord_m", f.tip_chord);
+  o.num("span_m", f.span);
+  o.num("sweep_m", f.sweep);
+  o.num("thickness_m", f.thickness);
+  o.finish();
+}
+
 inline void read_stage(const Json& j, const std::string& path, StageSpec& st, std::vector<std::string>& errors) {
   ObjectReader o(j, path, errors);
   o.str("name", st.name);
@@ -238,6 +300,21 @@ inline void read_stage(const Json& j, const std::string& path, StageSpec& st, st
       TankSpec t;
       read_tank(*tanks[i], item(path, "tanks", i), t, errors);
       st.tanks.push_back(t);
+    }
+  }
+  std::vector<const Json*> shapes;
+  if (o.list("sections", shapes)) {
+    for (std::size_t i = 0; i < shapes.size(); ++i) {
+      SectionSpec sec;
+      read_section(*shapes[i], item(path, "sections", i), sec, errors);
+      st.sections.push_back(sec);
+    }
+  }
+  if (o.list("stabilizers", shapes)) {
+    for (std::size_t i = 0; i < shapes.size(); ++i) {
+      FinPlanform f;
+      read_stabilizer(*shapes[i], item(path, "stabilizers", i), f, errors);
+      st.stabilizers.push_back(f);
     }
   }
   o.flag("sequential_drain", st.sequential_drain);
@@ -405,6 +482,30 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
     o.num("diameter_m", p.diameter);
     o.num("c_n_alpha", p.c_n_alpha);
     o.num("x_cp_m", p.x_cp);
+    AeroSpec& a = p.spec.aero;
+    o.num("reference_diameter_m", a.reference_diameter_m);
+    o.num("crossflow_cd", a.crossflow_cd);
+    o.num("crossflow_eta", a.crossflow_eta);
+    o.num("rear_axial", a.rear_axial);
+    o.num("power_on_base", a.power_on_base);
+    o.num("roughness", a.wetted_roughness);
+    o.flag("full_angle", a.full_angle);
+    std::vector<std::array<double, 2>> unused;
+    if (const Json* tv = o.get("table")) {  // [[mach, ca, cn_alpha, x_cp_m], ...]
+      if (tv->type != Json::Type::Array) {
+        o.error(*tv, "table", "expected a list of [mach, ca, cn_alpha, x_cp_m]");
+      } else {
+        for (std::size_t i = 0; i < tv->items.size(); ++i) {
+          const Json& row = tv->items[i];
+          if (row.type != Json::Type::Array || row.items.size() != 4U || row.items[0].type != Json::Type::Number || row.items[1].type != Json::Type::Number ||
+              row.items[2].type != Json::Type::Number || row.items[3].type != Json::Type::Number) {
+            o.error(row, "table[" + std::to_string(i) + "]", "expected four numbers [mach, ca, cn_alpha, x_cp_m]");
+            break;
+          }
+          a.table.push_back(AeroTablePoint{row.items[0].number, row.items[1].number, row.items[2].number, row.items[3].number});
+        }
+      }
+    }
     o.finish();
   }
   std::vector<const Json*> list;
@@ -428,6 +529,14 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
       o.num("mass_kg", pl.mass);
       o.num("x_m", pl.x);
       o.num("jettison_time_s", pl.jettison_time_s);
+      std::vector<const Json*> shapes;
+      if (o.list("sections", shapes)) {
+        for (std::size_t k = 0; k < shapes.size(); ++k) {
+          SectionSpec sec;
+          detail::read_section(*shapes[k], item(item("", "payloads", i), "sections", k), sec, errors);
+          pl.sections.push_back(sec);
+        }
+      }
       o.finish();
       p.spec.payloads.push_back(pl);
     }
@@ -580,7 +689,19 @@ inline std::string write_vehicle(const VehicleFile& v) {
        num_text(p.crash_speed_ms) + ", \"max_substep_s\": " + num_text(p.max_substep) + ", \"thrust_scale\": " + num_text(p.thrust_scale) + ", \"cd_scale\": " + num_text(p.cd_scale) +
        ", \"cn_scale\": " + num_text(p.cn_scale) + ", \"thrust_misalign_pitch_deg\": " + num_text(p.thrust_misalign_pitch_deg) + ", \"thrust_misalign_yaw_deg\": " +
        num_text(p.thrust_misalign_yaw_deg) + "},\n";
-  o += "  \"aero\": {\"diameter_m\": " + num_text(p.diameter) + ", \"c_n_alpha\": " + num_text(p.c_n_alpha) + ", \"x_cp_m\": " + num_text(p.x_cp) + "},\n";
+  o += "  \"aero\": {\"diameter_m\": " + num_text(p.diameter) + ", \"c_n_alpha\": " + num_text(p.c_n_alpha) + ", \"x_cp_m\": " + num_text(p.x_cp) + ", \"reference_diameter_m\": " +
+       num_text(g.aero.reference_diameter_m) + ", \"crossflow_cd\": " + num_text(g.aero.crossflow_cd) + ", \"crossflow_eta\": " + num_text(g.aero.crossflow_eta) + ", \"rear_axial\": " +
+       num_text(g.aero.rear_axial) + ", \"power_on_base\": " + num_text(g.aero.power_on_base) + ", \"roughness\": " + num_text(g.aero.wetted_roughness) + ", \"full_angle\": " +
+       (g.aero.full_angle ? "true" : "false");
+  if (!g.aero.table.empty()) {
+    o += ", \"table\": [";
+    for (std::size_t i = 0; i < g.aero.table.size(); ++i) {
+      const AeroTablePoint& t = g.aero.table[i];
+      o += std::string(i == 0U ? "" : ", ") + "[" + num_text(t.mach) + ", " + num_text(t.ca) + ", " + num_text(t.cn_alpha) + ", " + num_text(t.x_cp) + "]";
+    }
+    o += "]";
+  }
+  o += "},\n";
   o += "  \"stages\": [\n";
   for (std::size_t s = 0; s < g.stages.size(); ++s) {
     const StageSpec& st = g.stages[s];
@@ -591,7 +712,27 @@ inline std::string write_vehicle(const VehicleFile& v) {
       o += std::string(k == 0U ? "" : ", ") + "{\"propellant_kg\": " + num_text(t.propellant) + ", \"x_bottom_m\": " + num_text(t.x_bottom) + ", \"radius_m\": " + num_text(t.radius) +
            ", \"density_kg_m3\": " + num_text(t.density) + "}";
     }
-    o += "], \"sequential_drain\": " + std::string(st.sequential_drain ? "true" : "false") + ",\n     \"ignite_time_s\": " + num_text(st.ignite_time_s) + ", \"ignite_after_sep_of\": " +
+    o += "], \"sequential_drain\": " + std::string(st.sequential_drain ? "true" : "false") + ",\n";
+    if (!st.sections.empty()) {
+      o += "     \"sections\": [";
+      for (std::size_t k = 0; k < st.sections.size(); ++k) {
+        const SectionSpec& sec = st.sections[k];
+        const char* kind = sec.kind == SectionKind::Nose ? "nose" : (sec.kind == SectionKind::Tube ? "tube" : "transition");
+        o += std::string(k == 0U ? "" : ", ") + "{\"kind\": \"" + kind + "\", \"x_start_m\": " + num_text(sec.x_start) + ", \"length_m\": " + num_text(sec.length) + ", \"d_aft_m\": " +
+             num_text(sec.d_aft) + ", \"d_fore_m\": " + num_text(sec.d_fore) + ", \"shape\": \"" + nose_shape_name(sec.nose) + "\"}";
+      }
+      o += "],\n";
+    }
+    if (!st.stabilizers.empty()) {
+      o += "     \"stabilizers\": [";
+      for (std::size_t k = 0; k < st.stabilizers.size(); ++k) {
+        const FinPlanform& f = st.stabilizers[k];
+        o += std::string(k == 0U ? "" : ", ") + "{\"count\": " + std::to_string(f.count) + ", \"x_le_root_m\": " + num_text(f.x_le_root) + ", \"root_chord_m\": " + num_text(f.root_chord) +
+             ", \"tip_chord_m\": " + num_text(f.tip_chord) + ", \"span_m\": " + num_text(f.span) + ", \"sweep_m\": " + num_text(f.sweep) + ", \"thickness_m\": " + num_text(f.thickness) + "}";
+      }
+      o += "],\n";
+    }
+    o += "     \"ignite_time_s\": " + num_text(st.ignite_time_s) + ", \"ignite_after_sep_of\": " +
          std::to_string(st.ignite_after_sep_of) + ", \"ignite_delay_s\": " + num_text(st.ignite_delay_s) + ", \"separate_time_s\": " + num_text(st.separate_time_s) +
          ", \"separate_on_burnout\": " + (st.separate_on_burnout ? "true" : "false") + ", \"separate_delay_s\": " + num_text(st.separate_delay_s) + ",\n     \"gimbal_limit_deg\": " +
          num_text(st.gimbal_limit_deg) + ", \"gimbal_rate_dps\": " + num_text(st.gimbal_rate_dps) + ", \"gimbal_lag_s\": " + num_text(st.gimbal_lag_s);
@@ -613,7 +754,18 @@ inline std::string write_vehicle(const VehicleFile& v) {
   for (std::size_t i = 0; i < g.payloads.size(); ++i) {
     const PayloadSpec& pl = g.payloads[i];
     o += std::string(i == 0U ? "" : ", ") + "{\"name\": " + quoted(pl.name) + ", \"mass_kg\": " + num_text(pl.mass) + ", \"x_m\": " + num_text(pl.x) + ", \"jettison_time_s\": " +
-         num_text(pl.jettison_time_s) + "}";
+         num_text(pl.jettison_time_s);
+    if (!pl.sections.empty()) {
+      o += ", \"sections\": [";
+      for (std::size_t k = 0; k < pl.sections.size(); ++k) {
+        const SectionSpec& sec = pl.sections[k];
+        const char* kind = sec.kind == SectionKind::Nose ? "nose" : (sec.kind == SectionKind::Tube ? "tube" : "transition");
+        o += std::string(k == 0U ? "" : ", ") + "{\"kind\": \"" + kind + "\", \"x_start_m\": " + num_text(sec.x_start) + ", \"length_m\": " + num_text(sec.length) + ", \"d_aft_m\": " +
+             num_text(sec.d_aft) + ", \"d_fore_m\": " + num_text(sec.d_fore) + ", \"shape\": \"" + nose_shape_name(sec.nose) + "\"}";
+      }
+      o += "]";
+    }
+    o += "}";
   }
   o += "],\n  \"fins\": [";
   for (std::size_t i = 0; i < g.fins.size(); ++i) {

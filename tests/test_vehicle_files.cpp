@@ -307,3 +307,17 @@ TFC_TEST(example_the_spacecraft_slews_in_orbit_with_wheels_and_thrusters) {
   CHECK(max_tilt > 29.0 && max_tilt < 31.0);  // the slew reached its 30 degrees
   CHECK(f.trace.back().mass < 800.0);         // and the thrusters used some propellant
 }
+
+TFC_TEST(vehicle_reader_starts_a_ring_at_the_angle_given) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  const std::string text = R"({
+    "stages": [{"dry_mass_kg": 1000, "length_m": 6, "radius_m": 0.5, "x_cg_dry_m": 3,
+                "tanks": [{"propellant_kg": 4000, "x_bottom_m": 0.5, "radius_m": 0.5, "density_kg_m3": 1000}]}],
+    "engines": [{"stage": 0, "count": 4, "ring_radius_m": 1.0, "ring_start_deg": 90, "thrust_vac_n": 1000, "isp_vac_s": 300}]
+  })";
+  CHECK(sim::read_vehicle(text, v, errors) && errors.empty());
+  const std::vector<sim::EngineSpec>& e = v.params.spec.engines;
+  CHECK(e.size() == 4U && near_abs(e[0].pos.y, 0.0, 1e-12) && near_abs(e[0].pos.z, 1.0, 1e-12));   // starting at 90 degrees from +Y toward +Z
+  CHECK(near_abs(e[1].pos.y, -1.0, 1e-12) && near_abs(e[1].pos.z, 0.0, 1e-12));                     // then a quarter turn on
+}

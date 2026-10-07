@@ -194,7 +194,7 @@ TFC_TEST(general_the_centre_of_gravity_of_tanks_and_a_payload_is_the_mass_weight
   b.radius = 0.4;
   b.density = 500.0;
   st.tanks = {a, b};
-  p.spec.payloads.push_back(sim::PayloadSpec{"sat", 200.0, 6.5, -1.0});
+  p.spec.payloads.push_back(sim::PayloadSpec{"sat", 200.0, 6.5, -1.0, {}});
   const sim::Vehicle6 v(p, in_space());
   // full tanks: columns of height m / (rho pi r^2); the centroid of a column is its middle
   const double ha = 600.0 / (1000.0 * sim::kPi * 0.25);
@@ -282,11 +282,12 @@ TFC_TEST(general_a_two_stage_vehicle_in_vacuum_gains_the_speed_of_the_rocket_equ
   e2.stage = 1;
   e2.isp_vac = 350.0;
   p.spec.engines = {e1, e2};
-  p.spec.payloads.push_back(sim::PayloadSpec{"payload", 300.0, 10.0, -1.0});
+  p.spec.payloads.push_back(sim::PayloadSpec{"payload", 300.0, 10.0, -1.0, {}});
   CHECK(sim::validate(p.spec).empty());
   sim::Vehicle6 v(p, in_space());
   CHECK(close(v.mass(), 12800.0, 1e-12));
   double t_burnout1 = -1.0;
+  double t_separation = -1.0;
   double mass_after_sep = -1.0;
   bool stage1_gone_when_second_lit = false;
   for (int k = 0; k < 40000 && v.time() < 330.0; ++k) {
@@ -296,6 +297,7 @@ TFC_TEST(general_a_two_stage_vehicle_in_vacuum_gains_the_speed_of_the_rocket_equ
     }
     if (mass_after_sep < 0.0 && !v.stage_active(0)) {
       mass_after_sep = v.mass();
+      t_separation = v.time();
     }
     if (v.stage_ignited(1) && !v.stage_active(0)) {
       stage1_gone_when_second_lit = true;
@@ -306,6 +308,7 @@ TFC_TEST(general_a_two_stage_vehicle_in_vacuum_gains_the_speed_of_the_rocket_equ
   const double dv2 = 350.0 * g0 * std::log(2800.0 / 800.0);
   CHECK(close(t_burnout1, 8000.0 / (200000.0 / (300.0 * g0)), 2e-3));  // 117.7 s
   CHECK(close(mass_after_sep, 2800.0, 1e-9));                          // the first stage is gone: 500 + 2000 + 300
+  CHECK(near_abs(t_separation - t_burnout1, 1.0, 0.03));               // one second after its burnout: separate_delay_s
   CHECK(stage1_gone_when_second_lit && v.stage_ignited(1) && !v.stage_active(0) && v.stage_active(1));
   CHECK(close(v.mass(), 800.0, 1e-6));                                 // second stage burnt out: its structure and the payload
   CHECK(close(v.speed(), dv1 + dv2, 5e-4));                            // the rocket equation, twice
@@ -316,7 +319,7 @@ TFC_TEST(general_a_stage_ignites_at_its_time_and_a_payload_leaves_at_its_time) {
   sim::Params p = one_stage(500.0, {engine_at(0.0, 0.0, 0.0, 20000.0)});
   p.gravity_scale = 0.0;
   p.spec.stages[0].ignite_time_s = 2.5;
-  p.spec.payloads.push_back(sim::PayloadSpec{"fairing", 150.0, 5.0, 4.0});
+  p.spec.payloads.push_back(sim::PayloadSpec{"fairing", 150.0, 5.0, 4.0, {}});
   sim::Vehicle6 v(p, in_space());
   CHECK(close(v.mass(), 1000.0 + 500.0 + 150.0, 1e-12) && v.current_loads().thrust == 0.0 && !v.stage_ignited(0));
   while (v.time() < 2.0) {
@@ -444,7 +447,7 @@ TFC_TEST(general_a_bad_description_is_refused_with_a_message_that_names_the_fiel
   s.stages[0].throttle = {{5.0, 1.0}, {2.0, 0.5}};
   CHECK(message_has(s, "throttle"));
   s = good.spec;
-  s.payloads.push_back(sim::PayloadSpec{"bad", -1.0, 0.0, -1.0});
+  s.payloads.push_back(sim::PayloadSpec{"bad", -1.0, 0.0, -1.0, {}});
   CHECK(message_has(s, "payloads[0].mass"));
   s = good.spec;
   for (unsigned i = 0; i <= sim::kMaxEngines; ++i) {
@@ -572,10 +575,10 @@ TFC_TEST(effectors_thrusters_fire_in_proportion_to_the_command_make_the_torque_o
   sim::Params py = p;
   py.spec.engines = {yaw_aft, yaw_fwd};
   sim::Vehicle6 vy(py, in_space());
-  vy.step(0.01, 0.0, 2.0);
+  vy.step(0.01, 0.0, 1.0);  // half of the 2 degrees at which the thrusters are fully on
   const sim::Loads ly = vy.current_loads();
   CHECK(ly.m_thrust.y > 0.0 && near_abs(ly.f_thrust.z, 0.0, 1e-9) && near_abs(ly.m_thrust.z, 0.0, 1e-9));  // a pure couple about +Y: no net force
-  CHECK(near_abs(ly.m_thrust.y, 100.0 * ((vy.mass_props().x_cg - 0.0) + (2.0 - vy.mass_props().x_cg)), 1e-6));
+  CHECK(near_abs(ly.m_thrust.y, 0.5 * 100.0 * ((vy.mass_props().x_cg - 0.0) + (2.0 - vy.mass_props().x_cg)), 1e-6));  // half duty: half the torque of the two thrusters
   // the effectiveness: the torque of full thrust per radian of command = T (x_cg - 0) / (full_cmd rad) / I
   const double i_t = v.mass_props().i_t;
   CHECK(close(v.control_effectiveness(), 100.0 * v.mass_props().x_cg / (2.0 * sim::kDeg2Rad) / v.mass_props().i_t, 1e-9));
@@ -586,6 +589,130 @@ TFC_TEST(effectors_thrusters_fire_in_proportion_to_the_command_make_the_torque_o
   }
   const double burnt = before - v.propellant(0);
   CHECK(close(burnt, 2.0 * 100.0 / (200.0 * sim::kG0), 2e-2));  // 100 N / (200 s g0) = 0.051 kg/s: 0.102 kg in 2 s (the rise of the valve costs a little)
+}
+
+TFC_TEST(effectors_a_thruster_wired_the_wrong_way_makes_the_control_effectiveness_negative) {
+  sim::Params p = bare_body();
+  p.spec.stages[0].tanks.push_back(sim::TankSpec{20.0, 0.5, 0.4, 1000.0});
+  sim::EngineSpec th = engine_at(0.0, 0.0, 0.0, 100.0);
+  th.gimbal = false;
+  th.dir = sim::V3{0.0, 1.0, 0.0};  // an aft thruster pushing toward +Y turns the nose toward -Y: the opposite of what pitch-plus asks
+  th.control = sim::Control::PitchPlus;
+  th.full_cmd_deg = 2.0;
+  p.spec.engines = {th};
+  const sim::Vehicle6 v(p, in_space());
+  CHECK(v.control_effectiveness() < 0.0);
+  p.spec.engines[0].dir = sim::V3{0.0, -1.0, 0.0};
+  CHECK(sim::Vehicle6(p, in_space()).control_effectiveness() > 0.0);
+}
+
+TFC_TEST(effectors_fin_gain_scales_the_deflection_and_a_negative_gain_reverses_it) {
+  const auto force_with_gain = [](double gain) {
+    sim::Params p = bare_body();
+    sim::FinSpec fin;
+    fin.x_hinge = 0.2;
+    fin.area_each = 0.5;
+    fin.gain = gain;
+    fin.limit_deg = 15.0;
+    fin.rate_dps = 1.0e12;
+    p.spec.fins.push_back(fin);
+    sim::Scenario sc;
+    sc.wind_scale = 0.0;
+    sc.has_initial = true;
+    sc.initial.r = sim::V3{sim::kEarthR + 5000.0, 0.0, 0.0};
+    sc.initial.v = sim::V3{200.0, 0.0, 0.0};
+    sim::Vehicle6 v(p, sc);
+    v.step(1e-6, 4.0, 0.0);
+    return v.current_loads().f_aero.y;
+  };
+  const double full = force_with_gain(1.0);
+  CHECK(full < 0.0);
+  CHECK(close(force_with_gain(0.5), 0.5 * full, 1e-4));
+  CHECK(close(force_with_gain(-1.0), -full, 1e-4));
+}
+
+TFC_TEST(effectors_a_wheels_momentum_rides_along_and_precesses_the_body) {
+  sim::Params p = bare_body();
+  p.ideal_roll_control = false;
+  p.spec.wheels.enabled = true;
+  p.spec.wheels.stage = 0;
+  p.spec.wheels.torque_max = 1.0;
+  p.spec.wheels.momentum_max = 50.0;
+  p.spec.wheels.full_cmd_deg = 1.0;
+  sim::Vehicle6 v(p, in_space());
+  sim::State s = v.state();
+  s.w = sim::V3{0.0, 0.1, 0.0};      // turning about Y at 0.1 rad/s
+  s.wheel_h = sim::V3{0.0, 0.0, 3.0};  // with 3 N m s stored in the Z wheel
+  v.set_state(s);
+  const double i_x = v.mass_props().i_x;
+  for (int k = 0; k < 100; ++k) {
+    v.step(0.01, 0.0, 0.0);  // no command: only the gyroscopic coupling acts
+  }
+  // I w' = -w x (I w + H): the X component is -(w_y H_z - w_z H_y) = -0.3 N m, so w_x falls at 0.3 / I_x per second
+  CHECK(near_abs(v.state().w.x, -0.3 / i_x * 1.0, 0.03 * 0.3 / i_x));
+}
+
+TFC_TEST(general_parallel_stages_gimbal_separately_each_with_its_own_limit) {
+  sim::Params p;
+  p.ground_contact = false;
+  p.gravity_scale = 0.0;
+  p.gimbal_rate_dps = 1.0e6;
+  for (int i = 0; i < 2; ++i) {
+    sim::StageSpec st;
+    st.name = i == 0 ? "core" : "booster";
+    st.dry_mass = 1000.0;
+    st.length = 4.0;
+    st.radius = 0.5;
+    st.x_cg_dry = 2.0;
+    st.tanks.push_back(sim::TankSpec{1000.0, 0.5, 0.5, 1000.0});
+    st.gimbal_limit_deg = i == 0 ? 2.0 : 6.0;  // the booster's nozzle can swing further than the core's
+    p.spec.stages.push_back(st);
+    for (int k = 0; k < 2; ++k) {  // two engines on each stage: they share one direction (found once per stage), which must be the stage's own
+      p.spec.engines.push_back(engine_at(0.0, 0.0, 0.0, 10000.0));
+      p.spec.engines.back().stage = i;
+    }
+  }
+  sim::Vehicle6 v(p, in_space());
+  v.step(0.1, 5.0, 0.0);  // ask for 5 degrees: the core stops at 2, the booster follows to 5
+  const sim::Loads l = v.current_loads();
+  CHECK(near_abs(l.f_thrust.y, -20000.0 * (std::sin(2.0 * sim::kDeg2Rad) + std::sin(5.0 * sim::kDeg2Rad)), 1e-6));
+  CHECK(v.engines_on() == 4);
+}
+
+TFC_TEST(general_an_engine_that_starts_later_lights_later) {
+  sim::EngineSpec early = engine_at(0.0, 0.0, 0.0, 10000.0);
+  sim::EngineSpec late = engine_at(0.0, 0.0, 0.0, 30000.0);
+  late.start_offset_s = 2.0;
+  const sim::Params p = one_stage(2000.0, {early, late});
+  sim::Vehicle6 v(p, in_space());
+  while (v.time() < 1.0) {
+    v.step(0.01, 0.0, 0.0);
+  }
+  CHECK(close(v.current_loads().thrust, 10000.0, 1e-9));  // only the first
+  while (v.time() < 3.0) {
+    v.step(0.01, 0.0, 0.0);
+  }
+  CHECK(close(v.current_loads().thrust, 40000.0, 1e-9));  // both
+}
+
+TFC_TEST(design_the_adaptive_schedule_follows_the_derivative_gain_and_honours_the_proportional_ceiling) {
+  // a vehicle whose divergence tracks its effectiveness so that kp is constant while kd = 2 zeta wn / b is not: the points must go where kd changes
+  std::vector<sim::NominalPoint> nominal;
+  for (int k = 0; k <= 6000; ++k) {
+    sim::NominalPoint n;
+    n.t = k * 0.01;
+    n.b_ctl = 1.0 + (99.0 * (1.0 - std::exp(-n.t / 1.5)));
+    n.a_div = (5.0 * n.b_ctl) - 4.0;  // (wn^2 + a) / b = 5 whatever b is, for wn = 2 (and a is never negative, which the design would floor at 0)
+    nominal.push_back(n);
+  }
+  const std::vector<sim::GainPoint> g = sim::gain_schedule_adaptive(nominal, 16U, 2.0, 0.8, 0.2, 1.0e30, 1.0e-3, 0.05);
+  CHECK(g.size() > 4U && near_abs(g[0].kp, 5.0, 1e-9) && near_abs(g[3].kp, 5.0, 1e-6));  // kp is flat: only kd asks for points
+  // the ceiling: no gain above it
+  const std::vector<sim::GainPoint> capped = sim::gain_schedule_adaptive(nominal, 16U, 2.0, 0.8, 0.2, 2.0, 1.0e-3, 0.05);  // kp 5 is above it
+  for (const sim::GainPoint& pt : capped) {
+    CHECK(pt.kp <= 2.0 + 1e-12);
+  }
+  CHECK(near_abs(capped[0].ki, 0.2 * 2.0, 1e-12));
 }
 
 TFC_TEST(effectors_a_reaction_wheel_turns_the_vehicle_by_the_momentum_it_takes_and_stops_when_full) {
@@ -724,4 +851,95 @@ TFC_TEST(design_a_pitch_program_can_be_a_table_and_the_tables_carry_it) {
   CHECK(t.guidance.size(1U) == tfc::Guidance::kMaxPoints);
   CHECK(near_abs(static_cast<double>(t.guidance.at(2500U).tilt_y_deg), 30.0, 0.5));  // 25 s into the table: 30 degrees
   CHECK(near_abs(static_cast<double>(t.guidance.at(0U).tilt_y_deg), 0.0, 1e-6));
+}
+
+// ---- the paths of the general model that the first coverage run of it found no test on ----
+
+TFC_TEST(general_the_mass_properties_of_a_stack_for_a_given_mass_scale_the_propellant_of_its_stages) {
+  sim::Params p;
+  p.ground_contact = false;
+  for (int i = 0; i < 2; ++i) {
+    sim::StageSpec st;
+    st.dry_mass = 500.0;
+    st.x_start = 4.0 * i;
+    st.length = 4.0;
+    st.radius = 0.5;
+    st.x_cg_dry = (4.0 * i) + 2.0;
+    st.tanks.push_back(sim::TankSpec{1000.0, (4.0 * i) + 0.5, 0.5, 1000.0});
+    p.spec.stages.push_back(st);
+  }
+  p.spec.engines.push_back(engine_at(0.0, 0.0, 0.0, 10000.0));
+  const sim::Vehicle6 v(p, in_space());
+  const sim::MassProps full = v.mass_props();
+  CHECK(close(full.mass, 3000.0, 1e-12));
+  const sim::MassProps half = v.mass_props(2000.0);  // half the propellant (1000 of 2000 kg), shared between the stages in the proportion they have
+  CHECK(close(half.mass, 2000.0, 1e-12) && half.x_cg < full.x_cg + 1.0 && half.i_t < full.i_t);
+  // the same as the mass properties of a state that has that propellant
+  sim::State s = v.state();
+  s.prop[0] = 500.0;
+  s.prop[1] = 500.0;
+  s.prop_set = true;
+  sim::Vehicle6 w(p, in_space());
+  w.set_state(s);
+  CHECK(close(half.x_cg, w.mass_props().x_cg, 1e-12) && close(half.i_t, w.mass_props().i_t, 1e-12));
+}
+
+TFC_TEST(general_two_fixed_engines_share_a_direction_and_a_table_vehicle_has_a_divergence) {
+  sim::EngineSpec a = engine_at(0.0, 0.5, 0.0, 10000.0);
+  a.gimbal = false;
+  sim::EngineSpec b = engine_at(0.0, -0.5, 0.0, 10000.0);
+  b.gimbal = false;
+  const sim::Params p = one_stage(1000.0, {a, b});
+  const sim::Vehicle6 v(p, in_space());
+  const sim::Loads l = v.current_loads();
+  CHECK(close(l.f_thrust.x, 20000.0, 1e-12) && near_abs(l.f_thrust.y, 0.0, 1e-9) && near_abs(sim::norm(l.m_thrust), 0.0, 1e-6));  // two fixed engines straight back: no gimbal moves them
+  // the reference model's own summary, and a table vehicle's divergence q S C_N-alpha (x_cp - x_cg) / I
+  const sim::Vehicle6 ref;
+  double cn = 0.0;
+  double xcp = 0.0;
+  double ca = 0.0;
+  double s_ref = 0.0;
+  ref.aero_summary(1.1, cn, xcp, ca, s_ref);
+  CHECK(close(cn, 2.5, 1e-12) && close(xcp, 12.5, 1e-12) && close(ca, 0.75, 1e-12) && close(s_ref, sim::kPi * 0.25 * 1.8 * 1.8, 1e-12));
+  sim::Params tp;
+  tp.ground_contact = false;
+  tp.gravity_scale = 0.0;
+  tp.spec = sim::legacy_spec(tp);
+  tp.spec.aero.table = {{0.0, 0.30, 4.0, 10.0}, {3.0, 0.50, 4.0, 10.0}};
+  sim::Scenario sc;
+  sc.wind_scale = 0.0;
+  sc.has_initial = true;
+  sc.initial.r = sim::V3{sim::kEarthR + 5000.0, 0.0, 0.0};
+  sc.initial.v = sim::V3{300.0, 0.0, 0.0};
+  const sim::Vehicle6 tv(tp, sc);
+  const sim::Loads tl = tv.current_loads();
+  const sim::MassProps mp = tv.mass_props();
+  CHECK(close(tv.divergence(), tl.dynamic_pressure * sim::kPi * 0.25 * 1.8 * 1.8 * 4.0 * (10.0 - mp.x_cg) / mp.i_t, 1e-12));
+}
+
+TFC_TEST(effectors_a_wheel_saturates_in_yaw_too_and_a_vehicle_with_no_stage_left_still_answers) {
+  sim::Params p = bare_body();
+  p.ideal_roll_control = false;
+  p.spec.wheels.enabled = true;
+  p.spec.wheels.stage = 0;
+  p.spec.wheels.torque_max = 4.0;
+  p.spec.wheels.momentum_max = 2.0;
+  p.spec.wheels.full_cmd_deg = 1.0;
+  sim::Vehicle6 v(p, in_space());
+  for (int k = 0; k < 300; ++k) {
+    v.step(0.01, 0.0, -1.0);  // a negative yaw command: the wheel fills the other way
+  }
+  CHECK(near_abs(v.state().wheel_h.y, 2.0, 1e-9));
+  const double w = v.state().w.y;
+  v.step(0.5, 0.0, -1.0);
+  CHECK(near_abs(v.state().w.y, w, 1e-9));  // full: no more torque in that direction
+  // the design of nothing is nothing, and a vehicle whose only stage separated still reports a gimbal
+  CHECK(sim::gain_schedule_adaptive({}, 16U, 2.0, 0.8, 0.2, 1.0e30, 1.0e-3, 0.1).empty());
+  sim::Params q = bare_body();
+  q.spec.stages[0].separate_time_s = 0.5;
+  sim::Vehicle6 gone(q, in_space());
+  while (gone.time() < 1.0) {
+    gone.step(0.01, 1.0, 1.0);
+  }
+  CHECK(!gone.stage_active(0) && gone.gimbal_pitch_deg() >= 0.0 && gone.engine_count() == 0);
 }
