@@ -116,4 +116,4 @@ These are limits of the flight software and of the rig, not of the description; 
 
 ## 8. Not modelled yet
 
-The reference model's departures from real life are in `SIM_FIDELITY.md`; the next ones to go, in the order they are being built, are: propellant slosh, a bending mode, a second-order actuator, jet damping and a real roll controller; staging disturbances. (The aerodynamics follow the shape and the world is general since 6 Oct 2026; what they are not is in `AERODYNAMICS.md` section 6 and `ENVIRONMENT.md` section 5.)
+The reference model's departures from real life are in `SIM_FIDELITY.md`; the next ones to go, in the order they are being built, are: propellant slosh and a bending mode. (Built on 7 Oct 2026, `DYNAMICS.md`: a second-order servo with backlash, jet damping, a real roll controller, the push and tip-off of a separation.) (The aerodynamics follow the shape and the world is general since 6 Oct 2026; what they are not is in `AERODYNAMICS.md` section 6 and `ENVIRONMENT.md` section 5.)

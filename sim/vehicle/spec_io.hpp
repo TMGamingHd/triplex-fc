@@ -327,6 +327,10 @@ inline void read_stage(const Json& j, const std::string& path, StageSpec& st, st
   o.num("gimbal_limit_deg", st.gimbal_limit_deg);
   o.num("gimbal_rate_dps", st.gimbal_rate_dps);
   o.num("gimbal_lag_s", st.gimbal_lag_s);
+  o.num("separation_dv_ms", st.separation_dv_ms);
+  o.num("tipoff_pitch_dps", st.tipoff_pitch_dps);
+  o.num("tipoff_yaw_dps", st.tipoff_yaw_dps);
+  o.num("tipoff_roll_dps", st.tipoff_roll_dps);
   o.pairs("throttle", st.throttle);
   o.finish();
 }
@@ -590,6 +594,26 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
     o.num("full_cmd_deg", w.full_cmd_deg);
     o.finish();
   }
+  if (const Json* v = top.get("actuator")) {
+    ObjectReader o(*v, "actuator", errors);
+    ActuatorSpec& a = p.spec.actuator;
+    o.integer("order", a.order);
+    o.num("natural_hz", a.natural_hz);
+    o.num("damping", a.damping);
+    o.num("backlash_deg", a.backlash_deg);
+    o.finish();
+  }
+  if (const Json* v = top.get("roll_control")) {
+    ObjectReader o(*v, "roll_control", errors);
+    RollSpec& r = p.spec.roll;
+    r.enabled = true;
+    o.integer("stage", r.stage);
+    o.num("torque_max_nm", r.torque_max);
+    o.num("kp_nm_per_rad", r.kp);
+    o.num("kd_nm_s_per_rad", r.kd);
+    o.finish();
+  }
+  top.flag("jet_damping", p.spec.jet_damping);
   if (const Json* v = top.get("scenario")) {
     ObjectReader o(*v, "scenario", errors);
     Scenario& sc = out.scenario;
@@ -793,6 +817,10 @@ inline std::string write_vehicle(const VehicleFile& v) {
          std::to_string(st.ignite_after_sep_of) + ", \"ignite_delay_s\": " + num_text(st.ignite_delay_s) + ", \"separate_time_s\": " + num_text(st.separate_time_s) +
          ", \"separate_on_burnout\": " + (st.separate_on_burnout ? "true" : "false") + ", \"separate_delay_s\": " + num_text(st.separate_delay_s) + ",\n     \"gimbal_limit_deg\": " +
          num_text(st.gimbal_limit_deg) + ", \"gimbal_rate_dps\": " + num_text(st.gimbal_rate_dps) + ", \"gimbal_lag_s\": " + num_text(st.gimbal_lag_s);
+    if (st.separation_dv_ms != 0.0 || st.tipoff_pitch_dps != 0.0 || st.tipoff_yaw_dps != 0.0 || st.tipoff_roll_dps != 0.0) {
+      o += ", \"separation_dv_ms\": " + num_text(st.separation_dv_ms) + ", \"tipoff_pitch_dps\": " + num_text(st.tipoff_pitch_dps) + ", \"tipoff_yaw_dps\": " + num_text(st.tipoff_yaw_dps) +
+           ", \"tipoff_roll_dps\": " + num_text(st.tipoff_roll_dps);
+    }
     if (!st.throttle.empty()) {
       o += ", \"throttle\": " + pairs_text(st.throttle);
     }
@@ -835,6 +863,17 @@ inline std::string write_vehicle(const VehicleFile& v) {
   if (g.wheels.enabled) {
     o += ",\n  \"wheels\": {\"stage\": " + std::to_string(g.wheels.stage) + ", \"torque_max_nm\": " + num_text(g.wheels.torque_max) + ", \"momentum_max_nms\": " + num_text(g.wheels.momentum_max) +
          ", \"full_cmd_deg\": " + num_text(g.wheels.full_cmd_deg) + "}";
+  }
+  if (g.actuator.order != 1 || g.actuator.backlash_deg != 0.0) {
+    o += ",\n  \"actuator\": {\"order\": " + std::to_string(g.actuator.order) + ", \"natural_hz\": " + num_text(g.actuator.natural_hz) + ", \"damping\": " + num_text(g.actuator.damping) +
+         ", \"backlash_deg\": " + num_text(g.actuator.backlash_deg) + "}";
+  }
+  if (g.roll.enabled) {
+    o += ",\n  \"roll_control\": {\"stage\": " + std::to_string(g.roll.stage) + ", \"torque_max_nm\": " + num_text(g.roll.torque_max) + ", \"kp_nm_per_rad\": " + num_text(g.roll.kp) +
+         ", \"kd_nm_s_per_rad\": " + num_text(g.roll.kd) + "}";
+  }
+  if (g.jet_damping) {
+    o += ",\n  \"jet_damping\": true";
   }
   const Scenario& sc = v.scenario;
   o += ",\n  \"scenario\": {\"wind_scale\": " + num_text(sc.wind_scale) + ", \"wind_direction\": " + vec_text(sc.wind_dir) + ", \"dry_cg_shift_m\": " + num_text(sc.dry_cg_shift) +

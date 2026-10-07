@@ -90,6 +90,7 @@ struct State {
   std::array<double, kMaxStages> prop{};      // the propellant left in each stage (a stage that has separated keeps what it had)
   bool prop_set = false;                      // false: derive `prop` from `m` (a vehicle of one stage); true: `prop` is given
   V3 wheel_h{};                               // the angular momentum of the reaction wheels about body Y and Z (x unused), N m s
+  double roll = 0.0;                          // the angle turned through about the long axis since T-zero, rad (the integral of the roll rate: what a roll controller holds)
 };
 
 struct EngineFailure {
@@ -194,6 +195,8 @@ class Vehicle6 {
       std::abort();
     }
     pl_ = g_.planet;
+    servo_dynamics_ = g_.actuator.order == 2 || g_.actuator.backlash_deg > 0.0;
+    ideal_roll_ = p_.ideal_roll_control && !g_.roll.enabled;
     s_.r = V3{pl_.radius, 0.0, 0.0};
     {
       const double lat = sc_.site.latitude_deg * kDeg2Rad;
@@ -261,8 +264,13 @@ class Vehicle6 {
           const double limit = st.gimbal_limit_deg >= 0.0 ? st.gimbal_limit_deg : p_.gimbal_limit_deg;
           const double rate = st.gimbal_rate_dps >= 0.0 ? st.gimbal_rate_dps : p_.gimbal_rate_dps;
           const double lag = st.gimbal_lag_s >= 0.0 ? st.gimbal_lag_s : p_.gimbal_lag_s;
-          gimbal_p_[s] = slew(gimbal_p_[s], cmd_pitch_deg, h, limit, rate, lag);
-          gimbal_y_[s] = slew(gimbal_y_[s], cmd_yaw_deg, h, limit, rate, lag);
+          if (servo_dynamics_) {
+            drive_servo(servo_p_[s], servo_pv_[s], gimbal_p_[s], cmd_pitch_deg, h, limit, rate, lag);
+            drive_servo(servo_y_[s], servo_yv_[s], gimbal_y_[s], cmd_yaw_deg, h, limit, rate, lag);
+          } else {
+            gimbal_p_[s] = slew(gimbal_p_[s], cmd_pitch_deg, h, limit, rate, lag);
+            gimbal_y_[s] = slew(gimbal_y_[s], cmd_yaw_deg, h, limit, rate, lag);
+          }
         }
       }
       if (p_.ground_contact && held_by_ground(h)) {
@@ -405,6 +413,10 @@ class Vehicle6 {
       l.mdot += md;
       l.mdot_stage[st] += md;
       l.thrust += ti;
+      if (g_.jet_damping) {  // the exhaust leaves with the velocity of the nozzle, which a turning vehicle gives it: it carries away angular momentum, -md r x (w x r)
+        const V3 r{en.pos.x - mp.x_cg, en.pos.y, en.pos.z};
+        l.m_thrust = l.m_thrust - (cross(r, cross(s.w, r)) * md);
+      }
     }
     // The fins: a force at the hinge of each set, normal to the plane of the two fins that make it (pitch: along -Y for a positive deflection; yaw: along +Z).
     for (std::size_t f = 0; f < g_.fins.size(); ++f) {
@@ -421,6 +433,9 @@ class Vehicle6 {
     }
     if (g_.wheels.enabled) {
       l.m_thrust = l.m_thrust + wheel_m_;  // the wheels' torque on the vehicle (an internal torque: the wheel takes the opposite momentum)
+    }
+    if (g_.roll.enabled && active_[static_cast<std::size_t>(g_.roll.stage)]) {  // the vehicle's own roll controller: a torque about the long axis against the roll and its rate
+      l.m_thrust.x += std::clamp((-g_.roll.kp * s.roll) - (g_.roll.kd * s.w.x), -g_.roll.torque_max, g_.roll.torque_max);
     }
     return l;
   }
@@ -655,6 +670,45 @@ class Vehicle6 {
     return cur + d;
   }
 
+  // One axis of a gimbal servo with dynamics (a second-order servo and/or backlash; the plain first-order lag is `slew`): moves the servo (`pos`, `vel`) toward the command, then the engine
+  // (`out`) follows it through the play. The second-order servo is theta'' = wn^2 (target - theta) - 2 zeta wn theta', advanced by RK4 (exact to the step's order for the linear part), then the
+  // rate and the travel are limited (at a stop the velocity is lost).
+  void drive_servo(double& pos, double& vel, double& out, double cmd, double h, double limit, double rate, double lag) const {
+    const ActuatorSpec& ac = g_.actuator;
+    if (ac.order == 2) {
+      const double target = std::clamp(cmd, -limit, limit);
+      const double wn = 2.0 * kPi * ac.natural_hz;
+      const double zw = 2.0 * ac.damping * wn;
+      const auto acc = [&](double x, double v) { return (wn * wn * (target - x)) - (zw * v); };
+      const double k1x = vel;
+      const double k1v = acc(pos, vel);
+      const double k2x = vel + (0.5 * h * k1v);
+      const double k2v = acc(pos + (0.5 * h * k1x), vel + (0.5 * h * k1v));
+      const double k3x = vel + (0.5 * h * k2v);
+      const double k3v = acc(pos + (0.5 * h * k2x), vel + (0.5 * h * k2v));
+      const double k4x = vel + (h * k3v);
+      const double k4v = acc(pos + (h * k3x), vel + (h * k3v));
+      pos += std::clamp(h * (k1x + (2.0 * k2x) + (2.0 * k3x) + k4x) / 6.0, -rate * h, rate * h);  // (it cannot move faster than the rate limit in a step either)
+      vel += h * (k1v + (2.0 * k2v) + (2.0 * k3v) + k4v) / 6.0;
+      vel = std::clamp(vel, -rate, rate);
+      if (pos > limit) {
+        pos = limit;
+        vel = std::min(vel, 0.0);
+      } else if (pos < -limit) {
+        pos = -limit;
+        vel = std::max(vel, 0.0);
+      }
+    } else {
+      pos = slew(pos, cmd, h, limit, rate, lag);
+    }
+    const double half = 0.5 * ac.backlash_deg;
+    if (pos - out > half) {
+      out = pos - half;
+    } else if (out - pos > half) {
+      out = pos + half;
+    }
+  }
+
   [[nodiscard]] std::size_t lead_stage() const {  // the lowest stage still on the vehicle
     for (std::size_t s = 0; s < g_.stages.size(); ++s) {
       if (active_[s]) {
@@ -795,6 +849,15 @@ class Vehicle6 {
         t_sep_[s] = t_;
         refresh_fixed();
         s_.m = total_mass(s_.prop);
+        if (st.separation_dv_ms != 0.0) {  // the springs push the rest of the vehicle forward
+          s_.v = s_.v + rotate(s_.q, V3{st.separation_dv_ms, 0.0, 0.0});
+        }
+        if (st.tipoff_pitch_dps != 0.0 || st.tipoff_yaw_dps != 0.0 || st.tipoff_roll_dps != 0.0) {  // and the release leaves it turning (roll about X, yaw about Y, pitch about Z)
+          s_.w = s_.w + (V3{st.tipoff_roll_dps, st.tipoff_yaw_dps, st.tipoff_pitch_dps} * kDeg2Rad);
+          if (ideal_roll_) {
+            s_.w.x = 0.0;  // a roll that is held ideally has no roll rate to hand on
+          }
+        }
       }
     }
     for (std::size_t i = 0; i < g_.payloads.size(); ++i) {
@@ -1080,6 +1143,7 @@ class Vehicle6 {
     V3 w{};
     double m = 0.0;
     std::array<double, kMaxStages> prop{};
+    double roll = 0.0;
   };
 
   [[nodiscard]] Deriv deriv(const State& s, double t) const {
@@ -1106,9 +1170,10 @@ class Vehicle6 {
     const V3 m_total = l.m_thrust + l.m_aero;
     d.w = V3{(m_total.x - gyro.x - (dix * s.w.x)) / mp.i_x, (m_total.y - gyro.y - (dit * s.w.y)) / mp.i_t,
              (m_total.z - gyro.z - (dit * s.w.z)) / mp.i_t};
-    if (p_.ideal_roll_control) {
+    if (ideal_roll_) {
       d.w.x = 0.0;
     }
+    d.roll = s.w.x;
     d.m = -l.mdot;
     for (std::size_t st = 0; st < kMaxStages; ++st) {
       d.prop[st] = -l.mdot_stage[st];
@@ -1128,6 +1193,7 @@ class Vehicle6 {
     }
     o.prop_set = true;
     o.wheel_h = s.wheel_h;
+    o.roll = s.roll + (d.roll * h);
     return o;
   }
 
@@ -1142,12 +1208,13 @@ class Vehicle6 {
     k.q = (k1.q + (k2.q * 2.0) + (k3.q * 2.0) + k4.q) * (1.0 / 6.0);
     k.w = (k1.w + (k2.w * 2.0) + (k3.w * 2.0) + k4.w) / 6.0;
     k.m = (k1.m + (2.0 * k2.m) + (2.0 * k3.m) + k4.m) / 6.0;
+    k.roll = (k1.roll + (2.0 * k2.roll) + (2.0 * k3.roll) + k4.roll) / 6.0;
     for (std::size_t i = 0; i < kMaxStages; ++i) {
       k.prop[i] = (k1.prop[i] + (2.0 * k2.prop[i]) + (2.0 * k3.prop[i]) + k4.prop[i]) / 6.0;
     }
     s_ = advanced(s_, k, h);
     s_.q = normalized(s_.q);
-    if (p_.ideal_roll_control) {
+    if (ideal_roll_) {
       s_.w.x = 0.0;
     }
     if (g_.stages.size() == 1U) {
@@ -1178,8 +1245,14 @@ class Vehicle6 {
   bool shaped_ = false;  // the aerodynamics follow the shape (or a table), not the reference model's fixed numbers
   double fixed_ = 0.0;  // the mass that is not propellant
   std::array<double, kMaxStages> cap_{};
-  std::array<double, kMaxStages> gimbal_p_{};
+  std::array<double, kMaxStages> gimbal_p_{};  // the gimbal angle of each stage's engines (after any backlash)
   std::array<double, kMaxStages> gimbal_y_{};
+  std::array<double, kMaxStages> servo_p_{};   // the servo's own position and velocity when it has dynamics (a second-order servo or backlash)
+  std::array<double, kMaxStages> servo_y_{};
+  std::array<double, kMaxStages> servo_pv_{};
+  std::array<double, kMaxStages> servo_yv_{};
+  bool servo_dynamics_ = false;
+  bool ideal_roll_ = false;
   std::array<bool, kMaxStages> active_{};
   std::array<double, kMaxStages> t_ign_{};
   std::array<double, kMaxStages> t_burnout_{};

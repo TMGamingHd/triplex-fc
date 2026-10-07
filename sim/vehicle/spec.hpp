@@ -7,6 +7,7 @@
 // it from its own simple fields); a vehicle with any number of stages, tanks and engines is another, read from a file (spec_io.hpp).
 #pragma once
 #include <array>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -101,6 +102,12 @@ struct StageSpec {
   std::vector<FinPlanform> stabilizers;
   // Throttle: the fraction of rated thrust against the time since this stage ignited, linear between the points, held after the last. Empty: full thrust.
   std::vector<std::array<double, 2>> throttle;
+  // What the separation of this stage does to the vehicle that stays: a push forward (springs or a pressure, m/s added along the long axis) and the angular rates the release leaves it
+  // with (its tip-off, deg/s about the body axes: pitch about Z, yaw about Y, roll about X). All zero: a clean separation, as before.
+  double separation_dv_ms = 0.0;
+  double tipoff_pitch_dps = 0.0;
+  double tipoff_yaw_dps = 0.0;
+  double tipoff_roll_dps = 0.0;
 };
 
 // An engine that fires when the pitch or yaw command asks for that direction, in proportion to it: a reaction-control thruster. PitchPlus fires for a positive pitch command (one that
@@ -149,6 +156,27 @@ struct WheelSpec {
   double torque_max = 0.0;      // N m
   double momentum_max = 0.0;    // N m s
   double full_cmd_deg = 1.0;    // the command at which the torque is the maximum
+};
+
+// The servo that moves the gimballed engines (docs/design/DYNAMICS.md). Order 1 is the first-order lag the vehicle always had (the stage's or the vehicle's `gimbal_lag_s`), then the rate limit;
+// order 2 is a second-order servo, theta'' = wn^2 (command - theta) - 2 zeta wn theta', which overshoots and rings as a real one does, then the rate and travel limits. Backlash is the play
+// between the servo and the engine (either order): the engine does not move until the servo has taken up half of it on that side.
+struct ActuatorSpec {
+  int order = 1;
+  double natural_hz = 10.0;    // order 2: the undamped natural frequency
+  double damping = 0.7;        // order 2: the damping ratio
+  double backlash_deg = 0.0;   // total play
+};
+
+// A roll controller of the vehicle's own, not the flight computers' (which steer two tilt planes): reaction-control jets or the like give a torque about the long axis,
+// -kp x (the roll angle turned through since T-zero) - kd x (the roll rate), limited to torque_max, while stage `stage` is on the vehicle. Without it the vehicle either holds its roll
+// ideally (the reference model's `ideal_roll_control`) or turns freely about its long axis.
+struct RollSpec {
+  bool enabled = false;
+  int stage = 0;
+  double torque_max = 0.0;  // N m
+  double kp = 0.0;          // N m per radian
+  double kd = 0.0;          // N m s per radian
 };
 
 struct PayloadSpec {
@@ -224,6 +252,9 @@ struct VehicleSpec {
   WheelSpec wheels;
   AeroSpec aero;
   PlanetSpec planet;
+  ActuatorSpec actuator;
+  RollSpec roll;
+  bool jet_damping = false;  // the moment of the exhaust leaving a turning vehicle: -mdot x r x (omega x r) for each engine (a damping of the pitch and yaw rates)
   [[nodiscard]] bool empty() const { return stages.empty(); }
 };
 
@@ -308,6 +339,9 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
     }
     if (st.ignite_delay_s < 0.0 || st.separate_delay_s < 0.0) {
       fail(at + ": delays must not be negative");
+    }
+    if (!std::isfinite(st.separation_dv_ms) || !std::isfinite(st.tipoff_pitch_dps) || !std::isfinite(st.tipoff_yaw_dps) || !std::isfinite(st.tipoff_roll_dps)) {
+      fail(at + ": the separation push and tip-off rates must be numbers");
     }
     double last = -1.0;
     for (const std::array<double, 2>& p : st.throttle) {
@@ -404,6 +438,26 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
     }
     if (!(fin.area_each > 0.0) || !(fin.lift_slope > 0.0) || !(fin.limit_deg > 0.0) || !(fin.rate_dps > 0.0) || fin.lag_s < 0.0 || fin.gain == 0.0) {
       fail(at + ": area_each, lift_slope, limit_deg and rate_dps must be positive, lag_s not negative and gain not zero");
+    }
+  }
+  {
+    const ActuatorSpec& ac = v.actuator;
+    if (ac.order != 1 && ac.order != 2) {
+      fail("actuator.order must be 1 or 2");
+    }
+    if (ac.order == 2 && (!(ac.natural_hz > 0.0) || !(ac.damping > 0.0))) {
+      fail("actuator: a second-order servo needs natural_hz and damping above zero");
+    }
+    if (!(ac.backlash_deg >= 0.0)) {
+      fail("actuator.backlash_deg must not be negative");
+    }
+  }
+  if (v.roll.enabled) {
+    if (v.roll.stage < 0 || v.roll.stage >= static_cast<int>(v.stages.size())) {
+      fail("roll_control.stage must name a stage");
+    }
+    if (!(v.roll.torque_max > 0.0) || !(v.roll.kp >= 0.0) || !(v.roll.kd >= 0.0)) {
+      fail("roll_control: torque_max_nm must be positive and the gains not negative");
     }
   }
   if (v.wheels.enabled) {
