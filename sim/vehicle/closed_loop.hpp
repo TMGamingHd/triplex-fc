@@ -26,6 +26,8 @@ struct Result {
   double max_deg_liftoff = 0.0;     // the largest error in the first 3 s
   double final_altitude = 0.0;
   double final_tilt_deg = 0.0;
+  double final_speed = 0.0;         // m/s, at the end of the run
+  double max_q = 0.0;               // Pa, the largest dynamic pressure of the flight
   uint32_t nominal_from = 0U;       // the frame ACT reached Nominal
   uint32_t ready_at = 0U;           // the first frame on which all three flight computers were ready for launch (0 if never, or no pad)
   bool calibrated = false;          // every computer's IMU calibration was ready at lift-off
@@ -91,6 +93,7 @@ struct Loop {
   bool sensor_fault_b = false;               // node B's gyro reads 15 dps too much
   float frame_loss_prob = 0.0F;              // the chance that a receiver does not get a given sensor frame of another computer in a frame (a late or lost frame): TS-16
   uint32_t loss_seed = 77U;
+  uint32_t noise_seed = 0U;                  // mixed into the seeds of the three IMU models: another value is another realisation of the sensor noise and the constant errors (0: the firmware's seeds, as before)
   uint32_t resync_period = 0U;               // the replicas exchange their state in the last frame of every period and adopt the vote (TS-16 option C); 0: never
   tfc::resync::Config resync;
   uint8_t resync_nodes = 0x07U;              // the computers that take part in the resync (send their state, vote, adopt); the others never adopt: the diverse computer of ADR-021 is left out with 0x03
@@ -107,7 +110,7 @@ inline Result run(const Loop& lp) {
   std::array<tfc::FlightFunction, 3> ff{tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator), tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator),
                                         tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator)};
   std::array<tfc::ImuCalibrator, 3> cal{};  // each computer calibrates its own IMU on the pad and subtracts the bias before it sends
-  std::array<ImuModel, 3> imu{ImuModel(lp.sensors, 0x1234U), ImuModel(lp.sensors, 0x1235U), ImuModel(lp.sensors, 0x1236U)};  // the firmware's seeds: 0x1234 + node
+  std::array<ImuModel, 3> imu{ImuModel(lp.sensors, 0x1234U ^ lp.noise_seed), ImuModel(lp.sensors, 0x1235U ^ lp.noise_seed), ImuModel(lp.sensors, 0x1236U ^ lp.noise_seed)};  // the firmware's seeds: 0x1234 + node
   tfc::ActLogic act;
   tfc::ActRecord none{};
   act.boot(tfc::ResetCause::PowerOn, none);
@@ -296,6 +299,7 @@ inline Result run(const Loop& lp) {
       lp.trace->push_back(row);
     }
     r.crashed = r.crashed || runner.vehicle().crashed();
+    r.max_q = std::fmax(r.max_q, runner.vehicle().current_loads().dynamic_pressure);
     r.min_altitude = std::fmin(r.min_altitude, runner.vehicle().altitude());
     const tfc::Reference ref = tables.guidance.at(fk + 1U);
     const double ep = t.y_deg - static_cast<double>(ref.tilt_y_deg);
@@ -316,6 +320,7 @@ inline Result run(const Loop& lp) {
   r.calibrated = lp.pad_frames > 0U && cal[0].ready() && cal[1].ready() && cal[2].ready();
   r.final_altitude = runner.vehicle().altitude();
   r.final_tilt_deg = runner.vehicle().tilts().y_deg;
+  r.final_speed = runner.vehicle().speed();
   const tfc::DecodedSimFlags fl = tfc::unpack_sim_flags(pending.f[4]);
   r.flags = fl.ok ? fl.s.flags : 0xFFU;
   return r;

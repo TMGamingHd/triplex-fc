@@ -49,6 +49,7 @@ add_executable(tfc_tests
   tests/test_dynamics.cpp
   tests/test_slosh.cpp
   tests/test_flex.cpp
+  tests/test_montecarlo.cpp
   tests/test_pad.cpp
   tests/test_launch.cpp
   tests/test_supervisor_clock.cpp
@@ -99,6 +100,13 @@ target_link_libraries(tfc_sens PRIVATE tfc_core Threads::Threads)
 target_include_directories(tfc_sens PRIVATE sim/vehicle)
 target_compile_options(tfc_sens PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
 
+# A Monte Carlo of the closed loop (tools/sim/tfc_mc.cpp, docs/design/MONTE_CARLO.md).
+add_executable(tfc_mc tools/sim/tfc_mc.cpp)
+target_link_libraries(tfc_mc PRIVATE tfc_core Threads::Threads)
+target_include_directories(tfc_mc PRIVATE sim/vehicle)
+target_compile_definitions(tfc_mc PRIVATE TFC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_compile_options(tfc_mc PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
+
 # Fly any vehicle description with the real flight software (tools/sim/tfc_fly.cpp, docs/design/VEHICLE_SPEC.md).
 add_executable(tfc_fly tools/sim/tfc_fly.cpp)
 target_link_libraries(tfc_fly PRIVATE tfc_core)
@@ -138,6 +146,15 @@ target_compile_options(tfc_bench PRIVATE -O2 -fno-exceptions -fno-rtti -Wall -We
 
 enable_testing()
 add_test(NAME tfc_tests COMMAND tfc_tests)
+
+# The Monte Carlo tool runs end to end: a handful of short flights with the shipped dispersions, a report, and one flight flown again by itself (the tool is a command line; its logic is tested in
+# tests/test_montecarlo.cpp).
+add_test(NAME mc_tool_report COMMAND tfc_mc --config ${CMAKE_SOURCE_DIR}/vehicles/dispersions.json --flights 4 --frames 600 --threads 2)
+set_tests_properties(mc_tool_report PROPERTIES PASS_REGULAR_EXPRESSION "Good flights: [0-9]+ of 4 .*Which departure explains the error.*The five worst flights")
+add_test(NAME mc_tool_one_flight COMMAND tfc_mc --config ${CMAKE_SOURCE_DIR}/vehicles/dispersions.json --frames 600 --only 2)
+set_tests_properties(mc_tool_one_flight PROPERTIES PASS_REGULAR_EXPRESSION "flight 2 of seed 1:.*thrust_scale.*flew")
+add_test(NAME mc_tool_list COMMAND tfc_mc --list)
+set_tests_properties(mc_tool_list PROPERTIES PASS_REGULAR_EXPRESSION "thrust_scale.*tipoff_roll_dps")
 
 # End-to-end: Python virtual peers -> candump log -> tfc_replay (real core/ code).
 find_package(Python3 COMPONENTS Interpreter)

@@ -1,0 +1,39 @@
+// The dispersions of dispersions.json plus those of the dynamics of vehicles/launcher_dynamics.json (docs/design/DYNAMICS.md): slosh, the bending mode, backlash and the separation. EVERY NUMBER IS
+// AN ASSUMPTION (see dispersions.json). Fly it with a pad phase, so that the flight computers calibrate the gyro bias out before lift-off:
+//   tfc_mc --vehicle vehicles/launcher_dynamics.json --config vehicles/dispersions_dynamics.json --sensors vehicle --no-accel --pad 1500
+{
+  "flights": 100,
+  "seed": 1,
+  "limit_deg": 5,
+  "dispersions": [
+    {"name": "thrust_scale", "normal": [1.0, 0.01]},
+    {"name": "isp_scale", "normal": [1.0, 0.005]},
+    {"name": "cd_scale", "normal": [1.0, 0.1]},
+    {"name": "cn_scale", "normal": [1.0, 0.1]},
+    {"name": "thrust_misalign_pitch_deg", "normal": [0, 0.15]},
+    {"name": "thrust_misalign_yaw_deg", "normal": [0, 0.15]},
+    {"name": "gimbal_lag_s", "uniform": [0, 0.05]},
+    {"name": "dry_mass_scale", "normal": [1.0, 0.02]},
+    {"name": "propellant_scale", "normal": [1.0, 0.005]},
+    {"name": "dry_cg_shift_m", "normal": [0, 0.15]},
+    {"name": "wind_scale", "uniform": [0, 2]},
+    {"name": "wind_azimuth_deg", "uniform": [0, 360]},
+    {"name": "turbulence_sigma_ms", "uniform": [0, 3]},
+    {"name": "density_scale", "normal": [1.0, 0.05]},
+    {"name": "temperature_offset_k", "normal": [0, 5]},
+    {"name": "slosh_mass_scale", "uniform": [0.7, 1.3]},
+    {"name": "slosh_frequency_scale", "uniform": [0.8, 1.2]},
+    {"name": "flex_frequency_hz", "normal": [2.5, 0.25]},
+    {"name": "flex_slope_imu_per_m", "uniform": [-0.1, 0.1]},
+    {"name": "backlash_deg", "uniform": [0, 0.2]},
+    {"name": "separation_dv_ms", "normal": [1.5, 0.3]},
+    {"name": "tipoff_pitch_dps", "normal": [0, 0.15]},
+    {"name": "tipoff_yaw_dps", "normal": [0, 0.15]},
+    {"name": "tipoff_roll_dps", "normal": [0, 0.3]},
+    {"name": "gyro_bias_dps", "constant": 1.0},
+    {"name": "gyro_scale_err", "constant": 0.02},
+    {"name": "accel_bias_g", "constant": 0.01},
+    {"name": "accel_scale_err", "constant": 0.02},
+    {"name": "misalign_deg", "constant": 1.0}
+  ]
+}

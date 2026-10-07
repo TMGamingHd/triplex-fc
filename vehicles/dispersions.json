@@ -1,0 +1,31 @@
+// A starting set of dispersions for tfc_mc (docs/design/MONTE_CARLO.md). EVERY NUMBER IS AN ASSUMPTION about a generic launcher, written from the usual orders of magnitude of launch-vehicle
+// dispersion analyses, not taken from any vehicle or measured: replace them with the ones your vehicle has. Exceptions: the sensor errors are the ISM330DHCX's (DS13012 rev 7, Table 3,
+// the typical values): zero-rate level +-1 dps, zero-g offset +-10 mg, sensitivity +-2 %, cross-axis 1 % (taken here as a 1 degree mounting error); the bus model's noise (0.17 dps uniform) is the bench's.
+// "normal": [mean, standard deviation(, clip in standard deviations; 3 if not given)]; "uniform": [min, max]; "constant": a number.
+{
+  "flights": 100,
+  "seed": 1,
+  "limit_deg": 5,
+  "dispersions": [
+    {"name": "thrust_scale", "normal": [1.0, 0.01]},
+    {"name": "isp_scale", "normal": [1.0, 0.005]},
+    {"name": "cd_scale", "normal": [1.0, 0.1]},
+    {"name": "cn_scale", "normal": [1.0, 0.1]},
+    {"name": "thrust_misalign_pitch_deg", "normal": [0, 0.15]},
+    {"name": "thrust_misalign_yaw_deg", "normal": [0, 0.15]},
+    {"name": "gimbal_lag_s", "uniform": [0, 0.05]},
+    {"name": "dry_mass_scale", "normal": [1.0, 0.02]},
+    {"name": "propellant_scale", "normal": [1.0, 0.005]},
+    {"name": "dry_cg_shift_m", "normal": [0, 0.15]},
+    {"name": "wind_scale", "uniform": [0, 2]},
+    {"name": "wind_azimuth_deg", "uniform": [0, 360]},
+    {"name": "turbulence_sigma_ms", "uniform": [0, 3]},
+    {"name": "density_scale", "normal": [1.0, 0.05]},
+    {"name": "temperature_offset_k", "normal": [0, 5]},
+    {"name": "gyro_bias_dps", "constant": 1.0},
+    {"name": "gyro_scale_err", "constant": 0.02},
+    {"name": "accel_bias_g", "constant": 0.01},
+    {"name": "accel_scale_err", "constant": 0.02},
+    {"name": "misalign_deg", "constant": 1.0}
+  ]
+}
