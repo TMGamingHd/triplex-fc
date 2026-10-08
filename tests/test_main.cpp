@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: MIT
+#include <cstring>
+
 #include "tfc_test.hpp"
 
-int main() {
+// With an argument, only the tests whose name contains it are run (tfc_tests slosh); with none, all of them.
+int main(int argc, char** argv) {
   int failed_cases = 0;
   for (const auto& c : tfct::registry()) {
+    if (argc > 1 && std::strstr(c.name, argv[1]) == nullptr) {
+      continue;
+    }
     const int before = tfct::failures();
     c.fn();
     const bool ok = tfct::failures() == before;
