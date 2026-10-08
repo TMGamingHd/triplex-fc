@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mutations import MUTATIONS, ROOT, build_include  # noqa: E402
 
 TESTS = sorted((ROOT / "tests").glob("*.cpp"))
+# Test files that exercise the simulator rather than the flight core. They are slow to compile and to run, and a core mutant they alone could kill shows up as a survivor of the run without them,
+# which is then run again with them (--exclude is how the first run leaves them out).
 FLAGS = ["-std=c++17", "-O1", "-g", "-fsanitize=address,undefined", "-fno-exceptions", "-fno-rtti", "-w"]
 
 
@@ -27,7 +29,7 @@ def one(name: str) -> tuple[str, str, str]:
         if r.returncode:
             return name, "BUILD-FAILED", r.stderr.strip().splitlines()[0][:120] if r.stderr.strip() else ""
         try:
-            run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=600)
+            run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=1800, env={**os.environ, "TFC_STOP_AT_FIRST_FAIL": "1"})
         except subprocess.TimeoutExpired:  # a mutant that makes the code loop for ever is caught: the suite does not finish
             return name, "killed", "timed out (an endless loop)"
         out = run.stdout + run.stderr
@@ -40,9 +42,20 @@ def one(name: str) -> tuple[str, str, str]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="run_unit", description=__doc__)
     ap.add_argument("names", nargs="*")
+    ap.add_argument("--fast", action="store_true", help="build without optimisation or sanitizers (a first pass: a mutant only a sanitizer would catch shows up as a survivor, to be run again without --fast)")
+    ap.add_argument("--exclude", default="", help="a regular expression: test files whose name matches are left out")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     args = ap.parse_args(argv)
     names = args.names or list(MUTATIONS)
+    if args.fast:
+        global FLAGS
+        FLAGS = ["-std=c++17", "-O0", "-fno-exceptions", "-fno-rtti", "-w"]
+    if args.exclude:
+        import re
+
+        global TESTS
+        TESTS = [t for t in TESTS if not re.search(args.exclude, t.name)]
+        print(f"{len(TESTS)} test files ({args.exclude} left out)", flush=True)
     survived = []
     with ThreadPoolExecutor(max_workers=args.jobs) as ex:
         for name, verdict, info in ex.map(one, names):
