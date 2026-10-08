@@ -13,6 +13,12 @@ jobs:
       - uses: actions/checkout@v6
       - name: Every mutant must be killed by the C++ tests
         run: python3 tools/mutation/run_unit.py --jobs 4
+  simulator:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Every deliberate bug in the vehicle simulator must be killed by the C++ tests
+        run: python3 tools/mutation/run_sim.py --jobs 4
   campaign:
     runs-on: ubuntu-24.04
     steps:

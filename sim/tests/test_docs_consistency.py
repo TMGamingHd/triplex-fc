@@ -143,6 +143,18 @@ class Numbers(unittest.TestCase):
                     bad.append(f"{p.relative_to(ROOT)}: {q.group(0)} (there are {n})")
         self.assertEqual(bad, [])
 
+    def test_the_simulator_mutant_count_quoted_anywhere_is_the_number_of_simulator_mutants(self):
+        sys.path.insert(0, str(ROOT / "tools" / "mutation"))
+        import sim_mutations
+
+        n = len(sim_mutations.MUTATIONS)
+        bad = []
+        for p in doc_files() + [ROOT / "README.md", ROOT / "sim" / "README.md", ROOT / "CONTRIBUTING.md"]:
+            for q in re.finditer(r"(\d+) simulator mutants", p.read_text()):
+                if int(q.group(1)) != n:
+                    bad.append(f"{p.relative_to(ROOT)}: {q.group(0)} (there are {n})")
+        self.assertEqual(bad, [])
+
 
 if __name__ == "__main__":
     unittest.main()

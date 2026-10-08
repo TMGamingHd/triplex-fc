@@ -35,6 +35,9 @@ flexibility are not modelled, and **roll is held by an ideal roll controller** (
   The force is linear in the angle of attack at any angle and **is zero while the vehicle flies tail-first** (relative velocity along the body's -X, an angle of attack past 90 degrees): there is no drag and no restoring moment then. This matters only for
   a vehicle that tumbles after a total loss of control, not for any flight that stays recoverable (`SIM_FIDELITY.md`).
 - **Wind:** a mean profile (jet-stream peak) plus scripted 1-cosine gusts and shears.
+- **Ground** (added 6 Oct 2026; `Params::ground_contact`, default on): the pad holds the vehicle up. A vehicle at the surface that is not moving away from it, with no net upward force along the local vertical, stays where it is (position and attitude held, no velocity or rotation) and burns
+  propellant; it is released at once when the net force is upward. One that comes down is landed under `crash_speed_ms` (5 m/s) and destroyed above it (`crashed()`: the state freezes where it hit). It acts only at the surface, and a vehicle that lifts off at once goes through exactly the
+  arithmetic it did before (a test compares the two with the ground on and off bit for bit). Without it a vehicle with thrust-to-weight under 1 sank through the pad.
 - **Engine-out:** one engine's thrust goes to zero at a set time; its moment about the CG remains (a steady disturbance torque) and the control
   authority falls by `(N-1)/N`.
 

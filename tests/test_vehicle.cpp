@@ -263,12 +263,14 @@ TFC_TEST(an_ideal_roll_controller_keeps_the_roll_rate_zero_even_with_an_engine_o
   Scenario sc;
   sc.engine_out_time = 0.0;
   sc.engine_out_index = 1;
-  Vehicle6 held(Params{}, sc);
+  Params ideal;
+  ideal.ground_contact = false;  // the bare equations: with the ground, this vehicle (an engine out at lift-off, a deflected gimbal) falls back onto the pad after 3 s and is held there
+  Vehicle6 held(ideal, sc);
   for (int i = 0; i < 300; ++i) {
     held.step(0.01, 3.0, 3.0);
   }
   CHECK(held.state().w.x == 0.0);
-  Params free_roll;
+  Params free_roll = ideal;
   free_roll.ideal_roll_control = false;
   Vehicle6 drifting(free_roll, sc);
   for (int i = 0; i < 300; ++i) {

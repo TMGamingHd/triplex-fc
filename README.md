@@ -19,7 +19,7 @@ flowchart LR
 
 | Area | State |
 |---|---|
-| **Flight core** (`core/`, C++17, header-only, no heap, no exceptions): voter, fault manager (3-of-5 and leaky count, probation, strikes, sticky Safe, authenticated commands), sensor/compute split, resynchronisation, releases, phases, estimator, controller, ACT logic | Built. 537 host tests under ASan and UBSan, 100 % line and 98.4 % branch coverage, 390 deliberate bugs all caught ([CODING_STANDARD](docs/verification/CODING_STANDARD.md)) |
+| **Flight core** (`core/`, C++17, header-only, no heap, no exceptions): voter, fault manager (3-of-5 and leaky count, probation, strikes, sticky Safe, authenticated commands), sensor/compute split, resynchronisation, releases, phases, estimator, controller, ACT logic | Built. 555 host tests under ASan and UBSan, 100 % line and 98.4 % branch coverage, 390 deliberate bugs all caught ([CODING_STANDARD](docs/verification/CODING_STANDARD.md)) |
 | **Supervisor** (`supervisor/`, `firmware/supervisor`): watchdog and reset ladder, boot sequencing, T-zero, the clock of record, the override sense lines | Built (logic and Pico application); not run on a board |
 | **Firmware** (Zephyr; `firmware/`: flight computer, actuator node, Pico, supervisor) | Builds for `native_sim`, `nucleo_g474re` and `rpi_pico2`; live tests with real instances on a virtual CAN bus; see [firmware/README.md](firmware/README.md) |
 | **Simulator and virtual peers** (`sim/`, `tools/sim`): 6-DOF ascent, platform model, fake FC-B and FC-C with 32 kinds of fault injection | Built; see [sim/README.md](sim/README.md) |

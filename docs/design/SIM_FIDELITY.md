@@ -14,6 +14,7 @@
 | Wind | A mean profile (jet stream at 12 km), scripted 1-cosine gusts | Turbulence (a random, Dryden or von Karman, field) and shear layers | **Medium**: gusts are the load case that sets the gains; a random field would find different worst cases |
 | Aerodynamics | A fixed centre of pressure ahead of the CG, normal force linear in the angle of attack at any angle (and **no aerodynamic force at all past 90 degrees**, when the vehicle flies tail-first), an axial coefficient with a Gaussian transonic rise | Centre of pressure that moves with Mach, a nonlinear normal force (stall), drag that grows with the angle of attack, base drag, plume effects | **Medium**: the unstable pitch mode is the hardest thing the controller faces and its strength is a free number (the loop tolerates 2.5 times the nominal normal-force slope) |
 | Engines | Five identical engines, constant vacuum thrust, ambient-pressure loss, constant mass flow; engine-out | A start-up transient, thrust build-up and tail-off, throttling, engine-to-engine differences, thrust misalignment (now a parameter), propellant mixture shifts | **High at lift-off**: see 3.1 |
+| Ground | The pad: a vehicle at the surface with less than one g of thrust stays there, burning propellant, until it is light enough to rise; one that comes back down is landed (under 5 m/s) or destroyed (the run stops) | Pad geometry, hold-down and release dynamics, tip-over, the launch mount's reaction on the engines, terrain | Small for a flight that lifts off; it settles every case of thrust-to-weight under 1 |
 | Thrust-vector control | An ideal gimbal with an 8 degree limit and a 60 degrees per second rate limit; **now with an optional first-order lag** (`gimbal_lag_s`) | Actuator dynamics (bandwidth, delay, backlash), hydraulic or electric limits, the five engines moving together | Medium: the loop tolerates a 0.28 s lag, 5 to 10 times a real TVC's |
 | Roll | **Ideal roll control**: the roll rate is held at zero and roll torques are ignored | A real roll torque, the roll controller and its interaction with pitch and yaw | Medium: a documented flattering assumption (VEHICLE_SIM section 3). Engine-out roll would otherwise end the flight |
 | Propellant slosh | None | Sloshing masses in the tanks, an important mode for a real launch vehicle | **High for a real vehicle**, none for the rig (the rig has no tanks) |
@@ -46,7 +47,7 @@ unless the row changes it. The figure in brackets is the worst error at that val
 | gimbal actuator lag | 0.283203 s (error 4.66 deg; lift-off 0.04) | 0.386719 s (error 4.55 deg; lift-off 0.06) |
 | thrust misalignment, pitch | at least 3 deg (error 4.45 deg; lift-off 22.37) | at least 3 deg (error 4.84 deg; lift-off 22.37) |
 | thrust misalignment, yaw | at least 3 deg (error 4.46 deg; lift-off 22.37) | at least 3 deg (error 4.84 deg; lift-off 22.37) |
-| thrust low (fraction lost) | **not valid: the vehicle never left the pad** (see "Reading it") (the table says: at least 0.5 fraction, error 0.09 deg; lift-off 0.03) | 0.0820312 fraction (error 4.04 deg; lift-off 0.05) |
+| thrust low (fraction lost) | 0.234375 fraction (error 0.74 deg; lift-off 0.02): **the vehicle's own limit**, thrust-to-weight 1 at 22.8 % less thrust; below it the vehicle stays on the pad | 0.0820312 fraction (error 4.04 deg; lift-off 0.05) |
 | thrust high (fraction gained) | at least 0.5 fraction (error 0.46 deg; lift-off 0.03) | at least 0.5 fraction (error 0.78 deg; lift-off 0.09) |
 | normal-force slope high (fraction gained) | 1.52344 fraction (error 3.96 deg; lift-off 0.02) | 1.74609 fraction (error 3.37 deg; lift-off 0.10) |
 | normal-force slope low (fraction lost) | at least 0.9 fraction (error 0.08 deg; lift-off 0.02) | at least 0.9 fraction (error 0.80 deg; lift-off 0.09) |
@@ -58,7 +59,7 @@ unless the row changes it. The figure in brackets is the worst error at that val
 Reading it:
 - **The flight computers are robust to what a real IMU does to a flight on the platform**: 2.5 dps of gyro bias, a 50% gain error, 70 ms of extra latency, a 95% chance of a stale sample, 16 times the noise, a 0.3 g accelerometer bias.
 - **The controller is robust to a real vehicle's dispersions**: 150% more normal-force slope (2.5 times the instability), 50% more thrust, a gimbal lag of 0.28 s, 3 m of centre-of-gravity shift, 8 times the wind.
-  **Not 50% less thrust:** the "thrust low" row of the table below (at least 0.5 on the platform) is not a result. The model had no ground, so a vehicle with less than 77 % of its thrust (thrust-to-weight under 1) never left the pad and sank through it (345 m below it after 30 s at 70 %, 1.8 km at 50 %), and the only test applied was the attitude error. Found by the sweep of 6 Oct 2026; the ground model and a "must have climbed" criterion are the next change, and the row is re-measured there.
+  **Thrust low is a limit of the vehicle, not of the controller:** with 23.4 % less thrust the vehicle still rises (its thrust-to-weight is then 1.04); with more it stays on the pad and the flight fails (the criterion: off the ground by 3 s). Until 6 Oct 2026 the model had no ground and this row read "at least 50 %": a vehicle with 30 % or 50 % less thrust never left the pad and sank through it (345 m below it after 30 s, 1.8 km), and the only test applied was the attitude error. The sweep of 6 Oct 2026 found it; the ground model and the "must have climbed" criterion fixed it. The other 19 rows did not change by a digit.
 - **Where it is not**, and what each means, is in section 3.
 
 ## 3. What the audit found
@@ -85,6 +86,7 @@ expected thrust acceleration subtracted.
 - A total loss of the flight computers at 30 s: ACT enters Safe on lost votes within a few frames and stays; the simulator marks the run safed; the unstable vehicle leaves the platform's range (the rig would reach its stops).
 - The simulator process with a SYNC frame number that is corrupt (4 billion), goes backwards, or jumps forward by more than a minute: it **used to be able to hang** (it stepped the world over every skipped frame); it now ignores a number beyond 30,000 frames (5 minutes) and treats a jump of more than 6,000 frames as a new run.
 - ACT's frames absent: the simulator holds the last command and keeps publishing.
+- A vehicle with thrust-to-weight under 1 (6 Oct 2026): it stands on the pad and burns propellant until it is light enough to rise; an unguided one turns over at about 30 s, falls back and is destroyed at 41.8 s (the run stops, `crashed()`).
 - Dispersions at their defaults change nothing: the nominal flight is bit for bit the same as before the model was extended.
 
 ## 4. What to do next, in order of what it would change
