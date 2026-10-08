@@ -12,7 +12,7 @@
 | Gravity and Earth | Inverse-square on a **non-rotating spherical** Earth | Earth's rotation (about 0.4 km/s of eastward launch velocity and a Coriolis term), the equatorial bulge (J2) | Small for a 100 s ascent; no effect on the attitude loop |
 | Atmosphere | US Standard Atmosphere 1976 | Day-to-day density and temperature variation | Small |
 | Wind | A mean profile (jet stream at 12 km), scripted 1-cosine gusts | Turbulence (a random, Dryden or von Karman, field) and shear layers | **Medium**: gusts are the load case that sets the gains; a random field would find different worst cases |
-| Aerodynamics | A fixed centre of pressure ahead of the CG, normal force linear in the angle of attack at any angle, an axial coefficient with a Gaussian transonic rise | Centre of pressure that moves with Mach, a nonlinear normal force (stall), drag that grows with the angle of attack, base drag, plume effects | **Medium**: the unstable pitch mode is the hardest thing the controller faces and its strength is a free number (the loop tolerates 2.5 times the nominal normal-force slope) |
+| Aerodynamics | A fixed centre of pressure ahead of the CG, normal force linear in the angle of attack at any angle (and **no aerodynamic force at all past 90 degrees**, when the vehicle flies tail-first), an axial coefficient with a Gaussian transonic rise | Centre of pressure that moves with Mach, a nonlinear normal force (stall), drag that grows with the angle of attack, base drag, plume effects | **Medium**: the unstable pitch mode is the hardest thing the controller faces and its strength is a free number (the loop tolerates 2.5 times the nominal normal-force slope) |
 | Engines | Five identical engines, constant vacuum thrust, ambient-pressure loss, constant mass flow; engine-out | A start-up transient, thrust build-up and tail-off, throttling, engine-to-engine differences, thrust misalignment (now a parameter), propellant mixture shifts | **High at lift-off**: see 3.1 |
 | Thrust-vector control | An ideal gimbal with an 8 degree limit and a 60 degrees per second rate limit; **now with an optional first-order lag** (`gimbal_lag_s`) | Actuator dynamics (bandwidth, delay, backlash), hydraulic or electric limits, the five engines moving together | Medium: the loop tolerates a 0.28 s lag, 5 to 10 times a real TVC's |
 | Roll | **Ideal roll control**: the roll rate is held at zero and roll torques are ignored | A real roll torque, the roll controller and its interaction with pitch and yaw | Medium: a documented flattering assumption (VEHICLE_SIM section 3). Engine-out roll would otherwise end the flight |
@@ -46,7 +46,7 @@ unless the row changes it. The figure in brackets is the worst error at that val
 | gimbal actuator lag | 0.283203 s (error 4.66 deg; lift-off 0.04) | 0.386719 s (error 4.55 deg; lift-off 0.06) |
 | thrust misalignment, pitch | at least 3 deg (error 4.45 deg; lift-off 22.37) | at least 3 deg (error 4.84 deg; lift-off 22.37) |
 | thrust misalignment, yaw | at least 3 deg (error 4.46 deg; lift-off 22.37) | at least 3 deg (error 4.84 deg; lift-off 22.37) |
-| thrust low (fraction lost) | at least 0.5 fraction (error 0.09 deg; lift-off 0.03) | 0.0820312 fraction (error 4.04 deg; lift-off 0.05) |
+| thrust low (fraction lost) | **not valid: the vehicle never left the pad** (see "Reading it") (the table says: at least 0.5 fraction, error 0.09 deg; lift-off 0.03) | 0.0820312 fraction (error 4.04 deg; lift-off 0.05) |
 | thrust high (fraction gained) | at least 0.5 fraction (error 0.46 deg; lift-off 0.03) | at least 0.5 fraction (error 0.78 deg; lift-off 0.09) |
 | normal-force slope high (fraction gained) | 1.52344 fraction (error 3.96 deg; lift-off 0.02) | 1.74609 fraction (error 3.37 deg; lift-off 0.10) |
 | normal-force slope low (fraction lost) | at least 0.9 fraction (error 0.08 deg; lift-off 0.02) | at least 0.9 fraction (error 0.80 deg; lift-off 0.09) |
@@ -57,7 +57,8 @@ unless the row changes it. The figure in brackets is the worst error at that val
 
 Reading it:
 - **The flight computers are robust to what a real IMU does to a flight on the platform**: 2.5 dps of gyro bias, a 50% gain error, 70 ms of extra latency, a 95% chance of a stale sample, 16 times the noise, a 0.3 g accelerometer bias.
-- **The controller is robust to a real vehicle's dispersions**: 150% more normal-force slope (2.5 times the instability), 50% more or less thrust (on the platform), a gimbal lag of 0.28 s, 3 m of centre-of-gravity shift, 8 times the wind.
+- **The controller is robust to a real vehicle's dispersions**: 150% more normal-force slope (2.5 times the instability), 50% more thrust, a gimbal lag of 0.28 s, 3 m of centre-of-gravity shift, 8 times the wind.
+  **Not 50% less thrust:** the "thrust low" row of the table below (at least 0.5 on the platform) is not a result. The model had no ground, so a vehicle with less than 77 % of its thrust (thrust-to-weight under 1) never left the pad and sank through it (345 m below it after 30 s at 70 %, 1.8 km at 50 %), and the only test applied was the attitude error. Found by the sweep of 6 Oct 2026; the ground model and a "must have climbed" criterion are the next change, and the row is re-measured there.
 - **Where it is not**, and what each means, is in section 3.
 
 ## 3. What the audit found

@@ -374,7 +374,91 @@ TFC_TEST(vehicle_true_sensors_read_specific_force_and_body_rates_in_the_sensor_f
   CHECK(near_abs(gyro.z, 0.1 * kRad2Deg, 1e-9) && near_abs(gyro.x, 0.2 * kRad2Deg, 1e-9) && near_abs(gyro.y, 0.3 * kRad2Deg, 1e-9));
 }
 
+// A snapshot of a controlled flight of a dispersed vehicle (gimbal lag, thrust misalignment and scale, a normal-force scale, a gust, an engine-out and a
+// shifted centre of gravity, held upright by a plain PD loop): the state at 20, 40 and 60 s as the model computed it on 6 Oct 2026, before any change to the
+// model was made. It is the guard of every later change (a general vehicle description, a ground, environment models): none of them may move the reference
+// vehicle. The tolerances are far below any physical change and above the rounding differences between compilers and machines.
+TFC_TEST(a_controlled_flight_of_the_reference_vehicle_is_unchanged_by_changes_to_the_model) {
+  using namespace sim;
+  Params p;
+  p.gimbal_lag_s = 0.05;
+  p.thrust_misalign_pitch_deg = 0.3;
+  p.thrust_scale = 0.97;
+  p.cn_scale = 1.1;
+  Scenario sc;
+  sc.engine_out_time = 30.0;
+  sc.engine_out_index = 2;
+  sc.dry_cg_shift = -0.2;
+  sc.gusts.push_back(Gust{15.0, 3.0, V3{0.0, 0.0, 12.0}});
+  // r.x r.y r.z  v.x v.y v.z  q.w q.x q.y q.z  w.y w.z  m
+  static const double kGolden[3][13] = {
+      {0x1.855557939fd53p+22, 0x1.2370bdd3c27c2p+3, 0x1.4e9710a555ac1p+1, 0x1.2c1fd65efa485p+6, 0x1.ca7e51772003ap-1, 0x1.6bc989c01b1adp-1, 0x1.ffffc7eb18a89p-1, 0x1.1596bee5924a6p-20, -0x1.1450a187bc938p-11, 0x1.caefbdecc7ecp-10, -0x1.818af77bbeed9p-13, -0x1.8d60cabfafa0ap-16, 0x1.a6e221dcf86p+14},  // t = 20 s
+      {0x1.857a6217920bdp+22, 0x1.a850973c6e5d2p+3, 0x1.811112e5a7f25p+5, 0x1.30497a5ff728ap+7, -0x1.3114e279e4f92p+1, 0x1.25ea628ee7d7cp+2, 0x1.fffe6aae255a5p-1, 0x1.1720cd0a86a05p-17, -0x1.5f45530514145p-9, -0x1.0e063a3fb51e9p-8, -0x1.2382278f30714p-14, 0x1.072b7814032cp-12, 0x1.7d9a376bf10c5p+14},  // t = 40 s
+      {0x1.85b54c03bea36p+22, -0x1.44f2687487b31p+6, 0x1.942603e8b21fp+7, 0x1.cc294142594d7p+7, -0x1.9f88337a7f62cp+2, 0x1.5fbaf50b9a25dp+3, 0x1.ffff102eb3209p-1, 0x1.8af5a0c810b6bp-19, -0x1.7c72276f0c4ap-9, -0x1.3d8ad0f605a3dp-9, -0x1.8ad2528dacb75p-16, 0x1.40fb8830bc27dp-14, 0x1.58e8b8e9840f5p+14},  // t = 60 s
+  };
+  Vehicle6 v(p, sc);
+  double max_tilt = 0.0;
+  unsigned snapshot = 0U;
+  for (int k = 1; k <= 6000; ++k) {
+    const Tilts tl = v.tilts();
+    const V3& w = v.state().w;
+    v.step(0.01, (-1.4 * tl.y_deg) - (0.6 * w.z * kRad2Deg), (-1.4 * tl.x_deg) - (0.6 * w.y * kRad2Deg));
+    max_tilt = std::fmax(max_tilt, std::fmax(std::fabs(v.tilts().x_deg), std::fabs(v.tilts().y_deg)));
+    if (k % 2000 == 0) {
+      const State& s = v.state();
+      const double* g = kGolden[snapshot++];
+      CHECK(near_abs(s.r.x, g[0], 1e-3) && near_abs(s.r.y, g[1], 1e-3) && near_abs(s.r.z, g[2], 1e-3));
+      CHECK(near_abs(s.v.x, g[3], 1e-6) && near_abs(s.v.y, g[4], 1e-6) && near_abs(s.v.z, g[5], 1e-6));
+      CHECK(near_abs(s.q.w, g[6], 1e-9) && near_abs(s.q.x, g[7], 1e-9) && near_abs(s.q.y, g[8], 1e-9) && near_abs(s.q.z, g[9], 1e-9));
+      CHECK(near_abs(s.w.y, g[10], 1e-9) && near_abs(s.w.z, g[11], 1e-9));
+      CHECK(near_abs(s.m, g[12], 1e-6));
+    }
+  }
+  CHECK(snapshot == 3U);
+  CHECK(max_tilt < 1.0);  // the loop holds the vehicle upright: the snapshot is of a flight, not of a tumble
+}
+
 // ---- the design: the nominal ascent and the gain schedule ----
+
+// The figures that docs/design/VEHICLE_SIM.md sections 3, 7 and 11 quote for the reference vehicle. They are pinned here so that the page and the code
+// cannot drift apart again (until 6 Oct 2026 the page said 500 kN, a thrust-to-weight of 1.7 and 280 s; the code gives 399.2 kN, 1.357 and 269 s).
+TFC_TEST(reference_vehicle_figures_are_the_documented_ones) {
+  using namespace sim;
+  const Params p;
+  const Vehicle6 v(p);
+  const Loads l = v.current_loads();
+  const double weight = v.mass() * kG0;
+  CHECK(close(l.thrust, 5.0 * (92000.0 - (101325.0 * 0.12)), 1e-9));  // 399.2 kN at sea level
+  CHECK(near_abs(l.thrust, 399205.0, 1.0));
+  CHECK(close(5.0 * p.thrust_vac_each, 460000.0, 1e-12));
+  CHECK(close(l.thrust / weight, 1.3569, 1e-3));                       // liftoff thrust-to-weight, sea level
+  CHECK(close(5.0 * p.thrust_vac_each / weight, 1.5636, 1e-3));        // and in vacuum
+  CHECK(close(l.mdot, 151.31, 1e-4));                                  // 30.26 kg/s per engine
+  CHECK(close(l.thrust / (l.mdot * kG0), 269.03, 1e-4));               // the sea-level Isp is derived, not an input
+  CHECK(close(p.m_prop0 / l.mdot, 158.61, 1e-4));                      // the burn time
+  CHECK(close(v.mass_props(v.mass()).x_cg, 7.792, 1e-3));              // the gimbal arm L_g at liftoff
+  CHECK(close(v.mass_props(p.m_dry).x_cg, 10.0, 1e-12));               // and at burnout
+  const std::vector<NominalPoint> n = nominal_trajectory(p);
+  CHECK(close(n.front().b_ctl, 8.163, 1e-3));                          // control effectiveness at liftoff
+  CHECK(close(n.back().b_ctl, 11.089, 1e-3));                          // and at 100 s
+  double a_max = 0.0;
+  double t_a = 0.0;
+  for (const NominalPoint& np : n) {
+    if (np.a_div > a_max) {
+      a_max = np.a_div;
+      t_a = np.t;
+    }
+  }
+  CHECK(close(a_max, 4.418, 1e-3) && near_abs(t_a, 65.0, 0.5));        // the divergence peaks at max-Q
+  // the gain schedule: 17 points are designed and the schedule holds 16, so the one at 96 s is dropped and the 90 s gains are held to the end
+  const std::vector<GainPoint> designed = gain_schedule(n, 6.0, 2.5, 0.8, 0.2);
+  CHECK(designed.size() == 17U && near_abs(designed.back().t, 96.0, 1e-6));
+  const FlightTables tables = flight_tables(p);
+  CHECK(tables.gains.size() == tfc::GainSchedule::kMaxPoints);
+  CHECK(tables.gains.frame_at(tfc::GainSchedule::kMaxPoints - 1U) == 9000U);
+  CHECK(close(tables.gains.gains_at(tfc::GainSchedule::kMaxPoints - 1U).kp, designed[15].kp, 1e-5));
+  CHECK(close(designed[15].kp, 0.7534, 1e-3) && close(designed[16].kp, 0.6893, 1e-3));
+}
 
 TFC_TEST(the_nominal_ascent_is_a_believable_gravity_turn) {
   using namespace sim;
