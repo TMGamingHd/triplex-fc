@@ -18,7 +18,7 @@ from tfc_peers.faults import parse_fault, parse_node
 from tfc_peers.peers import Scenario
 
 from . import oracles
-from .model import INF, Result, Scenario as Sc, faulty_nodes, parsed_faults
+from .model import Result, Scenario as Sc, faulty_nodes, parsed_faults
 
 ROOT = Path(__file__).resolve().parents[2]
 REPLAY = os.environ.get("TFC_REPLAY_BIN", str(ROOT / "build/host/tfc_replay"))

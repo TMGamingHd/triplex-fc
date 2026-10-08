@@ -23,12 +23,12 @@ bus, the real IMUs, the servos, the relays and the supervisor's lines. Nothing i
 
 | Evidence | Result (5 Oct 2026) | Reproduce |
 |---|---|---|
-| C++ unit, fuzz and recovery tests under ASan and UBSan | 679 tests pass | `ctest --test-dir build` |
+| C++ unit, fuzz and recovery tests under ASan and UBSan | 691 tests pass | `ctest --test-dir build` |
 | Python tests (peers, replay, tools, docs) | 297 tests pass; 35 live tests skip without `vcan0`, so a run without it proves nothing about them | `cd sim && python3 -m unittest discover -s tests -t .` |
 | Structural coverage of `core/` and `supervisor/` | 100 % of lines, 98.4 % of branches (the gate: 100 and 98) | `python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98` |
 | Fault campaign: every fault kind over its input range, safety properties on every frame | 12,362 scenarios, 4,900,623 frames, **no property violated, no anomaly** | `cd sim && python3 -m campaign.run --strict` |
 | Mutation testing (deliberate bugs the tests must catch) | 390 mutants, every one killed (the equivalent ones, changes that cannot alter behaviour, are not listed; `tools/mutation/mutations.py` records each with its reason) | `python3 tools/mutation/run_unit.py` |
-| Structural coverage and mutation testing of the vehicle simulator (`sim/vehicle`) | 99.4 % of lines, 90.8 % of branches (gate 99 and 90: the general model, the file reader and the aerodynamics bring many error branches); 417 simulator mutants, every one killed (four equivalent mutants are documented, with the reason). Its sweeps found 13 and then 22 gaps in the tests, and the dynamics' first runs 8, 7 and 3 more, all closed | `python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 90`; `python3 tools/mutation/run_sim.py` |
+| Structural coverage and mutation testing of the vehicle simulator (`sim/vehicle`) | 99.2 % of lines, 91.1 % of branches (gate 99 and 90: the general model, the file reader and the aerodynamics bring many error branches); 464 simulator mutants, every one killed (five equivalent mutants are documented, with the reason). Its sweeps found 13 and then 22 gaps in the tests, and the dynamics' first runs 8, 7 and 3 more, all closed | `python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 90`; `python3 tools/mutation/run_sim.py` |
 | Static analysis and the flight-code standard | clang-tidy, cppcheck and `tools/check_standard.py` clean; strict warnings as errors, 2 KB stack bound | CI; `docs/verification/CODING_STANDARD.md` |
 | Live tests with real firmware on `vcan0` | triplex, closed loop through max-Q, resync, sensor split, mixed releases, launch, T0 line, phases, ACT's hardware Safe line (in flight and on the pad) | `tools/bench/sil_triplex.sh --test` |
 

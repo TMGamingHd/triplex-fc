@@ -26,7 +26,7 @@
 | "Every one of 32 fault kinds characterised over its input range, with measured detection latency" | the generated tables in `../verification/FAULT_CAMPAIGN.md` |
 | "Found and fixed N defects with the campaign" (a frozen command that got the healthy node isolated; an unrecoverable total loss; a replicated estimator that diverges for good on one lost frame; ...) | `../verification/FAULT_CAMPAIGN.md` section 6, ADR-014, 015, 017, 030 |
 | "Tests proven able to fail: 390 injected bugs, every one caught" | `python3 tools/mutation/run_unit.py`, `cd sim && python3 -m campaign.mutate` |
-| "679 C++ tests under ASan and UBSan; 100 % line and 98.4 % branch coverage of the flight core and the supervisor; JPL Power-of-Ten rules enforced by tools" | `tools/coverage/core_coverage.py`, `../verification/CODING_STANDARD.md` |
+| "691 C++ tests under ASan and UBSan; 100 % line and 98.4 % branch coverage of the flight core and the supervisor; JPL Power-of-Ten rules enforced by tools" | `tools/coverage/core_coverage.py`, `../verification/CODING_STANDARD.md` |
 | "No heap, no exceptions, no RTTI in the flight binary, checked on the ARM ELF" | `tools/check_elf.sh` |
 | "Real firmware instances on a virtual CAN bus: a triplex that survives the loss of its sync master, a closed loop through max-Q with a computer killed in flight, a launch sequence with a scrub, mixed releases, state resynchronisation, a hardware Safe line" | `tools/bench/sil_triplex.sh --test` (`../../sim/tests/test_live_*.py`) |
 | "A decision log of 33 ADRs, each with its state, and the trade studies behind them, with the data" | `../decisions/DECISIONS.md`, `../decisions/TRADE_STUDIES.md` |

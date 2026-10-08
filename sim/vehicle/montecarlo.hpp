@@ -158,6 +158,10 @@ inline const std::vector<Target>& targets() {
       {"gyro_bias_dps", "dps", "each gyro's constant bias, up to this on each axis", [](L l, double v) { l.sensors.gyro_bias_dps = static_cast<float>(v); }},
       {"gyro_scale_err", "fraction", "each gyro's gain error, up to this", [](L l, double v) { l.sensors.gyro_scale_err = static_cast<float>(v); }},
       {"gyro_noise_scale", "x", "the gyro noise times this (times the 0.17 dps of the bench model)", [](L l, double v) { l.sensors.gyro_noise_amp_dps = static_cast<float>(0.17 * v); }},
+      {"gyro_noise_density_mdps", "mdps/rtHz", "the gyro's white-noise density (the datasheet model; replaces the uniform noise)", [](L l, double v) { l.sensors.gyro_noise_density_dps = static_cast<float>(v * 0.001); }},
+      {"gyro_bias_instability_dph", "deg/h", "the standard deviation of the gyro's wandering bias", [](L l, double v) { l.sensors.gyro_bias_instability_dps = static_cast<float>(v / 3600.0); }},
+      {"sensor_temperature_offset_c", "C", "the sensors' temperature above 25 degrees", [](L l, double v) { l.sensors.temperature_offset_c = static_cast<float>(v); }},
+      {"sample_jitter", "frames", "the sensors' samples are early by up to this fraction of a frame", [](L l, double v) { l.sensors.sample_jitter = static_cast<float>(v); }},
       {"accel_bias_g", "g", "each accelerometer's constant bias, up to this", [](L l, double v) { l.sensors.accel_bias_g = static_cast<float>(v); }},
       {"accel_scale_err", "fraction", "each accelerometer's gain error, up to this", [](L l, double v) { l.sensors.accel_scale_err = static_cast<float>(v); }},
       {"misalign_deg", "deg", "each IMU's mounting error, up to this about each axis", [](L l, double v) { l.sensors.misalign_deg = static_cast<float>(v); }},
@@ -483,6 +487,18 @@ inline bool read_config(const std::string& text, Config& cfg, std::vector<std::s
     cfg.seed = static_cast<uint64_t>(seed);
   }
   top.num("limit_deg", cfg.limit_deg);
+  std::string preset;
+  if (top.str("sensor_preset", preset)) {
+    if (preset == "bench") {
+      cfg.base.sensors = SensorErrors{};
+    } else if (preset == "ism330dhcx_typical") {
+      cfg.base.sensors = ism330dhcx_typical();
+    } else if (preset == "ism330dhcx_maximum") {
+      cfg.base.sensors = ism330dhcx_maximum();
+    } else {
+      errors.push_back("sensor_preset: \"" + preset + "\" is not one of \"bench\", \"ism330dhcx_typical\", \"ism330dhcx_maximum\"");
+    }
+  }
   int threads = static_cast<int>(cfg.threads);
   if (top.integer("threads", threads) && threads >= 1) {
     cfg.threads = static_cast<unsigned>(threads);

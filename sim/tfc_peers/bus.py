@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Iterator, Protocol
 
-from .peers import FRAME_US, Scenario, TimedFrame
+from .peers import FRAME_US, Scenario
 from .protocol import ID_SYNC, Frame, unpack_sync
 
 _CAN_FRAME = struct.Struct("=IB3x8s")  # struct can_frame: id, dlc, pad, data[8]
