@@ -21,6 +21,7 @@ namespace sim {
 struct RunnerConfig {
   Params params;                   // the vehicle that is flown
   Params design;                   // the vehicle the pitch program and gains were designed on (they differ when the flown vehicle is dispersed)
+  Plan plan;                       // the trajectory the tables are designed on, and how the gains are designed from it (the reference ascent by default)
   Scenario scenario;
   bool vehicle_true = false;       // the sensors feel the vehicle itself (rates and specific force) instead of the platform's tilt and gravity
   uint32_t status_every = 10U;     // frames between the state, telemetry and flags frames (10 = 10 Hz)
@@ -36,7 +37,7 @@ struct SimFrames {
 class SimRunner {
  public:
   explicit SimRunner(const RunnerConfig& cfg = RunnerConfig{})
-      : cfg_(cfg), tables_(flight_tables(cfg.design)), vehicle_(cfg.params, cfg.scenario) {}
+      : cfg_(cfg), tables_(flight_tables(cfg.design, cfg.plan)), vehicle_(cfg.params, cfg.scenario) {}
 
   // The first SYNC heard carries frame `k0`. Bring the world to the start of that frame (the engines have been running since frame 0, with the gimbal neutral)
   // and return the frames for it. (They reach a node late in frame k0, so a node misses frame k0's sample: that is the price of joining a run in progress.)
@@ -150,7 +151,7 @@ class SimRunner {
       if (platform_.saturated()) {
         fl.flags = static_cast<uint8_t>(fl.flags | tfc::simflag::kPlatformSaturated);
       }
-      if (vehicle_.engines_on() < vehicle_.params().engines) {
+      if (vehicle_.engines_on() < vehicle_.engine_count()) {
         fl.flags = static_cast<uint8_t>(fl.flags | tfc::simflag::kEngineOut);
       }
       if (held_) {

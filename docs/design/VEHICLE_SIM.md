@@ -19,6 +19,8 @@ must be deterministic, fast, and usable without any hardware.
   On the bench without the platform the simulator feeds the nodes' sensors directly (section 6).
 
 ## 3. The model
+> **This page describes the reference vehicle.** The model itself takes any vehicle: any number of stages, tanks and engines at any position, payloads, fins, reaction thrusters and wheels, staging, throttling, a start in orbit, read from a file (`VEHICLE_SPEC.md`, ADR-031). The reference vehicle is one instance of that description and flies bit for bit as it did before it existed.
+
 **Frames.** A non-rotating inertial frame at the centre of a spherical Earth (radius 6,378,137 m, gravity `mu/r^2`); the launch point at the
 pole of the pad's local vertical. Attitude is the quaternion body-to-inertial; body X is the long axis, nose forward. Earth's rotation, slosh and
 flexibility are not modelled, and **roll is held by an ideal roll controller** (the roll rate about the long axis is zero and roll torques are ignored; `Params::ideal_roll_control`).

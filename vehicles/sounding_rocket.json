@@ -1,0 +1,25 @@
+// A small fin-stabilised sounding rocket with a solid motor, invented for the simulator. No gimbal: it steers with four aerodynamic fins, which have no authority until it has speed.
+// Its centre of pressure is behind its centre of gravity (x_cp_m below the centre of gravity), so it is stable by itself: the flight computers have little to do.
+// The gains are designed for at least b_min = 2 (the fins' effectiveness is nearly zero at lift-off and grows a hundredfold in seconds; a gain designed for zero would ring the loop) and spread
+// where they change (every_s = 0: adaptive), because the flight computers hold only 16 of them.
+{
+  "name": "sounding rocket",
+  "description": "200 kg, one solid motor of 16 kN for 18 s, fins instead of a gimbal, a 20 kg payload; thrust-to-weight 7 at lift-off.",
+  "vehicle": {"gimbal_limit_deg": 8},
+  "aero": {"diameter_m": 0.3, "c_n_alpha": 3.0, "x_cp_m": 1.6},
+  "stages": [
+    {"name": "motor", "dry_mass_kg": 60, "x_start_m": 0, "length_m": 4.0, "radius_m": 0.15, "inertia_factor": 0.6, "x_cg_dry_m": 2.0,
+     "tanks": [{"propellant_kg": 120, "x_bottom_m": 0.3, "radius_m": 0.14, "density_kg_m3": 1750}]}   // the grain: a solid propellant is a tank that cannot be throttled
+  ],
+  "engines": [
+    {"stage": 0, "position_m": [0, 0, 0], "thrust_vac_n": 16000, "exit_area_m2": 0.012, "isp_vac_s": 250, "gimbal": false, "rise_s": 0.2, "tail_s": 0.3}
+  ],
+  "payloads": [
+    {"name": "payload", "mass_kg": 20, "x_m": 3.6}
+  ],
+  "fins": [
+    {"name": "tail fins", "stage": 0, "x_hinge_m": 0.4, "area_each_m2": 0.04, "lift_slope": 3.0, "gain": 1.0, "limit_deg": 10, "rate_dps": 200, "lag_s": 0.02}
+  ],
+  "design": {"t_end_s": 60, "vertical_s": 3, "kick_ramp_s": 2, "kick_deg": 1.0, "follow_from_s": 8, "blend_s": 4,
+             "gains": {"every_s": 0, "wn": 4.0, "zeta": 0.8, "ki_over_kp": 0.2, "kp_max": 20, "b_min": 2}}
+}

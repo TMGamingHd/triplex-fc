@@ -1,0 +1,23 @@
+{
+  "name": "reference",
+  "description": "The reference vehicle of docs/design/VEHICLE_SIM.md: five engines, 30 t, a 100 s gravity-turn ascent through max-Q. The other files in vehicles/ are not this one.",
+  "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 60, "gimbal_lag_s": 0, "ideal_roll_control": true, "ground_contact": true, "crash_speed_ms": 5, "max_substep_s": 0.002, "thrust_scale": 1, "cd_scale": 1, "cn_scale": 1, "thrust_misalign_pitch_deg": 0, "thrust_misalign_yaw_deg": 0},
+  "aero": {"diameter_m": 1.8, "c_n_alpha": 2.5, "x_cp_m": 12.5},
+  "stages": [
+    {"name": "stage 1", "dry_mass_kg": 6000, "x_start_m": 0, "length_m": 20, "radius_m": 0.9, "inertia_factor": 0.6, "x_cg_dry_m": 10,
+     "tanks": [{"propellant_kg": 24000, "x_bottom_m": 2, "radius_m": 0.9, "density_kg_m3": 900}], "sequential_drain": false,
+     "ignite_time_s": 0, "ignite_after_sep_of": -1, "ignite_delay_s": 0, "separate_time_s": -1, "separate_on_burnout": false, "separate_delay_s": 0,
+     "gimbal_limit_deg": -1, "gimbal_rate_dps": -1, "gimbal_lag_s": -1}
+  ],
+  "engines": [
+    {"stage": 0, "position_m": [0, 0, 0], "thrust_vac_n": 92000, "exit_area_m2": 0.12, "isp_vac_s": 310, "gimbal": true, "cant_pitch_deg": 0, "cant_yaw_deg": 0, "start_offset_s": 0, "cutoff_time_s": -1, "rise_s": 0, "tail_s": 0, "direction": [1, 0, 0], "control": "none", "full_cmd_deg": 1},
+    {"stage": 0, "position_m": [0, 0.5, 0], "thrust_vac_n": 92000, "exit_area_m2": 0.12, "isp_vac_s": 310, "gimbal": true, "cant_pitch_deg": 0, "cant_yaw_deg": 0, "start_offset_s": 0, "cutoff_time_s": -1, "rise_s": 0, "tail_s": 0, "direction": [1, 0, 0], "control": "none", "full_cmd_deg": 1},
+    {"stage": 0, "position_m": [0, -0.5, 0], "thrust_vac_n": 92000, "exit_area_m2": 0.12, "isp_vac_s": 310, "gimbal": true, "cant_pitch_deg": 0, "cant_yaw_deg": 0, "start_offset_s": 0, "cutoff_time_s": -1, "rise_s": 0, "tail_s": 0, "direction": [1, 0, 0], "control": "none", "full_cmd_deg": 1},
+    {"stage": 0, "position_m": [0, 0, 0.5], "thrust_vac_n": 92000, "exit_area_m2": 0.12, "isp_vac_s": 310, "gimbal": true, "cant_pitch_deg": 0, "cant_yaw_deg": 0, "start_offset_s": 0, "cutoff_time_s": -1, "rise_s": 0, "tail_s": 0, "direction": [1, 0, 0], "control": "none", "full_cmd_deg": 1},
+    {"stage": 0, "position_m": [0, 0, -0.5], "thrust_vac_n": 92000, "exit_area_m2": 0.12, "isp_vac_s": 310, "gimbal": true, "cant_pitch_deg": 0, "cant_yaw_deg": 0, "start_offset_s": 0, "cutoff_time_s": -1, "rise_s": 0, "tail_s": 0, "direction": [1, 0, 0], "control": "none", "full_cmd_deg": 1}
+  ],
+  "payloads": [],
+  "fins": [],
+  "scenario": {"wind_scale": 1, "wind_direction": [0, 0, 1], "dry_cg_shift_m": 0, "gusts": [], "engine_failures": []},
+  "design": {"t_end_s": 100, "dt_s": 0.01, "vertical_s": 8, "kick_ramp_s": 4, "kick_deg": 1, "follow_from_s": 16, "blend_s": 4, "gains": {"every_s": 6, "wn": 2.5, "zeta": 0.8, "ki_over_kp": 0.2, "kp_max": 1e+30}}
+}

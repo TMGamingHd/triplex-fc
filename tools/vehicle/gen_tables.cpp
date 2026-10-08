@@ -9,6 +9,7 @@
 #include <string>
 
 #include "design.hpp"
+#include "spec_io.hpp"
 
 namespace {
 
@@ -51,16 +52,44 @@ std::string render(const sim::FlightTables& t) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  const std::string text = render(sim::flight_tables(sim::Params{}));
-  if (argc < 2) {
+  // tfc_gen_tables [--vehicle FILE] [OUT]: the tables of the reference vehicle, or of the vehicle in FILE (docs/design/VEHICLE_SPEC.md), to OUT or to the standard output.
+  std::string vehicle;
+  std::string path;
+  for (int i = 1; i < argc; ++i) {
+    const std::string a = argv[i];
+    if (a == "--vehicle" && i + 1 < argc) {
+      vehicle = argv[++i];
+    } else if (!a.empty() && a[0] != '-' && path.empty()) {
+      path = a;
+    } else {
+      std::cerr << "usage: tfc_gen_tables [--vehicle FILE] [OUT]\n";
+      return 2;
+    }
+  }
+  sim::FlightTables tables;
+  if (vehicle.empty()) {
+    tables = sim::flight_tables(sim::Params{});
+  } else {
+    sim::VehicleFile vf;
+    std::vector<std::string> errors;
+    if (!sim::load_vehicle_file(vehicle, vf, errors)) {
+      for (const std::string& e : errors) {
+        std::cerr << e << "\n";
+      }
+      return 1;
+    }
+    tables = sim::flight_tables(vf.params, vf.plan);
+  }
+  const std::string text = render(tables);
+  if (path.empty()) {
     std::cout << text;
     return 0;
   }
-  std::ofstream out(argv[1], std::ios::binary);
+  std::ofstream out(path, std::ios::binary);
   out << text;
   out.close();
   if (!out) {
-    std::cerr << "cannot write " << argv[1] << "\n";
+    std::cerr << "cannot write " << path << "\n";
     return 1;
   }
   return 0;

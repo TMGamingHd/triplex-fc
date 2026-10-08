@@ -5,7 +5,9 @@
 // flight computers' frame count. A run starts at the first SYNC heard and starts over if the frame number goes backwards (the sync master was reset).
 // With --pico PORT it also streams the vehicle's tilts to the Pico that drives the platform (docs/design/PICO.md): one platform frame per simulated frame, so 100 Hz.
 // With --hold the vehicle stands clamped on the pad until the mission frame in SYNC passes T-zero (docs/design/LAUNCH_SEQUENCE.md), then flies; a simulator that starts after T-zero joins the flight in progress.
-//   tfc_simd [--iface vcan0] [--hold] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
+//   tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
+// --vehicle flies the vehicle described in FILE (docs/design/VEHICLE_SPEC.md) instead of the reference vehicle; give it before the options that adjust the scenario. The flight computers carry the tables
+// they were built with, which are the reference vehicle's: for another vehicle regenerate them (tfc_gen_tables --vehicle FILE firmware/app/src/flight_tables.hpp) and rebuild the firmware.
 #include <fcntl.h>
 #include <poll.h>
 #include <termios.h>
@@ -26,6 +28,7 @@
 
 #include "design.hpp"
 #include "runner.hpp"
+#include "spec_io.hpp"
 #include "tfc/pico_link.hpp"
 #include "tfc/protocol.hpp"
 
@@ -145,6 +148,20 @@ int main(int argc, char** argv) {
     double v[3] = {0.0, 0.0, 0.0};
     if (a == "--iface") {
       iface = next();
+    } else if (a == "--vehicle") {
+      sim::VehicleFile vf;
+      std::vector<std::string> errors;
+      if (!sim::load_vehicle_file(next(), vf, errors)) {
+        for (const std::string& e : errors) {
+          std::fprintf(stderr, "%s\n", e.c_str());
+        }
+        return 1;
+      }
+      cfg.params = vf.params;
+      cfg.design = vf.params;
+      cfg.scenario = vf.scenario;
+      cfg.plan = vf.plan;
+      std::fprintf(stderr, "tfc_simd: flying \"%s\"; the flight computers must carry the tables of this vehicle (tfc_gen_tables --vehicle)\n", vf.name.c_str());
     } else if (a == "--hold") {
       cfg.start_held = true;
     } else if (a == "--pico") {
@@ -169,7 +186,7 @@ int main(int argc, char** argv) {
     } else if (a == "--quiet") {
       quiet = true;
     } else {
-      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--hold] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
+      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
       return 2;
     }
   }

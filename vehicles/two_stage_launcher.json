@@ -1,0 +1,39 @@
+// A generic two-stage medium launcher, invented for the simulator (it is not any real vehicle): nine engines on the first stage, one vacuum engine on the second, a fairing and a
+// payload. It exists to show that the simulator takes a vehicle that is nothing like the reference one. docs/design/VEHICLE_SPEC.md says what every field means.
+// Fly it with the vehicle's own sensors, not the platform's: it pitches past 45 degrees, the platform's travel (tfc_fly ... --sensors vehicle --no-accel). Its attitude error grows to about 8 degrees
+// over the 400 s: that is the flight computers' attitude estimate drifting (the gyro frames carry 0.125 degrees per second per count, about a fifth of this vehicle's pitch rate), not the controller
+// (docs/design/SIM_FIDELITY.md section 3.4). b_min keeps the gains finite through the coast between the stages, when the vehicle has no thrust to steer with.
+{
+  "name": "two-stage launcher",
+  "description": "Two stages, 563 t at lift-off, 9 + 1 engines, kerosene and liquid oxygen in separate tanks, throttle bucket through max-Q, hot-staging delays, a fairing.",
+  "vehicle": {"gimbal_limit_deg": 5, "gimbal_rate_dps": 20, "gimbal_lag_s": 0.05},
+  "aero": {"diameter_m": 3.7, "c_n_alpha": 2.5, "x_cp_m": 42},
+  "stages": [
+    {"name": "first", "dry_mass_kg": 22000, "x_start_m": 0, "length_m": 46, "radius_m": 1.85, "inertia_factor": 0.6, "x_cg_dry_m": 20,
+     "tanks": [
+       {"propellant_kg": 130000, "x_bottom_m": 2, "radius_m": 1.8, "density_kg_m3": 810},     // kerosene, low
+       {"propellant_kg": 280000, "x_bottom_m": 18.5, "radius_m": 1.8, "density_kg_m3": 1140}  // liquid oxygen, above it
+     ],
+     "separate_on_burnout": true, "separate_delay_s": 2.0,
+     "throttle": [[0, 1.0], [55, 1.0], [65, 0.7], [85, 0.7], [95, 1.0]]},   // thrust against time since ignition: down through max-Q
+    {"name": "second", "dry_mass_kg": 4000, "x_start_m": 46, "length_m": 14, "radius_m": 1.85, "inertia_factor": 0.6, "x_cg_dry_m": 52,
+     "tanks": [
+       {"propellant_kg": 30000, "x_bottom_m": 47, "radius_m": 1.8, "density_kg_m3": 810},
+       {"propellant_kg": 80000, "x_bottom_m": 51, "radius_m": 1.8, "density_kg_m3": 1140}
+     ],
+     "ignite_after_sep_of": 0, "ignite_delay_s": 4.0, "gimbal_limit_deg": 5, "gimbal_rate_dps": 20}
+  ],
+  "engines": [
+    // nine on the first stage: one in the middle, eight on a circle of 1.2 m; thrust and exit area per engine
+    {"stage": 0, "count": 1, "position_m": [0, 0, 0], "thrust_vac_n": 900000, "exit_area_m2": 0.9, "isp_vac_s": 311, "rise_s": 0.3, "tail_s": 0.5},
+    {"stage": 0, "count": 8, "position_m": [0, 0, 0], "ring_radius_m": 1.2, "thrust_vac_n": 900000, "exit_area_m2": 0.9, "isp_vac_s": 311, "rise_s": 0.3, "tail_s": 0.5},
+    // one vacuum engine on the second stage
+    {"stage": 1, "position_m": [46, 0, 0], "thrust_vac_n": 930000, "exit_area_m2": 4.0, "isp_vac_s": 348, "rise_s": 0.5, "tail_s": 0.5}
+  ],
+  "payloads": [
+    {"name": "fairing", "mass_kg": 1900, "x_m": 66, "jettison_time_s": 210},
+    {"name": "payload", "mass_kg": 15000, "x_m": 63}
+  ],
+  "design": {"t_end_s": 400, "vertical_s": 12, "kick_ramp_s": 6, "kick_deg": 1.5, "follow_from_s": 30, "blend_s": 8,
+             "gains": {"every_s": 0, "wn": 1.2, "zeta": 0.8, "ki_over_kp": 0.2, "b_min": 0.05}}
+}

@@ -59,7 +59,7 @@ ctest --test-dir build --output-on-failure                         # the whole s
 python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 93
 python3 tools/mutation/run_sim.py                                  # deliberate bugs in the simulator must still be caught (weekly in CI; about 15 minutes)
 ```
-`a_controlled_flight_of_the_reference_vehicle_is_unchanged_by_changes_to_the_model` (`tests/test_vehicle.cpp`) must still pass without edits: the reference vehicle's flight is the contract of every change. A new
+`a_controlled_flight_of_the_reference_vehicle_is_unchanged_by_changes_to_the_model` (`tests/test_vehicle.cpp`) and `general_the_reference_vehicle_flies_as_the_frozen_single_vehicle_model_did` (`tests/test_vehicle_general.cpp`, against `tests/oracle/`) must still pass without edits: the reference vehicle's flight is the contract of every change. A change that moves it by even a rounding moves the quantised sensor values of the closed loop, and with them the documented sensitivity numbers. A new
 model, option or guard comes with a test that fails without it, and a mutant in `tools/mutation/sim_mutations.py` that removes it.
 
 ## Milestones, stages and tags
