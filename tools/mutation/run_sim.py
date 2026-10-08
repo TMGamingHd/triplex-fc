@@ -45,7 +45,7 @@ def one(name: str) -> tuple[str, str, str]:
         if r.returncode:
             return name, "BUILD-FAILED", (r.stderr.strip().splitlines() or [""])[0][:120]
         try:
-            run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=900)
+            run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=900, env={**os.environ, "TFC_STOP_AT_FIRST_FAIL": "1"})
         except subprocess.TimeoutExpired:  # a mutant that makes the code loop for ever is caught: the suite does not finish
             return name, "killed", "timed out (an endless loop)"
         out = run.stdout + run.stderr

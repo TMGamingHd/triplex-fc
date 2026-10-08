@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // A Monte Carlo of the closed loop: many flights of the whole software chain (the simulated vehicle, three flight functions, the real ACT logic), each with a random draw of departures from
 // the nominal, and what fraction of them fly, how far they stray, and which departure explains it. See docs/design/MONTE_CARLO.md.
-//   tfc_mc [--vehicle FILE] [--config FILE] [--flights N] [--seed S] [--threads T] [--limit DEG] [--frames N] [--sensors platform|vehicle] [--no-accel] [--pad FRAMES]
+//   tfc_mc [--vehicle FILE] [--config FILE] [--flights N] [--seed S] [--threads T] [--limit DEG] [--frames N] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--pad FRAMES]
 //          [--csv FILE] [--only INDEX] [--list]
 // --config: the dispersions (vehicles/dispersions.json is a starting point; every number in it is an assumption). --only re-flies one flight of the run and prints its draws and its result:
 // the draws are a function of the seed and the index alone. --list names what can be dispersed.
@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
   std::string csv_path;
   bool vehicle_true = false;
   bool no_accel = false;
+  std::string imu;
   bool list = false;
   long only = -1;
   uint32_t frames = 0U;
@@ -82,6 +83,8 @@ int main(int argc, char** argv) {
       pad = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
     } else if (a == "--sensors" && more) {
       vehicle_true = std::string(argv[++i]) == "vehicle";
+    } else if (a == "--imu" && more) {
+      imu = argv[++i];
     } else if (a == "--no-accel") {
       no_accel = true;
     } else if (a == "--csv" && more) {
@@ -92,7 +95,7 @@ int main(int argc, char** argv) {
       list = true;
     } else {
       std::fprintf(stderr,
-                   "usage: tfc_mc [--vehicle FILE] [--config FILE] [--flights N] [--seed S] [--threads T] [--limit DEG] [--frames N] [--sensors platform|vehicle] [--no-accel] [--pad FRAMES] "
+                   "usage: tfc_mc [--vehicle FILE] [--config FILE] [--flights N] [--seed S] [--threads T] [--limit DEG] [--frames N] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--pad FRAMES] "
                    "[--csv FILE] [--only INDEX] [--list]\n");
       return 2;
     }
@@ -138,6 +141,16 @@ int main(int argc, char** argv) {
   if (limit_given) cfg.limit_deg = limit_arg;
   if (threads_arg != 0U) cfg.threads = threads_arg;
   if (frames != 0U) cfg.base.frames = frames;
+  if (imu == "bench") {
+    cfg.base.sensors = sim::SensorErrors{};
+  } else if (imu == "ism330dhcx_typical") {
+    cfg.base.sensors = sim::ism330dhcx_typical();
+  } else if (imu == "ism330dhcx_maximum") {
+    cfg.base.sensors = sim::ism330dhcx_maximum();
+  } else if (!imu.empty()) {
+    std::fprintf(stderr, "--imu: \"%s\" is not bench, ism330dhcx_typical or ism330dhcx_maximum\n", imu.c_str());
+    return 2;
+  }
   cfg.base.pad_frames = pad;
   cfg.base.cfg.vehicle_true = vehicle_true;
   cfg.base.estimator.use_accel = !no_accel;

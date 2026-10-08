@@ -50,6 +50,7 @@ add_executable(tfc_tests
   tests/test_slosh.cpp
   tests/test_flex.cpp
   tests/test_montecarlo.cpp
+  tests/test_imu_datasheet.cpp
   tests/test_pad.cpp
   tests/test_launch.cpp
   tests/test_supervisor_clock.cpp

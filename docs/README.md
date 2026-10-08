@@ -29,6 +29,7 @@
 | [PICO.md](design/PICO.md) | The Pico: platform driver and fault injector |
 | [VEHICLE_SIM.md](design/VEHICLE_SIM.md) | The 6-DOF ascent simulator, the platform and the bus runner |
 | [ENVIRONMENT.md](design/ENVIRONMENT.md) | The world: planets, rotation, J2, atmospheres and their dispersions, wind profiles, turbulence |
+| [IMU_MODEL.md](design/IMU_MODEL.md) | The IMU as the ISM330DHCX datasheet describes it: noise, wandering bias, drift with temperature, cross-axis, jitter; the presets, the checks |
 | [MONTE_CARLO.md](design/MONTE_CARLO.md) | Many flights, each with a random draw of everything that can differ: the tool, the statistics, what it found |
 | [DYNAMICS.md](design/DYNAMICS.md) | The servo (second order, backlash), jet damping, the push and tip-off of a separation, the roll controller: the formulas and their checks |
 | [AERODYNAMICS.md](design/AERODYNAMICS.md) | The aerodynamics that follow a vehicle's shape: the formulas, their limits, how they are checked |

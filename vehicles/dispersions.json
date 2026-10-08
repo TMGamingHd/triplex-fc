@@ -1,11 +1,14 @@
 // A starting set of dispersions for tfc_mc (docs/design/MONTE_CARLO.md). EVERY NUMBER IS AN ASSUMPTION about a generic launcher, written from the usual orders of magnitude of launch-vehicle
-// dispersion analyses, not taken from any vehicle or measured: replace them with the ones your vehicle has. Exceptions: the sensor errors are the ISM330DHCX's (DS13012 rev 7, Table 3,
-// the typical values): zero-rate level +-1 dps, zero-g offset +-10 mg, sensitivity +-2 %, cross-axis 1 % (taken here as a 1 degree mounting error); the bus model's noise (0.17 dps uniform) is the bench's.
+// dispersion analyses, not taken from any vehicle or measured: replace them with the ones your vehicle has. Exception: the sensors, which are the ISM330DHCX's own (DS13012 rev 7, Table 3, the
+// typical values, "sensor_preset": see docs/design/IMU_MODEL.md): zero-rate level +-1 dps, zero-g offset +-10 mg, sensitivity +-2 %, cross-axis 1 % and 0.5 %, a white noise of 5 mdps and 60 micro-g per
+// root hertz, a bias instability of 3 degrees an hour, drift with temperature; the temperature and the sample jitter below are assumptions.
+// "sensor_preset": "bench" (the first weeks' uniform noise and no errors), "ism330dhcx_typical" or "ism330dhcx_maximum" (the datasheet's limits).
 // "normal": [mean, standard deviation(, clip in standard deviations; 3 if not given)]; "uniform": [min, max]; "constant": a number.
 {
   "flights": 100,
   "seed": 1,
   "limit_deg": 5,
+  "sensor_preset": "ism330dhcx_typical",
   "dispersions": [
     {"name": "thrust_scale", "normal": [1.0, 0.01]},
     {"name": "isp_scale", "normal": [1.0, 0.005]},
@@ -22,10 +25,7 @@
     {"name": "turbulence_sigma_ms", "uniform": [0, 3]},
     {"name": "density_scale", "normal": [1.0, 0.05]},
     {"name": "temperature_offset_k", "normal": [0, 5]},
-    {"name": "gyro_bias_dps", "constant": 1.0},
-    {"name": "gyro_scale_err", "constant": 0.02},
-    {"name": "accel_bias_g", "constant": 0.01},
-    {"name": "accel_scale_err", "constant": 0.02},
-    {"name": "misalign_deg", "constant": 1.0}
+    {"name": "sensor_temperature_offset_c", "uniform": [-20, 40]},
+    {"name": "sample_jitter", "uniform": [0, 0.3]}
   ]
 }

@@ -2,7 +2,7 @@
 // Fly any vehicle with the real flight software: read a vehicle description (docs/design/VEHICLE_SPEC.md), design the pitch program and the gain schedule on its nominal flight, and close the
 // loop over it (the simulated vehicle, three flight functions with their IMU models, the real ACT logic: sim/vehicle/closed_loop.hpp). Reports what happened, and can write the whole flight
 // as a CSV for a plot.
-//   tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE]
+//   tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE]
 // "reference" is the built-in reference vehicle of VEHICLE_SIM.md. --frames: frames of flight after T-zero (default: the design's flight time). --check: only read and validate the file (and print
 // what is in it), do not fly. --dump: write the vehicle back out as a normalised file (every field, in the order the format documents) and stop.
 #include <cstdio>
@@ -67,13 +67,14 @@ void describe(const sim::VehicleFile& v) {
 
 int main(int argc, char** argv) {
   if (argc < 2 || argv[1][0] == '-') {
-    std::fprintf(stderr, "usage: tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE]\n");
+    std::fprintf(stderr, "usage: tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE]\n");
     return 2;
   }
   uint32_t frames = 0U;
   uint32_t pad = 0U;
   bool vehicle_true = false;
   bool no_accel = false;
+  std::string imu;
   bool check = false;
   uint32_t every = 10U;
   std::string csv;
@@ -86,6 +87,8 @@ int main(int argc, char** argv) {
       pad = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
     } else if (a == "--sensors" && i + 1 < argc) {
       vehicle_true = std::string(argv[++i]) == "vehicle";
+    } else if (a == "--imu" && i + 1 < argc) {
+      imu = argv[++i];
     } else if (a == "--no-accel") {
       no_accel = true;
     } else if (a == "--csv" && i + 1 < argc) {
@@ -133,6 +136,14 @@ int main(int argc, char** argv) {
   lp.cfg.plan = vf.plan;
   lp.cfg.vehicle_true = vehicle_true;
   lp.estimator.use_accel = !no_accel;
+  if (imu == "ism330dhcx_typical") {
+    lp.sensors = sim::ism330dhcx_typical();
+  } else if (imu == "ism330dhcx_maximum") {
+    lp.sensors = sim::ism330dhcx_maximum();
+  } else if (!imu.empty() && imu != "bench") {
+    std::fprintf(stderr, "--imu: \"%s\" is not bench, ism330dhcx_typical or ism330dhcx_maximum\n", imu.c_str());
+    return 2;
+  }
   lp.pad_frames = pad;
   lp.frames = frames != 0U ? frames : static_cast<uint32_t>(vf.plan.trajectory.t_end / 0.01);
   std::vector<sim::TraceRow> trace;

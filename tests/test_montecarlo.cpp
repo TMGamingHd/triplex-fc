@@ -205,6 +205,10 @@ TFC_TEST(mc_every_dispersion_sets_the_field_it_names) {
   set("accel_scale_err", 0.03, lp);
   set("misalign_deg", 1.0, lp);
   set("sensor_latency_frames", 2.6, lp);
+  set("gyro_noise_density_mdps", 6.0, lp);
+  set("gyro_bias_instability_dph", 7.2, lp);
+  set("sensor_temperature_offset_c", 15.0, lp);
+  set("sample_jitter", 0.25, lp);
   set("slosh_mass_scale", 1.3, lp);
   set("slosh_frequency_scale", 0.8, lp);
   set("flex_frequency_hz", 3.1, lp);
@@ -222,6 +226,8 @@ TFC_TEST(mc_every_dispersion_sets_the_field_it_names) {
   CHECK(p.spec.planet.density_scale == 1.05 && p.spec.planet.temperature_offset == 7.0);
   CHECK(lp.sensors.gyro_bias_dps == 0.5F && lp.sensors.gyro_scale_err == 0.02F && near_abs(static_cast<double>(lp.sensors.gyro_noise_amp_dps), 0.34, 1e-6) && lp.sensors.accel_bias_g == 0.01F &&
         lp.sensors.accel_scale_err == 0.03F && lp.sensors.misalign_deg == 1.0F && lp.sensors.latency_frames == 3U);
+  CHECK(near_abs(static_cast<double>(lp.sensors.gyro_noise_density_dps), 0.006, 1e-9) && near_abs(static_cast<double>(lp.sensors.gyro_bias_instability_dps), 0.002, 1e-9) &&
+        lp.sensors.temperature_offset_c == 15.0F && lp.sensors.sample_jitter == 0.25F);  // (in the datasheet's units: milli-dps per root hertz, degrees an hour)
   CHECK(p.spec.stages[0].tanks[0].slosh.mass_scale == 1.3 && p.spec.stages[1].tanks[1].slosh.frequency_scale == 0.8);
   CHECK(p.spec.flex.frequency_hz == 3.1 && p.spec.flex.damping == 0.01 && p.spec.flex.slope_imu == -0.3 && p.spec.actuator.backlash_deg == 0.2);
   CHECK(p.spec.stages[0].separation_dv_ms == 2.5 && p.spec.stages[0].tipoff_pitch_dps == 0.4 && p.spec.stages[0].tipoff_yaw_dps == -0.3 && p.spec.stages[0].tipoff_roll_dps == 0.6);
@@ -289,6 +295,12 @@ TFC_TEST(mc_the_configuration_file_is_read_strictly) {
   CHECK(refused(R"({"dispersions": [{"name": "thrust_scale", "uniform": [3, 1]}]})", "max not below min"));
   CHECK(refused(R"({"dispersions": [{"name": "thrust_scale", "constant": 1}, {"name": "thrust_scale", "constant": 2}]})", "dispersed twice"));
   CHECK(refused(R"({"flights": 0})", "flights"));
+  CHECK(refused(R"({"sensor_preset": "ism330dhcx_perfect"})", "sensor_preset"));
+  sim::mc::Config pre;
+  std::vector<std::string> pe;
+  CHECK(sim::mc::read_config(R"({"sensor_preset": "ism330dhcx_maximum"})", pre, pe) && pre.base.sensors.gyro_bias_dps == 3.0F && pre.base.sensors.accel_bias_g == 0.065F);
+  CHECK(sim::mc::read_config(R"({"sensor_preset": "ism330dhcx_typical"})", pre, pe) && pre.base.sensors.gyro_bias_dps == 1.0F);
+  CHECK(sim::mc::read_config(R"({"sensor_preset": "bench"})", pre, pe) && pre.base.sensors.gyro_bias_dps == 0.0F && pre.base.sensors.gyro_noise_amp_dps == 0.17F);
   CHECK(refused(R"({"flights": 5, "colour": 1})", "unknown field"));
   CHECK(refused(R"({"limit_deg": -1})", "limit_deg must be positive"));
   CHECK(refused(R"({"flights": )", "line"));

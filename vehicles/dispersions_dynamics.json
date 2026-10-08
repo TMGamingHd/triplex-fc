@@ -1,10 +1,11 @@
 // The dispersions of dispersions.json plus those of the dynamics of vehicles/launcher_dynamics.json (docs/design/DYNAMICS.md): slosh, the bending mode, backlash and the separation. EVERY NUMBER IS
-// AN ASSUMPTION (see dispersions.json). Fly it with a pad phase, so that the flight computers calibrate the gyro bias out before lift-off:
+// AN ASSUMPTION except the sensors, which are the datasheet's (see dispersions.json). Fly it with a pad phase, so that the flight computers calibrate the gyro bias out before lift-off:
 //   tfc_mc --vehicle vehicles/launcher_dynamics.json --config vehicles/dispersions_dynamics.json --sensors vehicle --no-accel --pad 1500
 {
   "flights": 100,
   "seed": 1,
   "limit_deg": 5,
+  "sensor_preset": "ism330dhcx_typical",
   "dispersions": [
     {"name": "thrust_scale", "normal": [1.0, 0.01]},
     {"name": "isp_scale", "normal": [1.0, 0.005]},
@@ -30,10 +31,7 @@
     {"name": "tipoff_pitch_dps", "normal": [0, 0.15]},
     {"name": "tipoff_yaw_dps", "normal": [0, 0.15]},
     {"name": "tipoff_roll_dps", "normal": [0, 0.3]},
-    {"name": "gyro_bias_dps", "constant": 1.0},
-    {"name": "gyro_scale_err", "constant": 0.02},
-    {"name": "accel_bias_g", "constant": 0.01},
-    {"name": "accel_scale_err", "constant": 0.02},
-    {"name": "misalign_deg", "constant": 1.0}
+    {"name": "sensor_temperature_offset_c", "uniform": [-20, 40]},
+    {"name": "sample_jitter", "uniform": [0, 0.3]}
   ]
 }
