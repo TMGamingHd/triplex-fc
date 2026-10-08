@@ -23,7 +23,7 @@ must be deterministic, fast, and usable without any hardware.
 
 **Frames.** A non-rotating inertial frame at the centre of a spherical Earth (radius 6,378,137 m, gravity `mu/r^2`); the launch point at the
 pole of the pad's local vertical. Attitude is the quaternion body-to-inertial; body X is the long axis, nose forward. Earth's rotation, slosh and
-flexibility are not modelled, and **roll is held by an ideal roll controller** (the roll rate about the long axis is zero and roll torques are ignored; `Params::ideal_roll_control`).
+flexibility are not modelled **in the reference vehicle** (a vehicle file can switch them on: `ENVIRONMENT.md`, `DYNAMICS.md`), and **its roll is held by an ideal roll controller** (the roll rate about the long axis is zero and roll torques are ignored; `Params::ideal_roll_control`).
 
 **Equations** (integrated with RK4 at 2 ms inside each 10 ms frame):
 - Translation: `m a = F_thrust + F_aero + m g` (inertial).
@@ -121,7 +121,7 @@ Still unverified against any outside data: the aerodynamic and engine numbers, t
 ## 10. What it does not model, and the caveats
 **The full account is `docs/design/SIM_FIDELITY.md`** (model by model, how far each departure can go before the flight is lost, what the audit found, what to do next). In short: dispersions of the vehicle and errors of the IMU are now options, swept by `tfc_sens`; the biggest gaps are the missing pad phase and launch command, an estimator that cannot tell thrust from gravity on a real vehicle, a pessimistic and uncalibrated IMU noise model, and no turbulence.
 
-Earth rotation and the shape of the geoid; propellant slosh; structural flexibility; roll control (it is idealised: see section 3); separation and a second stage; real atmospheric turbulence (gusts are scripted); the rig's accelerations (the platform does not
+Earth rotation and the shape of the geoid; propellant slosh, structural flexibility, a real roll controller, the push and tip-off of a separation (each an option of the vehicle file since 7 Oct 2026, `DYNAMICS.md`; the reference vehicle has none); a second stage; real atmospheric turbulence (gusts are scripted); the rig's accelerations (the platform does not
 accelerate, which is why the vehicle-true mode exists). The model is a believable vehicle, not a flight-qualified one: say so in the write-up.
 
 ## 11. What was built and what it shows (host, 4 Oct 2026)

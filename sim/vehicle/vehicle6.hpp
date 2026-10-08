@@ -24,6 +24,7 @@
 #include "aero.hpp"
 #include "atmosphere.hpp"
 #include "math3.hpp"
+#include "slosh.hpp"
 #include "spec.hpp"
 
 namespace sim {
@@ -90,6 +91,9 @@ struct State {
   std::array<double, kMaxStages> prop{};      // the propellant left in each stage (a stage that has separated keeps what it had)
   bool prop_set = false;                      // false: derive `prop` from `m` (a vehicle of one stage); true: `prop` is given
   V3 wheel_h{};                               // the angular momentum of the reaction wheels about body Y and Z (x unused), N m s
+  double roll = 0.0;                          // the angle turned through about the long axis since T-zero, rad (the integral of the roll rate: what a roll controller holds)
+  std::array<std::array<double, 4>, kMaxSlosh> slosh{};  // each sloshing tank's mass: its displacement in body Y and Z (m) and the speed of each (m/s) relative to the tank
+  std::array<double, 4> flex{};                           // the bending mode: eta in body Y and Z (m) and their rates (m/s)
 };
 
 struct EngineFailure {
@@ -128,6 +132,7 @@ struct MassProps {
   double x_cg = 0.0;  // from the aft end
   double i_t = 0.0;   // transverse inertia about the CG
   double i_x = 0.0;   // roll inertia
+  double slosh_mass = 0.0;  // the part of the liquid that sloshes, which the rest (mass, x_cg, inertias) leaves out: mass + slosh_mass is the vehicle's
 };
 
 struct Tilts {  // the vehicle's long axis relative to the pad vertical, as the platform shows it
@@ -146,6 +151,16 @@ struct Loads {
   double mach = 0.0;
   double alpha = 0.0;  // total angle of attack, rad
   double thrust = 0.0;  // N, total
+  V3 f_slosh{};         // the force of the sloshing masses' springs on the vehicle, body frame
+  V3 m_slosh{};         // and its moment about the CG
+  struct SloshNow {     // each sloshing tank now: its mass, where it acts, its spring and its damper
+    double m1 = 0.0;
+    double x_s = 0.0;
+    double k = 0.0;
+    double c = 0.0;
+  };
+  std::array<SloshNow, kMaxSlosh> pod{};
+  V3 flex_q{};          // the generalised force on the bending mode in body Y and Z (N)
 };
 
 // The description of the reference vehicle of `Params`' own fields, in the general form: one stage, one tank, `engines` engines.
@@ -194,6 +209,15 @@ class Vehicle6 {
       std::abort();
     }
     pl_ = g_.planet;
+    servo_dynamics_ = g_.actuator.order == 2 || g_.actuator.backlash_deg > 0.0;
+    for (std::size_t st = 0; st < g_.stages.size(); ++st) {
+      for (std::size_t k = 0; k < g_.stages[st].tanks.size(); ++k) {
+        if (g_.stages[st].tanks[k].slosh.enabled && pods_.size() < kMaxSlosh) {
+          pods_.push_back(Pod{st, k});
+        }
+      }
+    }
+    ideal_roll_ = p_.ideal_roll_control && !g_.roll.enabled;
     s_.r = V3{pl_.radius, 0.0, 0.0};
     {
       const double lat = sc_.site.latitude_deg * kDeg2Rad;
@@ -247,6 +271,9 @@ class Vehicle6 {
     const double h = dt / n;
     for (int i = 0; i < n; ++i) {
       process_events();
+      if (g_.flex.enabled && !active_[static_cast<std::size_t>(g_.flex.stage)]) {
+        s_.flex = {};  // the stage the mode belongs to has gone: so has the mode
+      }
       step_turbulence(h);
       update_engines(h, cmd_pitch_deg, cmd_yaw_deg);
       for (std::size_t f = 0; f < g_.fins.size(); ++f) {
@@ -261,8 +288,13 @@ class Vehicle6 {
           const double limit = st.gimbal_limit_deg >= 0.0 ? st.gimbal_limit_deg : p_.gimbal_limit_deg;
           const double rate = st.gimbal_rate_dps >= 0.0 ? st.gimbal_rate_dps : p_.gimbal_rate_dps;
           const double lag = st.gimbal_lag_s >= 0.0 ? st.gimbal_lag_s : p_.gimbal_lag_s;
-          gimbal_p_[s] = slew(gimbal_p_[s], cmd_pitch_deg, h, limit, rate, lag);
-          gimbal_y_[s] = slew(gimbal_y_[s], cmd_yaw_deg, h, limit, rate, lag);
+          if (servo_dynamics_) {
+            drive_servo(servo_p_[s], servo_pv_[s], gimbal_p_[s], cmd_pitch_deg, h, limit, rate, lag);
+            drive_servo(servo_y_[s], servo_yv_[s], gimbal_y_[s], cmd_yaw_deg, h, limit, rate, lag);
+          } else {
+            gimbal_p_[s] = slew(gimbal_p_[s], cmd_pitch_deg, h, limit, rate, lag);
+            gimbal_y_[s] = slew(gimbal_y_[s], cmd_yaw_deg, h, limit, rate, lag);
+          }
         }
       }
       if (p_.ground_contact && held_by_ground(h)) {
@@ -331,11 +363,12 @@ class Vehicle6 {
         prop[s] *= scale;
       }
     }
-    MassProps mp = mass_props_of(prop);
+    MassProps mp = mass_props_of(prop, false);  // (the designer's view: the whole liquid as part of the rigid body)
     mp.mass = m;  // as asked: the mass given, whatever the parts add up to
     return mp;
   }
-  [[nodiscard]] MassProps mass_props() const { return mass_props_state(s_, -1); }
+  [[nodiscard]] MassProps mass_props() const { return mass_props_state(s_, -1, false); }  // the whole liquid in the rigid body: what the gains are designed from
+  [[nodiscard]] MassProps rigid_mass_props() const { return mass_props_state(s_, -1, true); }  // with the sloshing mass taken out (`slosh_mass` says how much): what the dynamics use
 
   // The forces and moments on a state at time t (the gimbal angles are the vehicle's current ones).
   [[nodiscard]] Loads loads(const State& s, double t) const {
@@ -365,6 +398,7 @@ class Vehicle6 {
     }
     // The thrust of every engine that is running: along its own direction (the commanded gimbal of its stage if it gimbals, its cant, the misalignment dispersion), at its own position.
     // Engines without a cant of their own share one direction per stage (gimbaled) and one for the fixed ones, found once.
+    const bool flex_on = g_.flex.enabled && active_[static_cast<std::size_t>(g_.flex.stage)];
     std::array<V3, kMaxStages> dir_gimbal{};
     std::array<bool, kMaxStages> have_gimbal{};
     V3 dir_fixed{};
@@ -398,13 +432,23 @@ class Vehicle6 {
           have_fixed = true;
         }
       }
-      const V3 f = dir * ti;
+      V3 f = dir * ti;
+      if (flex_on) {  // the thrust follows the structure: along the tangent of the bent axis at the engines, a lateral force T sigma eta on top
+        f = f + V3{0.0, ti * g_.flex.slope_engine * s.flex[0], ti * g_.flex.slope_engine * s.flex[1]};
+      }
       l.f_thrust = l.f_thrust + f;
       l.m_thrust = l.m_thrust + cross(V3{en.pos.x - mp.x_cg, en.pos.y, en.pos.z}, f);
       const double md = frac * p_.thrust_scale * en.thrust_vac / (en.isp_vac * kG0);
       l.mdot += md;
       l.mdot_stage[st] += md;
       l.thrust += ti;
+      if (g_.jet_damping) {  // the exhaust leaves with the velocity of the nozzle, which a turning vehicle gives it: it carries away angular momentum, -md r x (w x r)
+        const V3 r{en.pos.x - mp.x_cg, en.pos.y, en.pos.z};
+        l.m_thrust = l.m_thrust - (cross(r, cross(s.w, r)) * md);
+      }
+    }
+    if (flex_on) {
+      l.flex_q = V3{0.0, g_.flex.phi_engine * l.f_thrust.y, g_.flex.phi_engine * l.f_thrust.z};
     }
     // The fins: a force at the hinge of each set, normal to the plane of the two fins that make it (pitch: along -Y for a positive deflection; yaw: along +Z).
     for (std::size_t f = 0; f < g_.fins.size(); ++f) {
@@ -422,6 +466,35 @@ class Vehicle6 {
     if (g_.wheels.enabled) {
       l.m_thrust = l.m_thrust + wheel_m_;  // the wheels' torque on the vehicle (an internal torque: the wheel takes the opposite momentum)
     }
+    if (g_.roll.enabled && active_[static_cast<std::size_t>(g_.roll.stage)]) {  // the vehicle's own roll controller: a torque about the long axis against the roll and its rate
+      l.m_thrust.x += std::clamp((-g_.roll.kp * s.roll) - (g_.roll.kd * s.w.x), -g_.roll.torque_max, g_.roll.torque_max);
+    }
+    if (!pods_.empty()) {
+      // The sloshing masses: a spring and a damper between each and the tank, along body Y and Z. The spring's stiffness is the mass times omega^2, with omega^2 the model's `w2g` times the
+      // acceleration along the axis (floored: a liquid with no axial acceleration is not settled and has no spring to speak of). The force on the vehicle is the spring's, at the mass.
+      const double g_axial = std::max((l.f_thrust.x + l.f_aero.x) / s.m, kSloshMinG);
+      for (std::size_t i = 0; i < pods_.size(); ++i) {
+        const Pod& pd = pods_[i];
+        if (!active_[pd.stage]) {
+          continue;
+        }
+        const TankSpec& tk = g_.stages[pd.stage].tanks[pd.tank];
+        const SloshModel sm = slosh_model(tk, tank_liquid(pd.stage, pd.tank, prop_of(s, pd.stage)));
+        if (!(sm.m1 > 0.0)) {
+          continue;
+        }
+        const double w2 = g_axial * sm.w2g;
+        Loads::SloshNow& now = l.pod[i];
+        now.m1 = sm.m1;
+        now.x_s = sm.x_s;
+        now.k = sm.m1 * w2;
+        now.c = 2.0 * tk.slosh.damping * sm.m1 * std::sqrt(w2);
+        const std::array<double, 4>& x = s.slosh[i];
+        const V3 f{0.0, (now.k * x[0]) + (now.c * x[2]), (now.k * x[1]) + (now.c * x[3])};
+        l.f_slosh = l.f_slosh + f;
+        l.m_slosh = l.m_slosh + cross(V3{sm.x_s - mp.x_cg, 0.0, 0.0}, f);
+      }
+    }
     return l;
   }
 
@@ -438,9 +511,23 @@ class Vehicle6 {
   // What IMUs fixed to the vehicle would feel, in the sensor frame (X, Y, Z) = (body Y, body Z, body X): body rates in dps and specific force in g.
   void vehicle_true_imu(V3& gyro_dps, V3& accel_g) const {
     const Loads l = loads(s_, t_);
-    const V3 f = (l.f_thrust + l.f_aero) / s_.m / kG0;
-    gyro_dps = V3{s_.w.y, s_.w.z, s_.w.x} * kRad2Deg;
-    accel_g = V3{f.y, f.z, f.x};
+    V3 f = (l.f_thrust + l.f_aero) / s_.m / kG0;
+    if (!pods_.empty()) {  // lateral: over the rigid mass, with the springs' force; axial: over the whole mass (the sloshing mass rides on the tank)
+      const double m_rigid = s_.m - mass_props_state(s_, -1).slosh_mass;
+      f = V3{(l.f_thrust.x + l.f_aero.x) / s_.m, (l.f_thrust.y + l.f_aero.y + l.f_slosh.y) / m_rigid, (l.f_thrust.z + l.f_aero.z + l.f_slosh.z) / m_rigid} / kG0;
+    }
+    V3 w = s_.w;
+    V3 a = f;
+    if (g_.flex.enabled && active_[static_cast<std::size_t>(g_.flex.stage)]) {  // the structure bends where the IMUs are: its slope turns at eta' and its displacement accelerates at eta''
+      const FlexSpec& fx = g_.flex;
+      const double wf = 2.0 * kPi * fx.frequency_hz;
+      const double ddy = (l.flex_q.y - (2.0 * fx.damping * wf * fx.generalized_mass * s_.flex[2]) - (wf * wf * fx.generalized_mass * s_.flex[0])) / fx.generalized_mass;
+      const double ddz = (l.flex_q.z - (2.0 * fx.damping * wf * fx.generalized_mass * s_.flex[3]) - (wf * wf * fx.generalized_mass * s_.flex[1])) / fx.generalized_mass;
+      w = w + V3{0.0, -fx.slope_imu * s_.flex[3], fx.slope_imu * s_.flex[2]};
+      a = a + (V3{0.0, fx.phi_imu * ddy, fx.phi_imu * ddz} / kG0);
+    }
+    gyro_dps = V3{w.y, w.z, w.x} * kRad2Deg;
+    accel_g = V3{a.y, a.z, a.x};
   }
 
   [[nodiscard]] Loads current_loads() const { return loads(s_, t_); }
@@ -655,6 +742,45 @@ class Vehicle6 {
     return cur + d;
   }
 
+  // One axis of a gimbal servo with dynamics (a second-order servo and/or backlash; the plain first-order lag is `slew`): moves the servo (`pos`, `vel`) toward the command, then the engine
+  // (`out`) follows it through the play. The second-order servo is theta'' = wn^2 (target - theta) - 2 zeta wn theta', advanced by RK4 (exact to the step's order for the linear part), then the
+  // rate and the travel are limited (at a stop the velocity is lost).
+  void drive_servo(double& pos, double& vel, double& out, double cmd, double h, double limit, double rate, double lag) const {
+    const ActuatorSpec& ac = g_.actuator;
+    if (ac.order == 2) {
+      const double target = std::clamp(cmd, -limit, limit);
+      const double wn = 2.0 * kPi * ac.natural_hz;
+      const double zw = 2.0 * ac.damping * wn;
+      const auto acc = [&](double x, double v) { return (wn * wn * (target - x)) - (zw * v); };
+      const double k1x = vel;
+      const double k1v = acc(pos, vel);
+      const double k2x = vel + (0.5 * h * k1v);
+      const double k2v = acc(pos + (0.5 * h * k1x), vel + (0.5 * h * k1v));
+      const double k3x = vel + (0.5 * h * k2v);
+      const double k3v = acc(pos + (0.5 * h * k2x), vel + (0.5 * h * k2v));
+      const double k4x = vel + (h * k3v);
+      const double k4v = acc(pos + (h * k3x), vel + (h * k3v));
+      pos += std::clamp(h * (k1x + (2.0 * k2x) + (2.0 * k3x) + k4x) / 6.0, -rate * h, rate * h);  // (it cannot move faster than the rate limit in a step either)
+      vel += h * (k1v + (2.0 * k2v) + (2.0 * k3v) + k4v) / 6.0;
+      vel = std::clamp(vel, -rate, rate);
+      if (pos > limit) {
+        pos = limit;
+        vel = std::min(vel, 0.0);
+      } else if (pos < -limit) {
+        pos = -limit;
+        vel = std::max(vel, 0.0);
+      }
+    } else {
+      pos = slew(pos, cmd, h, limit, rate, lag);
+    }
+    const double half = 0.5 * ac.backlash_deg;
+    if (pos - out > half) {
+      out = pos - half;
+    } else if (out - pos > half) {
+      out = pos + half;
+    }
+  }
+
   [[nodiscard]] std::size_t lead_stage() const {  // the lowest stage still on the vehicle
     for (std::size_t s = 0; s < g_.stages.size(); ++s) {
       if (active_[s]) {
@@ -665,6 +791,29 @@ class Vehicle6 {
   }
 
   [[nodiscard]] double capacity(std::size_t s) const { return cap_[s]; }  // what the tanks of stage s hold when full
+
+  // The propellant stage `st` holds in state `s` (a vehicle of one stage has it from its total mass, as mass_props_state does).
+  [[nodiscard]] double prop_of(const State& s, std::size_t st) const {
+    return g_.stages.size() == 1U ? std::clamp(s.m - fixed_, 0.0, capacity(0U)) : s.prop[st];
+  }
+
+  // The liquid in tank `k` of stage `st` when the stage holds `total` kilograms (the same division as mass_props_of's: in proportion to the tanks' size, or the first tank listed last to empty).
+  [[nodiscard]] double tank_liquid(std::size_t st, std::size_t k, double total) const {
+    const StageSpec& sp = g_.stages[st];
+    const double have = std::clamp(total, 0.0, capacity(st));
+    if (!sp.sequential_drain) {
+      return capacity(st) > 0.0 ? have * (sp.tanks[k].propellant / capacity(st)) : 0.0;
+    }
+    double left = have;
+    double cap_after = capacity(st);
+    double tm = 0.0;
+    for (std::size_t j = 0; j <= k; ++j) {
+      cap_after -= sp.tanks[j].propellant;
+      tm = std::clamp(left - cap_after, 0.0, sp.tanks[j].propellant);
+      left -= tm;
+    }
+    return tm;
+  }
 
   // The mass of the stages and payloads still on the vehicle, with the given propellant in the stages that are on it.
   [[nodiscard]] double total_mass(const std::array<double, kMaxStages>& prop) const {
@@ -682,14 +831,14 @@ class Vehicle6 {
 
   // The mass properties of a state, with one more kilogram of propellant in stage `bump` if it is >= 0 (for the rate of change of the inertia). A vehicle of one stage takes its
   // propellant from the total mass (m - structure, as the reference vehicle always did, so that its flights are the same to the last bit); a stack takes it from `prop`.
-  [[nodiscard]] MassProps mass_props_state(const State& s, int bump) const {
+  [[nodiscard]] MassProps mass_props_state(const State& s, int bump, bool slosh_free = true) const {
     std::array<double, kMaxStages> prop = s.prop;
     if (g_.stages.size() == 1U) {
       prop[0] = std::clamp(s.m + (bump >= 0 ? 1.0 : 0.0) - fixed_, 0.0, capacity(0U));
     } else if (bump >= 0) {
       prop[static_cast<std::size_t>(bump)] += 1.0;
     }
-    return mass_props_of(prop);
+    return mass_props_of(prop, slosh_free);
   }
 
   // After a step, a vehicle of one stage has the propellant its total mass says (it keeps the mass as the integrated quantity); a stack keeps both.
@@ -707,12 +856,14 @@ class Vehicle6 {
 
   // The mass, centre of gravity and inertias of the vehicle with the given propellant in each stage: the sum over its parts (each stage's structure, each tank's propellant column,
   // each payload) with the parallel-axis terms, in the order stage by stage, so that the reference vehicle's sums are those of the single-vehicle model it replaced.
-  [[nodiscard]] MassProps mass_props_of(const std::array<double, kMaxStages>& prop) const {
+  // With `slosh_free`, the liquid that sloshes is taken out of the rigid body (what the dynamics use); without it all of it is part of the body (what the gain design uses).
+  [[nodiscard]] MassProps mass_props_of(const std::array<double, kMaxStages>& prop, bool slosh_free) const {
     struct Part {
       double m, x, it, ix;
     };
     Part parts[(kMaxStages * (1U + kMaxTanks)) + kMaxPayloads];  // filled up to n below; not zeroed (it is large and this is the hottest function)
     std::size_t n = 0;
+    double slosh_total = 0.0;
     for (std::size_t s = 0; s < g_.stages.size(); ++s) {
       if (!active_[s]) {
         continue;
@@ -737,7 +888,17 @@ class Vehicle6 {
         const double tr = tk.radius;
         const double area = kPi * tr * tr;
         const double hp = tm / (tk.density * area);
-        parts[n++] = Part{tm, tk.x_bottom + (0.5 * hp), tm * ((3.0 * tr * tr) + (hp * hp)) / 12.0, 0.5 * tm * tr * tr};
+        const double xc = tk.x_bottom + (0.5 * hp);
+        const double it = tm * ((3.0 * tr * tr) + (hp * hp)) / 12.0;
+        const SloshModel sm = slosh_free && tk.slosh.enabled ? slosh_model(tk, tm) : SloshModel{};
+        if (sm.m1 > 0.0) {  // the rest of the liquid: its mass, its centre and its inertia with the sloshing mass taken out of the column (parallel axes)
+          const double mr = tm - sm.m1;
+          const double xr = ((tm * xc) - (sm.m1 * sm.x_s)) / mr;
+          slosh_total += sm.m1;
+          parts[n++] = Part{mr, xr, it + (tm * (xc - xr) * (xc - xr)) - (sm.m1 * (sm.x_s - xr) * (sm.x_s - xr)), 0.5 * tm * tr * tr};
+        } else {
+          parts[n++] = Part{tm, xc, it, 0.5 * tm * tr * tr};
+        }
       }
     }
     for (std::size_t i = 0; i < g_.payloads.size(); ++i) {
@@ -753,6 +914,7 @@ class Vehicle6 {
       mx += parts[i].m * parts[i].x;
     }
     mp.mass = m;
+    mp.slosh_mass = slosh_total;
     mp.x_cg = m > 0.0 ? mx / m : 0.0;
     for (std::size_t i = 0; i < n; ++i) {
       mp.i_t = mp.i_t + parts[i].it + (parts[i].m * (parts[i].x - mp.x_cg) * (parts[i].x - mp.x_cg));
@@ -795,6 +957,15 @@ class Vehicle6 {
         t_sep_[s] = t_;
         refresh_fixed();
         s_.m = total_mass(s_.prop);
+        if (st.separation_dv_ms != 0.0) {  // the springs push the rest of the vehicle forward
+          s_.v = s_.v + rotate(s_.q, V3{st.separation_dv_ms, 0.0, 0.0});
+        }
+        if (st.tipoff_pitch_dps != 0.0 || st.tipoff_yaw_dps != 0.0 || st.tipoff_roll_dps != 0.0) {  // and the release leaves it turning (roll about X, yaw about Y, pitch about Z)
+          s_.w = s_.w + (V3{st.tipoff_roll_dps, st.tipoff_yaw_dps, st.tipoff_pitch_dps} * kDeg2Rad);
+          if (ideal_roll_) {
+            s_.w.x = 0.0;  // a roll that is held ideally has no roll rate to hand on
+          }
+        }
       }
     }
     for (std::size_t i = 0; i < g_.payloads.size(); ++i) {
@@ -1080,17 +1251,24 @@ class Vehicle6 {
     V3 w{};
     double m = 0.0;
     std::array<double, kMaxStages> prop{};
+    double roll = 0.0;
+    std::array<std::array<double, 4>, kMaxSlosh> slosh{};
+    std::array<double, 4> flex{};
   };
 
   [[nodiscard]] Deriv deriv(const State& s, double t) const {
     Deriv d;
     const Loads l = loads(s, t);
-    const V3 f_inertial = rotate(s.q, l.f_thrust + l.f_aero);
+    const MassProps mp = mass_props_state(s, -1);
+    const V3 f_body = pods_.empty() ? l.f_thrust + l.f_aero : l.f_thrust + l.f_aero + l.f_slosh;
+    // The sloshing mass is not in the rigid body, so a lateral force accelerates only the rigid part; along the axis the sloshing mass rides on the tank and presses on it with its
+    // weight (it is held up by the liquid below), so the whole vehicle accelerates: the axial acceleration is the force over the whole mass.
+    const double m_rigid = s.m - mp.slosh_mass;
+    const V3 a_body = pods_.empty() ? V3{} : V3{f_body.x / s.m, f_body.y / m_rigid, f_body.z / m_rigid};
     const double rn = norm(s.r);
     d.r = s.v;
-    d.v = (f_inertial / s.m) + (pl_.j2 != 0.0 ? gravity(s.r) : (s.r * (-p_.gravity_scale * pl_.mu / (rn * rn * rn))));
+    d.v = (pods_.empty() ? rotate(s.q, f_body) / s.m : rotate(s.q, a_body)) + (pl_.j2 != 0.0 ? gravity(s.r) : (s.r * (-p_.gravity_scale * pl_.mu / (rn * rn * rn))));
     d.q = q_dot(s.q, s.w);
-    const MassProps mp = mass_props_state(s, -1);
     // dI/dt = sum over the stages that burn of (dI/d propellant of that stage) * (its mass flow)
     double dit = 0.0;
     double dix = 0.0;
@@ -1103,11 +1281,32 @@ class Vehicle6 {
     }
     const V3 iw{mp.i_x * s.w.x, mp.i_t * s.w.y, mp.i_t * s.w.z};
     const V3 gyro = g_.wheels.enabled ? cross(s.w, iw + V3{0.0, s.wheel_h.y, s.wheel_h.z}) : cross(s.w, iw);  // the wheels' momentum rides along
-    const V3 m_total = l.m_thrust + l.m_aero;
+    const V3 m_total = pods_.empty() ? l.m_thrust + l.m_aero : l.m_thrust + l.m_aero + l.m_slosh;
     d.w = V3{(m_total.x - gyro.x - (dix * s.w.x)) / mp.i_x, (m_total.y - gyro.y - (dit * s.w.y)) / mp.i_t,
              (m_total.z - gyro.z - (dit * s.w.z)) / mp.i_t};
-    if (p_.ideal_roll_control) {
+    if (ideal_roll_) {
       d.w.x = 0.0;
+    }
+    d.roll = s.w.x;
+    if (g_.flex.enabled && active_[static_cast<std::size_t>(g_.flex.stage)]) {  // the bending mode: eta'' = (Q - 2 zeta omega M eta' - omega^2 M eta) / M, in each plane
+      const double wf = 2.0 * kPi * g_.flex.frequency_hz;
+      const double mg = g_.flex.generalized_mass;
+      d.flex = {s.flex[2], s.flex[3], (l.flex_q.y - (2.0 * g_.flex.damping * wf * mg * s.flex[2]) - (wf * wf * mg * s.flex[0])) / mg,
+                (l.flex_q.z - (2.0 * g_.flex.damping * wf * mg * s.flex[3]) - (wf * wf * mg * s.flex[1])) / mg};
+    }
+    if (!pods_.empty()) {
+      // Each sloshing mass moves against its spring and the acceleration of the point it hangs at (the vehicle's specific force there, with the turning of the vehicle): x'' = -F / m1 - a_point.
+      const V3 a_spec = a_body;  // (its lateral part is over the rigid mass, as above)
+      for (std::size_t i = 0; i < pods_.size(); ++i) {
+        const Loads::SloshNow& now = l.pod[i];
+        if (!(now.m1 > 0.0)) {
+          continue;
+        }
+        const V3 r{now.x_s - mp.x_cg, 0.0, 0.0};
+        const V3 a_pt = a_spec + cross(d.w, r) + cross(s.w, cross(s.w, r));
+        const std::array<double, 4>& x = s.slosh[i];
+        d.slosh[i] = {x[2], x[3], (-((now.k * x[0]) + (now.c * x[2])) / now.m1) - a_pt.y, (-((now.k * x[1]) + (now.c * x[3])) / now.m1) - a_pt.z};
+      }
     }
     d.m = -l.mdot;
     for (std::size_t st = 0; st < kMaxStages; ++st) {
@@ -1128,6 +1327,15 @@ class Vehicle6 {
     }
     o.prop_set = true;
     o.wheel_h = s.wheel_h;
+    o.roll = s.roll + (d.roll * h);
+    for (std::size_t j = 0; j < 4U; ++j) {
+      o.flex[j] = s.flex[j] + (d.flex[j] * h);
+    }
+    for (std::size_t i = 0; i < kMaxSlosh; ++i) {
+      for (std::size_t j = 0; j < 4U; ++j) {
+        o.slosh[i][j] = s.slosh[i][j] + (d.slosh[i][j] * h);
+      }
+    }
     return o;
   }
 
@@ -1142,12 +1350,21 @@ class Vehicle6 {
     k.q = (k1.q + (k2.q * 2.0) + (k3.q * 2.0) + k4.q) * (1.0 / 6.0);
     k.w = (k1.w + (k2.w * 2.0) + (k3.w * 2.0) + k4.w) / 6.0;
     k.m = (k1.m + (2.0 * k2.m) + (2.0 * k3.m) + k4.m) / 6.0;
+    k.roll = (k1.roll + (2.0 * k2.roll) + (2.0 * k3.roll) + k4.roll) / 6.0;
+    for (std::size_t j = 0; j < 4U; ++j) {
+      k.flex[j] = (k1.flex[j] + (2.0 * k2.flex[j]) + (2.0 * k3.flex[j]) + k4.flex[j]) / 6.0;
+    }
+    for (std::size_t i = 0; i < pods_.size(); ++i) {
+      for (std::size_t j = 0; j < 4U; ++j) {
+        k.slosh[i][j] = (k1.slosh[i][j] + (2.0 * k2.slosh[i][j]) + (2.0 * k3.slosh[i][j]) + k4.slosh[i][j]) / 6.0;
+      }
+    }
     for (std::size_t i = 0; i < kMaxStages; ++i) {
       k.prop[i] = (k1.prop[i] + (2.0 * k2.prop[i]) + (2.0 * k3.prop[i]) + k4.prop[i]) / 6.0;
     }
     s_ = advanced(s_, k, h);
     s_.q = normalized(s_.q);
-    if (p_.ideal_roll_control) {
+    if (ideal_roll_) {
       s_.w.x = 0.0;
     }
     if (g_.stages.size() == 1U) {
@@ -1178,8 +1395,19 @@ class Vehicle6 {
   bool shaped_ = false;  // the aerodynamics follow the shape (or a table), not the reference model's fixed numbers
   double fixed_ = 0.0;  // the mass that is not propellant
   std::array<double, kMaxStages> cap_{};
-  std::array<double, kMaxStages> gimbal_p_{};
+  std::array<double, kMaxStages> gimbal_p_{};  // the gimbal angle of each stage's engines (after any backlash)
   std::array<double, kMaxStages> gimbal_y_{};
+  std::array<double, kMaxStages> servo_p_{};   // the servo's own position and velocity when it has dynamics (a second-order servo or backlash)
+  std::array<double, kMaxStages> servo_y_{};
+  std::array<double, kMaxStages> servo_pv_{};
+  std::array<double, kMaxStages> servo_yv_{};
+  struct Pod {  // a tank that sloshes: which one
+    std::size_t stage;
+    std::size_t tank;
+  };
+  std::vector<Pod> pods_;
+  bool servo_dynamics_ = false;
+  bool ideal_roll_ = false;
   std::array<bool, kMaxStages> active_{};
   std::array<double, kMaxStages> t_ign_{};
   std::array<double, kMaxStages> t_burnout_{};

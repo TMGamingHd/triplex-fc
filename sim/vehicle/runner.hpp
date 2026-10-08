@@ -26,6 +26,7 @@ struct RunnerConfig {
   bool vehicle_true = false;       // the sensors feel the vehicle itself (rates and specific force) instead of the platform's tilt and gravity
   uint32_t status_every = 10U;     // frames between the state, telemetry and flags frames (10 = 10 Hz)
   bool start_held = false;         // the vehicle stands on the pad (held, at rest) until release(); false: it is released at the first frame, as before
+  const FlightTables* tables = nullptr;  // tables already designed (for `design` and `plan`): used instead of designing them again (a sweep over one design, or a test)
 };
 
 struct SimFrames {
@@ -37,7 +38,9 @@ struct SimFrames {
 class SimRunner {
  public:
   explicit SimRunner(const RunnerConfig& cfg = RunnerConfig{})
-      : cfg_(cfg), tables_(flight_tables(cfg.design, cfg.plan)), vehicle_(cfg.params, cfg.scenario) {}
+      : cfg_(cfg), tables_(cfg.tables != nullptr ? *cfg.tables : flight_tables(cfg.design, cfg.plan)), vehicle_(cfg.params, cfg.scenario) {}
+
+  [[nodiscard]] const FlightTables& tables() const { return tables_; }
 
   // The first SYNC heard carries frame `k0`. Bring the world to the start of that frame (the engines have been running since frame 0, with the gimbal neutral)
   // and return the frames for it. (They reach a node late in frame k0, so a node misses frame k0's sample: that is the price of joining a run in progress.)

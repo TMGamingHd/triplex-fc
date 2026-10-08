@@ -1,26 +1,28 @@
-// A generic two-stage medium launcher, invented for the simulator (it is not any real vehicle): nine engines on the first stage, one vacuum engine on the second, a fairing and a
-// payload. It exists to show that the simulator takes a vehicle that is nothing like the reference one. docs/design/VEHICLE_SPEC.md says what every field means.
-// Fly it with the vehicle's own sensors, not the platform's: it pitches past 45 degrees, the platform's travel (tfc_fly ... --sensors vehicle --no-accel). With the accelerometer off the flight
-// computers' attitude estimate drifts: the gyro frames carry 1/32 degree per second per count (it was 0.125 until 7 Oct 2026, when the attitude error grew to 7.7 degrees over the 400 s; it is 0.70 degree
-// now, docs/design/SIM_FIDELITY.md section 3.4, ADR-032). b_min keeps the gains finite through the coast between the stages, when the vehicle has no thrust to steer with.
+// The two-stage launcher of two_stage_launcher.json with the dynamics of DYNAMICS.md switched on: a second-order gimbal servo with backlash, jet damping, a roll controller, sloshing in
+// every tank, one bending mode of the first stage, and the push and tip-off of the stage separation. EVERY NUMBER OF THE DYNAMICS HERE IS AN ASSUMPTION, none is measured or taken from a
+// vehicle: it shows what the simulator does with them and what the flight software makes of the result. Fly it as the other: tfc_fly vehicles/launcher_dynamics.json --sensors vehicle --no-accel.
 {
-  "name": "two-stage launcher",
-  "description": "Two stages, 563 t at lift-off, 9 + 1 engines, kerosene and liquid oxygen in separate tanks, throttle bucket through max-Q, hot-staging delays, a fairing.",
-  "vehicle": {"gimbal_limit_deg": 5, "gimbal_rate_dps": 20, "gimbal_lag_s": 0.05},
+  "name": "two-stage launcher with dynamics",
+  "description": "The two-stage launcher with a second-order servo, backlash, jet damping, a roll controller, slosh, one bending mode and a separation that pushes and twists (all assumed numbers).",
+  "vehicle": {"gimbal_limit_deg": 5, "gimbal_rate_dps": 20, "ideal_roll_control": false},
+  "actuator": {"order": 2, "natural_hz": 6, "damping": 0.6, "backlash_deg": 0.1},
+  "jet_damping": true,
+  "roll_control": {"stage": 1, "torque_max_nm": 60000, "kp_nm_per_rad": 100000, "kd_nm_s_per_rad": 500000},
+  "flex": {"stage": 0, "frequency_hz": 2.5, "damping": 0.005, "generalized_mass_kg": 40000, "phi_engine": 1.0, "slope_engine_per_m": 0.05, "phi_imu": 0.3, "slope_imu_per_m": -0.04},
   "aero": {"diameter_m": 3.7},   // the aerodynamics follow the shape (the stages' sections and the fairing's); diameter_m is the reference model's and is not used
   "stages": [
     {"name": "first", "dry_mass_kg": 22000, "x_start_m": 0, "length_m": 46, "radius_m": 1.85, "inertia_factor": 0.6, "x_cg_dry_m": 20,
      "tanks": [
-       {"propellant_kg": 130000, "x_bottom_m": 2, "radius_m": 1.8, "density_kg_m3": 810},     // kerosene, low
-       {"propellant_kg": 280000, "x_bottom_m": 18.5, "radius_m": 1.8, "density_kg_m3": 1140}  // liquid oxygen, above it
+       {"propellant_kg": 130000, "x_bottom_m": 2, "radius_m": 1.8, "density_kg_m3": 810, "slosh": {"damping": 0.03}},     // kerosene, low
+       {"propellant_kg": 280000, "x_bottom_m": 18.5, "radius_m": 1.8, "density_kg_m3": 1140, "slosh": {"damping": 0.03}}  // liquid oxygen, above it
      ],
      "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 46, "d_aft_m": 3.7, "d_fore_m": 3.7}],
-     "separate_on_burnout": true, "separate_delay_s": 2.0,
+     "separate_on_burnout": true, "separate_delay_s": 2.0, "separation_dv_ms": 1.5, "tipoff_pitch_dps": 0.2, "tipoff_yaw_dps": -0.1, "tipoff_roll_dps": 0.3,
      "throttle": [[0, 1.0], [55, 1.0], [65, 0.7], [85, 0.7], [95, 1.0]]},   // thrust against time since ignition: down through max-Q
     {"name": "second", "dry_mass_kg": 4000, "x_start_m": 46, "length_m": 14, "radius_m": 1.85, "inertia_factor": 0.6, "x_cg_dry_m": 52,
      "tanks": [
-       {"propellant_kg": 30000, "x_bottom_m": 47, "radius_m": 1.8, "density_kg_m3": 810},
-       {"propellant_kg": 80000, "x_bottom_m": 51, "radius_m": 1.8, "density_kg_m3": 1140}
+       {"propellant_kg": 30000, "x_bottom_m": 47, "radius_m": 1.8, "density_kg_m3": 810, "slosh": {"damping": 0.03}},
+       {"propellant_kg": 80000, "x_bottom_m": 51, "radius_m": 1.8, "density_kg_m3": 1140, "slosh": {"damping": 0.03}}
      ],
      "sections": [{"kind": "tube", "x_start_m": 46, "length_m": 14, "d_aft_m": 3.7, "d_fore_m": 3.7}],
      "ignite_after_sep_of": 0, "ignite_delay_s": 4.0, "gimbal_limit_deg": 5, "gimbal_rate_dps": 20}

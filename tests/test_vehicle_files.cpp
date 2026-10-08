@@ -284,6 +284,51 @@ TFC_TEST(example_the_two_stage_launcher_flies_through_throttling_staging_and_the
   CHECK(f.trace.back().altitude > 150000.0 && f.trace.back().speed > 2000.0);
 }
 
+TFC_TEST(example_the_launcher_with_dynamics_flies_through_staging_with_a_servo_that_rings_slosh_a_bending_mode_and_a_separation_that_twists) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(sim::load_vehicle_file(repo_root() + "vehicles/launcher_dynamics.json", v, errors) && errors.empty());
+  const sim::VehicleSpec& g = v.params.spec;
+  CHECK(g.actuator.order == 2 && g.actuator.backlash_deg > 0.0 && g.jet_damping && g.roll.enabled && g.flex.enabled && g.stages[0].tanks[0].slosh.enabled && g.stages[0].tipoff_roll_dps != 0.0);
+  const Flown f = fly_example("launcher_dynamics.json", 22000U, true);  // 220 s: past the separation at 166 s
+  CHECK(f.loaded && f.r.finite && !f.r.crashed && f.r.safe_frames == 0U && f.r.liftoff_frame < 100U);
+  CHECK(f.r.max_deg_settled < 4.0);
+  CHECK(f.trace.back().altitude > 150000.0 && f.trace.back().speed > 2000.0);
+}
+
+// The bending mode and the flight software: the flight computers have no notch, and the gyros of the vehicle read the slope of the structure on top of its rate. With the slope at the IMU of
+// the example's (assumed) 0.04 per metre the loop does not notice the mode (0.08 degree); with 0.5 per metre of the other sign it rings (2.2 degrees in 30 s, and 24 over the 400 s); with 1 per metre of the first sign it is lost. Which sign is the bad one
+// is the model's output, not a rule: it depends on where the engines and the IMUs are on the mode shape. The numbers are the example's assumptions, not any vehicle's.
+TFC_TEST(example_the_bending_mode_can_break_the_loop_the_flight_software_has_no_filter_for_it) {
+  sim::VehicleFile base;
+  std::vector<std::string> errors;
+  CHECK(sim::load_vehicle_file(repo_root() + "vehicles/launcher_dynamics.json", base, errors) && errors.empty());
+  const sim::FlightTables tables = sim::flight_tables(base.params, base.plan);  // designed once, on the example: the vehicles flown below differ from it in one number
+  const auto fly = [&](double slope_imu) {
+    Flown f;
+    f.loaded = true;
+    sim::Params flown = base.params;
+    flown.spec.flex.slope_imu = slope_imu;
+    sim::Loop lp;
+    lp.cfg.params = flown;
+    lp.cfg.design = base.params;
+    lp.cfg.scenario = base.scenario;
+    lp.cfg.plan = base.plan;
+    lp.cfg.tables = &tables;
+    lp.cfg.vehicle_true = true;
+    lp.estimator.use_accel = false;
+    lp.frames = 3000U;  // 30 s: the loop that is going to ring or be lost has done so
+    f.r = sim::run(lp);
+    return f;
+  };
+  const Flown quiet = fly(-0.04);
+  const Flown rings = fly(0.5);
+  const Flown lost = fly(-1.0);
+  CHECK(quiet.loaded && quiet.r.finite && quiet.r.max_deg_settled < 1.0);
+  CHECK(rings.r.max_deg_settled > 1.5);
+  CHECK(lost.r.max_deg_settled > 20.0 || !lost.r.finite || lost.r.safe_frames > 0U);
+}
+
 TFC_TEST(example_the_sounding_rocket_steers_with_fins_and_no_gimbal) {
   const Flown f = fly_example("sounding_rocket.json", 6000U, false);
   CHECK(f.loaded && f.r.finite && !f.r.crashed && f.r.safe_frames == 0U && f.r.liftoff_frame < 50U);

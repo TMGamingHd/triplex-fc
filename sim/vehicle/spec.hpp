@@ -7,6 +7,7 @@
 // it from its own simple fields); a vehicle with any number of stages, tanks and engines is another, read from a file (spec_io.hpp).
 #pragma once
 #include <array>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,15 @@ constexpr unsigned kMaxEngines = 64U;   // a cluster of 33 engines is a vehicle 
 constexpr unsigned kMaxTanks = 8U;      // per stage
 constexpr unsigned kMaxPayloads = 4U;
 constexpr unsigned kMaxFins = 4U;       // sets of fins (a set is a cruciform of four)
+constexpr unsigned kMaxSlosh = 8U;      // tanks that slosh, on the whole vehicle
+
+// The first sloshing mode of a tank (slosh.hpp, docs/design/DYNAMICS.md): off by default (the liquid is part of the rigid body, as always).
+struct SloshSpec {
+  bool enabled = false;
+  double damping = 0.02;          // the damping ratio of the sloshing (a baffled tank has a few percent: an assumption)
+  double mass_scale = 1.0;        // a dispersion: the sloshing mass times this
+  double frequency_scale = 1.0;   // and its frequency
+};
 
 // A propellant tank: a vertical cylinder of radius `radius` whose bottom is at `x_bottom`; the propellant sits at the bottom of it (the vehicle accelerates forward, so it settles aft).
 struct TankSpec {
@@ -26,6 +36,7 @@ struct TankSpec {
   double x_bottom = 0.0;    // m
   double radius = 0.9;      // m
   double density = 900.0;   // kg/m^3 (kerosene 800, liquid oxygen 1140, liquid hydrogen 71, a solid propellant 1750)
+  SloshSpec slosh;
 };
 
 // The outer shape of the vehicle, for the aerodynamics that follow it (aero.hpp, docs/design/AERODYNAMICS.md). A stage lists the pieces of its outer body and its fixed fins; when the stage separates they go.
@@ -101,6 +112,12 @@ struct StageSpec {
   std::vector<FinPlanform> stabilizers;
   // Throttle: the fraction of rated thrust against the time since this stage ignited, linear between the points, held after the last. Empty: full thrust.
   std::vector<std::array<double, 2>> throttle;
+  // What the separation of this stage does to the vehicle that stays: a push forward (springs or a pressure, m/s added along the long axis) and the angular rates the release leaves it
+  // with (its tip-off, deg/s about the body axes: pitch about Z, yaw about Y, roll about X). All zero: a clean separation, as before.
+  double separation_dv_ms = 0.0;
+  double tipoff_pitch_dps = 0.0;
+  double tipoff_yaw_dps = 0.0;
+  double tipoff_roll_dps = 0.0;
 };
 
 // An engine that fires when the pitch or yaw command asks for that direction, in proportion to it: a reaction-control thruster. PitchPlus fires for a positive pitch command (one that
@@ -149,6 +166,43 @@ struct WheelSpec {
   double torque_max = 0.0;      // N m
   double momentum_max = 0.0;    // N m s
   double full_cmd_deg = 1.0;    // the command at which the torque is the maximum
+};
+
+// The servo that moves the gimballed engines (docs/design/DYNAMICS.md). Order 1 is the first-order lag the vehicle always had (the stage's or the vehicle's `gimbal_lag_s`), then the rate limit;
+// order 2 is a second-order servo, theta'' = wn^2 (command - theta) - 2 zeta wn theta', which overshoots and rings as a real one does, then the rate and travel limits. Backlash is the play
+// between the servo and the engine (either order): the engine does not move until the servo has taken up half of it on that side.
+struct ActuatorSpec {
+  int order = 1;
+  double natural_hz = 10.0;    // order 2: the undamped natural frequency
+  double damping = 0.7;        // order 2: the damping ratio
+  double backlash_deg = 0.0;   // total play
+};
+
+// A roll controller of the vehicle's own, not the flight computers' (which steer two tilt planes): reaction-control jets or the like give a torque about the long axis,
+// -kp x (the roll angle turned through since T-zero) - kd x (the roll rate), limited to torque_max, while stage `stage` is on the vehicle. Without it the vehicle either holds its roll
+// ideally (the reference model's `ideal_roll_control`) or turns freely about its long axis.
+struct RollSpec {
+  bool enabled = false;
+  int stage = 0;
+  double torque_max = 0.0;  // N m
+  double kp = 0.0;          // N m per radian
+  double kd = 0.0;          // N m s per radian
+};
+
+// One bending mode of the structure (docs/design/DYNAMICS.md), in each of the two lateral planes: a modal coordinate eta with the frequency, the damping and the generalised mass given, and the
+// mode shape reduced to what couples it to the rest: its displacement `phi` and its slope `sigma` (per metre) where the engines are and where the IMUs are. The lateral thrust drives it
+// (generalised force phi_engine x the lateral thrust), the thrust follows the slope of the structure at the engines (the lateral force T sigma_engine eta), and a gyro on the vehicle reads the slope's
+// rate on top of the body's (sigma_imu eta') and an accelerometer the structure's acceleration there (phi_imu eta''). The mode exists while `stage` is on the vehicle.
+struct FlexSpec {
+  bool enabled = false;
+  int stage = 0;
+  double frequency_hz = 0.0;
+  double damping = 0.005;          // the damping ratio (a structure's: half a percent is typical; an assumption)
+  double generalized_mass = 0.0;   // kg
+  double phi_engine = 1.0;         // the mode shape's displacement at the engines
+  double slope_engine = 0.0;       // and its slope there, per metre
+  double phi_imu = 0.0;            // the displacement at the IMUs
+  double slope_imu = 0.0;          // and the slope, per metre
 };
 
 struct PayloadSpec {
@@ -224,6 +278,10 @@ struct VehicleSpec {
   WheelSpec wheels;
   AeroSpec aero;
   PlanetSpec planet;
+  ActuatorSpec actuator;
+  RollSpec roll;
+  FlexSpec flex;
+  bool jet_damping = false;  // the moment of the exhaust leaving a turning vehicle: -mdot x r x (omega x r) for each engine (a damping of the pitch and yaw rates)
   [[nodiscard]] bool empty() const { return stages.empty(); }
 };
 
@@ -259,6 +317,7 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
   if (v.payloads.size() > kMaxPayloads) {
     fail("payloads: at most " + std::to_string(kMaxPayloads) + " are supported");
   }
+  unsigned sloshing = 0U;
   for (std::size_t s = 0; s < v.stages.size(); ++s) {
     const StageSpec& st = v.stages[s];
     const std::string at = "stages[" + std::to_string(s) + "]";
@@ -286,6 +345,15 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
       if (!(t.radius > 0.0) || !(t.density > 0.0)) {
         fail(tk + ".radius and .density must be positive");
       }
+      if (t.slosh.enabled) {
+        if (!(t.slosh.damping >= 0.0) || !(t.slosh.mass_scale > 0.0) || !(t.slosh.frequency_scale > 0.0)) {
+          fail(tk + ".slosh: damping must not be negative and mass_scale and frequency_scale must be positive");
+        }
+        if (!(t.propellant > 0.0)) {
+          fail(tk + ".slosh: a tank with no propellant has nothing to slosh");
+        }
+        ++sloshing;
+      }
       if (t.propellant > 0.0 && t.radius > 0.0 && t.density > 0.0) {
         const double height = t.propellant / (t.density * kPi * t.radius * t.radius);
         if (t.x_bottom + height > st.x_start + st.length + 1e-9) {
@@ -309,6 +377,9 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
     if (st.ignite_delay_s < 0.0 || st.separate_delay_s < 0.0) {
       fail(at + ": delays must not be negative");
     }
+    if (!std::isfinite(st.separation_dv_ms) || !std::isfinite(st.tipoff_pitch_dps) || !std::isfinite(st.tipoff_yaw_dps) || !std::isfinite(st.tipoff_roll_dps)) {
+      fail(at + ": the separation push and tip-off rates must be numbers");
+    }
     double last = -1.0;
     for (const std::array<double, 2>& p : st.throttle) {
       if (p[0] < last || p[1] < 0.0 || p[1] > 1.0) {
@@ -317,6 +388,9 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
       }
       last = p[0];
     }
+  }
+  if (sloshing > kMaxSlosh) {
+    fail("tanks: at most " + std::to_string(kMaxSlosh) + " tanks can slosh");
   }
   for (std::size_t e = 0; e < v.engines.size(); ++e) {
     const EngineSpec& en = v.engines[e];
@@ -404,6 +478,37 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
     }
     if (!(fin.area_each > 0.0) || !(fin.lift_slope > 0.0) || !(fin.limit_deg > 0.0) || !(fin.rate_dps > 0.0) || fin.lag_s < 0.0 || fin.gain == 0.0) {
       fail(at + ": area_each, lift_slope, limit_deg and rate_dps must be positive, lag_s not negative and gain not zero");
+    }
+  }
+  {
+    const ActuatorSpec& ac = v.actuator;
+    if (ac.order != 1 && ac.order != 2) {
+      fail("actuator.order must be 1 or 2");
+    }
+    if (ac.order == 2 && (!(ac.natural_hz > 0.0) || !(ac.damping > 0.0))) {
+      fail("actuator: a second-order servo needs natural_hz and damping above zero");
+    }
+    if (!(ac.backlash_deg >= 0.0)) {
+      fail("actuator.backlash_deg must not be negative");
+    }
+  }
+  if (v.flex.enabled) {
+    if (v.flex.stage < 0 || v.flex.stage >= static_cast<int>(v.stages.size())) {
+      fail("flex.stage must name a stage");
+    }
+    if (!(v.flex.frequency_hz > 0.0) || !(v.flex.generalized_mass > 0.0) || !(v.flex.damping >= 0.0)) {
+      fail("flex: frequency_hz and generalized_mass_kg must be positive and damping not negative");
+    }
+    if (!std::isfinite(v.flex.phi_engine) || !std::isfinite(v.flex.slope_engine) || !std::isfinite(v.flex.phi_imu) || !std::isfinite(v.flex.slope_imu)) {
+      fail("flex: the mode shape's values must be numbers");
+    }
+  }
+  if (v.roll.enabled) {
+    if (v.roll.stage < 0 || v.roll.stage >= static_cast<int>(v.stages.size())) {
+      fail("roll_control.stage must name a stage");
+    }
+    if (!(v.roll.torque_max > 0.0) || !(v.roll.kp >= 0.0) || !(v.roll.kd >= 0.0)) {
+      fail("roll_control: torque_max_nm must be positive and the gains not negative");
     }
   }
   if (v.wheels.enabled) {

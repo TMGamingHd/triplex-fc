@@ -96,7 +96,7 @@ TFC_TEST(environment_a_vehicle_held_on_the_pad_goes_round_the_pole_with_the_plan
   sim::Params p = body(preset("earth"));
   p.ground_contact = true;
   p.gravity_scale = 1.0;
-  p.spec.stages[0].tanks.push_back(sim::TankSpec{200.0, 0.5, 0.5, 1000.0});
+  p.spec.stages[0].tanks.push_back(sim::TankSpec{200.0, 0.5, 0.5, 1000.0, {}});
   sim::EngineSpec e;
   e.thrust_vac = 5000.0;  // far less than the weight: it cannot lift off
   e.exit_area = 0.0;
@@ -133,7 +133,7 @@ TFC_TEST(environment_on_the_equator_a_lift_off_needs_less_than_the_weight_by_the
     p.ground_contact = true;
     p.gravity_scale = 1.0;
     p.spec.planet.j2 = 0.0;  // (J2 changes the weight at the equator by 0.2 %: out of the way of the threshold)
-    p.spec.stages[0].tanks.push_back(sim::TankSpec{200.0, 0.5, 0.5, 1000.0});
+    p.spec.stages[0].tanks.push_back(sim::TankSpec{200.0, 0.5, 0.5, 1000.0, {}});
     sim::EngineSpec e;
     e.thrust_vac = thrust_over_weight * 1200.0 * g;
     e.isp_vac = 1.0e6;  // (burning no propellant to speak of: the weight stays the weight)
@@ -164,7 +164,7 @@ TFC_TEST(environment_a_vehicle_held_on_a_turning_pad_is_never_released_by_roundi
       sim::Params p = body(preset("earth"));
       p.ground_contact = true;
       p.gravity_scale = 1.0;
-      p.spec.stages[0].tanks.push_back(sim::TankSpec{200.0, 0.5, 0.5, 1000.0});
+      p.spec.stages[0].tanks.push_back(sim::TankSpec{200.0, 0.5, 0.5, 1000.0, {}});
       sim::EngineSpec e;
       e.thrust_vac = 5000.0;
       e.exit_area = 0.0;
@@ -248,7 +248,7 @@ TFC_TEST(environment_an_exponential_atmosphere_follows_its_definition_and_none_l
   sim::PlanetSpec none = preset("reference");
   none.atmosphere = sim::AtmosphereKind::None;
   sim::Params p = body(none);
-  p.spec.stages[0].tanks.push_back(sim::TankSpec{100.0, 0.5, 0.5, 1000.0});
+  p.spec.stages[0].tanks.push_back(sim::TankSpec{100.0, 0.5, 0.5, 1000.0, {}});
   sim::EngineSpec e;
   e.thrust_vac = 20000.0;
   e.exit_area = 1.0;
@@ -361,7 +361,7 @@ TFC_TEST(environment_on_the_moon_the_hover_threshold_is_the_weight_there_and_an_
     sim::Params p = body(moon);
     p.ground_contact = true;
     p.gravity_scale = 1.0;
-    p.spec.stages[0].tanks.push_back(sim::TankSpec{200.0, 0.5, 0.5, 1000.0});
+    p.spec.stages[0].tanks.push_back(sim::TankSpec{200.0, 0.5, 0.5, 1000.0, {}});
     sim::EngineSpec e;
     e.thrust_vac = thrust_over_weight * 1200.0 * g;  // the vehicle weighs 1200 kg
     e.exit_area = 0.0;

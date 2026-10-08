@@ -262,7 +262,7 @@ TFC_TEST(general_a_two_stage_vehicle_in_vacuum_gains_the_speed_of_the_rocket_equ
   s1.length = 6.0;
   s1.radius = 0.9;
   s1.x_cg_dry = 3.0;
-  s1.tanks.push_back(sim::TankSpec{8000.0, 0.5, 0.9, 900.0});
+  s1.tanks.push_back(sim::TankSpec{8000.0, 0.5, 0.9, 900.0, {}});
   s1.separate_on_burnout = true;
   s1.separate_delay_s = 1.0;
   sim::StageSpec s2;
@@ -272,7 +272,7 @@ TFC_TEST(general_a_two_stage_vehicle_in_vacuum_gains_the_speed_of_the_rocket_equ
   s2.length = 4.0;
   s2.radius = 0.9;
   s2.x_cg_dry = 8.0;
-  s2.tanks.push_back(sim::TankSpec{2000.0, 6.5, 0.9, 900.0});
+  s2.tanks.push_back(sim::TankSpec{2000.0, 6.5, 0.9, 900.0, {}});
   s2.ignite_after_sep_of = 0;
   s2.ignite_delay_s = 2.0;
   p.spec.stages = {s1, s2};
@@ -538,7 +538,7 @@ TFC_TEST(effectors_a_canard_needs_a_negative_gain_and_the_control_effectiveness_
 
 TFC_TEST(effectors_thrusters_fire_in_proportion_to_the_command_make_the_torque_of_their_position_and_burn_propellant) {
   sim::Params p = bare_body();
-  p.spec.stages[0].tanks.push_back(sim::TankSpec{20.0, 0.5, 0.4, 1000.0});  // 20 kg of hydrazine
+  p.spec.stages[0].tanks.push_back(sim::TankSpec{20.0, 0.5, 0.4, 1000.0, {}});  // 20 kg of hydrazine
   sim::EngineSpec up = engine_at(0.0, 0.0, 0.0, 100.0);  // a thruster at the aft end firing toward -Y: a positive pitch command turns the nose toward +Y
   up.gimbal = false;
   up.dir = sim::V3{0.0, -1.0, 0.0};
@@ -593,7 +593,7 @@ TFC_TEST(effectors_thrusters_fire_in_proportion_to_the_command_make_the_torque_o
 
 TFC_TEST(effectors_a_thruster_wired_the_wrong_way_makes_the_control_effectiveness_negative) {
   sim::Params p = bare_body();
-  p.spec.stages[0].tanks.push_back(sim::TankSpec{20.0, 0.5, 0.4, 1000.0});
+  p.spec.stages[0].tanks.push_back(sim::TankSpec{20.0, 0.5, 0.4, 1000.0, {}});
   sim::EngineSpec th = engine_at(0.0, 0.0, 0.0, 100.0);
   th.gimbal = false;
   th.dir = sim::V3{0.0, 1.0, 0.0};  // an aft thruster pushing toward +Y turns the nose toward -Y: the opposite of what pitch-plus asks
@@ -664,7 +664,7 @@ TFC_TEST(general_parallel_stages_gimbal_separately_each_with_its_own_limit) {
     st.length = 4.0;
     st.radius = 0.5;
     st.x_cg_dry = 2.0;
-    st.tanks.push_back(sim::TankSpec{1000.0, 0.5, 0.5, 1000.0});
+    st.tanks.push_back(sim::TankSpec{1000.0, 0.5, 0.5, 1000.0, {}});
     st.gimbal_limit_deg = i == 0 ? 2.0 : 6.0;  // the booster's nozzle can swing further than the core's
     p.spec.stages.push_back(st);
     for (int k = 0; k < 2; ++k) {  // two engines on each stage: they share one direction (found once per stage), which must be the stage's own
@@ -752,7 +752,7 @@ TFC_TEST(effectors_bad_effector_descriptions_are_refused) {
     return false;
   };
   sim::Params p = bare_body();
-  p.spec.stages[0].tanks.push_back(sim::TankSpec{20.0, 0.5, 0.4, 1000.0});
+  p.spec.stages[0].tanks.push_back(sim::TankSpec{20.0, 0.5, 0.4, 1000.0, {}});
   sim::EngineSpec th = engine_at(0.0, 0.0, 0.0, 100.0);
   th.gimbal = false;
   th.dir = sim::V3{0.0, -1.0, 0.0};
@@ -865,7 +865,7 @@ TFC_TEST(general_the_mass_properties_of_a_stack_for_a_given_mass_scale_the_prope
     st.length = 4.0;
     st.radius = 0.5;
     st.x_cg_dry = (4.0 * i) + 2.0;
-    st.tanks.push_back(sim::TankSpec{1000.0, (4.0 * i) + 0.5, 0.5, 1000.0});
+    st.tanks.push_back(sim::TankSpec{1000.0, (4.0 * i) + 0.5, 0.5, 1000.0, {}});
     p.spec.stages.push_back(st);
   }
   p.spec.engines.push_back(engine_at(0.0, 0.0, 0.0, 10000.0));

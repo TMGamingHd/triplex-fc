@@ -103,7 +103,7 @@ inline Result run(const Loop& lp) {
   RunnerConfig rcfg = lp.cfg;
   rcfg.start_held = lp.pad_frames > 0U;
   SimRunner runner(rcfg);
-  const FlightTables tables = flight_tables(lp.cfg.design, lp.cfg.plan);
+  const FlightTables& tables = runner.tables();  // (designed once, by the runner)
   std::array<tfc::FlightFunction, 3> ff{tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator), tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator),
                                         tfc::FlightFunction(tables.gains, tables.guidance, lp.estimator)};
   std::array<tfc::ImuCalibrator, 3> cal{};  // each computer calibrates its own IMU on the pad and subtracts the bias before it sends
