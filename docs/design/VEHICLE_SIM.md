@@ -73,7 +73,7 @@ heard (the world is brought to that frame with the gimbal neutral) and starts ov
 | CAN id | Content | Rate |
 |---|---|---|
 | `0x300` | ACT: the voted gimbal command (pitch plane, yaw plane, 0.001 degree), mode and Safe flags (protocol v2) | every frame |
-| `0x501` | Simulator: sensor-frame body rates, 0.125 dps per count (the same scale as the gyro frames) | every frame |
+| `0x501` | Simulator: sensor-frame body rates, 1/32 dps per count (the same scale as the gyro frames) | every frame |
 | `0x502` | Simulator: sensor-frame accelerometer input, 1/2048 g per count | every frame |
 | `0x503` | Simulator state: altitude, speed, mass | every 10 frames |
 | `0x504` | Simulator telemetry: dynamic pressure, attitude error in the two planes (against the pitch program) | every 10 frames |

@@ -9,6 +9,8 @@ from __future__ import annotations
 import itertools
 import math
 
+from tfc_peers import protocol as P
+
 from .model import Scenario
 
 N = "ABC"
@@ -508,7 +510,7 @@ def new_sensor_faults() -> list[Scenario]:
 def new_bit_faults() -> list[Scenario]:
     out = []
     for sensor, bit, p, seed in itertools.product(("gyro", "accel"), range(16), (0.02, 0.1, 0.5, 1.0), (1, 2)):
-        lsb_rel = (2 ** bit) * (0.125 if sensor == "gyro" else 1 / 2048) / _tol(sensor)
+        lsb_rel = (2 ** bit) * (P.GYRO_LSB_DPS if sensor == "gyro" else P.ACCEL_LSB_G) / _tol(sensor)
         if lsb_rel <= 0.5:
             exp = "ignore"
         elif lsb_rel < 1.5:
@@ -518,7 +520,7 @@ def new_bit_faults() -> list[Scenario]:
         out.append(_sc("bitflip", [f"B:bitflip:start=100,sensor={sensor},bit={bit},p={p}"], exp, None, seed=seed, frames=FRAMES,
                        tag=dict(node="B", sensor=sensor, bit=bit, p=p)))
     for sensor, bit, value, n in itertools.product(("gyro", "accel"), range(16), (0, 1), range(3)):
-        lsb_rel = (2 ** bit) * (0.125 if sensor == "gyro" else 1 / 2048) / _tol(sensor)
+        lsb_rel = (2 ** bit) * (P.GYRO_LSB_DPS if sensor == "gyro" else P.ACCEL_LSB_G) / _tol(sensor)
         exp = "ignore" if lsb_rel <= 0.5 else ("detect" if lsb_rel >= 16 else "gray")
         out.append(_sc("stuckbit", [f"{N[n]}:stuckbit:start=100,sensor={sensor},bit={bit},value={value}"], exp, None, frames=FRAMES,
                        tag=dict(node=N[n], sensor=sensor, bit=bit, value=value)))

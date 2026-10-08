@@ -1003,7 +1003,7 @@ TFC_TEST(the_committed_firmware_tables_are_the_ones_the_design_gives) {
     CHECK(committed_guidance.point(1U, i).frame == now.guidance.point(1U, i).frame);
     CHECK(near_abs(static_cast<double>(committed_guidance.point(1U, i).deg), static_cast<double>(now.guidance.point(1U, i).deg), 1e-3));
   }
-  for (unsigned i = 0; i < now.gains.size(); ++i) {
+  for (unsigned i = 0; i < now.gains.size() && i < tfc::GainSchedule::kMaxPoints; ++i) {  // (the second bound is the table's capacity: the size never exceeds it, and GCC 15's -O2 cannot see that)
     CHECK(committed_gains.frame_at(i) == now.gains.frame_at(i));
     CHECK(near_abs(static_cast<double>(committed_gains.gains_at(i).kp), static_cast<double>(now.gains.gains_at(i).kp), 1e-4));
     CHECK(near_abs(static_cast<double>(committed_gains.gains_at(i).kd), static_cast<double>(now.gains.gains_at(i).kd), 1e-4));

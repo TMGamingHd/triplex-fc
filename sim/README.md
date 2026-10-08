@@ -255,7 +255,7 @@ from `start` (so `B:corrupt:start=100,period=3,duty=1` damages one frame in thre
 | `bias` | F04 | A constant sensor offset | `sensor`=`gyro`\|`accel` (gyro), `axis`=0\|1\|2 (0), `mag` (3.0; dps for gyro, g for accel) | Adds `mag` to that axis |
 | `drift` | F05 | A slowly growing offset | `sensor` (gyro), `axis` (0), `rate` (0.05; per frame, dps or g) | Adds `rate` x (frames since start + 1) to that axis |
 | `spike` | F06 | Random single-frame outliers | `sensor` (gyro), `mag` (20.0), `p` (0.05; probability per frame) | With probability `p`, adds +-`mag` to one random axis for that frame |
-| `saturate` | F07 | Sensor pinned to full scale | none | Gyro and accel at the 16-bit limits (+4095.875/-4096 dps, +-16 g), sign alternating each frame |
+| `saturate` | F07 | Sensor pinned to full scale | none | Gyro and accel at the 16-bit limits (+1023.97/-1024 dps, +-16 g), sign alternating each frame |
 | `corrupt` | F08 | A flaky link | `p` (0.2; probability per frame, per frame type) | Flips one random bit of a gyro/accel/command frame; its CRC then fails |
 | `cmd_offset` | F09 | A wrong-but-valid command (software bug) | `mag` (1.0; degrees) | Adds `mag` to the pitch command; everything else, including the CRC, stays valid |
 | `digest` | F10 | Silent internal state divergence | `xor` (1; 16-bit mask) | XORs the estimator-state digest in the command frame; pitch and yaw unchanged |
@@ -431,7 +431,7 @@ Every 10 ms major frame, each simulated node sends three frames (CAN IDs from `c
 | ID | Frame | Peer send time in the frame | Payload (8 bytes: 6 data, 1 sequence, 1 CRC-8) |
 |---|---|---|---|
 | `0x010` | SYNC (sent by the sync master, FC-A; the peers only *listen* for it) | 0.0 ms | frame number (u32, little endian), 2 reserved bytes |
-| `0x100+n` | GYRO | 1.5 ms + 0.2 ms x n | 3 x int16, 0.125 dps per count |
+| `0x100+n` | GYRO | 1.5 ms + 0.2 ms x n | 3 x int16, 1/32 dps per count |
 | `0x110+n` | ACCEL | 2.3 ms + 0.2 ms x n | 3 x int16, 1/2048 g per count |
 | `0x510` | GROUND (operator command; sent only by `--command` / `tfc_peers command`) | 6.5 ms in the frame it is scripted for | opcode (1 reintegrate, 2 disable, 3 clear-disabled, 4 clear-safe, 5 launch, 6 scrub, 7 phase, 8 noop, 9 warm; +0x80 = ARM), node, 32-bit SipHash tag, command counter |
 | `0x200+n` | CMD (command + digest) | 5.0 ms + 0.3 ms x n | pitch int16 and yaw int16 (0.001 deg per count), digest u16 |
@@ -447,7 +447,7 @@ so healthy replicas send bit-identical commands (the design's deterministic repl
 synthetic function of the command and the frame number, identical across healthy nodes.
 
 Example log line: `(0.001500) vcan0 100#010031000100009D` = at 1.5 ms, node A's gyro: bytes
-`0100 3100 0100` = 1, 49, 1 counts = (0.125, 6.125, 0.125) dps, sequence `00`, CRC `9D`.
+`0100 3100 0100` = 1, 49, 1 counts = (0.031, 1.531, 0.031) dps, sequence `00`, CRC `9D`.
 
 ## How the decisions are made, and the replay output
 `tfc::RedundancyManager` (`core/include/tfc/redundancy.hpp`) runs once per 10 ms frame:

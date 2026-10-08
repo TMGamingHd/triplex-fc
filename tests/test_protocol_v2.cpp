@@ -75,7 +75,10 @@ TFC_TEST(protocol_v2_golden_frames_match_the_pinned_bytes) {
   const Frame sf = pack_state_share(2U, s, 6U);
   CHECK(sf.id == 0x412U && hex(sf) == "f102c800000006f7");
 
-  CHECK(hex(pack_sim_rates(Vec3{{1.5F, -2.0F, 0.125F}}, 3U)) == "0c00f0ff0100032c");
+  CHECK(hex(pack_sim_rates(Vec3{{1.5F, -2.0F, 0.125F}}, 3U)) == "3000c0ff040003e7");
+  // the gyro frames at 1/32 dps per count (ADR-032): the same bytes as sim/tests/test_protocol.py pins, made by the Python peers
+  CHECK(hex(pack_gyro(1U, Vec3{{1.0F, -2.0F, 3.0F}}, 5U)) == "2000c0ff60000546");
+  CHECK(hex(pack_gyro(0U, Vec3{{9999.0F, -9999.0F, 0.06F}}, 0U)) == "ff7f008002000060");
   CHECK(pack_sim_rates(Vec3{}, 0U).id == 0x501U && pack_sim_accel(Vec3{}, 0U).id == 0x502U);
   CHECK(hex(pack_sim_accel(Vec3{{0.0F, 0.5F, 1.0F}}, 255U)) == "000000040008ffda");  // the same bytes as the accel frame of node C: same scale
   SimState ss;

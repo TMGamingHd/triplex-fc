@@ -495,11 +495,11 @@ TFC_TEST(resync_its_frames_are_in_the_schedule_and_do_not_raise_the_babbling_ala
 
 // ---- the closed loop ----
 
-TFC_TEST(resync_the_closed_loop_flies_a_one_percent_lossy_bus_that_it_loses_without_it) {
+TFC_TEST(resync_the_closed_loop_flies_a_two_percent_lossy_bus_that_it_loses_without_it) {
   sim::Loop base;
   base.frames = 6000U;
   base.estimator.use_accel = false;
-  base.frame_loss_prob = 0.01F;
+  base.frame_loss_prob = 0.02F;  // (1 % no longer loses the flight in 60 s since the gyro frames were made 4 times finer, ADR-032; 2 % does)
   const sim::Result without = sim::run(base);
   CHECK(without.safe_frames > 0U && without.max_deg_settled > 100.0);  // TS-16: the flight is lost
   sim::Loop with = base;

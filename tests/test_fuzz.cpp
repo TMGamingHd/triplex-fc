@@ -410,7 +410,7 @@ TFC_TEST(fuzz_protocol_roundtrip_crc_and_quantisation_properties) {
     const float v = rng.range(-5000.0F, 5000.0F);
     const int16_t q = quantize(v, kGyroLsbDps);
     // within range: the round trip is within half an LSB, and saturation is monotonic
-    if (std::fabs(v) < 4000.0F) {
+    if (std::fabs(v) < 1000.0F) {  // (the range is +-1024 dps)
       CHECK(std::fabs(static_cast<float>(q) * kGyroLsbDps - v) <= 0.5F * kGyroLsbDps + 1e-3F);
     }
     const int16_t q2 = quantize(v + 1.0F, kGyroLsbDps);
