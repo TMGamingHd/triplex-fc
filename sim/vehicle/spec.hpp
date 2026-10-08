@@ -28,6 +28,50 @@ struct TankSpec {
   double density = 900.0;   // kg/m^3 (kerosene 800, liquid oxygen 1140, liquid hydrogen 71, a solid propellant 1750)
 };
 
+// The outer shape of the vehicle, for the aerodynamics that follow it (aero.hpp, docs/design/AERODYNAMICS.md). A stage lists the pieces of its outer body and its fixed fins; when the stage separates they go.
+enum class NoseShape : int { Cone = 0, TangentOgive = 1, Parabola = 2, Ellipse = 3 };
+enum class SectionKind : int { Nose = 0, Tube = 1, Transition = 2 };
+
+// One piece of the outer body, along [x_start, x_start + length]. A nose has its base (the larger end) aft and its tip forward; a tube has one diameter; a transition has a diameter at its aft
+// end and another at its forward end: a flare if the aft one is larger (it widens toward the tail: a skirt, a shoulder, which adds stability), a boat-tail if the aft one is smaller.
+struct SectionSpec {
+  SectionKind kind = SectionKind::Tube;
+  double x_start = 0.0;
+  double length = 0.0;
+  double d_aft = 0.0;   // m
+  double d_fore = 0.0;  // m (a pointed nose: 0)
+  NoseShape nose = NoseShape::Cone;
+};
+
+// A set of `count` identical fins around the body, fixed (the control fins of FinSpec are listed here too, as fixed fins of the same planform: the control model adds only the force of the deflection).
+struct FinPlanform {
+  int count = 4;
+  double x_le_root = 0.0;   // the forward end of the root chord, on the body
+  double root_chord = 0.0;
+  double tip_chord = 0.0;
+  double span = 0.0;        // exposed, from the body surface to the tip
+  double sweep = 0.0;       // the axial distance from the leading edge of the root to the leading edge of the tip, aft positive
+  double thickness = 0.0;   // m
+};
+
+struct AeroTablePoint {
+  double mach = 0.0;
+  double ca = 0.0;        // axial force coefficient
+  double cn_alpha = 0.0;  // normal-force slope per radian
+  double x_cp = 0.0;      // m, centre of pressure
+};
+
+struct AeroSpec {
+  double reference_diameter_m = 0.0;  // 0: the largest body diameter of the sections
+  double crossflow_cd = 1.2;          // drag coefficient of a circular cylinder in cross-flow
+  double crossflow_eta = 0.7;         // the end-effect factor on it (a finite cylinder's is lower than an infinite one's)
+  double rear_axial = 1.1;            // the axial coefficient while the vehicle flies tail first (a blunt base facing the flow)
+  double power_on_base = 0.7;         // how much of the base drag a running engine takes away (the plume fills the wake)
+  double wetted_roughness = 1.0;      // a factor on the skin friction (1: a smooth painted skin)
+  bool full_angle = true;             // the force at every angle of attack (false: linear in the angle, none past 90 degrees: the reference model)
+  std::vector<AeroTablePoint> table;  // a table by Mach instead of the build-up (used when `sections` of every stage are empty)
+};
+
 struct StageSpec {
   std::string name;
   // The structure: dry mass, spread along [x_start, x_start + length], its radius (for the roll inertia) and the factor that turns a uniform rod's transverse inertia (m L^2 / 12) into this
@@ -52,6 +96,9 @@ struct StageSpec {
   double gimbal_limit_deg = -1.0;
   double gimbal_rate_dps = -1.0;
   double gimbal_lag_s = -1.0;
+  // The outer shape of this stage, aft to forward (a nose, tubes, transitions between diameters), and its fixed fins. Empty for every stage: the reference vehicle's aerodynamics.
+  std::vector<SectionSpec> sections;
+  std::vector<FinPlanform> stabilizers;
   // Throttle: the fraction of rated thrust against the time since this stage ignited, linear between the points, held after the last. Empty: full thrust.
   std::vector<std::array<double, 2>> throttle;
 };
@@ -109,6 +156,7 @@ struct PayloadSpec {
   double mass = 0.0;
   double x = 0.0;
   double jettison_time_s = -1.0;  // it leaves the vehicle at this time (<0: never)
+  std::vector<SectionSpec> sections;  // its outer shape (a fairing), which goes with it
 };
 
 struct VehicleSpec {
@@ -117,8 +165,25 @@ struct VehicleSpec {
   std::vector<PayloadSpec> payloads;
   std::vector<FinSpec> fins;
   WheelSpec wheels;
+  AeroSpec aero;
   [[nodiscard]] bool empty() const { return stages.empty(); }
 };
+
+inline void check_sections(const std::vector<SectionSpec>& sections, const std::string& at, std::vector<std::string>& bad) {
+  for (std::size_t k = 0; k < sections.size(); ++k) {
+    const SectionSpec& sec = sections[k];
+    const std::string sk = at + ".sections[" + std::to_string(k) + "]";
+    if (!(sec.length > 0.0) || !(sec.d_aft >= 0.0) || !(sec.d_fore >= 0.0)) {
+      bad.push_back(sk + ": length_m must be positive and the diameters not negative");
+    } else if (sec.kind == SectionKind::Nose && !(sec.d_aft > sec.d_fore)) {
+      bad.push_back(sk + " is a nose: its base (d_aft_m) must be larger than its tip (d_fore_m, 0 for a point)");
+    } else if (sec.kind == SectionKind::Tube && (!(sec.d_aft > 0.0) || sec.d_aft != sec.d_fore)) {
+      bad.push_back(sk + " is a tube: d_aft_m and d_fore_m must be the same positive diameter");
+    } else if (sec.kind == SectionKind::Transition && (!(sec.d_aft > 0.0) || !(sec.d_fore > 0.0) || sec.d_aft == sec.d_fore)) {
+      bad.push_back(sk + " is a transition: d_aft_m and d_fore_m must be positive and different");
+    }
+  }
+}
 
 // Problems with a description, each in words and with the name of the field; empty if there are none. Cheap: loaders call it, and tests.
 inline std::vector<std::string> validate(const VehicleSpec& v) {
@@ -168,6 +233,13 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
         if (t.x_bottom + height > st.x_start + st.length + 1e-9) {
           fail(tk + " holds more propellant than fits in the stage (its column would end " + std::to_string(t.x_bottom + height - st.x_start - st.length) + " m beyond the stage)");
         }
+      }
+    }
+    check_sections(st.sections, at, bad);
+    for (std::size_t k = 0; k < st.stabilizers.size(); ++k) {
+      const FinPlanform& f = st.stabilizers[k];
+      if (f.count < 1 || f.count > 12 || !(f.root_chord > 0.0) || !(f.span > 0.0) || f.tip_chord < 0.0 || f.thickness < 0.0 || f.sweep < 0.0) {
+        fail(at + ".stabilizers[" + std::to_string(k) + "]: count 1 to 12, root_chord_m and span_m positive, tip_chord_m, sweep_m and thickness_m not negative");
       }
     }
     if (st.ignite_after_sep_of >= static_cast<int>(s)) {
@@ -229,6 +301,29 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
   for (std::size_t p = 0; p < v.payloads.size(); ++p) {
     if (!(v.payloads[p].mass >= 0.0)) {
       fail("payloads[" + std::to_string(p) + "].mass must not be negative");
+    }
+    check_sections(v.payloads[p].sections, "payloads[" + std::to_string(p) + "]", bad);
+  }
+  {
+    const AeroSpec& a = v.aero;
+    if (a.reference_diameter_m < 0.0 || a.crossflow_cd < 0.0 || a.crossflow_eta < 0.0 || a.rear_axial < 0.0 || a.wetted_roughness < 0.0 || a.power_on_base < 0.0 || a.power_on_base > 1.0) {
+      fail("aero: the diameters, coefficients and factors must not be negative, and power_on_base lies between 0 and 1");
+    }
+    for (std::size_t k = 1; k < a.table.size(); ++k) {
+      if (!(a.table[k].mach > a.table[k - 1U].mach)) {
+        fail("aero.table: the Mach numbers must increase");
+        break;
+      }
+    }
+    bool any_section = false;
+    for (const StageSpec& st : v.stages) {
+      any_section = any_section || !st.sections.empty();
+    }
+    for (const PayloadSpec& pl : v.payloads) {
+      any_section = any_section || !pl.sections.empty();
+    }
+    if (any_section && !a.table.empty()) {
+      fail("aero: give the shape (stage sections) or a table by Mach, not both");
     }
   }
   if (v.fins.size() > kMaxFins) {

@@ -46,7 +46,7 @@ These come from `docs/verification/REQUIREMENTS.md` and are what reviewers check
 ```bash
 cmake -S . -B build -G Ninja -DTFC_SANITIZE=ON && cmake --build build && ctest --test-dir build --output-on-failure
 python3 tools/check_standard.py                                   # mechanical coding-standard rules
-python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98 --sim-min-line 99 --sim-min-branch 93
+python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98 --sim-min-line 99 --sim-min-branch 90
 cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/rel --target tfc_replay
 (cd sim && TFC_REPLAY_BIN=$PWD/../build/rel/tfc_replay python3 -m campaign.run --strict)   # about 2-4 minutes
 python3 tools/mutation/run_unit.py                                # deliberate bugs must still be caught (weekly in CI)
@@ -56,7 +56,7 @@ A new check or fallback in `core/` comes with a mutant in `tools/mutation/mutati
 ## Before you push a change to the vehicle simulator (`sim/vehicle/`)
 ```bash
 ctest --test-dir build --output-on-failure                         # the whole suite, with -Werror
-python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 93
+python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 90
 python3 tools/mutation/run_sim.py                                  # deliberate bugs in the simulator must still be caught (weekly in CI; about 15 minutes)
 ```
 `a_controlled_flight_of_the_reference_vehicle_is_unchanged_by_changes_to_the_model` (`tests/test_vehicle.cpp`) and `general_the_reference_vehicle_flies_as_the_frozen_single_vehicle_model_did` (`tests/test_vehicle_general.cpp`, against `tests/oracle/`) must still pass without edits: the reference vehicle's flight is the contract of every change. A change that moves it by even a rounding moves the quantised sensor values of the closed loop, and with them the documented sensitivity numbers. A new

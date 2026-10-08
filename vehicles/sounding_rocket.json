@@ -1,15 +1,19 @@
 // A small fin-stabilised sounding rocket with a solid motor, invented for the simulator. No gimbal: it steers with four aerodynamic fins, which have no authority until it has speed.
-// Its centre of pressure is behind its centre of gravity (x_cp_m below the centre of gravity), so it is stable by itself: the flight computers have little to do.
+// Its centre of pressure (from its shape: the ogive, and the fins, which pull it aft) is behind its centre of gravity, so it is stable by itself: the flight computers have little to do.
 // The gains are designed for at least b_min = 2 (the fins' effectiveness is nearly zero at lift-off and grows a hundredfold in seconds; a gain designed for zero would ring the loop) and spread
 // where they change (every_s = 0: adaptive), because the flight computers hold only 16 of them.
 {
   "name": "sounding rocket",
   "description": "200 kg, one solid motor of 16 kN for 18 s, fins instead of a gimbal, a 20 kg payload; thrust-to-weight 7 at lift-off.",
   "vehicle": {"gimbal_limit_deg": 8},
-  "aero": {"diameter_m": 0.3, "c_n_alpha": 3.0, "x_cp_m": 1.6},
+  "aero": {"diameter_m": 0.3},   // the aerodynamics follow the shape below (the stage's sections and fins); diameter_m is the reference model's and is not used
   "stages": [
     {"name": "motor", "dry_mass_kg": 60, "x_start_m": 0, "length_m": 4.0, "radius_m": 0.15, "inertia_factor": 0.6, "x_cg_dry_m": 2.0,
-     "tanks": [{"propellant_kg": 120, "x_bottom_m": 0.3, "radius_m": 0.14, "density_kg_m3": 1750}]}   // the grain: a solid propellant is a tank that cannot be throttled
+     "tanks": [{"propellant_kg": 120, "x_bottom_m": 0.3, "radius_m": 0.14, "density_kg_m3": 1750}],   // the grain: a solid propellant is a tank that cannot be throttled
+     // the outer shape, aft to forward: a 3.2 m body of 0.3 m and a 0.8 m tangent ogive; and four swept fins at the tail (the control fins below have the same planform)
+     "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 3.2, "d_aft_m": 0.3, "d_fore_m": 0.3},
+                  {"kind": "nose", "x_start_m": 3.2, "length_m": 0.8, "d_aft_m": 0.3, "d_fore_m": 0, "shape": "ogive"}],
+     "stabilizers": [{"count": 4, "x_le_root_m": 0.5, "root_chord_m": 0.4, "tip_chord_m": 0.15, "span_m": 0.25, "sweep_m": 0.25, "thickness_m": 0.005}]}
   ],
   "engines": [
     {"stage": 0, "position_m": [0, 0, 0], "thrust_vac_n": 16000, "exit_area_m2": 0.012, "isp_vac_s": 250, "gimbal": false, "rise_s": 0.2, "tail_s": 0.3}

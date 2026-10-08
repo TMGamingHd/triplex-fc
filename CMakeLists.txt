@@ -43,6 +43,8 @@ add_executable(tfc_tests
   tests/test_sim_model.cpp
   tests/test_vehicle_general.cpp
   tests/test_vehicle_files.cpp
+  tests/test_aero.cpp
+  tests/test_vehicle_refusals.cpp
   tests/test_pad.cpp
   tests/test_launch.cpp
   tests/test_supervisor_clock.cpp

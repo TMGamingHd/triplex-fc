@@ -19,7 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sim_mutations import EQUIVALENT, MUTATIONS, ROOT, build_vehicle  # noqa: E402
 
-FLAGS = ["-std=c++17", "-O1", "-g", "-fsanitize=address,undefined", "-fno-exceptions", "-fno-rtti", "-w"]
+# no sanitizers: a mutant is killed by a failing check, which they do not help with, and the long example flights of the file tests run several times slower under them
+FLAGS = ["-std=c++17", "-O1", "-fno-exceptions", "-fno-rtti", "-w"]
 SIM_HEADERS = sorted(p.name for p in (ROOT / "sim" / "vehicle").glob("*.hpp"))
 
 

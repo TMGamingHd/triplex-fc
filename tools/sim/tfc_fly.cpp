@@ -38,6 +38,21 @@ void describe(const sim::VehicleFile& v) {
     }
     std::printf("  stage %zu (%s): dry %.0f kg, propellant %.0f kg, %d main engine(s), %.0f kN vacuum\n", s + 1U, g.stages[s].name.c_str(), g.stages[s].dry_mass, prop, n, thrust_vac / 1000.0);
   }
+  // the static stability: where the centre of pressure is against the centre of gravity, in calibres (diameters): positive behind it is stable, negative ahead of it unstable
+  for (const double mach : {0.3, 2.0}) {
+    double cn = 0.0;
+    double xcp = 0.0;
+    double ca = 0.0;
+    double s_ref = 0.0;
+    veh.aero_summary(mach, cn, xcp, ca, s_ref);
+    const double d_ref = std::sqrt(4.0 * s_ref / sim::kPi);
+    if (std::fabs(cn) < 1e-9) {
+      std::printf("  aerodynamics at Mach %.1f: no normal force (a body with no lift: nothing to be stable or unstable about), axial coefficient %.2f\n", mach, ca);
+      continue;
+    }
+    std::printf("  aerodynamics at Mach %.1f: normal-force slope %.2f per radian, axial coefficient %.2f, centre of pressure %.2f m from the aft end, %.2f calibres %s the centre of gravity (%s)\n", mach, cn, ca, xcp,
+                std::fabs(xcp - mp.x_cg) / d_ref, xcp < mp.x_cg ? "behind" : "ahead of", xcp < mp.x_cg ? "stable" : "unstable");
+  }
   // the rated thrust of the first stage's main engines at sea level (an engine with a rise time starts cold, so the vehicle's thrust at T-zero would read zero)
   double sea_level = 0.0;
   for (const sim::EngineSpec& e : g.engines) {
