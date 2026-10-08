@@ -28,6 +28,7 @@
 | [HARDWARE_OVERRIDE.md](design/HARDWARE_OVERRIDE.md) | The manual switches below the supervisor; their own failure modes |
 | [PICO.md](design/PICO.md) | The Pico: platform driver and fault injector |
 | [VEHICLE_SIM.md](design/VEHICLE_SIM.md) | The 6-DOF ascent simulator, the platform and the bus runner |
+| [ENVIRONMENT.md](design/ENVIRONMENT.md) | The world: planets, rotation, J2, atmospheres and their dispersions, wind profiles, turbulence |
 | [AERODYNAMICS.md](design/AERODYNAMICS.md) | The aerodynamics that follow a vehicle's shape: the formulas, their limits, how they are checked |
 | [VEHICLE_SPEC.md](design/VEHICLE_SPEC.md) | Describing any vehicle (stages, tanks, engines, effectors) as a file; the tools; the examples; what the flight computers can do with it |
 | [SIM_FIDELITY.md](design/SIM_FIDELITY.md) | How close the simulator is to real life, measured |

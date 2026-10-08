@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -96,7 +97,21 @@ struct EngineFailure {
   int index = 0;      // which engine (0 is the first in the vehicle's list)
 };
 
+struct Site {  // where the vehicle is launched from: the pole's direction (for rotation and the oblateness) comes from it
+  double latitude_deg = 28.5;
+  double azimuth_deg = 90.0;  // of the launch direction (downrange), from north through east
+};
+
+struct Turbulence {  // a random wind on top of the mean wind and the gusts: a first-order Gauss-Markov process per axis with a length scale (Dryden's shape), the same every run for a seed
+  double sigma_ms = 0.0;           // the standard deviation of each component; 0: none
+  double scale_length_m = 533.0;   // 1750 ft, the length scale of Dryden's model above 2000 ft
+  uint32_t seed = 1U;
+};
+
 struct Scenario {
+  Site site;
+  Turbulence turbulence;
+  std::vector<std::array<double, 2>> wind_profile;  // (altitude m, mean wind speed m/s), linear between points: replaces the built-in profile when given
   std::vector<Gust> gusts;
   V3 wind_dir{0.0, 0.0, 1.0};   // direction of the mean wind (inertial), crossrange by default
   double wind_scale = 1.0;      // multiplies the mean wind profile
@@ -136,6 +151,8 @@ struct Loads {
 // The description of the reference vehicle of `Params`' own fields, in the general form: one stage, one tank, `engines` engines.
 inline VehicleSpec legacy_spec(const Params& p) {
   VehicleSpec g;
+  g.aero = p.spec.aero;      // (a Params without stages keeps the world and the aerodynamics settings its spec holds)
+  g.planet = p.spec.planet;
   StageSpec st;
   st.name = "stage 1";
   st.dry_mass = p.m_dry;
@@ -176,6 +193,16 @@ class Vehicle6 {
       }
       std::abort();
     }
+    pl_ = g_.planet;
+    s_.r = V3{pl_.radius, 0.0, 0.0};
+    {
+      const double lat = sc_.site.latitude_deg * kDeg2Rad;
+      const double azi = sc_.site.azimuth_deg * kDeg2Rad;
+      pole_ = V3{std::sin(lat), std::cos(lat) * std::cos(azi), std::cos(lat) * std::sin(azi)};  // the pole in the vehicle's frame (X up at the launch point, Y downrange, Z crossrange)
+      omega_ = pole_ * pl_.rotation_rate;
+      rotating_ = pl_.rotation_rate != 0.0;
+      rng_ = 0x9E3779B97F4A7C15ULL ^ (static_cast<uint64_t>(sc_.turbulence.seed) * 0xBF58476D1CE4E5B9ULL);
+    }
     for (std::size_t i = 0; i < kMaxStages; ++i) {
       t_ign_[i] = -1.0;
       t_burnout_[i] = -1.0;
@@ -197,6 +224,10 @@ class Vehicle6 {
       failures_.push_back(EngineFailure{sc_.engine_out_time, sc_.engine_out_index});
     }
     failures_.insert(failures_.end(), sc_.engine_failures.begin(), sc_.engine_failures.end());
+    if (rotating_) {
+      s_.v = cross(omega_, s_.r);  // on the pad the vehicle moves with the planet, and turns with it
+      s_.w = omega_;
+    }
     if (sc_.has_initial) {
       State init = sc_.initial;  // a start in flight gives the position, velocity and attitude; the vehicle brings its own mass unless the state carries its propellant
       if (!init.prop_set) {
@@ -216,6 +247,7 @@ class Vehicle6 {
     const double h = dt / n;
     for (int i = 0; i < n; ++i) {
       process_events();
+      step_turbulence(h);
       update_engines(h, cmd_pitch_deg, cmd_yaw_deg);
       for (std::size_t f = 0; f < g_.fins.size(); ++f) {
         const FinSpec& fin = g_.fins[f];
@@ -245,7 +277,7 @@ class Vehicle6 {
 
   [[nodiscard]] double time() const { return t_; }
   [[nodiscard]] const State& state() const { return s_; }
-  [[nodiscard]] double altitude() const { return norm(s_.r) - kEarthR; }
+  [[nodiscard]] double altitude() const { return norm(s_.r) - pl_.radius; }
   [[nodiscard]] double speed() const { return norm(s_.v); }
   [[nodiscard]] double mass() const { return s_.m; }
   [[nodiscard]] double gimbal_pitch_deg() const { return gimbal_p_[lead_stage()]; }  // of the stage that is flying (the lowest one on the vehicle)
@@ -308,10 +340,10 @@ class Vehicle6 {
   // The forces and moments on a state at time t (the gimbal angles are the vehicle's current ones).
   [[nodiscard]] Loads loads(const State& s, double t) const {
     Loads l;
-    const double alt = norm(s.r) - kEarthR;
-    const Air air = air_at(alt);
+    const double alt = norm(s.r) - pl_.radius;
+    const Air air = atmosphere(alt);
     const MassProps mp = mass_props_state(s, -1);
-    const V3 vrel = rotate_inv(s.q, s.v - wind_at(alt, t));
+    const V3 vrel = rotate_inv(s.q, rotating_ ? s.v - wind_at(alt, t) - cross(omega_, s.r) : s.v - wind_at(alt, t));  // the air moves with a rotating planet
     const double v_abs = norm(vrel);
     l.mach = v_abs / air.sound;
     l.dynamic_pressure = 0.5 * air.density * v_abs * v_abs;
@@ -417,7 +449,7 @@ class Vehicle6 {
   // (rad/s^2 per rad), at the state it is in now. It is what the gains of the flight computers are designed from (design.hpp).
   [[nodiscard]] double control_effectiveness() const {
     const MassProps mp = mass_props();
-    const Air air = air_at(altitude());
+    const Air air = atmosphere(altitude());
     double num = 0.0;
     double thrust = 0.0;
     for (std::size_t e = 0; e < g_.engines.size(); ++e) {
@@ -491,7 +523,7 @@ class Vehicle6 {
     }
   }
 
-  // The mean wind plus gusts, inertial frame, m/s.
+  // The mean wind (the scenario's profile, or the built-in one), the gusts and the turbulence, inertial frame, m/s.
   [[nodiscard]] V3 wind_at(double altitude, double t) const {
     V3 w = normalized(sc_.wind_dir) * (sc_.wind_scale * mean_wind_speed(altitude));
     for (const Gust& g : sc_.gusts) {
@@ -499,8 +531,61 @@ class Vehicle6 {
         w = w + (g.peak * (0.5 * (1.0 - std::cos(2.0 * kPi * (t - g.t0) / g.duration))));
       }
     }
+    if (sc_.turbulence.sigma_ms > 0.0) {
+      w = w + turb_;
+    }
     return w;
   }
+
+  // The air at an altitude: the planet's atmosphere (the 1976 standard, an exponential one, or none) with the scenario's dispersions of density and temperature.
+  [[nodiscard]] Air atmosphere(double alt) const {
+    Air a;
+    switch (pl_.atmosphere) {
+      case AtmosphereKind::Us1976:
+        a = air_at(alt);
+        break;
+      case AtmosphereKind::Exponential: {
+        a.density = pl_.surface_density * std::exp(-std::max(alt, 0.0) / pl_.scale_height);
+        a.temperature = pl_.temperature;
+        a.pressure = a.density * pl_.gas_constant * a.temperature;
+        a.sound = std::sqrt(pl_.gamma * pl_.gas_constant * a.temperature);
+        break;
+      }
+      case AtmosphereKind::None:
+        a.density = 0.0;
+        a.pressure = 0.0;
+        a.temperature = 0.0;
+        a.sound = 300.0;  // (there is no air to have a speed of sound: a placeholder so that a Mach number can be formed)
+        break;
+    }
+    if (pl_.temperature_offset != 0.0 && a.temperature > 0.0) {
+      const double t_new = a.temperature + pl_.temperature_offset;
+      a.density *= a.temperature / t_new;  // the same pressure in warmer or colder air
+      a.sound *= std::sqrt(t_new / a.temperature);
+      a.temperature = t_new;
+    }
+    if (pl_.density_scale != 1.0) {
+      a.density *= pl_.density_scale;
+      a.pressure *= pl_.density_scale;
+    }
+    return a;
+  }
+
+  // The gravitational acceleration at position r: the inverse-square field of the planet (times `gravity_scale`) and, if it has one, the oblateness term J2 about its pole.
+  [[nodiscard]] V3 gravity(const V3& r) const {
+    const double rn = norm(r);
+    V3 g = r * (-p_.gravity_scale * pl_.mu / (rn * rn * rn));
+    if (pl_.j2 != 0.0) {
+      const V3 rh = r / rn;
+      const double z = dot(rh, pole_);
+      const double k = 1.5 * pl_.j2 * pl_.mu * pl_.radius * pl_.radius / (rn * rn * rn * rn);
+      g = g + (((rh * ((5.0 * z * z) - 1.0)) - (pole_ * (2.0 * z))) * (k * p_.gravity_scale));
+    }
+    return g;
+  }
+  [[nodiscard]] const PlanetSpec& planet() const { return pl_; }
+  [[nodiscard]] const V3& turbulence() const { return turb_; }  // the random wind now, m/s (inertial frame)
+  [[nodiscard]] const V3& pole() const { return pole_; }
 
   // Replace the whole state (for tests and for starting an orbit or a coast). With `prop_set` false the propellant is derived from the mass (a vehicle of one stage);
   // a stack takes its propellant from `prop` and its mass from the stages that are still on it.
@@ -526,7 +611,20 @@ class Vehicle6 {
  private:
   static constexpr double kEmptyProp = 1e-6;  // kg of propellant under which a stage is out of it
 
-  static double mean_wind_speed(double altitude) {
+  [[nodiscard]] double mean_wind_speed(double altitude) const {
+    if (!sc_.wind_profile.empty()) {
+      const std::vector<std::array<double, 2>>& pr = sc_.wind_profile;
+      if (altitude <= pr.front()[0]) {
+        return pr.front()[1];
+      }
+      for (std::size_t i = 1; i < pr.size(); ++i) {
+        if (altitude <= pr[i][0]) {
+          const double f = (altitude - pr[i - 1][0]) / (pr[i][0] - pr[i - 1][0]);
+          return pr[i - 1][1] + (f * (pr[i][1] - pr[i - 1][1]));
+        }
+      }
+      return pr.back()[1];
+    }
     struct Pt {
       double h;
       double v;
@@ -831,6 +929,33 @@ class Vehicle6 {
     return st.throttle.back()[1];
   }
 
+  // One standard normal draw (Box-Muller from a xorshift generator: the same numbers on every machine for a seed).
+  double gauss() {
+    const auto uniform = [this]() {
+      rng_ ^= rng_ << 13U;
+      rng_ ^= rng_ >> 7U;
+      rng_ ^= rng_ << 17U;
+      return (static_cast<double>(rng_ >> 11U) + 0.5) / 9007199254740992.0;  // (0, 1)
+    };
+    const double u1 = uniform();
+    const double u2 = uniform();
+    return std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * kPi * u2);
+  }
+
+  // Advance the turbulence over h seconds: each component keeps `exp(-V h / L)` of itself and takes the rest from a fresh draw, so that its variance stays sigma^2 and its correlation
+  // falls by 1/e over a distance of L at the airspeed V (exact for a first-order Gauss-Markov process, at any step).
+  void step_turbulence(double h) {
+    const Turbulence& tb = sc_.turbulence;
+    if (!(tb.sigma_ms > 0.0)) {
+      return;
+    }
+    const V3 v_air = rotating_ ? s_.v - cross(omega_, s_.r) : s_.v;
+    const double speed = std::max(norm(v_air), 20.0);
+    const double a = std::exp(-speed * h / tb.scale_length_m);
+    const double k = tb.sigma_ms * std::sqrt(1.0 - (a * a));
+    turb_ = V3{(a * turb_.x) + (k * gauss()), (a * turb_.y) + (k * gauss()), (a * turb_.z) + (k * gauss())};
+  }
+
   // The thrust fraction of each engine for the next substep of h seconds: 1 (or the throttle) while it is lit, with the rise and tail-off time constants, 0 once its stage has gone.
   void update_engines(double h, double cmd_pitch_deg, double cmd_yaw_deg) {
     for (std::size_t e = 0; e < g_.engines.size(); ++e) {
@@ -897,17 +1022,24 @@ class Vehicle6 {
       return true;
     }
     const double rn = norm(s_.r);
-    if (!grounded_ && rn > kEarthR + 1e-6) {
+    if (!grounded_ && rn > pl_.radius + 1e-6) {
       return false;  // in the air: the common case, no extra work
     }
     const V3 up = s_.r / rn;
-    const double vr = dot(s_.v, up);
+    // the speed away from the surface, measured from the pad: on a rotating planet the pad's own velocity is perpendicular to the vertical, but its dot product is rounding noise (1e-10 m/s), and
+    // a vehicle that has "moved away" by that much would be let go for good, and fly off along the tangent
+    const double vr = dot(rotating_ ? s_.v - cross(omega_, s_.r) : s_.v, up);
     if (vr > 0.0) {
       grounded_ = false;  // moving away from the surface
       return false;
     }
     const Loads l = loads(s_, t_);
-    const double a_up = dot(rotate(s_.q, l.f_thrust + l.f_aero) / s_.m, up) - (p_.gravity_scale * kEarthMu / (rn * rn));
+    // the net acceleration along the vertical that would lift it: the thrust and the air, the field (not the whole of it: the planet's own motion carries the pad), and on a rotating planet the
+    // centripetal acceleration that the pad itself has (a pad on the equator is carried round a circle: the pad needs only g - omega^2 R toward the centre, so a lift-off needs a little less than the weight)
+    double a_up = dot(rotate(s_.q, l.f_thrust + l.f_aero) / s_.m, up) + dot(gravity(s_.r), up);
+    if (rotating_) {
+      a_up -= dot(cross(omega_, cross(omega_, s_.r)), up);
+    }
     if (vr == 0.0 && a_up > 0.0) {
       grounded_ = false;  // lifting off
       return false;
@@ -916,9 +1048,16 @@ class Vehicle6 {
       crashed_ = true;
     }
     grounded_ = true;
-    s_.r = up * kEarthR;
+    s_.r = up * pl_.radius;
     s_.v = V3{};
     s_.w = V3{};
+    if (rotating_) {  // held to the pad, it goes round with the planet: its position, its attitude and its velocity turn about the pole
+      const Q4 turn = from_axis_angle(pole_, pl_.rotation_rate * h);
+      s_.r = rotate(turn, s_.r);
+      s_.q = turn * s_.q;
+      s_.v = cross(omega_, s_.r);
+      s_.w = rotate_inv(s_.q, omega_);  // and it turns with it: the gyros of a vehicle on the pad read the planet's rotation
+    }
     if (!crashed_) {
       if (g_.stages.size() == 1U) {
         s_.m = std::max(s_.m - (l.mdot * h), fixed_);
@@ -949,7 +1088,7 @@ class Vehicle6 {
     const V3 f_inertial = rotate(s.q, l.f_thrust + l.f_aero);
     const double rn = norm(s.r);
     d.r = s.v;
-    d.v = (f_inertial / s.m) + (s.r * (-p_.gravity_scale * kEarthMu / (rn * rn * rn)));
+    d.v = (f_inertial / s.m) + (pl_.j2 != 0.0 ? gravity(s.r) : (s.r * (-p_.gravity_scale * pl_.mu / (rn * rn * rn))));
     d.q = q_dot(s.q, s.w);
     const MassProps mp = mass_props_state(s, -1);
     // dI/dt = sum over the stages that burn of (dI/d propellant of that stage) * (its mass flow)
@@ -1029,6 +1168,12 @@ class Vehicle6 {
   VehicleSpec g_;
   State s_{};
   double t_ = 0.0;
+  PlanetSpec pl_;
+  V3 pole_{1.0, 0.0, 0.0};
+  V3 omega_{};
+  bool rotating_ = false;
+  V3 turb_{};
+  uint64_t rng_ = 1U;
   AeroGeometry geo_;
   bool shaped_ = false;  // the aerodynamics follow the shape (or a table), not the reference model's fixed numbers
   double fixed_ = 0.0;  // the mass that is not propellant
