@@ -228,7 +228,8 @@ TFC_TEST(aero_the_axial_force_is_skin_friction_waves_front_face_and_base_and_a_r
   ogive.build({tube(0.0, 2.0, 0.2), nose(2.0, 0.6, 0.2, sim::NoseShape::TangentOgive)}, {}, 0.0);
   CHECK(blunt.axial(2.0, 1.0e7, 0.0, spec) > n.axial(2.0, 1.0e7, 0.0, spec) && ogive.axial(2.0, 1.0e7, 0.0, spec) < n.axial(2.0, 1.0e7, 0.0, spec));
   // a plausible rocket across the range: between 0.15 and 1.2 everywhere
-  for (double m = 0.2; m <= 5.0; m += 0.1) {
+  for (int i = 0; i <= 48; ++i) {
+    const double m = 0.2 + (0.1 * static_cast<double>(i));
     const double ca = n.axial(m, 1.0e7, 0.0, spec);
     CHECK(ca > 0.15 && ca < 1.2);
   }
