@@ -41,7 +41,7 @@ export default {
     R.manual = h('div');
     for (const [k, t] of MANUAL) R.manual.append(h('label', { class: 'check' }, h('input', { type: 'checkbox', dataset: { k }, checked: !!checks()[k], onchange: (e) => { const c = checks(); c[k] = e.target.checked; store.set('launch.checks', c); } }), h('span', {}, t)));
     R.auto = h('div', { class: 'alerts' });
-    R.launch = h('button', { class: 'btn go big', id: 'btn-launch', onclick: () => confirmLaunch(R.S) }, icon('launch'), 'ARM and LAUNCH…');
+    R.launch = h('button', { class: 'btn go big', id: 'btn-launch', onclick: () => confirmLaunch(R.S) }, icon('launch'), h('span', {}, 'ARM and LAUNCH…'));
     R.scrub = h('button', { class: 'btn danger big', id: 'btn-scrub', onclick: async () => { await sendCommand({ op: 'scrub', mode: 'single' }); } }, 'SCRUB');
     R.why = h('div', { class: 'note' });
     R.cmdlog = h('div', { class: 'note' });
@@ -98,7 +98,7 @@ export default {
     const consoleSeen = bad.some((b) => b.c.mode);
     const autos = [
       ['No bad frames on any computer (crc, seq, vote, digest = 0)', consoleSeen ? bad.every((b) => !(b.c.crc || b.c.seq || b.c.vote || b.c.digest)) : null, consoleSeen ? bad.map((b) => `${b.n.name}: crc ${b.c.crc ?? '–'} seq ${b.c.seq ?? '–'} vote ${b.c.vote ?? '–'} digest ${b.c.digest ?? '–'}`).join(' · ') : 'no node console attached: counters unknown'],
-      ['The vehicle is clamped on the pad (altitude 0)', s.truth ? s.truth.clamped === 1 : s.sim ? s.sim.alt < 1 : null, s.truth ? `altitude ${s.truth.alt.toFixed(1)} m` : s.sim ? `altitude ${s.sim.alt.toFixed(0)} m` : 'no simulator'],
+      ['The vehicle is clamped on the pad (altitude 0)', ph.name === 'flight' ? null : s.truth ? s.truth.clamped === 1 : s.sim ? s.sim.alt < 1 : null, ph.name === 'flight' ? 'not applicable: the vehicle has left the pad' : s.truth ? `altitude ${s.truth.alt.toFixed(1)} m` : s.sim ? `altitude ${s.sim.alt.toFixed(0)} m` : 'no simulator'],
       ['Every node is healthy in every other node’s view', s.nodes.every((n) => n.health === 'healthy'), s.nodes.map((n) => `${n.name} ${n.health}`).join(' · ')],
     ];
     const ak = JSON.stringify(autos);

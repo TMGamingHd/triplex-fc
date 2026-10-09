@@ -81,6 +81,14 @@ class TheBusTable(unittest.TestCase):
         self.assertEqual(K.id_name(0x300), "ACT")
         self.assertTrue(K.id_name(0x020).startswith("?"))
 
+    def test_the_expected_rates_are_the_measured_ones(self):
+        """Measured on the live rig (25 s of vcan0 with five processes, 8 Oct 2026): the 100 Hz ids at 96 to 100 a second, the state share at 10, the resync chunks at about 1, the simulator's status at 10."""
+        self.assertEqual([K.expected_hz(i) for i in (0x010, 0x100, 0x112, 0x200, 0x300, 0x402, 0x501)], [100.0] * 7)
+        self.assertEqual([K.expected_hz(i) for i in (0x410, 0x503, 0x505)], [10.0] * 3)
+        self.assertEqual(K.expected_hz(0x42B), 1.0)
+        self.assertIsNone(K.expected_hz(0x510))
+        self.assertIsNone(K.expected_hz(0x021))
+
     def test_the_schedule_matches_the_protocol_ids(self):
         ids = {n: i for i, n, _ in K.SCHEDULE}
         self.assertEqual(ids["SYNC"], P.ID_SYNC)

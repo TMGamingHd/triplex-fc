@@ -1,6 +1,6 @@
 // Flight: where the vehicle is and how it is flying. The numbers come from the simulator itself (`tfc_simd --telemetry`, "truth"), not from a sensor; the bus carries a coarser copy (10 Hz altitude, speed, mass,
 // dynamic pressure, attitude error) which is used when the truth is not there. The dashed curve is the nominal flight of the same vehicle (`tfc_fly`, the real flight software, no departures).
-import { h, svg, setText, num, eng, clock, store } from '../util.js';
+import { h, svg, setText, num, eng, store } from '../util.js';
 import { Chart, Trajectory, legend } from '../charts.js';
 import { api } from '../net.js';
 
@@ -8,7 +8,8 @@ let R = { nominal: null, nominalState: 'idle' };
 
 function rocket() {
   const root = svg('svg', { viewBox: '0 0 200 300', class: 'diagram', role: 'img', 'aria-label': 'The vehicle: stages, engines, attitude and gimbal', style: 'max-height:330px' });
-  root.append(svg('line', { x1: 10, y1: 270, x2: 190, y2: 270, stroke: 'var(--line2)', 'stroke-width': 2 }), svg('text', { x: 12, y: 286, fill: 'var(--faint)', 'font-size': 10 }, 'pad'));
+  R.pad = svg('g', {}, svg('line', { x1: 10, y1: 270, x2: 190, y2: 270, stroke: 'var(--line2)', 'stroke-width': 2 }), svg('text', { x: 12, y: 286, fill: 'var(--faint)', 'font-size': 10 }, 'pad'));
+  root.append(R.pad);
   R.rk = svg('g', {});
   R.rkTilt = svg('g', { transform: 'translate(100 200)' });
   R.stageEls = [];
@@ -45,7 +46,9 @@ const interp = (xs, ys, x) => { if (!xs || !xs.length || x < xs[0] || x > xs[xs.
 export default {
   id: 'flight', label: 'Flight', icon: 'flight',
   mount(root) {
-    R.traj = new Trajectory(h('canvas'), 320);
+    R.traj = new Trajectory(h('canvas'), 400);
+    R.view = store.get('flight.view', 'whole');
+    const viewSeg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Trajectory scale' }, [['whole', 'Whole flight'], ['follow', 'Follow vehicle']].map(([v, t]) => h('button', { type: 'button', 'aria-pressed': v === R.view ? 'true' : 'false', onclick: (e) => { R.view = v; store.set('flight.view', v); for (const b of viewSeg.children) b.setAttribute('aria-pressed', b === e.currentTarget ? 'true' : 'false'); } }, t)));
     R.rocket = rocket();
     R.tiltTxt = h('div', { class: 'note', style: { textAlign: 'center', marginTop: '4px' } });
     R.win = store.get('flight.window', 120);
@@ -68,8 +71,8 @@ export default {
     R.nomNote = h('div', { class: 'note' });
     R.legend = h('div', { class: 'legend' }, h('span', {}, h('i', { style: { background: 'var(--accent)' } }), 'flown'), h('span', {}, h('i', { style: { background: 'var(--faint)' } }), 'nominal (tfc_fly)'));
     root.append(h('div', { class: 'stack' }, R.flags,
-      h('div', { class: 'grid c-3-2' },
-        h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Trajectory'), h('div', { class: 'tools' }, R.legend)), h('div', { class: 'body' }, R.traj.c, R.nomNote)),
+      h('div', { class: 'grid c-3-2', style: { alignItems: 'start' } },
+        h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Trajectory'), h('div', { class: 'tools' }, R.legend, viewSeg)), h('div', { class: 'body' }, R.traj.c, R.nomNote)),
         h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'The vehicle')), h('div', { class: 'body', style: { display: 'grid', gridTemplateColumns: '150px 1fr', gap: '10px', alignItems: 'center' } }, h('div', {}, R.rocket, R.tiltTxt), h('div', {}, R.stats)))),
       h('div', { class: 'grid c-2-1' },
         h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Stages')), h('div', { class: 'body flush' }, R.stages)),
@@ -103,7 +106,7 @@ export default {
       let bi = -1, bd = 1e9; for (let i = 0; i < n; i++) { const d = Math.abs(H.t[i] - e.t); if (d < bd) { bd = d; bi = i; } }
       if (bi >= 0 && bd < 1.5 && rr[bi] != null) marks.push({ range: rr[bi], alt: aa[bi], label: e.kind === 'max-q' ? 'max-Q' : e.kind === 'liftoff' ? 'lift-off' : e.text.replace(/^\[\w+\] /, '').replace(/ at T.*/, ''), color: e.kind === 'max-q' ? 'var(--warn)' : 'var(--info)' });
     }
-    R.traj.draw({ nominal, trail: trail.range.length ? trail : null, marks, now });
+    R.traj.draw({ nominal, trail: trail.range.length ? trail : null, marks, now, view: R.view });
     setText(R.nomNote, R.nominalState === 'ready' ? `Nominal: the reference vehicle flown by tfc_fly with the real flight software, no departures, platform sensors (${(R.nominal.alt[R.nominal.alt.length - 1] / 1000).toFixed(1)} km, ${(R.nominal.range[R.nominal.range.length - 1] / 1000).toFixed(1)} km downrange at the end).` : R.nominalState === 'loading' ? 'Computing the nominal flight…' : 'The nominal flight is not available (build/host/tfc_fly is not built).');
     // the rocket
     if (t) {
@@ -122,16 +125,17 @@ export default {
       });
       const top = -(Math.max(1, nst) - 1) * 60;                           // the top edge of the highest stage drawn: the nose sits on it
       R.nose.setAttribute('d', `M-22 ${top} L0 ${top - 38} L22 ${top}z`);
-      R.flame.setAttribute('opacity', t.engines_on > 0 && t.thrust > 0 ? .9 : 0);
+      R.flame.setAttribute('opacity', !t.clamped && t.engines_on > 0 && t.thrust > 0 ? .9 : 0);          // the vehicle is held until T-zero: no flame on the pad
       R.flameG.setAttribute('transform', `translate(0 56) rotate(${-(t.gim_p || 0) * 3})`);   // the flame leans with the gimbal (drawn three times larger than it is)
-      R.rkTilt.setAttribute('transform', `translate(100 ${t.clamped ? 214 : 214}) rotate(${t.tilt_p})`);
+      R.pad.style.display = t.clamped ? '' : 'none';                       // the pad is only there until the vehicle leaves it
+      R.rkTilt.setAttribute('transform', `translate(100 ${t.clamped ? 214 : 190}) rotate(${t.tilt_p})`);
       setText(R.tiltTxt, `pitch tilt ${t.tilt_p.toFixed(1)}° · gimbal ${t.gim_p.toFixed(2)}°`);
     } else setText(R.tiltTxt, 'no simulator telemetry');
     // the numbers
     const dnom = (R.nominal && t && t.ft > 0) ? { alt: interp(R.nominal.t, R.nominal.alt, t.ft), speed: interp(R.nominal.t, R.nominal.speed, t.ft) } : null;
     const rows = t ? [
-      ['T+', clock(t.ft), 's'], ['Altitude', eng(t.alt, 1), 'm'], ['Range', eng(t.range, 1), 'm'], ['Speed', t.speed.toFixed(1), 'm/s'], ['Mach', t.mach.toFixed(2), ''], ['Dynamic pressure', (t.q / 1000).toFixed(2), 'kPa'],
-      ['Mass', eng(t.mass, 1), 'kg'], ['Thrust', (t.thrust / 1000).toFixed(0), 'kN'], ['Engines', `${t.engines_on}/${t.engines}`, ''], ['Pitch tilt', t.tilt_p.toFixed(2), '°'], ['Program', t.ref_p.toFixed(2), '°'],
+      ['T+', t.ft.toFixed(1), 's'], ['Altitude', eng(t.alt, 1), 'm'], ['Range', eng(t.range, 1), 'm'], ['Speed', t.speed.toFixed(1), 'm/s'], ['Mach', t.mach.toFixed(2), ''], ['Dynamic pressure', (t.q / 1000).toFixed(2), 'kPa'],
+      ['Mass', eng(t.mass, 1), 'kg'], ['Thrust', t.clamped ? 'held' : (t.thrust / 1000).toFixed(0), t.clamped ? '' : 'kN'], ['Engines', t.clamped ? 'on the pad' : `${t.engines_on}/${t.engines}`, ''], ['Pitch tilt', t.tilt_p.toFixed(2), '°'], ['Program', t.ref_p.toFixed(2), '°'],
       ['Tilt − program', (t.tilt_p - t.ref_p).toFixed(2), '°'], ['Gimbal pitch', t.gim_p.toFixed(2), '°'], ['Gimbal yaw', t.gim_y.toFixed(2), '°'],
       ...(dnom && dnom.alt != null ? [['Alt − nominal', eng(t.alt - dnom.alt, 1), 'm'], ['Speed − nominal', (t.speed - dnom.speed).toFixed(1), 'm/s']] : []),
     ] : b ? [['Altitude', eng(b.alt, 1), 'm'], ['Speed', b.speed.toFixed(0), 'm/s'], ['Mass', eng(b.mass, 1), 'kg'], ['Dyn. pressure', b.q != null ? (b.q / 1000).toFixed(2) : '—', 'kPa'], ['Pitch error', b.err_p, '°'], ['Yaw error', b.err_y, '°']] : [];
@@ -142,7 +146,7 @@ export default {
     const tb = R.stages.querySelector('tbody'); tb.innerHTML = '';
     if (t && t.prop) t.prop.forEach((p, i) => {
       const act = (t.stages_active >> i) & 1, ign = (t.stages_ignited >> i) & 1;
-      const state = !act ? 'separated' : ign ? (t.engines_on > 0 && i === (R.stageEls.findIndex((_, k) => (t.stages_active >> k) & 1)) ? 'burning' : 'ignited') : 'waiting';
+      const state = !act ? 'separated' : t.clamped ? 'on the pad' : ign ? (t.engines_on > 0 && i === (R.stageEls.findIndex((_, k) => (t.stages_active >> k) & 1)) ? 'burning' : 'ignited') : 'waiting';
       const frac = (R.maxProp || [])[i] ? p / R.maxProp[i] : 0;
       tb.append(h('tr', {}, h('td', {}, `Stage ${i + 1}`), h('td', {}, h('span', { class: `chip ${state === 'burning' ? 'warn' : state === 'separated' ? 'muted' : state === 'ignited' ? 'info' : 'muted'}` }, state)), h('td', { class: 'num' }, eng(p, 0)), h('td', { style: { width: '35%' } }, h('div', { class: 'progress' }, h('i', { style: { width: `${(frac * 100).toFixed(0)}%` } })))));
     });

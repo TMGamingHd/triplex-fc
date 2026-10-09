@@ -1,5 +1,5 @@
 // The shell: the header, the tab rail, the event stream, and the render loop that keeps the visible tab current.
-import { $, h, icon, setText, clock, store, toast, NODES } from './util.js';
+import { $, h, icon, setText, clock, store, toast, modal, download } from './util.js';
 import { api, stream, hasToken } from './net.js';
 import { S, setHistory, pushMetrics, addEvent, addLine } from './state.js';
 import { resetColorCache } from './charts.js';
@@ -33,7 +33,21 @@ for (const [i, t] of TABS.entries()) {
   main.append(pane);
   t.mount(pane, ctx);
 }
-nav.append(h('div', { class: 'hint' }, 'Keys 1 to 0 switch tabs.', h('br'), 'The console decides nothing about the flight: it shows what the computers say and what it can compute from the bus.'));
+nav.append(h('div', { class: 'hint' }, h('button', { class: 'btn small ghost', style: { width: '100%', marginBottom: '6px' }, title: 'Download the chart history as CSV', onclick: exportHistory }, '⬇ history CSV'), h('button', { class: 'btn small ghost', style: { width: '100%', marginBottom: '8px' }, onclick: help }, '? keys and colours'),
+  'The console decides nothing about the flight: it shows what the computers say and what it can compute from the bus.'));
+
+function exportHistory() {
+  const H = S.hist, keys = Object.keys(H.s).sort();
+  if (!H.t.length) { toast('No history yet.', 'warn'); return; }
+  download('tfc-history.csv', ['t,' + keys.join(','), ...H.t.map((t, i) => [t, ...keys.map((k) => H.s[k][i] ?? '')].join(','))].join('\n'), 'text/csv');
+}
+function help() {
+  const row = (k, t) => [h('span', { class: 'kbd' }, k), h('span', {}, t)];
+  modal({ title: 'Keys and colours', body: [
+    h('div', { class: 'helpgrid' }, row('1 … 9, 0', 'switch tab (Mission, Launch, Voting, Flight, Commands, Faults, Vehicle, Rig, Bus, Events)'), row('?', 'this help'), row('Esc', 'close a dialog')),
+    h('div', { class: 'legend' }, h('span', {}, h('i', { style: { background: 'var(--nA)' } }), 'FC-A'), h('span', {}, h('i', { style: { background: 'var(--nB)' } }), 'FC-B'), h('span', {}, h('i', { style: { background: 'var(--nC)' } }), 'FC-C'), h('span', {}, h('i', { style: { background: 'var(--nACT)' } }), 'ACT'), h('span', {}, h('i', { style: { background: 'var(--ok)' } }), 'healthy / good'), h('span', {}, h('i', { style: { background: 'var(--warn)' } }), 'warning / latched'), h('span', {}, h('i', { style: { background: 'var(--crit)' } }), 'critical / silent')),
+    h('p', { class: 'note', style: { margin: 0 } }, 'Dimmed italic numbers on a silent node are the last it said, not current. Dotted grey lines on the Flight tab are the bus’s copy of a number next to the simulator’s own. A status is always a word or a shape as well as a colour.')], buttons: [{ label: 'Close', value: 'x' }] });
+}
 
 function select(id) {
   const t = TABS.find((x) => x.id === id) || TABS[0];
@@ -50,6 +64,7 @@ function select(id) {
 }
 addEventListener('keydown', (e) => {
   if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable]') || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === '?') { help(); return; }
   const i = e.key === '0' ? 9 : +e.key - 1;
   if (i >= 0 && i < TABS.length) select(TABS[i].id);
 });
@@ -133,13 +148,15 @@ function transportBar(s) {
   transport.classList.remove('hide');
   if (tbKey !== 'built') {
     tbKey = 'built'; transport.innerHTML = '';
-    const play = h('button', { class: 'btn', id: 'tb-play', onclick: () => api('/api/replay', { play: !(S.snap.source.playing) }).catch((e) => toast(e.message, 'warn')) });
-    const seek = h('input', { type: 'range', id: 'tb-seek', min: 0, max: 1000, value: 0, style: { flex: 1 }, 'aria-label': 'Replay position' });
+    const seekBy = (d) => api('/api/replay', { seek: Math.max(S.snap.source.start, Math.min(S.snap.source.end, S.snap.source.pos + d)) }).catch((e) => toast(e.message, 'warn'));
+    const play = h('button', { class: 'btn', id: 'tb-play', style: { minWidth: '92px' }, onclick: () => api('/api/replay', { play: !(S.snap.source.playing) }).catch((e) => toast(e.message, 'warn')) });
+    const seek = h('input', { type: 'range', id: 'tb-seek', min: 0, max: 1000, value: 0, style: { flex: '1 1 160px', minWidth: '120px' }, 'aria-label': 'Replay position' });
     seek.addEventListener('change', () => { const so2 = S.snap.source; api('/api/replay', { seek: so2.start + (seek.value / 1000) * (so2.end - so2.start) }).catch((e) => toast(e.message, 'warn')); });
-    const speed = h('select', { id: 'tb-speed', 'aria-label': 'Replay speed' }, [0.25, 0.5, 1, 2, 4, 8, 16].map((x) => h('option', { value: x }, `${x}×`)));
+    const speed = h('select', { id: 'tb-speed', 'aria-label': 'Replay speed' }, [0.25, 0.5, 1, 2, 4, 8, 16, 32].map((x) => h('option', { value: x }, `${x}×`)));
     speed.addEventListener('change', () => api('/api/replay', { speed: +speed.value }).catch((e) => toast(e.message, 'warn')));
-    transport.append(h('div', { class: 'body', style: { display: 'flex', gap: '12px', alignItems: 'center' } }, h('span', { class: 'chip info' }, 'REPLAY'), play, seek, h('span', { class: 'mono', id: 'tb-pos' }), speed,
-      h('span', { class: 'note', id: 'tb-note' })));
+    transport.append(h('div', { class: 'body', style: { display: 'flex', gap: '8px 12px', alignItems: 'center', flexWrap: 'wrap' } }, h('span', { class: 'chip info' }, 'REPLAY'),
+      h('button', { class: 'btn small', title: 'Back to the start', onclick: () => seekBy(-1e9) }, '⏮'), h('button', { class: 'btn small', title: 'Back 10 s', onclick: () => seekBy(-10) }, '−10 s'), play, h('button', { class: 'btn small', title: 'Forward 10 s', onclick: () => seekBy(10) }, '+10 s'),
+      seek, h('span', { class: 'mono', id: 'tb-pos', style: { whiteSpace: 'nowrap' } }), speed, h('span', { class: 'note', id: 'tb-note', style: { flexBasis: '100%' } })));
   }
   setText($('#tb-play'), so.playing ? '❚❚ Pause' : '▶ Play');
   const seek = $('#tb-seek'); if (document.activeElement !== seek) seek.value = Math.round(((so.pos - so.start) / Math.max(1e-6, so.end - so.start)) * 1000);

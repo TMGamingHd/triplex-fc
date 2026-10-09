@@ -26,6 +26,8 @@ export async function run(kind, ctx) {
     // ---- keyboard
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '3', bubbles: true })); await sleep(200);
     log($('#pane-voting').classList.contains('active'), 'key 3 selects Voting');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true })); await sleep(200);
+    log(!!$('.modal'), 'the ? key opens the help'); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await sleep(150);
     // ---- theme
     const t0 = document.documentElement.dataset.theme; click('#theme-btn'); await sleep(100);
     log(document.documentElement.dataset.theme !== t0, 'theme toggles'); click('#theme-btn');
@@ -60,6 +62,8 @@ export async function run(kind, ctx) {
     log(!!ok, 'the vehicle validates with tfc_fly --check');
     // ---- the bus and the events
     await tab('bus'); const rows = await waitFor(() => $('#pane-bus tbody tr') && $$rows('#pane-bus tbody tr') > 10, 4000); log(!!rows, 'the bus table lists the ids');
+    log(/expected/i.test($('#pane-bus thead').textContent), 'the bus table shows the expected rate beside the measured one');
+    log(![...document.querySelectorAll('#pane-bus tbody td.num.s-crit')].some((td) => /^\d+\.\d$/.test(td.textContent)), 'no id runs below 90 % of its expected rate');
     await tab('events'); log($$rows('#pane-events .log-line') > 5, 'the event list has entries');
     if (kind === 'faults') await faults(ctx);
     if (kind === 'launch') await launch(ctx);
@@ -130,4 +134,8 @@ async function launch() {
   log(await waitFor(() => document.querySelector('#pane-mission .alert.crit'), 3000) != null, 'the Mission tab raises a critical alert');
   await tab('events');
   log(S.events.some((e) => /TEST ACTION: node B killed/.test(e.text)), 'the event log names the kill as a test action');
+  await tab('flight');
+  const follow = [...document.querySelectorAll('#pane-flight .seg button')].find((b) => b.textContent === 'Follow vehicle');
+  if (follow) follow.click();
+  log(!!follow && follow.getAttribute('aria-pressed') === 'true', 'the trajectory can follow the vehicle');
 }

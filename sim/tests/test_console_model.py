@@ -225,6 +225,17 @@ class Events(unittest.TestCase):
         tm2.feed(1.2, act(vote_status=0))
         self.assertEqual(events(tm2, "vote-status")[-1].level, "ok")
 
+    def test_a_status_that_flickers_between_non_triplex_values_after_a_loss_is_one_warning(self):
+        tm = Telemetry()
+        tm.feed(1.00, act(vote_status=0))
+        t = 1.01
+        for status in ([1] * 10 + [3] + [1] * 10 + [2] + [1] * 10):       # Duplex, a frame of Simplex, Duplex, a frame of miscompare, Duplex
+            tm.feed(t, act(vote_status=status))
+            t += 0.01
+        self.assertEqual(len(events(tm, "vote-status")), 1)
+        tm.feed(t, act(vote_status=0))
+        self.assertEqual([e.level for e in events(tm, "vote-status")], ["warn", "ok"])
+
     def test_a_ground_frame_on_the_bus_is_shown_and_its_tag_checked(self):
         tm = Telemetry()
         tm.feed(1.0, P.pack_ground(P.GROUND_OPS["reintegrate"], 1, 5))

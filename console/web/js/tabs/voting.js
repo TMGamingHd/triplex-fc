@@ -64,7 +64,7 @@ export default {
   mount(root) {
     R.diagram = diagram(); R.life = lifecycle();
     R.win = store.get('vote.window', 60);
-    R.rows = h('div'); R.rowsHead = h('div', { class: 'devhead' }, h('span', {}, 'channel'), NODES.map((n) => h('span', { style: { color: COL[n] } }, `FC-${n}`)), h('span', {}, 'deviation from the median, in tolerances  (± 1 = the voter’s band)'));
+    R.rows = h('div'); R.rowsHead = h('div', { class: 'devhead' }, h('span', {}, 'channel'), NODES.map((n) => h('span', { style: { color: COL[n] } }, `FC-${n}`)), h('span', {}, 'deviation from the median (green = within tolerance)'));
     const c1 = h('canvas'), c2 = h('canvas');
     R.chDev = new Chart(c1, { height: 170, window: R.win, yMin: 0, hlines: [{ y: 1, color: 'var(--crit)', label: 'tolerance', include: true }], series: NODES.map((n) => ({ key: `dev_${n.toLowerCase()}`, label: `FC-${n}`, color: COL[n] })) });
     R.chCmd = new Chart(c2, { height: 170, window: R.win, series: [...NODES.map((n) => ({ key: `cmd_p_${n.toLowerCase()}`, label: `FC-${n}`, color: COL[n], width: 1.4 })), { key: 'act_p', label: 'ACT out', color: 'var(--nACT)', width: 2.2, dash: [4, 3] }] });
@@ -76,10 +76,10 @@ export default {
     R.counterNote = h('div', { class: 'note', style: { padding: '8px 12px' } });
     R.params = h('div', { class: 'stats' });
     root.append(h('div', { class: 'stack' },
-      h('div', { class: 'grid cols2' },
+      h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))' } },
         h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'ACT: the vote on the commands'), h('div', { class: 'tools' }, h('span', { class: 'note' }, 'what ACT says it is doing'))), h('div', { class: 'body' }, R.diagram)),
         h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Node life cycle'), h('div', { class: 'tools' }, h('span', { class: 'note' }, 'ADR-010, ADR-013'))), h('div', { class: 'body' }, R.life, h('div', { id: 'lc-where', class: 'legend', style: { margin: '6px 0' } }), h('ol', { class: 'note', style: { margin: 0, paddingLeft: '20px' } }, LIFE.map(([n, t, d]) => h('li', { value: n }, h('b', {}, t + ': '), d)))))),
-      h('div', { class: 'grid c-3-2' },
+      h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))' } },
         h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Agreement, channel by channel'), h('div', { class: 'tools' }, h('span', { class: 'note' }, 'the console’s reconstruction from the bus'))), h('div', { class: 'body' }, R.rowsHead, R.rows,
           h('p', { class: 'note', style: { marginBottom: 0 } }, 'Each frame’s samples are compared only with the other nodes’ samples of the same frame. A point outside the green band is a sample the voter would call out of tolerance; a node is latched only if that persists (3 of the last 5 frames, or the leaky count).'))),
         h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Over time'), h('div', { class: 'tools' }, winSeg)),
