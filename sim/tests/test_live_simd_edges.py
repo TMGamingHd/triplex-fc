@@ -22,7 +22,7 @@ class SimdEdges(unittest.TestCase):
         self.bus = B.SocketCanBus("vcan0")
         self.mon = B.SocketCanBus("vcan0")
         self.mon.set_filter([(P.ID_SIM_RATES, 0x7FF)])
-        time.sleep(0.3)
+        time.sleep(0.8)  # tfc_simd designs the reference vehicle's gain tables before it listens: 0.36 s on the developer's machine (measured on 8 Oct 2026, the same on main before the flight console), so 0.3 s lost the first frames
 
     def tearDown(self):
         self.proc.terminate()

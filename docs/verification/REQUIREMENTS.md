@@ -190,6 +190,23 @@ The logic and the Pico application are built and host-tested; the parts arrive o
 | TFC-LAUN-006 | The guidance and gain schedules shall follow the frames since T-zero, not the SYNC frame number. | T | Verified (host, live on the virtual rig) |
 | TFC-LAUN-007 | The simulator shall hold the vehicle on the pad until T-zero and release it then. | T | Verified (host, live on the virtual rig) |
 
+## Ground console (ADR-034; docs/design/CONSOLE.md)
+These are requirements on a bench tool, not on the flight system: the console must be a faithful, safe window and a careful hand. "Live" means exercised with real firmware instances on `vcan0` (`sim/tests/test_live_console.py`).
+| ID | Requirement | Verif. | Status |
+|---|---|---|---|
+| TFC-CON-001 | The console shall show a node's health, mode, role and view only as the node's heartbeat gives them, and ACT's vote status and exclusions only as ACT's frame gives them; every quantity it computes itself (the deviation from the median, the go/no-go) shall be labelled as the console's own. | T, I | Verified (SIL) |
+| TFC-CON-002 | The console's go/no-go shall give the same answer as the launch checklist (`tfc_peers launch`) in every state. | T | Verified (SIL): 400 random states |
+| TFC-CON-003 | A source that falls silent (a heartbeat, SYNC, ACT, a node's samples) shall be shown as silent within 0.5 s of its last frame, with the time since, and never as its last value. | T | Verified (SIL) |
+| TFC-CON-004 | A command shall be sent only as an authenticated ground frame, with a counter taken from the command line's counter file; a command that needs an ARM shall be sent as ARM then EXECUTE 50 ms later and only after the operator confirms it; no command shall be sent from a replay or without an interface. | T | Verified (SIL); live for launch, scrub, reintegrate and no-op |
+| TFC-CON-005 | A launch shall not be sent while the console's go/no-go is NO-GO, unless forced, and the refusal shall name the reasons. | T | Verified (SIL); live |
+| TFC-CON-006 | Each node's answer to a command (accepted, refused and why) shall be shown with the command; with no node console attached the console shall say "no answer" and not infer one. | T | Verified (SIL); live |
+| TFC-CON-007 | Every API request shall need the session token; a request with another Host, a POST from another origin, and a static path outside the web directory shall be refused. | T | Verified (SIL) |
+| TFC-CON-008 | A fault injected through the console shall be applied between frames, and its detection shall be measured from the bus as the frames between the fault's start and the first heartbeat that calls the node latched, with the node's own reason. | T | Verified (SIL); live: a 3 dps bias on B is detected 2 frames after it starts |
+| TFC-CON-009 | A recording shall replay to the same events and state it was recorded with, and the state after a seek shall equal the state of playing straight to that time. | T | Verified (SIL) |
+| TFC-CON-010 | The processes the console starts shall not outlive it, even if it is killed. | T | Verified (SIL) |
+| TFC-CON-011 | The console's copies of core constants (tolerances, the persistence window, the ARM and counter windows, the phase table) and its reading of the nodes' console lines shall be checked against the C++ headers and the firmware's format strings, so that a change in `core/` or `firmware/` cannot leave it wrong without a test failing. | T | Verified (SIL) |
+| TFC-CON-012 | The console shall read the nodes' consoles, the supervisor and the Pico on their serial ports, and send only the supervisor's documented commands and bounded relay cuts. | T, M | Verified (SIL) against pseudo-terminals and a fake Pico; waits for the boards |
+
 ## Software quality
 | ID | Requirement | Verif. | Status |
 |---|---|---|---|

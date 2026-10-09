@@ -27,6 +27,7 @@
 | [SUPERVISOR.md](design/SUPERVISOR.md) | The supervisor (SUP-Lite): lines, ladder, commands |
 | [HARDWARE_OVERRIDE.md](design/HARDWARE_OVERRIDE.md) | The manual switches below the supervisor; their own failure modes |
 | [PICO.md](design/PICO.md) | The Pico: platform driver and fault injector |
+| [CONSOLE.md](design/CONSOLE.md) | The flight console: one web page that shows the bus, the nodes' consoles and the simulator's truth, and sends the operator's commands |
 | [VEHICLE_SIM.md](design/VEHICLE_SIM.md) | The 6-DOF ascent simulator, the platform and the bus runner |
 | [ENVIRONMENT.md](design/ENVIRONMENT.md) | The world: planets, rotation, J2, atmospheres and their dispersions, wind profiles, turbulence |
 | [IMU_MODEL.md](design/IMU_MODEL.md) | The IMU as the ISM330DHCX datasheet describes it: noise, wandering bias, drift with temperature, cross-axis, jitter; the presets, the checks |
@@ -40,7 +41,7 @@
 ## Decisions: why (`decisions/`)
 | Page | Covers |
 |---|---|
-| [DECISIONS.md](decisions/DECISIONS.md) | The 33 ADRs, with a register of what is built and what each waits for |
+| [DECISIONS.md](decisions/DECISIONS.md) | The 34 ADRs, with a register of what is built and what each waits for |
 | [TRADE_STUDIES.md](decisions/TRADE_STUDIES.md) | The studies behind them, with results where they are done |
 
 ## Verification: how we know (`verification/`)

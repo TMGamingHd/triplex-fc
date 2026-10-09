@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import queue
 import sys
+import threading
 import time
 from pathlib import Path
 
 from . import bus as B
+from . import control as CTL
 from . import protocol as P
 from .commands import GroundCommand, parse_commands, parse_phase
 from .faults import KINDS, FaultSpecError, parse_fault, parse_node
@@ -46,8 +49,36 @@ def _add_scenario_args(p: argparse.ArgumentParser) -> None:
                         "For `run`, 0 means keep going until Ctrl+C")
 
 
+def _control_poll(sc: Scenario):
+    """`--control`: a thread reads lines from standard input; the returned function, called once per frame, applies them and answers on standard output."""
+    lines: queue.SimpleQueue[str | None] = queue.SimpleQueue()
+
+    def reader() -> None:
+        for line in sys.stdin:
+            lines.put(line)
+        lines.put(None)  # end of input: the controller has gone; the run goes on with the faults it has
+
+    threading.Thread(target=reader, daemon=True).start()
+
+    def poll(k: int) -> None:
+        while True:
+            try:
+                line = lines.get_nowait()
+            except queue.Empty:
+                return
+            if line is None:
+                return
+            for reply in CTL.handle(sc, line, k):
+                print(reply, flush=True)
+
+    return poll
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     sc = _scenario(args)
+    if args.control and not args.follow_sync:
+        print("error: --control needs --follow-sync (commands are applied between SYNC frames)", file=sys.stderr)
+        return 2
     bus = B.SocketCanBus(args.iface)
     names = ",".join("ABC"[n] for n in sc.nodes)
     mode = "following SYNC from the flight computer" if args.follow_sync else "free-running at 100 Hz"
@@ -57,7 +88,7 @@ def cmd_run(args: argparse.Namespace) -> int:
           f"faults: {[str(f) for f in sc.faults] or 'none'}", flush=True)
     try:
         if args.follow_sync:
-            st = B.run_synced(sc, bus, args.frames, on_note=lambda m: print(f"note: {m}", flush=True))
+            st = B.run_synced(sc, bus, args.frames, on_note=lambda m: print(f"note: {m}", flush=True), poll=_control_poll(sc) if args.control else None)
         else:
             st = B.run_realtime(sc, bus, args.frames)
     except TimeoutError as e:
@@ -257,6 +288,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--follow-sync", action="store_true",
                    help="phase-lock to the flight computer's SYNC frames (frame numbers come from SYNC); "
                         "--frames then counts SYNC frames. Without it the peers free-run on their own 100 Hz clock")
+    p.add_argument("--control", action="store_true",
+                   help="read fault commands from standard input while running (needs --follow-sync): `add SPEC [for N]`, `clear ID|all`, `list`, `frame`; "
+                        "one answer line each (`ok ...` or `error: ...`). See tfc_peers/control.py")
     p.set_defaults(fn=cmd_run)
 
     p = sub.add_parser("record", help="generate traffic offline into a candump-format log (no sleeping)")

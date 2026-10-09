@@ -1,7 +1,7 @@
 # P-S2-02: the launch checklist (pad, go/no-go, countdown, T-zero)
 
 Follows `docs/verification/VERIFICATION_PROCEDURE_TEMPLATE.md`. The human checklist for a run of the closed loop, and the verification of the launch sequence on the virtual rig (`vcan0`) now and on the real rig later.
-Design: `docs/design/LAUNCH_SEQUENCE.md`. The automated half is `python3 -m tfc_peers launch`.
+Design: `docs/design/LAUNCH_SEQUENCE.md`. The automated half is `python3 -m tfc_peers launch`; the flight console's Launch tab (`docs/design/CONSOLE.md`) runs the same checklist with the same rule, shows each item, and sends the same ARM and EXECUTE after a typed confirmation.
 
 | Field | Entry |
 |---|---|

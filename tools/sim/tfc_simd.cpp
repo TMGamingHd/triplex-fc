@@ -5,13 +5,17 @@
 // flight computers' frame count. A run starts at the first SYNC heard and starts over if the frame number goes backwards (the sync master was reset).
 // With --pico PORT it also streams the vehicle's tilts to the Pico that drives the platform (docs/design/PICO.md): one platform frame per simulated frame, so 100 Hz.
 // With --hold the vehicle stands clamped on the pad until the mission frame in SYNC passes T-zero (docs/design/LAUNCH_SEQUENCE.md), then flies; a simulator that starts after T-zero joins the flight in progress.
-//   tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
+//   tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--telemetry PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
+// With --telemetry PORT it also sends the vehicle's true state, 10 times a second, as one JSON object per UDP datagram to 127.0.0.1:PORT (the flight console, docs/design/CONSOLE.md): what the bus does not
+// carry (the distance downrange, the stages, the thrust, the program the flight computers follow). It is an output only: nothing the flight computers do depends on it, and a datagram nobody reads is dropped.
 // --vehicle flies the vehicle described in FILE (docs/design/VEHICLE_SPEC.md) instead of the reference vehicle; give it before the options that adjust the scenario. The flight computers carry the tables
 // they were built with, which are the reference vehicle's: for another vehicle regenerate them (tfc_gen_tables --vehicle FILE firmware/app/src/flight_tables.hpp) and rebuild the firmware.
 #include <fcntl.h>
 #include <poll.h>
 #include <termios.h>
+#include <arpa/inet.h>
 #include <net/if.h>
+#include <netinet/in.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -19,6 +23,8 @@
 #include <linux/can.h>
 #include <linux/can/raw.h>
 
+#include <algorithm>
+#include <array>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -111,6 +117,57 @@ void send_platform(int fd, uint8_t seq, const sim::Tilts& t, unsigned& drops) {
   }
 }
 
+// The console's telemetry: a UDP socket to 127.0.0.1:port, and one JSON object per datagram. The state is the simulator's own (the truth), not what a sensor read.
+struct Telemetry {
+  int fd = -1;
+  sockaddr_in to{};
+};
+
+bool open_telemetry(Telemetry& t, int port) {
+  if (port <= 0 || port > 65535) {
+    std::fprintf(stderr, "--telemetry: %d is not a port\n", port);
+    return false;
+  }
+  t.fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+  if (t.fd < 0) {
+    std::perror("socket");
+    return false;
+  }
+  t.to.sin_family = AF_INET;
+  t.to.sin_port = htons(static_cast<uint16_t>(port));
+  t.to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  return true;
+}
+
+void send_telemetry(const Telemetry& t, const sim::SimRunner& runner) {
+  const sim::Vehicle6& v = runner.vehicle();
+  const sim::Loads l = v.current_loads();
+  const sim::Tilts tl = v.tilts();
+  const tfc::Reference ref = runner.tables().guidance.at(runner.flight_frame());
+  const std::size_t stages = std::min<std::size_t>(v.spec().stages.size(), sim::kMaxStages);
+  unsigned active = 0U;
+  unsigned ignited = 0U;
+  for (std::size_t s = 0; s < stages; ++s) {
+    active |= v.stage_active(s) ? (1U << s) : 0U;
+    ignited |= v.stage_ignited(s) ? (1U << s) : 0U;
+  }
+  std::array<char, 640> buf{};
+  int n = std::snprintf(buf.data(), buf.size(),
+                        "{\"frame\":%u,\"ft\":%.2f,\"clamped\":%d,\"alt\":%.2f,\"range\":%.1f,\"speed\":%.2f,\"mach\":%.3f,\"q\":%.1f,\"mass\":%.1f,\"thrust\":%.0f,"
+                        "\"tilt_p\":%.4f,\"tilt_y\":%.4f,\"ref_p\":%.4f,\"ref_y\":%.4f,\"gim_p\":%.3f,\"gim_y\":%.3f,\"stages_active\":%u,\"stages_ignited\":%u,"
+                        "\"engines_on\":%d,\"engines\":%d,\"crashed\":%d,\"prop\":[",
+                        static_cast<unsigned>(runner.frame()), static_cast<double>(runner.flight_frame()) * 0.01, runner.clamped() ? 1 : 0, v.altitude(), v.range(), v.speed(), l.mach,
+                        l.dynamic_pressure, v.mass(), l.thrust, tl.y_deg, tl.x_deg, static_cast<double>(ref.tilt_y_deg), static_cast<double>(ref.tilt_x_deg), v.gimbal_pitch_deg(),
+                        v.gimbal_yaw_deg(), active, ignited, v.engines_on(), v.engine_count(), v.crashed() ? 1 : 0);
+  for (std::size_t s = 0; s < stages && n > 0 && static_cast<std::size_t>(n) + 24U < buf.size(); ++s) {
+    n += std::snprintf(buf.data() + n, buf.size() - static_cast<std::size_t>(n), "%s%.1f", s == 0U ? "" : ",", v.propellant(s));
+  }
+  if (n > 0 && static_cast<std::size_t>(n) + 4U < buf.size()) {
+    n += std::snprintf(buf.data() + n, buf.size() - static_cast<std::size_t>(n), "]}");
+    (void)::sendto(t.fd, buf.data(), static_cast<std::size_t>(n), MSG_DONTWAIT, reinterpret_cast<const sockaddr*>(&t.to), sizeof t.to);
+  }
+}
+
 bool split(const std::string& arg, double* out, int n) {
   std::size_t pos = 0;
   for (int i = 0; i < n; ++i) {
@@ -135,6 +192,7 @@ int main(int argc, char** argv) {
   sim::RunnerConfig cfg;
   uint32_t max_frames = 0U;
   std::string pico_port;
+  int telemetry_port = 0;
   bool quiet = false;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -166,6 +224,8 @@ int main(int argc, char** argv) {
       cfg.start_held = true;
     } else if (a == "--pico") {
       pico_port = next();
+    } else if (a == "--telemetry") {
+      telemetry_port = std::atoi(next().c_str());
     } else if (a == "--vehicle-true") {
       cfg.vehicle_true = true;
     } else if (a == "--wind-scale") {
@@ -186,7 +246,7 @@ int main(int argc, char** argv) {
     } else if (a == "--quiet") {
       quiet = true;
     } else {
-      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
+      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--telemetry PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
       return 2;
     }
   }
@@ -200,6 +260,10 @@ int main(int argc, char** argv) {
     if (pico < 0) {
       return 1;
     }
+  }
+  Telemetry telemetry;
+  if (telemetry_port != 0 && !open_telemetry(telemetry, telemetry_port)) {
+    return 1;
   }
   unsigned pico_drops = 0U;
   std::signal(SIGINT, on_signal);
@@ -280,6 +344,9 @@ int main(int argc, char** argv) {
       if (pico >= 0) {
         send_platform(pico, static_cast<uint8_t>(runner.frame()), runner.vehicle().tilts(), pico_drops);
       }
+      if (telemetry.fd >= 0 && runner.frame() % 10U == 0U) {
+        send_telemetry(telemetry, runner);
+      }
       if (!quiet && runner.frame() % 100U == 0U) {
         const sim::Tilts t = runner.vehicle().tilts();
         std::fprintf(stderr, "t=%6.2f s  alt %8.0f m  speed %7.1f m/s  tilt pitch %7.3f yaw %7.3f deg  gimbal %6.2f %6.2f  ACT state %u  tx_err %u\n",
@@ -294,6 +361,9 @@ int main(int argc, char** argv) {
   ::close(sock);
   if (pico >= 0) {
     ::close(pico);
+  }
+  if (telemetry.fd >= 0) {
+    ::close(telemetry.fd);
   }
   std::fprintf(stderr, "tfc_simd: stopped at frame %u (t = %.2f s), altitude %.0f m\n", static_cast<unsigned>(runner.frame()), static_cast<double>(runner.frame()) * 0.01,
                runner.vehicle().altitude());

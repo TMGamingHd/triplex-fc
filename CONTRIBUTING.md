@@ -62,6 +62,15 @@ python3 tools/mutation/run_sim.py                                  # deliberate 
 `a_controlled_flight_of_the_reference_vehicle_is_unchanged_by_changes_to_the_model` (`tests/test_vehicle.cpp`) and `general_the_reference_vehicle_flies_as_the_frozen_single_vehicle_model_did` (`tests/test_vehicle_general.cpp`, against `tests/oracle/`) must still pass without edits: the reference vehicle's flight is the contract of every change. A change that moves it by even a rounding moves the quantised sensor values of the closed loop, and with them the documented sensitivity numbers. A new
 model, option or guard comes with a test that fails without it, and a mutant in `tools/mutation/sim_mutations.py` that removes it.
 
+## Before you push a change to the flight console (`console/`)
+```bash
+cd sim && python3 -m unittest discover -s tests -t . -p "test_console_*.py"          # the console's 163 offline tests
+python3 -m unittest tests.test_peers_control                                          # `tfc_peers run --control`, which the fault lab uses (14)
+python3 -m unittest tests.test_live_console -v                                       # live, with vcan0 and the images: the rig started from the console, a launch, a node lost, faults injected and measured (5, about a minute)
+sim/scripts/setup_vcan.sh && console/tfc-console                                      # then, in the browser, ?selftest=base (see console/README.md): the page's own smoke test
+```
+The page is plain JavaScript with no build step and there is no JavaScript engine on the CI machines: after editing `console/web/js/`, open the page (a load error is printed on it by `js/boot.js`) and run the smoke test. A change to the page that touches what the console *concludes* (the go/no-go, the events, the vote monitor) lives in `console/tfc_console/model.py` and comes with a test in `sim/tests/test_console_model.py`; a new firmware console line needs `tfc_console/lines.py` taught about it (`test_console_lines.py` fails until it is).
+
 ## Milestones, stages and tags
 - Each staged-build stage (S1-S4) and each milestone (M0-M5) ends with a **tag on `main`** and a short log or video: `git tag -a s1-single-fc -m "..." && git push origin s1-single-fc`.
 - Tags: `s1-single-fc`, `s2-act`, `s3-duplex`, `s4-triplex`, and `v1.0` at M5.
