@@ -10,7 +10,7 @@ const $id = (x) => document.getElementById(x);
 function nodeCard(n) {
   const id = (s) => `m-${n}-${s}`;
   return h('article', { class: `card nodecard n${n}` },
-    h('header', {}, h('div', { class: 'title' }, h('b', {}, `FC-${n}`), h('span', { id: id('role'), class: 'chip muted' }, '—')), h('div', { class: 'tools' }, h('span', { id: id('health'), class: 'chip muted' }, 'not seen'))),
+    h('header', {}, h('div', { class: 'title' }, h('b', {}, `FC-${n}`), h('span', { id: id('main'), class: 'chip main hide', title: 'The main computer: the lowest-numbered node still sending. Its SYNC sets the frame and it acts on the launch commands.' }, 'MAIN'), h('span', { id: id('role'), class: 'chip muted' }, '—')), h('div', { class: 'tools' }, h('span', { id: id('health'), class: 'chip muted' }, 'not seen'))),
     h('div', { class: 'body' },
       h('dl', { class: 'kv' },
         kvRow('heartbeat', id('hb'), 'age of the last heartbeat'), kvRow('sees system as', id('mode'), 'the redundancy mode this computer reports'), kvRow('ready for launch', id('ready')), kvRow('release', id('rel'), 'first 16 bits of the source hash'),
@@ -27,7 +27,7 @@ export default {
       NODES.map(nodeCard),
       h('article', { class: 'card nodecard nACT' },
         h('header', {}, h('div', { class: 'title' }, h('b', {}, 'ACT')), h('div', { class: 'tools' }, h('span', { id: 'm-act-state', class: 'chip muted' }, '—'))),
-        h('div', { class: 'body' }, h('dl', { class: 'kv' }, kvRow('vote status', 'm-act-vote'), kvRow('nodes in the vote', 'm-act-voted'), kvRow('excluded', 'm-act-excl'), kvRow('cause of Safe', 'm-act-cause'), kvRow('output pitch', 'm-act-p'), kvRow('output yaw', 'm-act-y'), kvRow('holding', 'm-act-held', 'ACT has no trustworthy vote this frame and repeats its last output'), kvRow('output frames', 'm-act-n'),
+        h('div', { class: 'body' }, h('dl', { class: 'kv' }, kvRow('vote status', 'm-act-vote'), kvRow('computers in the vote', 'm-act-voted'), kvRow('excluded', 'm-act-excl'), kvRow('cause of Safe', 'm-act-cause'), kvRow('output pitch', 'm-act-p'), kvRow('output yaw', 'm-act-y'), kvRow('holding', 'm-act-held', 'ACT has no trustworthy vote this frame and repeats its last output'), kvRow('output frames', 'm-act-n'),
           kvRow('', 'm-act-pad')),
           h('div', { style: { marginTop: '8px' } }, h('button', { class: 'btn small ghost', onclick: () => { store.set('events.tab', 'ACT'); R.ctx.go('events'); } }, 'its console →')))));
     const bus = h('div', { class: 'strip', id: 'm-strip' },
@@ -57,6 +57,7 @@ export default {
     for (const n of s.nodes) {
       const id = (x) => $id(`m-${n.name}-${x}`);
       const hc = id('health'), role = id('role');
+      id('main').classList.toggle('hide', !n.master); id('main').closest('.nodecard').classList.toggle('ismain', !!n.master);
       const cells = ['hb', 'mode', 'ready', 'rel', 'resets', 'strikes', 'wcet', 'bad', 'miss'].map(id);
       if (!n.seen) { hc.className = 'chip muted'; setText(hc, 'not on the bus'); setText(role, '—'); for (const c of cells) { setText(c, '—'); c.classList.remove('stale'); } continue; }
       const lv = n.alive ? healthLevel(n.health) : 'crit';
@@ -105,7 +106,7 @@ export default {
     const rows = !t && !b ? [] : [
       ['Altitude', t ? t.alt : b.alt, 'm', 0], ['Range', t ? t.range : null, 'm', 0], ['Speed', t ? t.speed : b.speed, 'm/s', 0], ['Mach', t ? t.mach : null, '', 2], ['Dyn. pressure', t ? t.q : b.q, 'Pa', 0],
       ['Mass', t ? t.mass : b.mass, 'kg', 0], ['Thrust', t && !t.clamped ? t.thrust / 1000 : null, 'kN', 0], ['Pitch error', b ? b.err_p : null, '°', 2], ['Yaw error', b ? b.err_y : null, '°', 2],
-      ['Engines on', t ? (t.clamped ? 'on the pad' : `${t.engines_on}/${t.engines}`) : b ? b.engines_on : null, '', 0],
+      ['Engines on', t ? (t.clamped ? 'held' : `${t.engines_on}/${t.engines}`) : b ? b.engines_on : null, '', 0],
     ];
     const rk = JSON.stringify(rows.map((r) => r[0]));
     if (R.statKey !== rk) { R.statKey = rk; R.stats.innerHTML = ''; R.statEls = rows.map((r) => { const v = h('div', { class: 'v' }); R.stats.append(h('div', { class: 'stat' }, h('div', { class: 'k' }, r[0]), v)); return v; }); if (!rows.length) R.stats.append(h('div', { class: 'empty' }, 'No simulator is running.')); }

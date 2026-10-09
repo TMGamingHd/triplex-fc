@@ -100,6 +100,29 @@ class ClosedLoop(unittest.TestCase):
         self.assertEqual(c.snap()["phase"]["name"], "flight")
         self.assertFalse(c.snap()["truth"]["crashed"])
 
+    def test_the_main_computer_passes_from_a_to_b_to_c_as_they_are_lost(self):
+        """The console infers the main computer from who still sends; the nodes' own console lines ("takes over as sync master") are the check, and the counts follow: sensors and computers voting 3, 2, 1."""
+        c = self.c
+        c.rig.start_profile("closed-loop")
+        self.assertTrue(wait_for(lambda: c.snap()["go_nogo"]["go"], 45.0), c.snap()["go_nogo"]["reasons"])
+        if (why := c.starved()):
+            self.skipTest(why)
+        s = c.snap()
+        self.assertEqual((s["master"], s["redundancy"]["sensors"], s["redundancy"]["computers"]), ("A", 3, 3))
+        takeovers = lambda who: [e for e in c.hub.model.events if e.kind == "sync-master" and e.src == who and e.frame and e.frame > 100]  # noqa: E731  (a boot-time claim at frame ~4 is every node's first)
+        c.rig.kill("A")
+        self.assertTrue(wait_for(lambda: c.snap()["master"] == "B", 3.0), c.snap()["master"])
+        self.assertTrue(wait_for(lambda: takeovers("B"), 3.0), "node B did not say it took over")
+        self.assertTrue(wait_for(lambda: c.snap()["redundancy"]["sensors"] == 2 and c.snap()["redundancy"]["computers"] == 2, 3.0), c.snap()["redundancy"])
+        self.assertEqual(c.snap()["act"]["vote_status"], "Duplex")
+        c.rig.kill("B")
+        self.assertTrue(wait_for(lambda: c.snap()["master"] == "C", 3.0), c.snap()["master"])
+        self.assertTrue(wait_for(lambda: takeovers("C"), 3.0), "node C did not say it took over")
+        self.assertTrue(wait_for(lambda: c.snap()["redundancy"]["sensors"] == 1 and c.snap()["redundancy"]["computers"] == 1, 3.0), c.snap()["redundancy"])
+        self.assertEqual(c.snap()["act"]["vote_status"], "Simplex")
+        changes = [e.node for e in c.hub.model.events if e.kind == "master-change"]
+        self.assertEqual(changes, ["B", "C"])
+
     def test_a_scrub_in_the_countdown_returns_to_the_pad(self):
         c = self.c
         c.rig.start_profile("closed-loop")

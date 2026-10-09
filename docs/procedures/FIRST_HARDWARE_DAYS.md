@@ -1,6 +1,6 @@
 # The first hardware days: the order of work, what to measure, and what each number decides
 
-> Status: **procedure**, written 5 Oct 2026 for the parts due on **9 October 2026**. Every result goes into [`../hardware/BENCH_LOG.md`](../hardware/BENCH_LOG.md), dated; the stages end in the as-run copies of the procedures below.
+> Status: **procedure**, written 5 Oct 2026 for the parts that arrived on **8 October 2026**. Every result goes into [`../hardware/BENCH_LOG.md`](../hardware/BENCH_LOG.md), dated; the stages end in the as-run copies of the procedures below.
 
 This page is the schedule for the first days after the parts arrive. It adds nothing to the design: each line points to the procedure that has the exact
 steps, and says which number measured that day settles which open setting. Days are a sequence, not dates; a stage that fails stops the sequence until it is understood.

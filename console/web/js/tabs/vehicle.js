@@ -27,7 +27,7 @@ function knobRows(S) {
     const sync = () => { const v = +box.value; const changed = Math.abs(v - base) > 1e-9; if (changed) R.knobs[k.path] = v; else delete R.knobs[k.path]; mod.classList.toggle('hide', !changed); setText(R.nmod, Object.keys(R.knobs).length ? `${Object.keys(R.knobs).length} knob${Object.keys(R.knobs).length > 1 ? 's' : ''} changed from the file` : 'no knob changed'); };
     range.addEventListener('input', () => { box.value = range.value; sync(); }); box.addEventListener('input', () => { range.value = box.value; sync(); });
     if (R.knobs[k.path] !== undefined) mod.classList.remove('hide');
-    R.sheet.append(h('div', { style: { display: 'grid', gridTemplateColumns: '1fr auto', gap: '2px 8px', padding: '6px 0', borderBottom: '1px solid var(--line)' } },
+    R.sheet.append(h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '2px 8px', padding: '6px 0', borderBottom: '1px solid var(--line)' } },
       h('div', {}, h('b', { style: { fontSize: '13px' } }, k.label), ' ', h('span', { class: 'note' }, k.unit), ' ', mod), h('div', { style: { display: 'flex', gap: '4px', alignItems: 'center', justifySelf: 'end' } }, box, reset),
       h('div', { style: { gridColumn: '1 / 3' } }, range), h('div', { class: 'note', style: { gridColumn: '1 / 3' } }, k.doc, ` (file: ${base})`)));
   }
@@ -37,8 +37,9 @@ function list(S) {
   clear(R.list);
   for (const v of S.vehicles) {
     const active = S.snap && S.snap.vehicle && S.snap.vehicle.active.name === v.name;
-    R.list.append(h('button', { class: 'btn ghost', style: { textAlign: 'left', display: 'block', width: '100%', borderColor: v.name === R.name ? 'var(--accent)' : '' }, onclick: () => load(v.name, S) },
-      h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, h('b', {}, v.name), h('span', { class: 'chip muted' }, v.where), active ? h('span', { class: 'chip ok' }, 'rig') : null),
+    R.list.append(h('button', { class: 'btn ghost', style: { textAlign: 'left', display: 'block', width: '100%', whiteSpace: 'normal', height: 'auto', borderColor: v.name === R.name ? 'var(--accent)' : '' }, onclick: () => load(v.name, S) },
+      h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, h('b', {}, v.name), active ? h('span', { class: 'chip ok' }, 'rig') : null),
+      h('div', { class: 'note', style: { fontWeight: 400, overflowWrap: 'anywhere' } }, v.where),
       h('div', { class: 'note', style: { fontWeight: 400 } }, (v.description || '').slice(0, 140))));
   }
 }
@@ -115,7 +116,7 @@ export default {
     R.active = h('div', { class: 'banner info' });
     R.saveName = h('input', { type: 'text', placeholder: 'save as…', style: { width: '150px' }, id: 'vehicle-save-name' });
     root.append(h('div', { class: 'stack' }, R.active,
-      h('div', { class: 'grid', style: { gridTemplateColumns: 'minmax(220px, 1fr) minmax(300px, 1.2fr) minmax(320px, 1.6fr)' } },
+      h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 330px), 1fr))' } },
         h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Vehicles')), h('div', { class: 'body' }, R.list, h('p', { class: 'note', style: { marginBottom: 0 } }, 'The examples in vehicles/ are never overwritten: a copy you save goes to the console’s own folder, as plain JSON (the // comments are not kept).'))),
         h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Parameters'), h('div', { class: 'tools' }, R.nmod)), h('div', { class: 'body' }, R.sheet)),
         h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'The file'), h('div', { class: 'tools' }, R.title)), h('div', { class: 'body' }, R.editor,

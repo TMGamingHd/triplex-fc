@@ -4,7 +4,7 @@ A desk-scale fault-tolerant flight computer: three redundant STM32 flight comput
 
 ![CI](https://github.com/TMGamingHd/triplex-fc/actions/workflows/ci.yml/badge.svg)
 
-**Status (5 Oct 2026):** everything that can be built and checked without the hardware is built and checked; the parts arrive on 9 Oct 2026 and **nothing has run on a board yet**. [`docs/STATUS.md`](docs/STATUS.md) says what is built, what is proven, and what waits for the hardware; [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) says what is not claimed.
+**Status (8 Oct 2026):** everything that can be built and checked without the hardware is built and checked; the parts have arrived and **nothing has run on a board yet** (the first bench day is [`docs/procedures/FIRST_HARDWARE_DAYS.md`](docs/procedures/FIRST_HARDWARE_DAYS.md)). [`docs/STATUS.md`](docs/STATUS.md) says what is built, what is proven, and what waits for the hardware; [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) says what is not claimed.
 
 ```mermaid
 flowchart LR
@@ -25,7 +25,7 @@ flowchart LR
 | **Simulator and virtual peers** (`sim/`, `tools/sim`): a 6-DOF model that flies **any vehicle described in a file** (stages, tanks, engines, fins, thrusters, wheels: [VEHICLE_SPEC](docs/design/VEHICLE_SPEC.md), four examples in `vehicles/`), platform model, fake FC-B and FC-C with 32 kinds of fault injection | Built; see [sim/README.md](sim/README.md) |
 | **Flight console** (`console/`, [docs/design/CONSOLE.md](docs/design/CONSOLE.md)): one web page, Python standard library only and local, that shows the launch sequence, how the three computers vote, where the vehicle is, the faults and their **measured** detection, and sends the authenticated commands (launch, scrub, reintegrate, ...) | Built; exercised live against the real firmware on `vcan0`; its serial paths have not met a board |
 | **Fault campaign**: every fault kind over its input range, safety properties checked on every frame | 12,362 scenarios, 4.9 million frames, no property violated: [FAULT_CAMPAIGN](docs/verification/FAULT_CAMPAIGN.md), [FMEA](docs/verification/FMEA.md) |
-| **Hardware** (the platform, the rig, the supervisor's board, the overrides) | Parts arrive 9 Oct 2026; procedures written: [docs/procedures/](docs/procedures/FIRST_HARDWARE_DAYS.md) |
+| **Hardware** (the platform, the rig, the supervisor's board, the overrides) | Parts arrived 8 Oct 2026; procedures written: [docs/procedures/](docs/procedures/FIRST_HARDWARE_DAYS.md) |
 
 ## Build and test (host)
 ```bash
