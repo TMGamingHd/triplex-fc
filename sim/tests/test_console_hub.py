@@ -166,9 +166,9 @@ class SeekIsReplayFromTheStart(unittest.TestCase):
                 time.sleep(0.05)
             self.assertFalse(src.playing)
             self.assertAlmostEqual(src.pos, src.t_end, places=2)
-            src.seek(20.0)
-            time.sleep(0.6)
-            self.assertAlmostEqual(src.pos, 20.0, delta=0.5)
+            src.seek(20.0)          # the player forgets and feeds 20 s again from the start: how long that takes depends on the machine
+            from tfc_console.server import wait_for
+            self.assertTrue(wait_for(lambda: abs(src.pos - 20.0) < 0.5 and hub.status["pos"] > 19.0, 30.0), (src.pos, hub.status))
             self.assertEqual(hub.status["state"], "paused")
             src.set_speed(1000)
             self.assertEqual(src.speed, 32.0)                # clamped
