@@ -1,6 +1,6 @@
 # Limitations
 
-> Status: **reference**, the honest list. Reviewed 5 Oct 2026. Each entry says what is *not* claimed and why, so that a reader (or an interviewer) does not have to find it out. Where a limit has a remedy, the entry names it. Nothing here is hidden elsewhere:
+> Status: **reference**, the honest list. Reviewed 8 Oct 2026. Each entry says what is *not* claimed and why, so that a reader (or an interviewer) does not have to find it out. Where a limit has a remedy, the entry names it. Nothing here is hidden elsewhere:
 > the per-fault gaps are in [`verification/FMEA.md`](verification/FMEA.md) and the campaign's edge cases in [`verification/FAULT_CAMPAIGN.md`](verification/FAULT_CAMPAIGN.md) section 6.
 
 ## 1. What the claim is, and what it is not
@@ -61,3 +61,12 @@ modelled. Fine for a bench, not for a flight uplink (`FUTURE_WORK.md` 2.4). One 
 - **Mutation testing proves the tests catch the bugs that were injected**, not all bugs. Equivalent mutants (changes that cannot alter behaviour) are judged by reasoning and listed in `tools/mutation/mutations.py` with the reason.
 - **Coverage is structural** (every line, 98.4 % of branches); it does not say the right thing is checked at each line.
 - **Public sources only.** Statements about SpaceX or any real program come from public material or inference; nothing here is insider knowledge and the project does not claim to replicate any SpaceX design.
+
+## 8. The flight console
+
+- **A bench tool, not flight software.** It shows what the computers say and sends the operator's authenticated commands; no flight decision depends on it. It is not a ground station for a real vehicle (the key is the public bench key, section 5), and nothing in it is qualified.
+- **Its serial paths have not met a board.** The Nucleos' consoles, the supervisor and the Pico are tested against pseudo-terminals and a fake Pico only (`design/CONSOLE.md` section 10).
+- **It judges nothing.** The deviation bars and the go/no-go are the console's own reading of the bus, labelled as such; the computers' verdicts are their heartbeats and ACT's frame. A reason (why a node was latched) is on the node's console and is shown only when a console is attached.
+- **The fault lab's virtual B and C are not full nodes** (no heartbeat, so no mode, role or view), and the rig is right only for the reference vehicle (the flight computers carry its tables, `design/CONSOLE.md` section 8).
+- **The virtual rig is sensitive to a loaded host**, like the live tests: starting a headless browser during a run has cost a frame and made the computers latch one another out. A page left open for 70 s did not.
+- **Range is inertial** (a rotating planet's own motion is not taken out), the bus-load figure is arithmetic (111 bits a frame, no stuffing) and not a measurement, and the nominal overlay is the reference vehicle's.

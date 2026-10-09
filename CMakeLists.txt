@@ -161,7 +161,7 @@ set_tests_properties(mc_tool_list PROPERTIES PASS_REGULAR_EXPRESSION "thrust_sca
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
   add_test(NAME peers_e2e
-    COMMAND ${CMAKE_COMMAND} -E env TFC_REPLAY_BIN=$<TARGET_FILE:tfc_replay>
+    COMMAND ${CMAKE_COMMAND} -E env TFC_REPLAY_BIN=$<TARGET_FILE:tfc_replay> TFC_FLY_BIN=$<TARGET_FILE:tfc_fly>
             ${Python3_EXECUTABLE} -m unittest discover -s tests -t .
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/sim)
 endif()

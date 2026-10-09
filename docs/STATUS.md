@@ -1,6 +1,6 @@
 # Status
 
-> Status: **reference**, the page to read first. Reviewed 5 Oct 2026. The parts arrive on **9 Oct 2026**. The numbers in section 3 are the output of the commands next to them (section 7 has the rest).
+> Status: **reference**, the page to read first. Reviewed 8 Oct 2026. The parts arrive on **9 Oct 2026**. The numbers in section 3 are the output of the commands next to them (section 7 has the rest).
 
 ## 1. In one paragraph
 
@@ -17,24 +17,26 @@ bus, the real IMUs, the servos, the relays and the supervisor's lines. Nothing i
 | **Simulator** (`sim/vehicle`, `tools/sim`) | 6-DOF flight of **any vehicle** read from a file (stages, tanks, engines at positions, staging, throttle, fins, thrusters, wheels, a start in orbit: `vehicles/`, `tfc_fly`), aerodynamics that follow the shape, any planet (rotation, J2, atmospheres, winds, turbulence), a second-order servo with backlash, jet damping, slosh, one bending mode, a roll controller, the push and twist of a separation, the ISM330DHCX datasheet's IMU errors, the platform model, the bus runner `tfc_simd`, the closed loop; sensitivity, resync and **Monte Carlo** (`tfc_mc`) studies | Host tests; a live closed loop on `vcan0` with six processes |
 | **Virtual peers and campaign** (`sim/tfc_peers`, `sim/campaign`) | Fake FC-B and FC-C with 32 fault kinds, scripted commands, record and replay through the real `core/`; the campaign with oracles; the TS-15 and TS-17 studies | 297 Python tests; the campaign (section 3) |
 | **Firmware** (`firmware/`: `app`, `act`, `pico`, `supervisor`) | Four Zephyr applications: the flight computer (node A, B or C from the build), the actuator node, the Pico (platform driver and injector), the supervisor (Pico 2). They build for `native_sim`, `nucleo_g474re` and `rpi_pico2`, and pass the ELF check (no heap, exceptions, RTTI or vtables) | CI builds all four; live tests with real firmware instances on `vcan0` (triplex, closed loop, resync, split, release, launch, T0, phases; run locally, CI runs the triplex test) |
+| **Flight console** (`console/`, ADR-034, [`design/CONSOLE.md`](design/CONSOLE.md)) | One web page (Python standard library, no dependencies, local): the launch sequence and go/no-go, how the three computers vote, where the vehicle is, the faults and their **measured** detection, the bus and the events, the vehicle's parameters, and a button for every ground command (two-step where the protocol says so). Starts and breaks the virtual rig; records and replays a session; reads the nodes' serial consoles, the supervisor and the Pico for the hardware day | 182 tests, 5 of them live against the real firmware; an in-page smoke test that presses the real buttons (28, 34 and 42 steps); **not run on a board** |
 | **Bench tools and procedures** (`tools/bench`, `docs/procedures`) | USB-CAN bring-up, logger, jitter and bus-loss measurement, golden-run check, the golden-release record and compatibility gate; ten procedures | Tested against `vcan0` and recorded logs; **not run on the adapter or a board** |
 
 ## 3. Evidence, in numbers
 
-| Evidence | Result (5 Oct 2026) | Reproduce |
+| Evidence | Result (5 to 8 Oct 2026) | Reproduce |
 |---|---|---|
-| C++ unit, fuzz and recovery tests under ASan and UBSan | 691 tests pass | `ctest --test-dir build` |
-| Python tests (peers, replay, tools, docs) | 297 tests pass; 35 live tests skip without `vcan0`, so a run without it proves nothing about them | `cd sim && python3 -m unittest discover -s tests -t .` |
+| C++ unit, fuzz and recovery tests under ASan and UBSan | 692 tests pass | `ctest --test-dir build` |
+| Python tests (peers, replay, tools, docs, the flight console) | 480 tests; **40 are live tests that skip without `vcan0`**, so a run without it proves nothing about them. With `vcan0` and the built images all pass (the live ones were first run on 8 Oct 2026; one, `test_live_simd_edges`, had a 0.3 s start-up grace shorter than `tfc_simd`'s 0.36 s start, which it has had since ADR-031, and now waits 0.8 s) | `cd sim && python3 -m unittest discover -s tests -t .` |
 | Structural coverage of `core/` and `supervisor/` | 100 % of lines, 98.4 % of branches (the gate: 100 and 98) | `python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98` |
 | Fault campaign: every fault kind over its input range, safety properties on every frame | 12,362 scenarios, 4,900,623 frames, **no property violated, no anomaly** | `cd sim && python3 -m campaign.run --strict` |
 | Mutation testing (deliberate bugs the tests must catch) | 390 mutants, every one killed (re-run on 7 Oct 2026 after the gyro-scale change of ADR-032: 390 of 390 in the fast pass, and the campaign's 58 of 58; the equivalent ones, changes that cannot alter behaviour, are not listed; `tools/mutation/mutations.py` records each with its reason). The runner stops a test binary at its first failure, and `--fast` (no optimisation, no sanitizers) and `--exclude` (the simulator's test files) make a pass take about an hour instead of most of a day, now that the suite includes the simulator's long flights | `python3 tools/mutation/run_unit.py --fast`; `python3 -m campaign.mutate` |
-| Structural coverage and mutation testing of the vehicle simulator (`sim/vehicle`) | 99.2 % of lines, 91.1 % of branches (gate 99 and 90: the general model, the file reader and the aerodynamics bring many error branches); 464 simulator mutants, every one killed (five equivalent mutants are documented, with the reason). Its sweeps found 13 and then 22 gaps in the tests, and the dynamics' first runs 8, 7 and 3 more, all closed | `python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 90`; `python3 tools/mutation/run_sim.py` |
+| Structural coverage and mutation testing of the vehicle simulator (`sim/vehicle`) | 99.3 % of lines, 91.1 % of branches (gate 99 and 90: the general model, the file reader and the aerodynamics bring many error branches); 467 simulator mutants, every one killed (five equivalent mutants are documented, with the reason). Its sweeps found 13 and then 22 gaps in the tests, and the dynamics' first runs 8, 7 and 3 more, all closed | `python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 90`; `python3 tools/mutation/run_sim.py` |
+| The flight console (`console/`) | 182 tests (`test_console_*.py`, `test_peers_control.py`, `test_live_console.py`): its go/no-go equals the launch checklist's verdict over 400 random states; its constants equal the C++ headers; its reading of the nodes' consoles covers every printk in the firmware; its model, run over the recorded launch, finds T-zero 1,000 frames after the countdown began, the loss of node B latched by both survivors in the same frame 2 frames after B's last frame, and **max-Q at 31.5 kPa, T+64.9 s, equal to `tfc_fly`'s nominal flight**; live, a 3 dps bias on B is detected 2 frames after it starts, with the node's own reason ("vote disagreement"). The page's own smoke test passes 28 of 28, 34 of 34 and 42 of 42 steps against the real firmware | `cd sim && python3 -m unittest discover -s tests -t .`; the page's test: `console/README.md` |
 | Static analysis and the flight-code standard | clang-tidy, cppcheck and `tools/check_standard.py` clean; strict warnings as errors, 2 KB stack bound | CI; `docs/verification/CODING_STANDARD.md` |
 | Live tests with real firmware on `vcan0` | triplex, closed loop through max-Q, resync, sensor split, mixed releases, launch, T0 line, phases, ACT's hardware Safe line (in flight and on the pad) | `tools/bench/sil_triplex.sh --test` |
 
 ## 3a. The decisions
 
-All 33 ADRs are accepted (ten on 5 Oct 2026, three on 6 and 7 Oct 2026) and none is open. [`decisions/DECISIONS.md`](decisions/DECISIONS.md) opens with a register: for each one, whether it is built, what it still waits for, and where. In short: every ADR is built on the host and
+All 34 ADRs are accepted (ten on 5 Oct 2026, three on 6 and 7 Oct 2026, one on 8 Oct 2026) and none is open. [`decisions/DECISIONS.md`](decisions/DECISIONS.md) opens with a register: for each one, whether it is built, what it still waits for, and where. In short: every ADR is built on the host and
 in the firmware; the ones that need the hardware to be *confirmed* are listed below; two are stretch goals outside v1 (the ring that re-homes an orphaned IMU, ADR-020 case 2; a second ACT, ADR-023). Trade studies: TS-0, TS-15, TS-16, TS-17 (paper part) and
 TS-23 are done; the rest are plans that the rig or the closed loop will feed (`decisions/TRADE_STUDIES.md` section 2 has the status of each). No ADR waits for one of those, except that the Safe hold time and the persistence constants are
 *parameters* that TS-4 and TS-1 tune on the rig.
@@ -55,6 +57,7 @@ Each row is a thing that cannot be settled without the parts. "Where" is the pro
 | 8 | CAN effects: bus-off recovery (FDIR-010), a babbler's real harm (FDIR-009), inconsistent omission, the sync-master takeover on hardware (F15) | Needs real transceivers | `P-S3-01`, `P-S4-01` |
 | 9 | The closed loop on the real platform; TS-4 (Safe hold time) and TS-1 (persistence) re-tuned on measured data | The rig | `P-S2-01`, `TRADE_STUDIES.md` |
 | 10 | The golden release (ADR-021) | A tagged release that has passed the hardware stage exits; the recorder and the gate exist | `procedures/P-REL-01-golden-release.md` |
+| 11 | **The flight console's serial paths**: the Nucleos' consoles, the supervisor's commands and the Pico's relays and status, read and sent on the real ports | The boards; tested against pseudo-terminals and a fake Pico only | `design/CONSOLE.md` section 10 |
 
 ## 5. Schedule
 
@@ -85,4 +88,5 @@ cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build bui
 (cd sim && TFC_REPLAY_BIN=$PWD/../build/rel/tfc_replay python3 -m campaign.run --strict)                         # the fault campaign
 python3 tools/mutation/run_unit.py --jobs 12 --fast --exclude 'test_(environment|dynamics|slosh|flex|montecarlo|imu_datasheet|aero|vehicle_files|vehicle_general|vehicle_refusals|sim_model)'   # mutation testing: about an hour (without --fast, minutes per mutant)
 sim/scripts/setup_vcan.sh && tools/bench/sil_triplex.sh --build --launch && tools/bench/sil_triplex.sh --test    # live tests (needs Zephyr: firmware/README.md)
+console/tfc-console                                                                                              # the flight console on vcan0 (console/README.md); --replay console/demo/launch-and-node-loss.log.gz needs no bus
 ```

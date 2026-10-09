@@ -195,10 +195,10 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "cannot write %s\n", csv.c_str());
       return 1;
     }
-    std::fprintf(f, "t_s,altitude_m,speed_ms,mach,dynamic_pressure_pa,mass_kg,thrust_n,tilt_pitch_deg,tilt_yaw_deg,err_pitch_deg,err_yaw_deg,cmd_pitch_deg,cmd_yaw_deg,stages_active,stages_ignited,engines_on,act_mode\n");
+    std::fprintf(f, "t_s,altitude_m,speed_ms,mach,dynamic_pressure_pa,mass_kg,thrust_n,tilt_pitch_deg,tilt_yaw_deg,err_pitch_deg,err_yaw_deg,cmd_pitch_deg,cmd_yaw_deg,stages_active,stages_ignited,engines_on,act_mode,range_m\n");
     for (const sim::TraceRow& row : trace) {
-      std::fprintf(f, "%.2f,%.3f,%.3f,%.4f,%.2f,%.2f,%.1f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%u,%u,%d,%d\n", row.t, row.altitude, row.speed, row.mach, row.dynamic_pressure, row.mass, row.thrust, row.tilt_y_deg,
-                   row.tilt_x_deg, row.err_y_deg, row.err_x_deg, row.cmd_pitch_deg, row.cmd_yaw_deg, row.stages_active, row.stages_ignited, row.engines_on, row.act_mode);
+      std::fprintf(f, "%.2f,%.3f,%.3f,%.4f,%.2f,%.2f,%.1f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%u,%u,%d,%d,%.1f\n", row.t, row.altitude, row.speed, row.mach, row.dynamic_pressure, row.mass, row.thrust, row.tilt_y_deg,
+                   row.tilt_x_deg, row.err_y_deg, row.err_x_deg, row.cmd_pitch_deg, row.cmd_yaw_deg, row.stages_active, row.stages_ignited, row.engines_on, row.act_mode, row.range);
     }
     std::fclose(f);
     std::printf("  wrote %zu rows to %s\n", trace.size(), csv.c_str());

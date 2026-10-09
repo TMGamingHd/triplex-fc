@@ -130,6 +130,44 @@ TFC_TEST(a_circular_orbit_conserves_radius_energy_and_angular_momentum) {
   CHECK(!v.burning() && v.engines_on() == 5);
 }
 
+TFC_TEST(range_is_the_arc_along_the_surface_from_the_launch_point) {
+  using namespace sim;
+  Params p;
+  Vehicle6 v(p);
+  CHECK(v.range() == 0.0);  // on the pad, at the launch point
+  State s;
+  // straight up: the altitude changes, the range does not
+  s.r = V3{kEarthR + 50000.0, 0.0, 0.0};
+  v.set_state(s);
+  CHECK(v.range() == 0.0);
+  // a point a known angle away, in each of the sideways directions: the arc is the radius times the angle, whichever way it lies
+  const double th = 0.01;  // 63.7 km
+  s.r = V3{kEarthR * std::cos(th), kEarthR * std::sin(th), 0.0};
+  v.set_state(s);
+  CHECK(close(v.range(), kEarthR * th, 1e-12));
+  s.r = V3{kEarthR * std::cos(th), 0.0, -kEarthR * std::sin(th)};
+  v.set_state(s);
+  CHECK(close(v.range(), kEarthR * th, 1e-12));
+  // a small angle keeps its precision (an acos of the cosine would have lost it: 1 m of arc is an angle of 1.6e-7, a cosine of 1 - 1.2e-14)
+  s.r = V3{kEarthR * std::cos(1.0 / kEarthR), kEarthR * std::sin(1.0 / kEarthR), 0.0};
+  v.set_state(s);
+  CHECK(close(v.range(), 1.0, 1e-6));
+  // past a quarter of the way round the planet the arc goes on growing (the cosine goes negative)
+  s.r = V3{-kEarthR, 1.0, 0.0};
+  v.set_state(s);
+  CHECK(close(v.range(), kEarthR * kPi, 1e-6));
+  // a coasting circular orbit: the range advances at the orbital angular rate times the radius of the planet
+  const double r0 = kEarthR + 300000.0;
+  s.r = V3{r0, 0.0, 0.0};
+  s.v = V3{0.0, std::sqrt(kEarthMu / r0), 0.0};
+  s.m = p.m_dry;
+  v.set_state(s);
+  for (int i = 0; i < 12; ++i) {
+    v.step(10.0, 0.0, 0.0);  // 120 s
+  }
+  CHECK(close(v.range(), kEarthR * (std::sqrt(kEarthMu / r0) / r0) * 120.0, 1e-6));
+}
+
 TFC_TEST(a_vacuum_burn_obeys_the_rocket_equation) {
   using namespace sim;
   Params p;

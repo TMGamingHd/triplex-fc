@@ -311,6 +311,9 @@ class Vehicle6 {
   [[nodiscard]] const State& state() const { return s_; }
   [[nodiscard]] double altitude() const { return norm(s_.r) - pl_.radius; }
   [[nodiscard]] double speed() const { return norm(s_.v); }
+  // The distance along the planet's surface from the launch point (the vehicle frame's +X axis at T-zero): the arc of the angle between the position and that axis. It is inertial: a rotating
+  // planet's own motion is not taken out of it. (atan2 of the sideways part, not acos of the cosine: acos has no precision left for a small angle, and the first kilometres are small angles.)
+  [[nodiscard]] double range() const { return pl_.radius * std::atan2(std::hypot(s_.r.y, s_.r.z), s_.r.x); }
   [[nodiscard]] double mass() const { return s_.m; }
   [[nodiscard]] double gimbal_pitch_deg() const { return gimbal_p_[lead_stage()]; }  // of the stage that is flying (the lowest one on the vehicle)
   [[nodiscard]] double gimbal_yaw_deg() const { return gimbal_y_[lead_stage()]; }

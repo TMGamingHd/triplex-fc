@@ -7,6 +7,7 @@
 | Vehicle simulator (6-DOF ascent, platform model, SocketCAN gateway) | **Done**: `../sim/vehicle` (the C++ model, the runner, the closed loop), `../tools/sim/tfc_simd` (on SocketCAN, with `--pico`), `../tools/sim/tfc_sens` (sensitivity), `../tools/sim/tfc_mc` (a Monte Carlo of the closed loop: `../docs/design/MONTE_CARLO.md`), `../tools/sim/tfc_fly` (fly any vehicle described in a file: `../vehicles/`, `../docs/design/VEHICLE_SPEC.md`). See `../docs/design/VEHICLE_SIM.md` and `../docs/design/SIM_FIDELITY.md` |
 | Pico client (`tfc_peers pico`, `pico_link.py`) | Done, not run on a board (`../docs/design/PICO.md`) |
 | Fault-campaign runner (`campaign/`) | Done |
+| The flight console, a web page over all of this (`../console`, `../docs/design/CONSOLE.md`); `tfc_simd --telemetry` and `tfc_peers run --control` are its two hooks into the simulator and the peers | Done; live on `vcan0`; not run on a board |
 
 Contents: [What the virtual peers are](#what-the-virtual-peers-are) ·
 [Which command do I want?](#which-command-do-i-want) ·
@@ -52,6 +53,7 @@ Details of the difference are in [Offline vs live](#offline-vs-live).
 | Watch a CAN bus in decoded form | `python3 -m tfc_peers listen --iface vcan0` |
 | Run fake peers next to the **real FC-A firmware** | `python3 -m tfc_peers run --follow-sync --nodes B,C ...` |
 | Run fake peers with **no** flight computer (to test a monitor or other receiver) | `python3 -m tfc_peers run --nodes B,C ...` (free-running) |
+| Add and clear faults **while the peers run** | `python3 -m tfc_peers run --follow-sync --nodes B,C --frames 0 --control` (then type `add B:bias:mag=3`); the flight console does it with buttons |
 | Script an operator command in a scenario | `--command 450:reintegrate:B` (on `record` or `run`) |
 | Send one operator command to a running flight computer | `python3 -m tfc_peers command reintegrate B` |
 | Create the virtual CAN interface | `./scripts/setup_vcan.sh` |
@@ -118,6 +120,19 @@ Virtual time, no sleeping: 400 frames take milliseconds. Output is identical on 
 
 `record` never emits SYNC (the peers are not the sync master). Frame numbers start at 0.
 
+### Changing the faults of a running scenario
+`run --follow-sync --control` reads one command per line from standard input and answers one line on standard output. Commands are applied **between frames**, in the run's own thread, so a command never meets a frame half-built; what a fault already did stays done (a node it got latched out stays out until the operator readmits it). This is the interface the flight console injects faults through ([`docs/design/CONSOLE.md`](../docs/design/CONSOLE.md)); it is plain text on purpose, so it can be typed by hand (`tfc_peers/control.py`).
+
+| Command | Does | Answer |
+|---|---|---|
+| `add SPEC` | Add a fault (SPEC as for `--fault`). Without `start=` it starts in the frame the command is applied in, not at frame 0 (an intermittent pattern then counts from now) | `ok add ID SPEC` (SPEC as applied, with its `start` and `end`) |
+| `add SPEC for N` | The same, ending N frames after it starts | `ok add ID SPEC` |
+| `clear ID` or `clear all` | Remove one fault, or every fault | `ok clear ID` or `ok clear all N` |
+| `list` | The faults now in the scenario | `ok list`, then one line `fault ID SPEC` each |
+| `frame` | The frame number the next command is applied in | `ok frame N` |
+
+An error answers `error: <why>` and changes nothing (a bad spec, a node the run does not simulate, an unknown fault number). Fault numbers are never reused.
+
 ### `python3 -m tfc_peers log`: record the live bus into a log
 | Flag | Default | Meaning |
 |---|---|---|
@@ -145,6 +160,7 @@ Real time, 100 Hz. Prints its own send-lateness statistics when finished.
 | `--iface NAME` | `vcan0` | SocketCAN interface to send on. `can0` for the USB-CAN adapter (once it has arrived and is configured). |
 | `--follow-sync` | off | Phase-lock to the flight computer's SYNC frames and use SYNC's frame number as the frame number. **Use this whenever a real FC-A is on the bus.** Without it the peers free-run on their own clock. `--frames` then counts SYNC frames. Exits with an error if no SYNC arrives for 2 s. |
 | `--frames N` | `1000` | As for `record`, but **`0` means keep going until Ctrl+C**. With `--follow-sync` it counts SYNC frames. A fixed N ends the peers' traffic after N frames; see "Why does C latch" above. |
+| `--control` | off | Read fault commands from standard input while running (needs `--follow-sync`): `add SPEC [for N]`, `clear ID\|all`, `list`, `frame`, one answer line each (`ok ...` or `error: ...`), applied between frames. See [Changing the faults of a running scenario](#changing-the-faults-of-a-running-scenario). |
 | `--nodes`, `--fault`, `--seed`, `--command` | as for `record` | With a real FC-A on the bus use `--nodes B,C`. Fault `start`/`end` frame numbers are then **FC-A's frame numbers** (SYNC's), not "seconds since the peers started". |
 
 Ctrl+C stops it cleanly and prints the statistics (exit status 0 with `--frames 0`, 130 with a fixed count). When a finite run ends it prints a reminder that a running flight computer will now report the peers missing.

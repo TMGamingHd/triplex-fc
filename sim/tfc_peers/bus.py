@@ -164,14 +164,15 @@ class SyncBus(Protocol):
 
 
 def run_synced(scenario: Scenario, bus: SyncBus, frames: int, sync_timeout_s: float = 2.0,
-               on_note=None) -> dict[str, float]:
+               on_note=None, poll=None) -> dict[str, float]:
     """Follow a live sync master: for each of `frames` SYNC frames, send that frame's traffic with
     the schedule offsets measured from the instant SYNC arrived, as a time-triggered node would.
 
     `frames <= 0` means follow until Ctrl+C (which ends the run cleanly and returns the statistics, with
     `interrupted` = 1). The SYNC frame number is the frame index, so peers that start late (or restart)
     still agree with the flight computer on which frame it is. Raises TimeoutError if no SYNC arrives for
-    `sync_timeout_s` (before the first SYNC, or after the flight computer stops).
+    `sync_timeout_s` (before the first SYNC, or after the flight computer stops). `poll(k)`, if given, is called once per SYNC with
+    the frame number, before that frame's traffic is generated: the place to change the scenario between frames (`--control`).
     """
     note = on_note or (lambda msg: None)
     bus.set_filter([(ID_SYNC, 0x7FF)])
@@ -192,6 +193,8 @@ def run_synced(scenario: Scenario, bus: SyncBus, frames: int, sync_timeout_s: fl
                 scenario.reset()
                 rewinds += 1
                 note(f"SYNC frame number went back to {k}: sync master restarted; peers restarted too")
+            if poll is not None:
+                poll(k)
             base = k * FRAME_US
             for tf in scenario.frames(k):
                 deadline = t_rx + (tf.t_us - base) * 1000

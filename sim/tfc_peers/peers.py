@@ -72,6 +72,10 @@ class VirtualNode:
         self._seq_frozen: int | None = None                 # seqstuck
         self._history: dict[int, list[TimedFrame]] = {}     # replay
 
+    def set_faults(self, faults: list[Fault]) -> None:
+        """Replace this node's faults between frames (the list is swapped whole, never edited in place, so a frame in progress sees one or the other)."""
+        self.faults = [f for f in faults if f.node == self.node]
+
     def _active(self, kind: str, k: int) -> list[Fault]:
         return [f for f in self.faults if f.kind == kind and f.active(k)]
 
@@ -266,6 +270,8 @@ class Scenario:
                  commands: list[GroundCommand] | None = None) -> None:
         self.nodes = sorted(set(nodes))
         self.faults = list(faults or [])
+        self._fault_ids = {i + 1: f for i, f in enumerate(self.faults)}  # the faults it started with are 1, 2, 3...; add_fault goes on from there
+        self._next_fault_id = len(self.faults) + 1
         self.seed = seed
         self.commands = list(commands or [])
         self._ground = self._build_ground_frames()
@@ -293,6 +299,39 @@ class Scenario:
     @property
     def next_frame(self) -> int:
         return self._next_k
+
+    # ---- faults changed while the scenario runs (`tfc_peers run --control`; the flight console) ----
+    def fault_table(self) -> list[tuple[int, Fault]]:
+        """Every fault now in the scenario with the number that names it (`clear_fault`)."""
+        return sorted(self._fault_ids.items())
+
+    def _apply_faults(self) -> None:
+        self.faults = [f for _i, f in sorted(self._fault_ids.items())]
+        for node in self._virtual.values():
+            node.set_faults(self.faults)
+
+    def add_fault(self, fault: Fault) -> int:
+        """Add a fault from the next frame on; returns its number. The node must be one the scenario simulates."""
+        if fault.node not in self.nodes:
+            raise ValueError(f"fault {fault} targets a node that is not simulated ({','.join(P.NODE_NAMES[n] for n in self.nodes)})")
+        number = self._next_fault_id
+        self._next_fault_id += 1
+        self._fault_ids[number] = fault
+        self._apply_faults()
+        return number
+
+    def clear_fault(self, number: int) -> bool:
+        """Remove one fault by its number; False if there is none. What it already did to the traffic stays done (a node it latched out stays out until the operator readmits it)."""
+        if self._fault_ids.pop(number, None) is None:
+            return False
+        self._apply_faults()
+        return True
+
+    def clear_faults(self) -> int:
+        n = len(self._fault_ids)
+        self._fault_ids.clear()
+        self._apply_faults()
+        return n
 
     def _generate(self, k: int) -> list[TimedFrame]:
         out = [tf for n in self.nodes for tf in self._virtual[n].step(k)]

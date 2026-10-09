@@ -48,7 +48,7 @@
 | Mutation: unit tests | 390 deliberate bugs in the core and the supervisor; every one must be caught by the C++ tests (the equivalent ones are listed in the file with the reason) | `python3 tools/mutation/run_unit.py` | weekly |
 | Mutation: campaign | The same bugs against the campaign's oracles | `python3 -m campaign.mutate` | weekly |
 | Structural coverage: simulator | Which lines and branches of `sim/vehicle` the tests execute (a model, so the gate is lower than the flight code's: it holds guards that no test can reach, such as a non-finite state) | `python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 90` | every PR |
-| Mutation: simulator | 464 simulator mutants: deliberate bugs in the vehicle dynamics, atmosphere, ground, platform, IMU model, runner and the design of the flight tables; each must be killed by the C++ tests (the five equivalent mutants are listed with the reason) | `python3 tools/mutation/run_sim.py` | weekly |
+| Mutation: simulator | 467 simulator mutants: deliberate bugs in the vehicle dynamics, atmosphere, ground, platform, IMU model, runner and the design of the flight tables; each must be killed by the C++ tests (the five equivalent mutants are listed with the reason) | `python3 tools/mutation/run_sim.py` | weekly |
 
 Mutation testing is the check on the checks: a test suite that cannot tell a deliberately broken core from the real one is not
 testing that behaviour. It found real gaps in this project (a Safe flag that was not sticky, a probation that could not fail, a

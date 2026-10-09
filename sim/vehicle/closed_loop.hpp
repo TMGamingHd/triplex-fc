@@ -78,6 +78,7 @@ struct TraceRow {
   unsigned stages_ignited = 0U;  // and per stage that has ignited
   int engines_on = 0;
   int act_mode = 0;
+  double range = 0.0;        // m along the surface from the launch point (Vehicle6::range)
 };
 
 struct Loop {
@@ -296,6 +297,7 @@ inline Result run(const Loop& lp) {
       }
       row.engines_on = veh.engines_on();
       row.act_mode = static_cast<int>(out.mode);
+      row.range = veh.range();
       lp.trace->push_back(row);
     }
     r.crashed = r.crashed || runner.vehicle().crashed();

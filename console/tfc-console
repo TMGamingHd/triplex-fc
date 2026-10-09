@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Launcher for the flight console that works from any directory:  /path/to/console/tfc-console [--iface vcan0] [--replay FILE]
+
+(`python3 -m tfc_console` only works from inside console/, where the package lives; the launcher also puts sim/ on the path for the protocol and the bus code it shares with tfc_peers.)
+"""
+import os
+import sys
+
+here = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, here)
+sys.path.insert(0, os.path.join(here, "..", "sim"))
+
+from tfc_console.cli import main  # noqa: E402
+
+sys.exit(main())

@@ -526,6 +526,11 @@ m("ground_keeps_its_velocity", V, "s_.r = up * pl_.radius;\n    s_.v = V3{};\n  
 m("ground_keeps_its_rotation", V, "s_.r = up * pl_.radius;\n    s_.v = V3{};\n    s_.w = V3{};", "s_.r = up * pl_.radius;\n    s_.v = V3{};")
 m("ground_fast_path_in_the_air_off", V, "if (!grounded_ && rn > pl_.radius + 1e-6) {", "if (!grounded_ && rn > pl_.radius + 1e9) {")
 
+# ---- the distance along the surface (added with the flight console, 8 Oct 2026: tfc_fly's range_m column and tfc_simd's telemetry) ----
+m("range_by_acos_loses_the_small_angles", V, "pl_.radius * std::atan2(std::hypot(s_.r.y, s_.r.z), s_.r.x)", "pl_.radius * std::acos(std::clamp(s_.r.x / norm(s_.r), -1.0, 1.0))")
+m("range_ignores_the_crossrange", V, "std::atan2(std::hypot(s_.r.y, s_.r.z), s_.r.x)", "std::atan2(std::fabs(s_.r.y), s_.r.x)")
+m("range_is_an_angle_not_an_arc", V, "pl_.radius * std::atan2(std::hypot(s_.r.y, s_.r.z), s_.r.x)", "std::atan2(std::hypot(s_.r.y, s_.r.z), s_.r.x)")
+
 
 def build_vehicle(name: str, tmp: Path) -> Path:
     """Copy sim/vehicle into tmp, apply the mutant `name` (a key of MUTATIONS, or an EQUIVALENT one, or "BASELINE" for none), and return the directory."""
