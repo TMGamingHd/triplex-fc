@@ -244,6 +244,72 @@ class Events(unittest.TestCase):
         self.assertIn("NOT valid", events(tm, "ground-frame")[1].text)
 
 
+class TheMainComputer(unittest.TestCase):
+    """The main computer is the lowest-numbered node still sending (core/sync_clock.hpp: the lowest healthy node's SYNC wins by the stagger of sync_window_us): A, then B, then C. CAN carries no sender, so it is inferred."""
+
+    def run_frames(self, tm, t0, n, nodes):
+        for k in range(n):
+            feed_frame(tm, t0 + k * 0.01, k % 256, nodes=nodes)
+        return t0 + n * 0.01
+
+    def test_it_is_a_while_all_three_send_and_b_then_c_as_they_fall_silent(self):
+        tm = Telemetry()
+        t = self.run_frames(tm, 1.0, 10, (0, 1, 2))
+        s = tm.snapshot(t)
+        self.assertEqual(s["master"], "A")
+        self.assertEqual([n["master"] for n in s["nodes"]], [True, False, False])
+        t = self.run_frames(tm, t, 10, (1, 2))
+        self.assertEqual(tm.snapshot(t)["master"], "B")
+        t = self.run_frames(tm, t, 10, (2,))
+        self.assertEqual(tm.snapshot(t)["master"], "C")
+
+    def test_a_change_of_main_computer_is_one_event_and_the_first_sighting_is_none(self):
+        tm = Telemetry()
+        t = self.run_frames(tm, 1.0, 10, (0, 1, 2))
+        tm.check_timeouts(t)
+        self.assertEqual(events(tm, "master-change"), [])                # the first one is not a change
+        t = self.run_frames(tm, t, 10, (1, 2))
+        tm.check_timeouts(t); tm.check_timeouts(t + 0.001)
+        ev = events(tm, "master-change")
+        self.assertEqual(len(ev), 1)
+        self.assertEqual((ev[0].level, ev[0].node), ("warn", "B"))
+        self.assertIn("main computer is now B (A stopped sending)", ev[0].text)
+        t = self.run_frames(tm, t, 10, (0, 1, 2))                        # A is back: it is the main computer again
+        tm.check_timeouts(t)
+        self.assertIn("main computer is A again", events(tm, "master-change")[-1].text)
+
+    def test_nobody_sending_keeps_the_last_one_and_says_none(self):
+        tm = Telemetry()
+        t = self.run_frames(tm, 1.0, 10, (0, 1, 2))
+        tm.check_timeouts(t)
+        self.assertIsNone(tm.snapshot(t + 1.0)["master"])
+        tm.check_timeouts(t + 1.0)
+        self.assertEqual(events(tm, "master-change"), [])
+
+    def test_a_node_latched_out_but_still_sending_is_counted_up_but_not_voting(self):
+        """The header's count is the sensors voting, not the nodes powered: a latched node still sends, so the old count read 3/3 in Duplex."""
+        tm = Telemetry()
+        t = 1.0
+        for k in range(10):
+            feed_frame(tm, t, k)
+            for n in range(3):
+                tm.feed(t + 0.006, hb(n, mode=2, view=(1, 0, 0)))
+            tm.feed(t + 0.007, act(vote_status=0, voted=7))
+            t += 0.01
+        s = tm.snapshot(t)
+        self.assertEqual([n["alive"] for n in s["nodes"]], [True, True, True])
+        self.assertEqual(s["nodes"][0]["health"], "latched")
+        self.assertEqual(s["redundancy"], {"sensors": 2, "computers": 3, "act_alive": True})     # Duplex of sensors; ACT still has all three computers' commands
+
+    def test_the_computers_in_acts_vote_are_counted_from_its_own_word(self):
+        tm = Telemetry()
+        feed_frame(tm, 1.0, 0)
+        tm.feed(1.01, act(vote_status=1, voted=6, excluded=1))
+        r = tm.snapshot(1.02)["redundancy"]
+        self.assertEqual((r["computers"], r["act_alive"]), (2, True))
+        self.assertIsNone(Telemetry().snapshot(1.0)["redundancy"]["computers"])
+
+
 class FramesThatAreNotGood(unittest.TestCase):
     def test_a_damaged_frame_is_counted_for_its_id_and_its_node_and_decoded_by_nobody(self):
         tm = Telemetry()

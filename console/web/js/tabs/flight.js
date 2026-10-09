@@ -135,7 +135,7 @@ export default {
     const dnom = (R.nominal && t && t.ft > 0) ? { alt: interp(R.nominal.t, R.nominal.alt, t.ft), speed: interp(R.nominal.t, R.nominal.speed, t.ft) } : null;
     const rows = t ? [
       ['T+', t.ft.toFixed(1), 's'], ['Altitude', eng(t.alt, 1), 'm'], ['Range', eng(t.range, 1), 'm'], ['Speed', t.speed.toFixed(1), 'm/s'], ['Mach', t.mach.toFixed(2), ''], ['Dynamic pressure', (t.q / 1000).toFixed(2), 'kPa'],
-      ['Mass', eng(t.mass, 1), 'kg'], ['Thrust', t.clamped ? 'held' : (t.thrust / 1000).toFixed(0), t.clamped ? '' : 'kN'], ['Engines', t.clamped ? 'on the pad' : `${t.engines_on}/${t.engines}`, ''], ['Pitch tilt', t.tilt_p.toFixed(2), '°'], ['Program', t.ref_p.toFixed(2), '°'],
+      ['Mass', eng(t.mass, 1), 'kg'], ['Thrust', t.clamped ? 'held' : (t.thrust / 1000).toFixed(0), t.clamped ? '' : 'kN'], ['Engines', t.clamped ? 'held' : `${t.engines_on}/${t.engines}`, ''], ['Pitch tilt', t.tilt_p.toFixed(2), '°'], ['Program', t.ref_p.toFixed(2), '°'],
       ['Tilt − program', (t.tilt_p - t.ref_p).toFixed(2), '°'], ['Gimbal pitch', t.gim_p.toFixed(2), '°'], ['Gimbal yaw', t.gim_y.toFixed(2), '°'],
       ...(dnom && dnom.alt != null ? [['Alt − nominal', eng(t.alt - dnom.alt, 1), 'm'], ['Speed − nominal', (t.speed - dnom.speed).toFixed(1), 'm/s']] : []),
     ] : b ? [['Altitude', eng(b.alt, 1), 'm'], ['Speed', b.speed.toFixed(0), 'm/s'], ['Mass', eng(b.mass, 1), 'kg'], ['Dyn. pressure', b.q != null ? (b.q / 1000).toFixed(2) : '—', 'kPa'], ['Pitch error', b.err_p, '°'], ['Yaw error', b.err_y, '°']] : [];

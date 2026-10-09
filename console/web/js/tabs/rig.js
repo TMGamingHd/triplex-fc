@@ -20,9 +20,9 @@ function profileCard(key, p, rig) {
       h('div', { class: 'btns', style: { marginBottom: '10px' } },
         h('button', { class: 'btn go', id: `rig-start-${key}`, disabled: !p.ready || (rig.procs.some((x) => x.state === 'running' || x.state === 'frozen')), onclick: () => call(() => api('/api/rig/start', { profile: key }), `Starting ${p.title}`) }, icon('play'), 'Start'),
         h('button', { class: 'btn danger', id: `rig-stop-${key}`, disabled: !running, onclick: () => call(() => api('/api/rig/stop', {}), 'Rig stopped') }, 'Stop all')),
-      rows.length ? h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'process'), h('th', {}, 'state'), h('th', { class: 'num' }, 'pid'), h('th', { class: 'num' }, 'up'), h('th', { class: 'num' }, 'lines'), h('th', { class: 'num' }, 'restarts'))),
+      rows.length ? h('div', { class: 'tablewrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'process'), h('th', {}, 'state'), h('th', { class: 'num' }, 'pid'), h('th', { class: 'num' }, 'up'), h('th', { class: 'num' }, 'lines'), h('th', { class: 'num' }, 'restarts'))),
         h('tbody', {}, rows.map((x) => h('tr', {}, h('td', {}, h('span', { class: `tag n${x.name}` }, x.name), ' ', h('span', { class: 'note' }, x.title)), h('td', {}, h('span', { class: `chip ${x.state === 'running' ? 'ok' : x.state === 'frozen' ? 'warn' : x.state === 'exited' ? 'crit' : 'muted'}` }, x.state)),
-          h('td', { class: 'num' }, x.pid ?? '—'), h('td', { class: 'num' }, x.uptime != null ? `${x.uptime.toFixed(0)} s` : '—'), h('td', { class: 'num' }, x.lines), h('td', { class: 'num' }, x.restarts))))) : h('div', { class: 'note' }, `Processes: ${p.procs.join(', ')}`)));
+          h('td', { class: 'num' }, x.pid ?? '—'), h('td', { class: 'num' }, x.uptime != null ? `${x.uptime.toFixed(0)} s` : '—'), h('td', { class: 'num' }, x.lines), h('td', { class: 'num' }, x.restarts)))))) : h('div', { class: 'note' }, `Processes: ${p.procs.join(', ')}`)));
 }
 
 export default {

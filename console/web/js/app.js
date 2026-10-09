@@ -1,5 +1,5 @@
 // The shell: the header, the tab rail, the event stream, and the render loop that keeps the visible tab current.
-import { $, h, icon, setText, clock, store, toast, modal, download } from './util.js';
+import { $, h, icon, setText, clock, store, toast, modal, download, NODES } from './util.js';
 import { api, stream, hasToken } from './net.js';
 import { S, setHistory, pushMetrics, addEvent, addLine } from './state.js';
 import { resetColorCache } from './charts.js';
@@ -104,20 +104,29 @@ function header() {
   else if (ph.name === 'flight') { v = `T+${clock(ph.flight_s)}`; l = 'flight'; cls = 'fl'; }
   setText($('#clock-v'), v); setText($('#clock-l'), l); ck.className = cls;
   // redundancy mode: the worst of the live nodes' own view
+  // The mode is the flight computers' own (the lowest of what they report); the count is how many of the three sensors still vote in it, not how many computers are powered: a node that is latched out still sends.
   const alive = s.nodes.filter((n) => n.heartbeat);          // the nodes that report a mode (a virtual peer sends samples and no heartbeat)
   const mc = $('#mode-chip');
-  if (!alive.length) { chipClass(mc, 'chip', 'muted'); setText(mc, 'no nodes'); }
+  if (!alive.length) { chipClass(mc, 'chip', 'muted'); setText(mc, 'no nodes'); mc.title = ''; }
   else {
     const m = Math.min(...alive.map((n) => n.mode));
     const name = ['SAFE', 'SIMPLEX', 'DUPLEX', 'TRIPLEX'][m];
-    const up = s.nodes.filter((n) => n.alive).length;
-    chipClass(mc, 'chip', m === 3 ? 'ok' : m === 2 ? 'warn' : 'crit'); setText(mc, `${name} ${up}/3`);
+    chipClass(mc, 'chip', m === 3 ? 'ok' : m === 2 ? 'warn' : 'crit'); setText(mc, `${name} ${s.redundancy.sensors}/3`);
+    mc.title = `The flight computers report ${name.toLowerCase()}. ${s.redundancy.sensors} of 3 sensors are voting; a computer that is latched out of the sensor vote is still on the bus.`;
+  }
+  const mn = $('#main-chip');
+  if (!s.master) { chipClass(mn, 'chip', 'muted'); setText(mn, 'MAIN —'); mn.title = 'No node is sending'; }
+  else {
+    const first = s.master === NODES[0];
+    chipClass(mn, 'chip', first ? 'info' : 'warn'); setText(mn, `MAIN ${s.master}${first ? '' : ' (takeover)'}`);
+    mn.title = `${s.master} is the main computer: the lowest-numbered node still sending, whose SYNC sets the frame and which acts on the launch commands. If it goes silent, the next one (A, then B, then C) takes over.`;
   }
   const ac = $('#act-chip');
   if (!s.act) { chipClass(ac, 'chip', 'muted'); setText(ac, 'ACT —'); }
   else {
     const lv = !s.act.alive ? 'crit' : s.act.state === 1 ? 'ok' : s.act.state === 0 ? 'info' : 'crit';
-    chipClass(ac, 'chip', lv); setText(ac, `ACT ${s.act.alive ? s.act.state_name.toUpperCase() : 'SILENT'}`);
+    chipClass(ac, 'chip', lv); setText(ac, `ACT ${s.act.alive ? s.act.state_name.toUpperCase() : 'SILENT'}${s.act.alive ? ` · votes ${s.redundancy.computers}/3` : ''}`);
+    ac.title = 'ACT’s own state, and how many of the three computers’ commands it is voting on';
   }
   // alerts
   const al = s.alerts || [], crit = al.filter((a) => a.level === 'crit').length, warn = al.filter((a) => a.level === 'warn').length;

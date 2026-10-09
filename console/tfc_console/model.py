@@ -528,12 +528,34 @@ class Telemetry:
             if n.hb is not None and now - n.hb_t > K.HEARTBEAT_TIMEOUT_S and not self._notes.get(f"hb-silent-{i}"):
                 self._notes[f"hb-silent-{i}"] = True
                 self.emit(now, "crit", "bus", "node-silent", f"node {n.name}: no heartbeat for {now - n.hb_t:.1f} s", n.name)
+        self._track_master(now)
         if self.act is not None and now - self.act_t > K.ACT_TIMEOUT_S and not self._notes.get("act-silent"):
             self._notes["act-silent"] = True
             self.emit(now, "crit", "ACT", "act-silent", f"no ACT output for {now - self.act_t:.1f} s")
         elif self.act is not None and now - self.act_t <= K.ACT_TIMEOUT_S and self._notes.get("act-silent"):
             self._notes["act-silent"] = False
             self.emit(now, "ok", "ACT", "act-back", "ACT is sending its output again")
+
+    # The main computer (the sync master, whose SYNC sets the frame and whose launch commands are acted on) is the lowest-numbered node still sending: A, then B if A is gone, then C (core/sync_clock.hpp,
+    # the stagger of sync_window_us). CAN frames carry no sender, so the console infers it from who is still sending samples, and the nodes' own "takes over as sync master" lines confirm it in the log.
+    MASTER_S = 0.05
+
+    def master_of(self, now: float) -> int | None:
+        for i, n in enumerate(self.nodes):
+            if any(self._alive(v, now, self.MASTER_S) for v in n.sample_t.values()):
+                return i
+        return None
+
+    def _track_master(self, now: float) -> None:
+        m = self.master_of(now)
+        if m is None:                                     # nobody sending: keep the last one (the sync-lost event tells the rest)
+            return
+        old = self._notes.get("master")
+        if old == m:
+            return
+        self._notes["master"] = m
+        if old is not None:
+            self.emit(now, "warn", "bus", "master-change", f"main computer is now {self.nodes[m].name} ({self.nodes[old].name} stopped sending)" if m > old else f"main computer is {self.nodes[m].name} again", self.nodes[m].name)
 
     def update_rates(self, now: float) -> None:
         for st in self.ids.values():
@@ -667,6 +689,7 @@ class Telemetry:
         self.update_rates(now)
         gng = self.go_nogo(now)
         nodes = []
+        master = self.master_of(now)
         for i, n in enumerate(self.nodes):
             h = n.hb
             beating = h is not None and self._alive(n.hb_t, now, K.HEARTBEAT_TIMEOUT_S)
@@ -680,7 +703,7 @@ class Telemetry:
                 "release": None if h is None else f"{h.release_hash:#06x}", "protocol": None if h is None else h.protocol_version,
                 "view": None if h is None else [K.VIEW_NAMES[v] for v in h.node_state], "health": self.health_of(i, now),
                 "strikes": None if n.share is None else list(n.share.strikes), "cmd_counter": None if n.share is None else n.share.command_counter,
-                "digest": n.digest, "crc_bad": n.crc_bad, "seq_gaps": n.seq_gaps, "resync_frames": n.resync_frames, "hb_count": n.hb_count,
+                "master": master == i, "digest": n.digest, "crc_bad": n.crc_bad, "seq_gaps": n.seq_gaps, "resync_frames": n.resync_frames, "hb_count": n.hb_count,
                 "sample_age": {k: (None if v == -math.inf else round(max(0.0, now - v), 3)) for k, v in n.sample_t.items()},
                 "cmd": None if "cmd" not in n.values else [round(x, 4) for x in n.values["cmd"]],
                 "console": n.console, "console_age": None if n.console_t == -math.inf else round(now - n.console_t, 1),
@@ -708,6 +731,8 @@ class Telemetry:
         return {
             "t": round(now, 3), "frame": self.sync_no, "frame_rate": round(self.frame_rate, 2), "rx_total": self.rx_total, "crc_bad_total": self.crc_bad_total,
             "sync": {"alive": self._alive(self.sync_t, now, K.SYNC_TIMEOUT_S), "age": None if self.sync_t == -math.inf else round(max(0.0, now - self.sync_t), 3), "restarts": self.sync_restarts},
+            "master": None if master is None else self.nodes[master].name,
+            "redundancy": {"sensors": sum(1 for nd in nodes if nd["alive"] and nd["health"] in ("healthy", "unknown")), "computers": None if act is None else sum(act["voted"]), "act_alive": bool(act and act["alive"])},
             "phase": ph, "nodes": nodes, "act": act, "sim": sim, "truth": truth, "views": [[None if v is None else K.VIEW_NAMES[v] for v in row] for row in self.views()],
             "vote": {"channels": [None if c is None else {"vals": c["vals"], "med": c["med"], "dev": c["dev"], "norm": c["norm"], "n": c["n"], "age": round(max(0.0, now - c["t"]), 3)} for c in self.vote.latest],
                      "compared": self.vote.compared},

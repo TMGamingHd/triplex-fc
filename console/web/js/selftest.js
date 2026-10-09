@@ -15,6 +15,7 @@ const tab = async (id) => { click(`#tab-${id}`); await sleep(250); };
 export async function run(kind, ctx) {
   document.body.append(out);
   out.textContent = `selftest ${kind}\n`;
+  if (kind === 'layout') { try { await layout(ctx); } catch (e) { log(false, `layout audit threw: ${e.message}`); } return; }
   try {
     // ---- every tab mounts and shows something
     for (const t of ctx.tabs) { await tab(t.id); const pane = $(`#pane-${t.id}`); log(pane.classList.contains('active') && pane.querySelectorAll('*').length > 15, `tab ${t.id} renders (${pane.querySelectorAll('*').length} elements)`); }
@@ -130,6 +131,8 @@ async function launch() {
   log(await waitFor(() => S.snap.nodes[1].health === 'latched', 4000) != null, 'node B is latched');
   log(await waitFor(() => S.snap.act.excluded[1], 3000) != null, 'ACT excluded node B');
   log(await waitFor(() => !S.snap.nodes[1].alive, 3000) != null, 'node B is silent');
+  log(await waitFor(() => /^DUPLEX 2\/3/.test($('#mode-chip').textContent), 3000) != null, `the header says ${$('#mode-chip').textContent}, not 3/3`);
+  log(/votes 2\/3/.test($('#act-chip').textContent) && /^MAIN A/.test($('#main-chip').textContent), `ACT chip "${$('#act-chip').textContent}", main chip "${$('#main-chip').textContent}"`);
   await tab('mission');
   log(await waitFor(() => document.querySelector('#pane-mission .alert.crit'), 3000) != null, 'the Mission tab raises a critical alert');
   await tab('events');
@@ -138,4 +141,42 @@ async function launch() {
   const follow = [...document.querySelectorAll('#pane-flight .seg button')].find((b) => b.textContent === 'Follow vehicle');
   if (follow) follow.click();
   log(!!follow && follow.getAttribute('aria-pressed') === 'true', 'the trajectory can follow the vehicle');
+}
+
+// ?selftest=layout: on every tab, look for the things that look broken: a box whose content runs past its edge, and two neighbours that overlap. It reads the page as laid out and needs no live rig.
+const SKIP = /^(svg|path|g|circle|rect|line|text|tspan|canvas|defs|marker|polyline|polygon|ellipse|br|option|script|style)$/i;
+const describe = (el) => `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\s+/).join('.') : ''} "${(el.textContent || '').trim().slice(0, 28)}"`;
+function problems(root) {
+  const found = [];
+  for (const el of root.querySelectorAll('*')) {
+    if (SKIP.test(el.tagName) || el.closest('svg') || !el.offsetParent) continue;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'inline' || cs.display === 'contents') continue;
+    if (el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0 && cs.overflowX === 'visible') found.push(`content runs past its box: ${describe(el)} (${el.scrollWidth} > ${el.clientWidth})`);
+    if (el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1 && cs.textOverflow === 'ellipsis') found.push(`text is cut with an ellipsis: ${describe(el)}`);
+    const kids = [...el.children].filter((k) => !SKIP.test(k.tagName) && k.offsetParent && !['absolute', 'fixed'].includes(getComputedStyle(k).position));
+    const er = el.getBoundingClientRect();
+    for (const k of kids) { const r = k.getBoundingClientRect(); if (r.width && el.clientWidth && cs.overflowX === 'visible' && r.right > er.right + 2) found.push(`child sticks out of its parent: ${describe(k)} in ${describe(el)}`); }
+    if (cs.display.includes('grid') || cs.display.includes('flex') || el.tagName === 'TR') {
+      for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++) {
+        const a = kids[i].getBoundingClientRect(), b = kids[j].getBoundingClientRect();
+        if (!a.width || !b.width || !a.height || !b.height) continue;
+        const w = Math.min(a.right, b.right) - Math.max(a.left, b.left), hh = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (w > 2 && hh > 2) found.push(`overlap: ${describe(kids[i])} and ${describe(kids[j])}`);
+      }
+    }
+  }
+  return [...new Set(found)];
+}
+async function layout(ctx) {
+  out.textContent += `viewport ${innerWidth}x${innerHeight}\n`;
+  for (const t of ctx.tabs) {
+    await tab(t.id); await sleep(500);
+    const pane = $(`#pane-${t.id}`);
+    const p = problems(pane);
+    log(p.length === 0, `tab ${t.id}: ${p.length ? p.length + ' layout problem(s)' : 'no overflow or overlap'}`);
+    for (const m of p.slice(0, 8)) out.textContent += `      ${m}\n`;
+  }
+  const hp = problems($('#top'));
+  log(hp.length === 0, `header: ${hp.length ? hp.join('; ') : 'no overflow or overlap'}`);
 }

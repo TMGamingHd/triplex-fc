@@ -92,7 +92,8 @@ export default {
     const ic = document.getElementById('l-iface'); ic.className = `chip ${c.can_send ? 'ok' : 'muted'}`; setText(ic, c.can_send ? `sends on ${c.iface}` : 'cannot send');
     R.launch.disabled = !(c.can_send && go && ph.name === 'pad');
     R.scrub.disabled = !(c.can_send && ph.name === 'countdown');
-    setText(R.why, !c.can_send ? 'This console is not attached to a live bus (a replay is read-only), so it cannot send a command.' : ph.name === 'flight' ? 'The vehicle has left the pad: a launch is over and a scrub is refused.' : ph.name === 'countdown' ? 'The countdown is running. SCRUB returns the vehicle to the pad (one click, no confirmation: it is the safe direction).' : go ? 'Every required item holds. The launch is a two-step command: you confirm it, then the console sends ARM and EXECUTE.' : 'NO-GO: the button stays disabled until the checklist passes.');
+    const mainNote = s.master && c.can_send ? ` Main computer: ${s.master}${s.master === 'A' ? '' : ' (A is gone)'}; it acts on the launch command, after its own go/no-go.` : '';
+    setText(R.why, (!c.can_send ? 'This console is not attached to a live bus (a replay is read-only), so it cannot send a command.' : ph.name === 'flight' ? 'The vehicle has left the pad: a launch is over and a scrub is refused.' : ph.name === 'countdown' ? 'The countdown is running. SCRUB returns the vehicle to the pad (one click, no confirmation: it is the safe direction).' : go ? 'Every required item holds. The launch is a two-step command: you confirm it, then the console sends ARM and EXECUTE.' : 'NO-GO: the button stays disabled until the checklist passes.') + mainNote);
     // the automatic pre-launch items (steps 5 and 6 of P-S2-02)
     const bad = s.nodes.map((n) => ({ n, c: n.console || {} }));
     const consoleSeen = bad.some((b) => b.c.mode);

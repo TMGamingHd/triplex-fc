@@ -64,7 +64,7 @@ model, option or guard comes with a test that fails without it, and a mutant in 
 
 ## Before you push a change to the flight console (`console/`)
 ```bash
-cd sim && python3 -m unittest discover -s tests -t . -p "test_console_*.py"          # the console's 165 offline tests
+cd sim && python3 -m unittest discover -s tests -t . -p "test_console_*.py"          # the console's 170 offline tests
 python3 -m unittest tests.test_peers_control                                          # `tfc_peers run --control`, which the fault lab uses (14)
 python3 -m unittest tests.test_live_console -v                                       # live, with vcan0 and the images: the rig started from the console, a launch, a node lost, faults injected and measured (5, about a minute)
 sim/scripts/setup_vcan.sh && console/tfc-console                                      # then, in the browser, ?selftest=base (see console/README.md): the page's own smoke test
