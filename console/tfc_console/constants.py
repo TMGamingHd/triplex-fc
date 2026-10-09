@@ -58,6 +58,19 @@ SCHEDULE = (
 )
 
 
+def expected_hz(can_id: int) -> float | None:
+    """How often an id should be on the bus (docs/design/PROTOCOL.md and ARCHITECTURE.md: the 100 Hz frame, the state share and the simulator's status at 10 Hz, one resync frame per node chunk per second), or None for an id with no fixed rate."""
+    if can_id == 0x010 or can_id == 0x300 or can_id in (0x501, 0x502):
+        return 100.0
+    if any(base <= can_id <= base + 2 for base in (0x100, 0x110, 0x200, 0x400)):
+        return 100.0
+    if 0x410 <= can_id <= 0x412 or can_id in (0x503, 0x504, 0x505):
+        return 10.0
+    if 0x420 <= can_id < 0x42C:
+        return 1.0
+    return None
+
+
 def id_name(can_id: int) -> str:
     """A short name for a bus id: `GYRO B`, `SYNC`, `RESYNC A.2`, or `?0x123` for an id outside the schedule."""
     if can_id == 0x010:

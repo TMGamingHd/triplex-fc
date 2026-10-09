@@ -403,23 +403,26 @@ class Telemetry:
     BLIP_S = 0.05
 
     def _vote_status_changed(self, t: float, a: P.ActOut, old: P.ActOut) -> None:
-        pend = self._notes.get("vote-pending")            # (since t, since frame, status, reported) of a departure from the full vote
-        settled = 0                                       # Triplex: all three commands voting, which is what the vote is for; anything else is a departure from it
+        """Departures from the full vote, reported once each: a status that stays for BLIP_S is a warning (and a change to *another* status that stays is another); one that comes straight back is a quiet blip.
+        A status that flickers between two non-Triplex values (Duplex, a frame of Simplex, Duplex) after a node was lost is the same incident, not a new warning each time."""
+        pend = self._notes.get("vote-pending")            # (since t, since frame, status) of the status being waited on
+        reported = self._notes.get("vote-reported")       # the non-Triplex status last reported, until the vote is whole again
         name = lambda v: P.VOTE_STATUS_NAMES[min(v, 5)]  # noqa: E731
-        if a.vote_status == settled:
-            if pend is not None:
-                self._notes["vote-pending"] = None
-                if pend[3]:                                # it had already been reported: say it is over
-                    self.emit(t, "ok", "ACT", "vote-status", f"ACT's vote status is back to Triplex (it was {name(pend[2])} from frame {pend[1]})")
-                else:
-                    self.emit(t, "info", "ACT", "vote-blip", f"ACT's vote status blipped to {name(pend[2])} for {max(1, round((t - pend[0]) / K.FRAME_S))} frame(s)")
+        st = a.vote_status
+        if st == 0:                                       # Triplex: all three commands voting
+            self._notes["vote-pending"] = None
+            if reported is not None:
+                self._notes["vote-reported"] = None
+                self.emit(t, "ok", "ACT", "vote-status", f"ACT's vote status is back to Triplex (it had been {name(reported)})")
+            elif pend is not None:
+                self.emit(t, "info", "ACT", "vote-blip", f"ACT's vote status blipped to {name(pend[2])} for {max(1, round((t - pend[0]) / K.FRAME_S))} frame(s)")
             return
-        if pend is None or pend[2] != a.vote_status:
-            pend = (t, self.sync_no, a.vote_status, False)
+        if pend is None or pend[2] != st:
+            pend = (t, self.sync_no, st)
             self._notes["vote-pending"] = pend
-        if not pend[3] and t - pend[0] >= self.BLIP_S:
-            self._notes["vote-pending"] = (pend[0], pend[1], pend[2], True)
-            self.emit(t, "warn", "ACT", "vote-status", f"ACT's vote status is {name(a.vote_status)}, not Triplex (since frame {pend[1]})", frame=pend[1])
+        if st != reported and t - pend[0] >= self.BLIP_S:
+            self._notes["vote-reported"] = st
+            self.emit(t, "warn", "ACT", "vote-status", f"ACT's vote status is {name(st)}, not Triplex (since frame {pend[1]})", frame=pend[1])
 
     def _on_ground(self, t: float, f: P.Frame) -> None:
         g = P.unpack_ground(f)

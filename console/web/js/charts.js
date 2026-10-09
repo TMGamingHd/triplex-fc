@@ -139,15 +139,16 @@ export function legend(series) {
 /** Altitude against range: the nominal flight, the flown trail, event marks and the vehicle. */
 export class Trajectory {
   constructor(canvas, height = 300) { this.c = canvas; this.h = height; canvas.classList.add('chart'); canvas.style.height = height + 'px'; }
-  draw({ nominal, trail, marks, now }) {
+  /** view: 'whole' scales to the nominal flight as well; 'follow' scales to what has been flown (with a floor, so the first metres are not a full-screen line) */
+  draw({ nominal, trail, marks, now, view = 'whole' }) {
     const c = this.c, dpr = window.devicePixelRatio || 1, W = c.clientWidth, H = this.h;
     if (!W) return;
     if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
     const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
     const col = (v) => cssColor(c, v);
-    const L = 52, R = 14, T = 12, B = 26, pw = W - L - R, ph = H - T - B;
-    let xmax = 1000, ymax = 1000;
-    for (const s of [nominal, trail]) if (s) { for (let i = 0; i < s.range.length; i++) { xmax = Math.max(xmax, s.range[i]); ymax = Math.max(ymax, s.alt[i]); } }
+    const L = 52, R = 14, T = 26, B = 28, pw = W - L - R, ph = H - T - B;
+    let xmax = view === 'follow' ? 200 : 1000, ymax = view === 'follow' ? 200 : 1000;
+    for (const s of (view === 'follow' ? [trail] : [nominal, trail])) if (s) { for (let i = 0; i < s.range.length; i++) { xmax = Math.max(xmax, s.range[i]); ymax = Math.max(ymax, s.alt[i]); } }
     const xs = niceStep(xmax * 1.08, 5), ys = niceStep(ymax * 1.12, 5);
     const XM = Math.ceil((xmax * 1.04) / xs) * xs, YM = Math.ceil((ymax * 1.08) / ys) * ys;
     const X = (v) => L + (v / XM) * pw, Y = (v) => T + (1 - v / YM) * ph;
@@ -156,7 +157,7 @@ export class Trajectory {
     for (let v = 0; v <= YM + 1; v += ys) { g.strokeStyle = col('var(--line)'); g.beginPath(); g.moveTo(L, Y(v) + .5); g.lineTo(L + pw, Y(v) + .5); g.stroke(); g.fillStyle = col('var(--muted)'); g.fillText((v / 1000).toFixed(YM > 20000 ? 0 : 1), L - 5, Y(v)); }
     g.textAlign = 'center'; g.textBaseline = 'top';
     for (let v = 0; v <= XM + 1; v += xs) { g.strokeStyle = col('var(--line)'); g.beginPath(); g.moveTo(X(v) + .5, T); g.lineTo(X(v) + .5, T + ph); g.stroke(); g.fillStyle = col('var(--muted)'); g.fillText((v / 1000).toFixed(XM > 20000 ? 0 : 1), X(v), T + ph + 5); }
-    g.fillStyle = col('var(--muted)'); g.textAlign = 'left'; g.fillText('altitude, km', 4, 0 + 1); g.textAlign = 'right'; g.fillText('range, km', W - 4, H - 12);
+    g.fillStyle = col('var(--muted)'); g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText('altitude, km', 4, 4); g.textAlign = 'right'; g.textBaseline = 'bottom'; g.fillText('range, km', W - 4, H - 2);
     const path = (s, color, w, dash) => { if (!s || !s.range.length) return; g.strokeStyle = col(color); g.lineWidth = w; g.setLineDash(dash || []); g.beginPath(); s.range.forEach((r, i) => (i ? g.lineTo(X(r), Y(s.alt[i])) : g.moveTo(X(r), Y(s.alt[i])))); g.stroke(); g.setLineDash([]); };
     path(nominal, 'var(--faint)', 1.6, [6, 4]);
     path(trail, 'var(--accent)', 2.4);

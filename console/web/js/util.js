@@ -45,9 +45,9 @@ export function eng(v, d = 1) {                       // 12345 -> "12.3k"
 }
 export function clock(sec) {                          // seconds -> "01:23.4"
   if (sec == null) return '--:--.-';
-  const s = Math.max(0, sec);
-  const m = Math.floor(s / 60);
-  return String(m).padStart(2, '0') + ':' + (s - m * 60).toFixed(1).padStart(4, '0');
+  const tenths = Math.round(Math.max(0, sec) * 10);       // round first: 59.97 is 1:00.0, not 0:60.0
+  const m = Math.floor(tenths / 600);
+  return String(m).padStart(2, '0') + ':' + ((tenths - m * 600) / 10).toFixed(1).padStart(4, '0');
 }
 export const ago = (s) => (s == null ? '—' : s < 1 ? `${Math.round(s * 1000)} ms` : s < 100 ? `${s.toFixed(1)} s` : `${Math.round(s)} s`);
 export function hms(wall) { const d = new Date(wall * 1000); return d.toTimeString().slice(0, 8); }

@@ -233,7 +233,7 @@ class Hub:
             now = self.clock() if not self.replay else max(self._last_tick_t, 0.0)
             rows = []
             for can_id, st in sorted(self.model.ids.items()):
-                rows.append({"id": can_id, "name": K.id_name(can_id), "count": st.count, "rate": round(st.rate, 1), "crc_bad": st.crc_bad, "age": round(now - st.last_t, 3), "in_schedule": K.in_schedule(can_id) or can_id == P.ID_GROUND, "hex": st.last_hex})
+                rows.append({"id": can_id, "name": K.id_name(can_id), "count": st.count, "rate": round(st.rate, 1), "expected": K.expected_hz(can_id), "crc_bad": st.crc_bad, "age": round(now - st.last_t, 3), "in_schedule": K.in_schedule(can_id) or can_id == P.ID_GROUND, "hex": st.last_hex})
             return {"rows": rows, "rx_total": self.model.rx_total, "crc_bad_total": self.model.crc_bad_total, "oos": {f"{i:#05x}": c for i, c in sorted(self.model.oos.items())},
                     "frame_rate": round(self.model.frame_rate, 2), "nodes": [{"name": n.name, "crc_bad": n.crc_bad, "seq_gaps": n.seq_gaps} for n in self.model.nodes]}
 

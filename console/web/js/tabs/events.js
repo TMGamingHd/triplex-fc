@@ -1,7 +1,8 @@
 // Events: everything that has happened, in order, and the raw console of every node. The bus tells the outcome (a heartbeat changed); only the console tells the reason.
-import { h, setText, store, download, NODES } from '../util.js';
+import { h, setText, store, download, toast } from '../util.js';
+import { api } from '../net.js';
 
-let R = { open: new Set(), srcOn: store.get('events.src', null), minLevel: store.get('events.level', 'info'), tab: store.get('events.tab', 'A') };
+let R = { open: new Set(), openG: new Set(), srcOn: store.get('events.src', null), minLevel: store.get('events.level', 'info'), tab: store.get('events.tab', 'A') };
 const LV = { info: 0, ok: 1, warn: 2, crit: 3 };
 const SRC = ['bus', 'A', 'B', 'C', 'ACT', 'SIM', 'SUP', 'PEERS', 'OP', 'CON'];
 const NOISE = new Set(['boot', 'text', 'status', 'act-status', 'countdown', 'resync']);
@@ -13,20 +14,37 @@ function when(S, t) {
   return `+${Math.floor(d / 60)}:${(d % 60).toFixed(1).padStart(4, '0')}`;
 }
 
+function row(S, e) {
+  const open = R.open.has(e.seq);
+  const go = S.snap && S.snap.replay ? h('button', { class: 'btn small ghost', title: 'Replay from one second before this event', style: { padding: '0 6px', marginLeft: '6px' }, onclick: (ev) => { ev.stopPropagation(); api('/api/replay', { seek: Math.max(0, e.t - 1), play: true }).catch((x) => toast(x.message, 'warn')); } }, '⏵') : null;
+  return h('div', { class: `log-line ${e.level}`, style: { cursor: 'pointer' }, onclick: () => { open ? R.open.delete(e.seq) : R.open.add(e.seq); R.ekey = null; drawEvents(S); } },
+    h('span', { class: 's-muted' }, when(S, e.t).padEnd(8) + ' '), h('span', { class: 's-muted' }, (e.frame != null ? 'f' + e.frame : '').padEnd(8) + ' '), h('span', { class: `tag n${e.src}`, style: { marginRight: '8px' } }, e.src), e.text.replace(/^\[\w+\] /, ''), go,
+    open ? h('div', { class: 'mono-box', style: { margin: '4px 0 4px 0' } }, JSON.stringify({ kind: e.kind, level: e.level, node: e.node, t: e.t, frame: e.frame, fields: e.fields }, null, 1)) : null);
+}
+
+/** Events of the same frame are one incident seen by several observers (the bus, each node's console, ACT): shown as one line that opens. */
 function drawEvents(S) {
   const on = R.srcOn || SRC;
   const q = R.search.value.trim().toLowerCase();
   const rows = S.events.filter((e) => LV[e.level] >= LV[R.minLevel] && on.includes(e.src) && (R.noise.checked || !NOISE.has(e.kind)) && (!q || e.text.toLowerCase().includes(q) || e.kind.includes(q))).slice(-500);
-  const key = rows.length + ':' + (rows.length ? rows[rows.length - 1].seq : 0) + R.minLevel + on.join() + q + R.noise.checked + [...R.open].join();
+  const key = rows.length + ':' + (rows.length ? rows[rows.length - 1].seq : 0) + R.minLevel + on.join() + q + R.noise.checked + R.group.checked + [...R.open].join() + [...R.openG].join() + (S.snap && S.snap.replay);
   if (R.ekey === key) return; R.ekey = key;
   const box = R.list, stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 40;
   box.innerHTML = '';
   if (!rows.length) box.append(h('div', { class: 'empty' }, 'No event matches.'));
-  for (const e of rows) {
-    const open = R.open.has(e.seq);
-    box.append(h('div', { class: `log-line ${e.level}`, style: { cursor: 'pointer' }, onclick: () => { open ? R.open.delete(e.seq) : R.open.add(e.seq); R.ekey = null; drawEvents(S); } },
-      h('span', { class: 's-muted' }, when(S, e.t).padEnd(8) + ' '), h('span', { class: 's-muted' }, (e.frame != null ? 'f' + e.frame : '').padEnd(8) + ' '), h('span', { class: `tag n${e.src}`, style: { marginRight: '8px' } }, e.src), e.text.replace(/^\[\w+\] /, ''),
-      open ? h('div', { class: 'mono-box', style: { margin: '4px 0 4px 0' } }, JSON.stringify({ kind: e.kind, level: e.level, node: e.node, t: e.t, frame: e.frame, fields: e.fields }, null, 1)) : null));
+  const worst = (g) => g.reduce((m, e) => (LV[e.level] > LV[m] ? e.level : m), 'info');
+  for (let i = 0; i < rows.length;) {
+    let j = i + 1;
+    if (R.group.checked && rows[i].frame != null) while (j < rows.length && rows[j].frame === rows[i].frame && rows[j].src !== 'CON' && rows[i].src !== 'CON') j++;
+    const g = rows.slice(i, j);
+    if (g.length >= 3) {
+      const gk = `${g[0].frame}:${g[0].seq}`;
+      const nodes = [...new Set(g.map((e) => e.node).filter(Boolean))], srcs = [...new Set(g.map((e) => e.src))];
+      const d = h('details', { class: `group ${worst(g)}`, open: R.openG.has(gk) || null }, h('summary', {}, `${when(S, g[0].t)}  f${g[0].frame}  ·  ${g.length} events${nodes.length ? ' about node ' + nodes.join(', ') : ''}  ·  seen by ${srcs.join(', ')}  ·  ${g[0].text.replace(/^\[\w+\] /, '').slice(0, 70)}`), g.map((e) => row(S, e)));
+      d.addEventListener('toggle', () => { d.open ? R.openG.add(gk) : R.openG.delete(gk); R.ekey = null; });
+      box.append(d);
+    } else for (const e of g) box.append(row(S, e));
+    i = j;
   }
   if (stick) box.scrollTop = box.scrollHeight;
   setText(R.count, `${rows.length} shown of ${S.events.length}`);
@@ -54,6 +72,7 @@ export default {
     R.list = h('div', { class: 'mono-box', style: { height: '62vh', padding: 0, whiteSpace: 'normal' } });
     R.search = h('input', { type: 'text', placeholder: 'search', id: 'ev-search', style: { width: '150px' } }); R.search.addEventListener('input', () => { R.ekey = null; });
     R.noise = h('input', { type: 'checkbox', id: 'ev-noise' }); R.noise.addEventListener('change', () => { R.ekey = null; });
+    R.group = h('input', { type: 'checkbox', id: 'ev-group', checked: true }); R.group.addEventListener('change', () => { R.ekey = null; });
     R.count = h('span', { class: 'note' });
     const lvl = h('div', { class: 'seg', role: 'group', 'aria-label': 'Lowest level shown' }, Object.keys(LV).map((k) => h('button', { type: 'button', 'aria-pressed': k === R.minLevel ? 'true' : 'false', onclick: (e) => { R.minLevel = k; store.set('events.level', k); R.ekey = null; for (const b of lvl.children) b.setAttribute('aria-pressed', b === e.currentTarget ? 'true' : 'false'); } }, k)));
     R.srcBox = h('div', { class: 'btns' }, SRC.map((x) => h('label', { class: 'chip', style: { cursor: 'pointer' } }, h('input', { type: 'checkbox', checked: !R.srcOn || R.srcOn.includes(x), style: { accentColor: 'var(--accent)' }, onchange: () => { R.srcOn = SRC.filter((s, i) => R.srcBox.children[i].querySelector('input').checked); store.set('events.src', R.srcOn); R.ekey = null; } }), h('span', { class: `tag n${x}` }, x))));
@@ -61,8 +80,8 @@ export default {
     R.con = h('div', { class: 'mono-box', style: { height: '62vh', padding: 0 } });
     R.hideStatus = h('input', { type: 'checkbox', checked: true, id: 'con-hide' }); R.hideStatus.addEventListener('change', () => { R.ckey = null; });
     root.append(h('div', { class: 'grid c-3-2' },
-      h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Events'), h('div', { class: 'tools' }, R.count, R.search, h('button', { class: 'btn small', onclick: () => download('events.json', JSON.stringify(R.S.events, null, 1), 'application/json') }, 'Save'))),
-        h('div', { class: 'body' }, h('div', { style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '8px' } }, lvl, R.srcBox, h('label', { class: 'check', style: { padding: 0 } }, R.noise, h('span', { class: 'note' }, 'boot, countdown and resync chatter'))), R.list)),
+      h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Events'), h('div', { class: 'tools' }, R.count, R.search, h('button', { class: 'btn small', onclick: () => download('events.json', JSON.stringify(R.S.events, null, 1), 'application/json') }, 'JSON'), h('button', { class: 'btn small', onclick: () => download('events.csv', ['t,frame,level,src,node,kind,text', ...R.S.events.map((e) => [e.t, e.frame ?? '', e.level, e.src, e.node ?? '', e.kind, JSON.stringify(e.text)].join(','))].join('\n'), 'text/csv') }, 'CSV'))),
+        h('div', { class: 'body' }, h('div', { style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '8px' } }, lvl, R.srcBox, h('label', { class: 'check', style: { padding: 0 } }, R.noise, h('span', { class: 'note' }, 'boot, countdown and resync chatter')), h('label', { class: 'check', style: { padding: 0 } }, R.group, h('span', { class: 'note' }, 'group by frame'))), R.list)),
       h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Node consoles'), h('div', { class: 'tools' }, h('label', { class: 'check', style: { padding: 0 } }, R.hideStatus, h('span', { class: 'note' }, 'hide status lines')))),
         h('div', { class: 'body' }, h('div', { style: { marginBottom: '8px', overflowX: 'auto' } }, R.tabs), R.con))));
   },
