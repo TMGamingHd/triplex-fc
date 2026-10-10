@@ -2,7 +2,7 @@
 // Fly any vehicle with the real flight software: read a vehicle description (docs/design/VEHICLE_SPEC.md), design the pitch program and the gain schedule on its nominal flight, and close the
 // loop over it (the simulated vehicle, three flight functions with their IMU models, the real ACT logic: sim/vehicle/closed_loop.hpp). Reports what happened, and can write the whole flight
 // as a CSV for a plot.
-//   tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE]
+//   tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE] [--pose FILE] [--pose-hz N]
 // "reference" is the built-in reference vehicle of VEHICLE_SIM.md. --frames: frames of flight after T-zero (default: the design's flight time). --check: only read and validate the file (and print
 // what is in it), do not fly. --dump: write the vehicle back out as a normalised file (every field, in the order the format documents) and stop.
 #include <cstdio>
@@ -67,7 +67,7 @@ void describe(const sim::VehicleFile& v) {
 
 int main(int argc, char** argv) {
   if (argc < 2 || argv[1][0] == '-') {
-    std::fprintf(stderr, "usage: tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE]\n");
+    std::fprintf(stderr, "usage: tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE] [--pose FILE] [--pose-hz N]\n");
     return 2;
   }
   uint32_t frames = 0U;
@@ -79,6 +79,8 @@ int main(int argc, char** argv) {
   uint32_t every = 10U;
   std::string csv;
   std::string dump;
+  std::string pose;
+  uint32_t pose_hz = 50U;
   for (int i = 2; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--frames" && i + 1 < argc) {
@@ -99,6 +101,10 @@ int main(int argc, char** argv) {
       check = true;
     } else if (a == "--dump" && i + 1 < argc) {
       dump = argv[++i];
+    } else if (a == "--pose" && i + 1 < argc) {
+      pose = argv[++i];
+    } else if (a == "--pose-hz" && i + 1 < argc) {
+      pose_hz = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
     } else {
       std::fprintf(stderr, "unknown option %s\n", a.c_str());
       return 2;
@@ -146,10 +152,30 @@ int main(int argc, char** argv) {
   }
   lp.pad_frames = pad;
   lp.frames = frames != 0U ? frames : static_cast<uint32_t>(vf.plan.trajectory.t_end / 0.01);
+  std::FILE* pose_file = nullptr;
+  if (!pose.empty()) {  // the whole state for the 3D viewer (docs/design/VIEWER.md): the vehicle and the air first, then a pose every 1/pose_hz s
+    if (pose_hz == 0U || pose_hz > 100U) {
+      std::fprintf(stderr, "--pose-hz: %u is not between 1 and 100\n", static_cast<unsigned>(pose_hz));
+      return 2;
+    }
+    pose_file = std::fopen(pose.c_str(), "w");
+    if (pose_file == nullptr) {
+      std::fprintf(stderr, "cannot write %s\n", pose.c_str());
+      return 1;
+    }
+    const sim::Vehicle6 first(vf.params, vf.scenario);
+    std::fprintf(pose_file, "%s\n", sim::viewer_spec_json(vf, first).c_str());
+    lp.pose_every = std::max<uint32_t>(1U, 100U / pose_hz);
+    lp.on_pose = [pose_file](const sim::Vehicle6& v, double t, const sim::PoseExtra& x) { std::fprintf(pose_file, "%s\n", sim::viewer_pose_json(v, t, x).c_str()); };
+  }
   std::vector<sim::TraceRow> trace;
   lp.trace = &trace;
   lp.trace_every = every;
   const sim::Result r = sim::run(lp);
+  if (pose_file != nullptr) {
+    std::fclose(pose_file);
+    std::printf("  wrote the poses to %s\n", pose.c_str());
+  }
 
   double max_q = 0.0;
   double t_max_q = 0.0;

@@ -1,0 +1,46 @@
+// A two-stage fully reusable super-heavy launcher of the Starship class, built from PUBLICLY REPORTED round numbers (a 9 m stainless-steel stack about 123 m tall, a 33-engine booster, a six-engine
+// ship, methane and liquid oxygen, hot staging). It is NOT SpaceX data and not a model of any flight article: the masses, thrusts and tank sizes are estimates chosen to be of the right order, so that the
+// simulator and the 3D viewer (docs/design/VIEWER.md) have a vehicle of that class to fly. Nothing in the project's claims depends on its numbers. docs/design/VEHICLE_SPEC.md says what every field means.
+// Booster: 33 engines of 2.26 MN at sea level (thrust_vac = sea-level thrust + 101325 Pa x exit area), 13 of them on the gimbal (the inner three and the ring of ten), the outer 20 fixed. Ship: three
+// sea-level engines that gimbal and three vacuum engines (larger nozzle, higher Isp) that gimbal too. Fly it with the vehicle's own sensors, as the other large vehicles.
+// The ascent follows a pitch program (design.program: the angle of the long axis from the vertical against time) shaped like a heavy launcher's: nearly vertical for 14 s, then tipping over to 55 degrees at hot staging and
+// 72 degrees by shut-down (the tilts the flight computers steer are about two pad axes and lose their meaning close to the horizontal, so the program stops short of it). Fly it:
+//   build/host/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 300 --pose starship.pose.jsonl
+{
+  "name": "starship-class",
+  "description": "Two stages, 9 m diameter, 123 m, about 4.9 kt at lift-off, 33 + 6 engines, methane and liquid oxygen, hot staging. Public round numbers, not SpaceX data.",
+  "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08},
+  "aero": {"diameter_m": 9.0, "roughness": 1.2},
+  "stages": [
+    {"name": "booster", "dry_mass_kg": 275000, "x_start_m": 0, "length_m": 71, "radius_m": 4.5, "inertia_factor": 0.55, "x_cg_dry_m": 24,
+     "tanks": [
+       {"propellant_kg": 750000, "x_bottom_m": 3.0, "radius_m": 4.4, "density_kg_m3": 424},       // methane, low
+       {"propellant_kg": 2450000, "x_bottom_m": 32.5, "radius_m": 4.4, "density_kg_m3": 1141}     // liquid oxygen, above it
+     ],
+     "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 71, "d_aft_m": 9.0, "d_fore_m": 9.0}],
+     "separate_on_burnout": true, "separate_delay_s": 3.0, "separation_dv_ms": 1.5,
+     "throttle": [[0, 0.92], [45, 0.92], [60, 0.72], [95, 0.72], [110, 0.92]]},   // down through max-Q
+    {"name": "ship", "dry_mass_kg": 130000, "x_start_m": 71, "length_m": 52, "radius_m": 4.5, "inertia_factor": 0.55, "x_cg_dry_m": 92,
+     "tanks": [
+       {"propellant_kg": 280000, "x_bottom_m": 76.0, "radius_m": 4.4, "density_kg_m3": 424},
+       {"propellant_kg": 920000, "x_bottom_m": 87.5, "radius_m": 4.4, "density_kg_m3": 1141}
+     ],
+     "sections": [{"kind": "tube", "x_start_m": 71, "length_m": 34, "d_aft_m": 9.0, "d_fore_m": 9.0},
+                  {"kind": "nose", "x_start_m": 105, "length_m": 18, "d_aft_m": 9.0, "d_fore_m": 0, "shape": "ogive"}],
+     "ignite_time_s": 160.5, "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
+  ],
+  "engines": [
+    // booster: the inner three and the ring of ten on the gimbal, the outer twenty fixed; 2.26 MN at sea level, 1.33 m^2 exit area, Isp 347 s in vacuum
+    {"stage": 0, "count": 3,  "position_m": [0, 0, 0], "ring_radius_m": 0.95, "ring_start_deg": 90, "thrust_vac_n": 2395000, "exit_area_m2": 1.33, "isp_vac_s": 347, "rise_s": 0.8, "tail_s": 0.8},
+    {"stage": 0, "count": 10, "position_m": [0, 0, 0], "ring_radius_m": 2.25, "ring_start_deg": 0,  "thrust_vac_n": 2395000, "exit_area_m2": 1.33, "isp_vac_s": 347, "rise_s": 0.8, "tail_s": 0.8},
+    {"stage": 0, "count": 20, "position_m": [0, 0, 0], "ring_radius_m": 3.85, "ring_start_deg": 0,  "thrust_vac_n": 2395000, "exit_area_m2": 1.33, "isp_vac_s": 347, "rise_s": 0.8, "tail_s": 0.8, "gimbal": false},
+    // ship: three sea-level engines in the middle, three vacuum engines on a ring around them
+    {"stage": 1, "count": 3, "position_m": [71, 0, 0], "ring_radius_m": 0.95, "ring_start_deg": 90,  "thrust_vac_n": 2395000, "exit_area_m2": 1.33, "isp_vac_s": 347, "rise_s": 0.8, "tail_s": 0.8},
+    {"stage": 1, "count": 3, "position_m": [71, 0, 0], "ring_radius_m": 2.55, "ring_start_deg": 30,  "thrust_vac_n": 2550000, "exit_area_m2": 4.5,  "isp_vac_s": 380, "rise_s": 0.8, "tail_s": 0.8}
+  ],
+  "payloads": [
+    {"name": "payload", "mass_kg": 100000, "x_m": 108}
+  ],
+  "design": {"t_end_s": 450, "program": [[0,0],[14,0],[40,9],[80,28],[120,45],[160,55],[200,60],[260,64],[330,68],[400,71],[450,72]],
+             "gains": {"every_s": 0, "wn": 0.5, "zeta": 0.8, "ki_over_kp": 0.15, "b_min": 0.02}}
+}

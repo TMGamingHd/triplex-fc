@@ -36,6 +36,7 @@ add_executable(tfc_tests
   tests/test_sync_clock.cpp
   tests/test_act_ground.cpp
   tests/test_runner.cpp
+  tests/test_viewer_state.cpp
   tests/test_pico.cpp
   tests/test_pico_app.cpp
   tests/test_pico_fuzz.cpp

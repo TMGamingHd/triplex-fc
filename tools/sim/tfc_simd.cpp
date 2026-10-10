@@ -5,9 +5,11 @@
 // flight computers' frame count. A run starts at the first SYNC heard and starts over if the frame number goes backwards (the sync master was reset).
 // With --pico PORT it also streams the vehicle's tilts to the Pico that drives the platform (docs/design/PICO.md): one platform frame per simulated frame, so 100 Hz.
 // With --hold the vehicle stands clamped on the pad until the mission frame in SYNC passes T-zero (docs/design/LAUNCH_SEQUENCE.md), then flies; a simulator that starts after T-zero joins the flight in progress.
-//   tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--telemetry PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
+//   tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--telemetry PORT] [--viewer PORT] [--viewer-hz N] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
 // With --telemetry PORT it also sends the vehicle's true state, 10 times a second, as one JSON object per UDP datagram to 127.0.0.1:PORT (the flight console, docs/design/CONSOLE.md): what the bus does not
 // carry (the distance downrange, the stages, the thrust, the program the flight computers follow). It is an output only: nothing the flight computers do depends on it, and a datagram nobody reads is dropped.
+// With --viewer PORT it also sends the vehicle's whole state to the 3D viewer (docs/design/VIEWER.md): a "pose" (position, attitude, air, forces, engines, tanks) --viewer-hz times a second (default 50), and the
+// "spec" (the vehicle as the simulator reads it, and the air and wind it flies through) once at the start and every two seconds after, because a datagram nobody was listening for is lost. Same rules as --telemetry.
 // --vehicle flies the vehicle described in FILE (docs/design/VEHICLE_SPEC.md) instead of the reference vehicle; give it before the options that adjust the scenario. The flight computers carry the tables
 // they were built with, which are the reference vehicle's: for another vehicle regenerate them (tfc_gen_tables --vehicle FILE firmware/app/src/flight_tables.hpp) and rebuild the firmware.
 #include <fcntl.h>
@@ -35,6 +37,7 @@
 #include "design.hpp"
 #include "runner.hpp"
 #include "spec_io.hpp"
+#include "viewer_state.hpp"
 #include "tfc/pico_link.hpp"
 #include "tfc/protocol.hpp"
 
@@ -168,6 +171,24 @@ void send_telemetry(const Telemetry& t, const sim::SimRunner& runner) {
   }
 }
 
+void send_datagram(const Telemetry& t, const std::string& text) {
+  (void)::sendto(t.fd, text.data(), text.size(), MSG_DONTWAIT, reinterpret_cast<const sockaddr*>(&t.to), sizeof t.to);
+}
+
+// The 3D viewer's pose: the vehicle's whole state (viewer_state.hpp) with the program the flight computers follow and the command ACT sent.
+std::string viewer_pose(const sim::SimRunner& runner, const tfc::ActFrame& act) {
+  sim::PoseExtra x;
+  const tfc::Reference ref = runner.tables().guidance.at(runner.flight_frame());
+  x.ref_pitch_deg = static_cast<double>(ref.tilt_y_deg);
+  x.ref_yaw_deg = static_cast<double>(ref.tilt_x_deg);
+  x.cmd_pitch_deg = static_cast<double>(act.pitch_deg);
+  x.cmd_yaw_deg = static_cast<double>(act.yaw_deg);
+  x.act_mode = static_cast<int>(act.state);
+  x.clamped = runner.clamped();
+  x.frame = runner.frame();
+  return sim::viewer_pose_json(runner.vehicle(), static_cast<double>(runner.flight_frame()) * 0.01, x);
+}
+
 bool split(const std::string& arg, double* out, int n) {
   std::size_t pos = 0;
   for (int i = 0; i < n; ++i) {
@@ -193,6 +214,10 @@ int main(int argc, char** argv) {
   uint32_t max_frames = 0U;
   std::string pico_port;
   int telemetry_port = 0;
+  int viewer_port = 0;
+  unsigned viewer_hz = 50U;
+  sim::VehicleFile vehicle_file;   // what --vehicle read (the reference vehicle if none), for the viewer's spec
+  vehicle_file.name = "reference";
   bool quiet = false;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -219,6 +244,7 @@ int main(int argc, char** argv) {
       cfg.design = vf.params;
       cfg.scenario = vf.scenario;
       cfg.plan = vf.plan;
+      vehicle_file = vf;
       std::fprintf(stderr, "tfc_simd: flying \"%s\"; the flight computers must carry the tables of this vehicle (tfc_gen_tables --vehicle)\n", vf.name.c_str());
     } else if (a == "--hold") {
       cfg.start_held = true;
@@ -226,6 +252,14 @@ int main(int argc, char** argv) {
       pico_port = next();
     } else if (a == "--telemetry") {
       telemetry_port = std::atoi(next().c_str());
+    } else if (a == "--viewer") {
+      viewer_port = std::atoi(next().c_str());
+    } else if (a == "--viewer-hz") {
+      viewer_hz = static_cast<unsigned>(std::strtoul(next().c_str(), nullptr, 10));
+      if (viewer_hz == 0U || viewer_hz > 100U || 100U % viewer_hz != 0U) {
+        std::fprintf(stderr, "--viewer-hz: %u must divide 100 (1, 2, 4, 5, 10, 20, 25, 50 or 100)\n", viewer_hz);
+        return 2;
+      }
     } else if (a == "--vehicle-true") {
       cfg.vehicle_true = true;
     } else if (a == "--wind-scale") {
@@ -246,7 +280,7 @@ int main(int argc, char** argv) {
     } else if (a == "--quiet") {
       quiet = true;
     } else {
-      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--telemetry PORT] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
+      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--telemetry PORT] [--viewer PORT] [--viewer-hz N] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
       return 2;
     }
   }
@@ -265,11 +299,19 @@ int main(int argc, char** argv) {
   if (telemetry_port != 0 && !open_telemetry(telemetry, telemetry_port)) {
     return 1;
   }
+  Telemetry viewer;
+  if (viewer_port != 0 && !open_telemetry(viewer, viewer_port)) {
+    return 1;
+  }
   unsigned pico_drops = 0U;
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
 
   sim::SimRunner runner(cfg);
+  vehicle_file.params = cfg.params;        // the scenario options (--wind-scale and the rest) are part of the world the viewer draws
+  vehicle_file.scenario = cfg.scenario;
+  const std::string viewer_spec = viewer.fd >= 0 ? sim::viewer_spec_json(vehicle_file, runner.vehicle()) : std::string();
+  uint32_t last_spec_frame = 0xFFFFFFFFU;
   bool started = false;
   uint32_t acted = 0xFFFFFFFFU;  // the frame whose ACT output has been applied
   unsigned tx_errors = 0U;
@@ -347,6 +389,13 @@ int main(int argc, char** argv) {
       if (telemetry.fd >= 0 && runner.frame() % 10U == 0U) {
         send_telemetry(telemetry, runner);
       }
+      if (viewer.fd >= 0 && runner.frame() % (100U / viewer_hz) == 0U) {
+        if (last_spec_frame == 0xFFFFFFFFU || runner.frame() - last_spec_frame >= 200U) {
+          send_datagram(viewer, viewer_spec);
+          last_spec_frame = runner.frame();
+        }
+        send_datagram(viewer, viewer_pose(runner, d.act));
+      }
       if (!quiet && runner.frame() % 100U == 0U) {
         const sim::Tilts t = runner.vehicle().tilts();
         std::fprintf(stderr, "t=%6.2f s  alt %8.0f m  speed %7.1f m/s  tilt pitch %7.3f yaw %7.3f deg  gimbal %6.2f %6.2f  ACT state %u  tx_err %u\n",
@@ -364,6 +413,9 @@ int main(int argc, char** argv) {
   }
   if (telemetry.fd >= 0) {
     ::close(telemetry.fd);
+  }
+  if (viewer.fd >= 0) {
+    ::close(viewer.fd);
   }
   std::fprintf(stderr, "tfc_simd: stopped at frame %u (t = %.2f s), altitude %.0f m\n", static_cast<unsigned>(runner.frame()), static_cast<double>(runner.frame()) * 0.01,
                runner.vehicle().altitude());
