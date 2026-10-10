@@ -126,6 +126,15 @@ class WithTheSimulatorsOwnReader(unittest.TestCase):
         self.assertEqual(self.v.active["knobs"], {"scenario.wind_scale": 2.0})
         self.assertTrue(self.v.check(Path(args[1]).read_text())["ok"])            # what the simulator will be given is valid
 
+    def test_another_vehicle_is_flown_with_its_own_sensors_and_the_consoles_working_files_are_not_vehicles(self):
+        self.v.set_active("two_stage_launcher", {})
+        args = self.v.sim_args()
+        self.assertEqual(args[0], "--vehicle")
+        self.assertEqual(args[2:], ["--vehicle-true"])                 # a platform that tilts a few degrees cannot follow a launcher that pitches past 45
+        self.v.preview(self.v.read("reference")["text"])               # leaves a _tmp file in the scratch directory
+        self.assertTrue(list(self.v.scratch.glob("_*.json")))
+        self.assertFalse([x["name"] for x in self.v.listing() if x["name"].startswith("_")])
+
     def test_a_bad_knob_is_refused_when_chosen_not_when_the_rig_starts(self):
         with self.assertRaises(ValueError):
             self.v.set_active("reference", {"vehicle.thrust_scale": 9})

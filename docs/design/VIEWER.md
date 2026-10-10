@@ -21,7 +21,7 @@ console/tfc-console --viewer console/demo/starship-ascent.pose.jsonl.gz   # a re
 build/host/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 300 --pose flight.pose.jsonl   # make your own
 ```
 
-In the viewer, the chip at the top left says where the data comes from; click it to **open a recorded flight**, to **fly any vehicle in `vehicles/`** with the real flight software (it runs `tfc_fly` and plays the result: the rig itself flies only the reference vehicle, whose tables the flight computers carry), or to see where a live simulator sends. Keys: `1`–`6` the lenses, `C` the next camera, `Space` play and pause, `H` hide the panels, `F` full screen, `P` a picture.
+In the viewer, the chip at the top left says where the data comes from; click it to **open a recorded flight**, to **fly any vehicle in `vehicles/`** with the real flight software (it runs `tfc_fly` and plays the result: no flight computer process, a software run of the flight function). To see the **real flight computers** fly a vehicle, choose it on the Launch tab (*Vehicle on the rig*): the console builds the three computers with that vehicle's tables (about half a minute), the rig starts, and the viewer follows the launch live (ADR-036, `CONSOLE.md` section 8), or to see where a live simulator sends. Keys: `1`–`6` the lenses, `C` the next camera, `Space` play and pause, `H` hide the panels, `F` full screen, `P` a picture.
 
 With the rig running (**Rig** tab of the console, *Closed loop with the launch sequence*), the console starts `tfc_simd` with `--viewer PORT` itself and the viewer shows the launch as it happens.
 

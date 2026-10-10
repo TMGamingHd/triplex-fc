@@ -15,5 +15,10 @@ else()
   target_compile_definitions(app PRIVATE TFC_RELEASE_HASH_AUTO=0)
 endif()
 
+# Another vehicle's tables: `west build ... -DTFC_TABLES_HEADER=/path/flight_tables.hpp` (main.cpp includes it in place of the committed one). Unset: the committed tables, as always.
+if(DEFINED TFC_TABLES_HEADER)
+  target_compile_definitions(app PRIVATE "TFC_FLIGHT_TABLES_HEADER=\"${TFC_TABLES_HEADER}\"")
+endif()
+
 # Replicas must compute the same bits as each other and as the host (ADR-006): no fused multiply-add (-ffast-math stays off).
 target_compile_options(app PRIVATE -ffp-contract=off)

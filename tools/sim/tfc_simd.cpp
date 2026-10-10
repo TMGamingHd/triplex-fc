@@ -43,8 +43,8 @@
 
 namespace {
 
-// A SYNC frame number beyond this (five minutes of frames, past the burn-out of the vehicle) is not a frame number of this run: it is ignored, so a corrupt or foreign SYNC cannot make the world step for hours.
-constexpr uint32_t kMaxFrame = 30000U;
+// A SYNC frame number beyond this (sixteen minutes of frames at 100 Hz, past the burn-out of any vehicle on the rig, a Starship-class ascent included) is not a frame number of this run: it is ignored, so a corrupt or foreign SYNC cannot make the world step for hours.
+constexpr uint32_t kMaxFrame = 100000U;
 // A jump forward of more than this many frames (a minute) is a new run rather than a gap to step over.
 constexpr uint32_t kMaxGap = 6000U;
 
