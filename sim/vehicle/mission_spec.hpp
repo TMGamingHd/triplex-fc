@@ -70,6 +70,8 @@ struct MissionSpec {
   double ignition_margin = 1.15;
   // the landing burn
   double sink_ms = 0.5;
+  double aim_below_m = 1.5;         // the burn aims this far below the arms' height
+  double approach_s = 8.0;
   double tilt_max_deg = 12.0;
   double tilt_final_deg = 2.5;
   double final_height_m = 25.0;

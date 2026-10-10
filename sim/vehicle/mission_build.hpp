@@ -135,6 +135,8 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
   t.drag.scale_height = m.scale_height_m;
   t.drag.beta = m.ballistic_coefficient;
   t.landing.sink_ms = m.sink_ms;
+  t.landing.aim_below_m = m.aim_below_m;
+  t.landing.approach_s = m.approach_s;
   t.landing.tilt_max_deg = m.tilt_max_deg;
   t.landing.tilt_final_deg = m.tilt_final_deg;
   t.landing.final_height_m = m.final_height_m;

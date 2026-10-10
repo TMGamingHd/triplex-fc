@@ -137,6 +137,8 @@ struct LandingTarget {
   double tilt_max_deg = 12.0;      // the most the thrust may lean from the vertical, far from the ground
   double tilt_final_deg = 2.5;     // ... and near the ground
   double final_height_m = 25.0;    // the height over which the limit comes down from the first to the second
+  double aim_below_m = 0.0;        // the profile ends this far below the point, so that the vehicle passes through the point (the arms' height) still moving down, at about the sink speed
+  double approach_s = 8.0;         // the last of the descent follows v = sink + h / approach_s, gentler than the planned deceleration gives
   double decel_plan = 15.0;        // m/s^2: the net deceleration (beyond holding up the weight) the burn is planned on: it is lit when the stopping distance at this deceleration reaches the height
 };
 
@@ -176,7 +178,7 @@ class PoweredDescent {
   [[nodiscard]] DescentOut update(Vec3 r, Vec3 v, double mass, const LandingTarget& tgt, const Engines& eng, const nav::Gravity& grav, double ignition_margin, bool burning) noexcept {
     DescentOut out;
     const Vec3 up = dm::unit(tgt.point, Vec3{1.0, 0.0, 0.0});
-    const Vec3 rel = r - tgt.point;
+    const Vec3 rel = r - (tgt.point - (up * tgt.aim_below_m));
     const double h = dm::dot(rel, up);
     const Vec3 e_h = dm::perp(rel, up);   // horizontal position error
     const double v_z = dm::dot(v, up);
@@ -191,10 +193,16 @@ class PoweredDescent {
       out.direction = dm::unit(v * -1.0, up);   // not yet: the attitude to be burning in
       return out;
     }
-    // vertical: the deceleration that brings the speed to the arrival sink at zero height, holding up the weight on top of it
+    // vertical: hold the speed profile that stops at the arrival sink speed at zero height with the planned deceleration, v_ref^2 = sink^2 + 2 a h: the planned deceleration is the feed-forward, and the speed
+    // error from the profile is corrected (too fast: more thrust; too slow: less, down to a fraction of the weight)
     const double h_rem = dm::max_(h, 0.05);
-    const double decel = dm::max_(((v_down * v_down) - (tgt.sink_ms * tgt.sink_ms)) / (2.0 * h_rem), 0.0);
-    const double a_up = g_local + decel;
+    const double v_plan = dm::sqrt_((tgt.sink_ms * tgt.sink_ms) + (2.0 * tgt.decel_plan * h_rem));
+    const double v_approach = tgt.sink_ms + (h_rem / dm::max_(tgt.approach_s, 0.1));
+    const double v_ref = dm::min_(v_plan, v_approach);
+    // the deceleration that holds the vehicle on the profile is the profile's slope times the speed: the planned one on the constant-deceleration part, v / approach_s on the gentle end
+    const double slope = v_approach < v_plan ? 1.0 / dm::max_(tgt.approach_s, 0.1) : tgt.decel_plan / v_ref;
+    const double a_ff = v_down * slope;
+    const double a_up = dm::max_(g_local + a_ff + (0.6 * (v_down - v_ref)), 0.3 * g_local);
     // horizontal: ZEM / ZEV over the time to go (the time the vertical profile takes: 2 h / (v_down + sink), at least a second and a half)
     const double t_go = dm::clamp_(2.0 * h_rem / (v_down + tgt.sink_ms), 1.5, 60.0);
     out.time_to_go = t_go;

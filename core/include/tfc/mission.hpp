@@ -537,7 +537,7 @@ inline void Mission::step_glide(const Inputs& in, Output& out) noexcept {
   const double alpha = alpha_deg * dm::kDegToRad;
   aoa_deg_ = alpha_deg;
   const Vec3 side = dm::unit(want, back);
-  const Vec3 axis = (-vel * dm::cos_(alpha)) + (side * dm::sin_(alpha));
+  const Vec3 axis = (-vel * dm::cos_(alpha)) - (side * dm::sin_(alpha));   // (flying tail first, the air pushes the vehicle away from the side the nose is tilted to)
   reference_toward(axis);
   out.groups = 0U;
   out.throttle = 0.0F;

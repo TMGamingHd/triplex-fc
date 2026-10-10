@@ -192,7 +192,11 @@ TFC_TEST(descent_the_burn_waits_for_the_stopping_height_and_the_engine_count_fol
   const double h_stop = tfc::descent::PoweredDescent::stopping_height(300.0, tgt.decel_plan, tgt.sink_ms);
   CHECK(h_stop > 1500.0 && h_stop < 4000.0);
   const tfc::descent::DescentOut now = pd.update(tgt.point + Vec3{h_stop * 1.1, 0.0, 0.0}, Vec3{-300.0, 0.0, 0.0}, 290000.0, tgt, eng, g, 1.15, false);
-  CHECK(now.ignite && now.engines == 3U && now.throttle > 0.9);
+  CHECK(now.ignite && now.engines >= 2U && now.engines <= 3U && now.throttle >= eng.min_throttle - 1e-12 && now.throttle <= 1.0);
+  // well inside the stopping height (too fast for the height left): all three at nearly full throttle
+  tfc::descent::PoweredDescent pd_late;
+  const tfc::descent::DescentOut late = pd_late.update(tgt.point + Vec3{h_stop * 0.7, 0.0, 0.0}, Vec3{-300.0, 0.0, 0.0}, 290000.0, tgt, eng, g, 1.15, false);
+  CHECK(late.ignite && late.engines == 3U && late.throttle > 0.9);
   // slow and low: one engine at a throttle that holds it, and not more than the three
   tfc::descent::PoweredDescent pd2;
   const tfc::descent::DescentOut slow = pd2.update(tgt.point + Vec3{5.0, 0.0, 0.0}, Vec3{-1.0, 0.0, 0.0}, 150000.0, tgt, eng, g, 1.15, true);

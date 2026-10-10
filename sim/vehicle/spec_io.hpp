@@ -640,6 +640,8 @@ inline void read_mission(const Json& j, MissionSpec& m, std::vector<std::string>
   if (const Json* l = o.get("landing")) {
     ObjectReader lr(*l, "mission.landing", errors);
     lr.num("sink_ms", m.sink_ms);
+    lr.num("aim_below_m", m.aim_below_m);
+    lr.num("approach_s", m.approach_s);
     lr.num("tilt_max_deg", m.tilt_max_deg);
     lr.num("tilt_final_deg", m.tilt_final_deg);
     lr.num("final_height_m", m.final_height_m);
