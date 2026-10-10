@@ -8,6 +8,7 @@ import { World } from './world.js';
 import { CAMERAS } from './cam.js';
 import { derive } from './physics.js';
 import { loadGltf } from './models/gltf.js';
+import { DRESS } from './models/starship.js';
 import { h, store, fmt } from './ui.js';
 import { api } from '../../js/net.js';
 import { toast } from '../../js/util.js';
@@ -57,6 +58,8 @@ const app = {
     }
     this.styleName = v; store.set('v.style', v); rebuildVehicle();
   },
+  dress: Object.assign({}, DRESS.v3, store.get('v.dress', {})),
+  saveDress() { store.set('v.dress', this.dress); },
   saveGltf() { const { axis, fitLength, roll, offset, scale } = this.gltf; store.set('v.gltf', { axis, fitLength, roll, offset, scale }); },
   rebuild() { rebuildVehicle(); },
   screenshot() { world.render(); const a = h('a', { href: canvas.toDataURL('image/png'), download: `tfc-viewer-${(app.pose ? app.pose.t : 0).toFixed(1)}.png` }); document.body.append(a); a.click(); a.remove(); },
@@ -108,7 +111,7 @@ function setLens(id) {
 function rebuildVehicle() {
   const keep = app.lens;
   if (keep) { try { keep.unmount(app); } catch (e) { console.error(e); } app.lens = null; }
-  world.setVehicle(data.spec, app.styleName, app.styleName.startsWith('gltf:') ? { gltf: app.gltf } : {});
+  world.setVehicle(data.spec, app.styleName, { gltf: app.styleName.startsWith('gltf:') ? app.gltf : null, dress: app.dress });
   if (keep) setLens(keep.id);
 }
 data.onSpec.push(() => rebuildVehicle());
@@ -311,7 +314,7 @@ function loop(now) {
 
 // ---- go
 buildBottom();
-world.setVehicle(data.spec, app.styleName.startsWith('gltf:') ? 'auto' : app.styleName);
+world.setVehicle(data.spec, app.styleName.startsWith('gltf:') ? 'auto' : app.styleName, { dress: app.dress });
 if (Q.get('cam') || store.get('v.cam', null)) world.rig.set(Q.get('cam') || store.get('v.cam', 'orbit'));
 if (Q.get('gaz')) world.rig.gaz = +Q.get('gaz'); if (Q.get('gel')) world.rig.gel = +Q.get('gel'); if (Q.get('gfov')) world.rig.gfov = +Q.get('gfov'); if (Q.get('gpos')) world.rig.gpos = Q.get('gpos').split(',').map(Number);
 if (Q.get('yaw')) world.rig.yaw = +Q.get('yaw'); if (Q.get('pitch')) world.rig.pitch = +Q.get('pitch'); if (Q.get('dist')) world.rig.dist = +Q.get('dist'); if (Q.get('anchor')) world.rig.anchor = +Q.get('anchor');

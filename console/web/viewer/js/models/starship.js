@@ -1,11 +1,20 @@
 // The Starship dressing: what makes a 9 m stainless stack look like one, laid over the generic body that vehicle.js builds from the spec (the diameters, the stage lengths and the engines are the spec's own).
-//   booster: a hot-stage ring with its vents at the top, four grid fins stowed against the skin below it, two catch pins, the engine skirt and its thrust plate, soot on the lower tank;
+//   booster: a hot-stage ring with its vents at the top, grid fins stowed against the skin below it (three on Block 3, four before), two catch pins, the engine skirt and its thrust plate, soot on the lower tank;
 //   ship:    heat-shield tiles on the belly and the nose, two forward and two aft flaps stowed against the skin.
-// The proportions are of the vehicle class (public figures), not drawings; no markings are drawn. docs/design/VIEWER.md lists what is drawn from the spec and what is a visual choice.
+// The proportions are of the vehicle class (public figures), not drawings; no markings are drawn. The details a person may want to change (the fins' number, size and place, the flaps, the ring) are `dress`,
+// the page's Starship panel; V3 is the default. docs/design/VIEWER.md lists what is drawn from the spec and what is a visual choice.
 import * as THREE from '../../vendor/three.module.js';
 import { lathe, canvasTexture, outline, tileTextures } from './common.js';
 
 const TAU = Math.PI * 2;
+
+/** The parts of the dressing that are a choice and not the vehicle file's: Block 3 as reported (three grid fins, each 50 % larger in area than Block 2's, set lower on the booster) and Block 2 before it.
+ *  finScale is linear (the fin of Block 2 is 2.2 m by 3.4 m here), finDrop the metres from the bottom of the hot-stage ring to the top of the fin. These are illustrations of public descriptions, not drawings. */
+export const DRESS = {
+  v3: { name: 'Block 3 (V3)', fins: 3, finScale: 1.22, finDrop: 5.0, flapScale: 1.0, ringHeight: 3.4, pins: true },
+  v2: { name: 'Block 2 (V2)', fins: 4, finScale: 1.0, finDrop: 1.6, flapScale: 1.0, ringHeight: 3.4, pins: true },
+};
+export const dressOf = (d) => Object.assign({}, DRESS.v3, d || {});
 
 function ventTexture() {
   return canvasTexture(256, 64, (g, w, h) => {
@@ -47,7 +56,7 @@ export function decorateStarship(model) {
   const plate = new THREE.MeshStandardMaterial({ color: 0x3a3733, metalness: 0.8, roughness: 0.6, side: THREE.DoubleSide });
   const m = { steel, dark, fin, plate };
   const booster = model.stages[0], ship = model.stages[1];
-  const R = spec.diameter / 2;
+  const R = spec.diameter / 2, dress = dressOf(model.opts && model.opts.dress);
   const topB = (booster.spec.x_start_m || 0) + booster.spec.length_m;
 
   // ---- the booster
@@ -58,24 +67,24 @@ export function decorateStarship(model) {
     const p = new THREE.Mesh(plateGeo, m.plate); p.position.y = 2.7; g.add(p);
     const inner = new THREE.Mesh(lathe([{ x: 0, r: R - 0.04 }, { x: 2.7, r: R - 0.04 }], { segments: 64, flip: true, colour: () => [.5, .5, .5] }), new THREE.MeshStandardMaterial({ color: 0x2b2e33, metalness: 0.7, roughness: 0.6, vertexColors: true, side: THREE.DoubleSide })); g.add(inner);
     // the hot-stage ring: a collar a little proud of the skin, slotted all round
-    const ringTop = topB, ringH = 3.4;
+    const ringTop = topB, ringH = dress.ringHeight;
     const ringTex = ventTexture(); ringTex.repeat.set(2, 1);
     const ring = new THREE.Mesh(lathe([{ x: ringTop - ringH, r: R + 0.06 }, { x: ringTop - 0.2, r: R + 0.06 }, { x: ringTop, r: R + 0.02 }], { segments: 96, colour: () => [1, 1, 1] }),
       new THREE.MeshStandardMaterial({ map: ringTex, metalness: 0.8, roughness: 0.5, vertexColors: true }));
     ring.geometry.attributes.uv.array.forEach((v, i, a) => { if (i % 2 === 1) a[i] = (a[i] * 1.8 - (ringTop - ringH)) / ringH; });   // v from 0 at the bottom of the ring to 1 at the top
     ring.geometry.attributes.uv.needsUpdate = true;
     g.add(ring);
-    // four grid fins stowed against the skin, a little below the ring; two catch pins above them
-    const fy = ringTop - ringH - 1.6 - 1.7;
-    for (let i = 0; i < 4; i++) {
-      const a = Math.PI / 4 + (i * Math.PI) / 2;
+    // the grid fins stowed against the skin, below the ring, round the vehicle at equal angles; two catch pins above them
+    const fw = 2.2 * dress.finScale, fh = 3.4 * dress.finScale, fy = ringTop - ringH - dress.finDrop - fh / 2;
+    for (let i = 0; i < dress.fins; i++) {
+      const a = Math.PI / dress.fins + (i * TAU) / dress.fins;
       const holder = new THREE.Group(); holder.rotation.y = a;
-      const f = gridFin(m); f.position.set(0, fy, R + 0.32);                   // the fin's face is tangent to the skin
+      const f = gridFin(m, fw, fh, 0.55 * dress.finScale); f.position.set(0, fy, R + 0.32);                   // the fin's face is tangent to the skin
       holder.add(f); g.add(holder);
       // a short fairing at the hinge
-      const fair = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.5, 0.45), m.steel); fair.position.set(0, fy - 1.9, R + 0.2); holder.add(fair);
+      const fair = new THREE.Mesh(new THREE.BoxGeometry(1.1 * dress.finScale, 0.5, 0.45), m.steel); fair.position.set(0, fy - fh / 2 - 0.2, R + 0.2); holder.add(fair);
     }
-    for (const a of [0, Math.PI]) {
+    if (dress.pins) for (const a of [0, Math.PI]) {
       const holder = new THREE.Group(); holder.rotation.y = a + Math.PI / 2;
       const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 1.5, 14), m.steel); pin.rotation.x = Math.PI / 2; pin.position.set(0, ringTop - ringH - 0.9, R + 0.55); holder.add(pin);
       g.add(holder);
@@ -96,7 +105,7 @@ export function decorateStarship(model) {
     // the flaps: forward pair just under the nose, aft pair at the tail, on the sides of the belly, stowed against the skin
     const place = (x, w, h, a) => { const holder = new THREE.Group(); holder.rotation.y = a; const f = flap(m, w, h); f.rotation.set(0, 0, 0); f.position.set(0, x, R + 0.28); f.userData.tile = true; holder.add(f); g.add(holder); return f; };
     const fwdX = tubeEnd - 5.2, aftX = x0 + 1.4;
-    for (const s of [-1, 1]) { place(fwdX, 2.6, 5.0, belly + s * (Math.PI * 0.46)); place(aftX, 4.6, 9.0, belly + s * (Math.PI * 0.46)); }
+    for (const s of [-1, 1]) { place(fwdX, 2.6 * dress.flapScale, 5.0 * dress.flapScale, belly + s * (Math.PI * 0.46)); place(aftX, 4.6 * dress.flapScale, 9.0 * dress.flapScale, belly + s * (Math.PI * 0.46)); }
     // the base: the engine skirt of the ship
     const sk = new THREE.Mesh(new THREE.CircleGeometry(R * 0.97, 48), m.plate); sk.geometry.rotateX(-Math.PI / 2); sk.position.y = x0 + 1.6; g.add(sk);
   }
