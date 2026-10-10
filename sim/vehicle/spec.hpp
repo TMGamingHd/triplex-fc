@@ -140,7 +140,7 @@ struct StageSpec {
 
 // An engine that fires when the pitch or yaw command asks for that direction, in proportion to it: a reaction-control thruster. PitchPlus fires for a positive pitch command (one that
 // should turn the nose toward downrange), PitchMinus for a negative one, and likewise for the yaw plane. Its position and direction decide the torque and the parasitic force it makes.
-enum class Control : int { None = 0, PitchPlus = 1, PitchMinus = 2, YawPlus = 3, YawMinus = 4 };
+enum class Control : int { None = 0, PitchPlus = 1, PitchMinus = 2, YawPlus = 3, YawMinus = 4, RollPlus = 5, RollMinus = 6 };
 
 struct EngineSpec {
   int stage = 0;

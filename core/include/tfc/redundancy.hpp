@@ -438,7 +438,8 @@ class RedundancyManager {
     if (!classify(f.id, stream, node)) {
       const bool known = f.id == id::kSync || f.id == id::kActOut || (f.id >= id::kSim && f.id <= id::kSimLast) ||
                          (f.id >= id::kHeartbeat && f.id < id::kHeartbeat + kNodes) || (f.id >= id::kState && f.id < id::kState + kNodes) ||
-                         (f.id >= id::kResync && f.id < id::kResync + kResyncIds);
+                         (f.id >= id::kResync && f.id < id::kResync + kResyncIds) || (f.id >= id::kPropBase && f.id < id::kPropBase + kNodes) ||
+                         (f.id >= id::kSurfBase && f.id < id::kSurfBase + kNodes);
       if (f.id >= id::kState && f.id < id::kState + kNodes) {  // the state share: what a restarted node needs (FDIR-041)
         const DecodedStateShare ds = unpack_state_share(f);
         if (ds.ok) {

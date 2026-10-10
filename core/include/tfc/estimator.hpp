@@ -161,6 +161,12 @@ class AttitudeEstimator {
     rates_valid_ = s.rates_valid;
   }
 
+  // The attitude as the estimator holds it: the quaternion (w, x, y, z) of the sensor frame relative to its level reference, and the body rates in the sensor frame with the gyro bias taken out (degrees per second).
+  [[nodiscard]] std::array<float, 4> quaternion() const noexcept { return q_; }
+  [[nodiscard]] std::array<float, 3> body_rates_dps() const noexcept {
+    return {(w_[0] + bias_[0]) * kRadToDeg, (w_[1] + bias_[1]) * kRadToDeg, (w_[2] + bias_[2]) * kRadToDeg};
+  }
+
   [[nodiscard]] uint32_t steps() const noexcept { return steps_; }
   [[nodiscard]] uint32_t gyro_holds() const noexcept { return gyro_holds_; }
   [[nodiscard]] uint32_t accel_skips() const noexcept { return accel_skips_; }

@@ -47,6 +47,12 @@ add_executable(tfc_tests
   tests/test_aero.cpp
   tests/test_newtonian.cpp
   tests/test_landing_plant.cpp
+  tests/test_dmath.cpp
+  tests/test_nav.cpp
+  tests/test_peg.cpp
+  tests/test_attitude.cpp
+  tests/test_descent.cpp
+  tests/test_mission.cpp
   tests/test_vehicle_refusals.cpp
   tests/test_environment.cpp
   tests/test_dynamics.cpp

@@ -177,6 +177,7 @@ struct Controls {
   double throttle = 0.0;                              // fraction of rated thrust of the engines that run, guided stages (engines run only when told to: the default is none)
   uint32_t group_mask = 0U;                           // guided stages: bit g set: the engines of group g are commanded on
   std::array<double, kSurfaceChannels> surface_deg{};  // the surface command
+  double roll_deg = 0.0;                              // the roll command: what the roll thrusters fire in proportion to
   uint32_t events = 0U;
 };
 
@@ -670,6 +671,10 @@ class Vehicle6 {
     }
     V3 w = s_.w;
     V3 a = f;
+    if (p_.landing_model && (grounded_ || landed_ || caught_)) {   // held by the ground or the arms: the reaction makes the specific force the local gravity along the vertical, whatever the engines do
+      a = rotate_inv(s_.q, s_.r / norm(s_.r)) * (norm(gravity(s_.r)) / kG0);
+      f = a;
+    }
     if (g_.flex.enabled && active_[static_cast<std::size_t>(g_.flex.stage)]) {  // the structure bends where the IMUs are: its slope turns at eta' and its displacement accelerates at eta''
       const FlexSpec& fx = g_.flex;
       const double wf = 2.0 * kPi * fx.frequency_hz;
@@ -683,6 +688,42 @@ class Vehicle6 {
   }
 
   [[nodiscard]] Loads current_loads() const { return loads(s_, t_); }
+
+  // For the design of the attitude loop: the angular acceleration (rad/s^2, body axes) the vehicle would have, in the state it is in now, with every actuator at once at the angle `c` commands (the gimbal of the
+  // stage that flies, the surfaces that are deployed, the roll thrusters): the answer to "what does one more degree of this command do". A copy is made and nothing in this vehicle changes.
+  [[nodiscard]] V3 angular_accel_with(const Controls& c) const {
+    Vehicle6 tmp = *this;
+    tmp.ctrl_.roll_deg = c.roll_deg;
+    tmp.ctrl_.pitch_deg = c.pitch_deg;
+    tmp.ctrl_.yaw_deg = c.yaw_deg;
+    for (std::size_t st = 0; st < tmp.g_.stages.size(); ++st) {
+      tmp.gimbal_p_[st] = c.pitch_deg;
+      tmp.gimbal_y_[st] = c.yaw_deg;
+    }
+    for (std::size_t i = 0; i < tmp.g_.surfaces.size(); ++i) {
+      const SurfaceSpec& sf = tmp.g_.surfaces[i];
+      if (tmp.surf_deployed_[i] && sf.channel >= 0 && sf.channel < static_cast<int>(kSurfaceChannels)) {
+        tmp.surf_pos_[i] = std::clamp(c.surface_deg[static_cast<std::size_t>(sf.channel)], sf.min_deg, sf.max_deg);
+      }
+    }
+    tmp.update_engines(0.0, c.pitch_deg, c.yaw_deg);   // (the thrusters that fire in proportion to a command take it; the main engines keep their thrust)
+    return tmp.deriv(tmp.s_, tmp.t_).w;
+  }
+
+  // The same with the attitude turned by `angle_rad` about the body axis `axis` (0 roll, 1 yaw, 2 pitch: x, y, z) and the velocity unchanged: the change in angular acceleration per radian is the aerodynamic stiffness
+  // of that axis (positive: it makes the vehicle diverge).
+  [[nodiscard]] V3 angular_accel_turned(const Controls& c, int axis, double angle_rad) const {
+    Vehicle6 tmp = *this;
+    const V3 ax = axis == 0 ? V3{1.0, 0.0, 0.0} : (axis == 1 ? V3{0.0, 1.0, 0.0} : V3{0.0, 0.0, 1.0});
+    tmp.s_.q = normalized(tmp.s_.q * from_axis_angle(ax, angle_rad));
+    return tmp.angular_accel_with(c);
+  }
+
+  // Put the vehicle at an attitude and rate (for the design run that forces the attitude to the guidance's, and for tests).
+  void set_attitude(const Q4& q, const V3& w) {
+    s_.q = normalized(q);
+    s_.w = w;
+  }
 
   // How strongly a small gimbal angle turns the vehicle: the sum over the engines that gimbal of thrust times the arm from the centre of gravity, divided by the transverse inertia
   // (rad/s^2 per rad), at the state it is in now. It is what the gains of the flight computers are designed from (design.hpp).
@@ -1757,6 +1798,12 @@ class Vehicle6 {
           break;
         case Control::YawMinus:
           duty = std::clamp(-cmd_yaw_deg / en.full_cmd_deg, 0.0, 1.0);
+          break;
+        case Control::RollPlus:
+          duty = std::clamp(ctrl_.roll_deg / en.full_cmd_deg, 0.0, 1.0);
+          break;
+        case Control::RollMinus:
+          duty = std::clamp(-ctrl_.roll_deg / en.full_cmd_deg, 0.0, 1.0);
           break;
       }
       const double cmd = lit ? throttle_of(g_.stages[st], t_ - t_ign_[st]) * duty : 0.0;

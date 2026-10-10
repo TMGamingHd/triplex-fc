@@ -357,6 +357,10 @@ inline bool read_control(const std::string& s, Control& c) {
     c = Control::YawPlus;
   } else if (s == "yaw-") {
     c = Control::YawMinus;
+  } else if (s == "roll+") {
+    c = Control::RollPlus;
+  } else if (s == "roll-") {
+    c = Control::RollMinus;
   } else {
     return false;
   }
@@ -369,6 +373,8 @@ inline const char* control_name(Control c) {
     case Control::PitchMinus: return "pitch-";
     case Control::YawPlus: return "yaw+";
     case Control::YawMinus: return "yaw-";
+    case Control::RollPlus: return "roll+";
+    case Control::RollMinus: return "roll-";
     case Control::None: break;
   }
   return "none";
@@ -393,7 +399,7 @@ inline void read_engines(const Json& j, const std::string& path, std::vector<Eng
   o.vec3("direction", e.dir);
   std::string control;
   if (o.str("control", control) && !read_control(control, e.control)) {
-    o.error(*o.get("control"), "control", "expected \"none\", \"pitch+\", \"pitch-\", \"yaw+\" or \"yaw-\"");
+    o.error(*o.get("control"), "control", "expected \"none\", \"pitch+\", \"pitch-\", \"yaw+\", \"yaw-\", \"roll+\" or \"roll-\"");
   }
   o.num("full_cmd_deg", e.full_cmd_deg);
   o.integer("group", e.group);
