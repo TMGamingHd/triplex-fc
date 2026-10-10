@@ -340,6 +340,9 @@ inline void read_stage(const Json& j, const std::string& path, StageSpec& st, st
   o.num("tipoff_yaw_dps", st.tipoff_yaw_dps);
   o.num("tipoff_roll_dps", st.tipoff_roll_dps);
   o.pairs("throttle", st.throttle);
+  o.flag("guided", st.guided);
+  o.num("catch_pin_x_m", st.catch_pin_x);
+  o.num("leg_x_m", st.leg_x);
   o.finish();
 }
 
@@ -393,6 +396,9 @@ inline void read_engines(const Json& j, const std::string& path, std::vector<Eng
     o.error(*o.get("control"), "control", "expected \"none\", \"pitch+\", \"pitch-\", \"yaw+\" or \"yaw-\"");
   }
   o.num("full_cmd_deg", e.full_cmd_deg);
+  o.integer("group", e.group);
+  o.num("min_throttle", e.min_throttle);
+  o.integer("max_starts", e.max_starts);
   int count = 1;
   o.integer("count", count);
   double ring_r = 0.0;
@@ -425,6 +431,49 @@ inline void read_fin(const Json& j, const std::string& path, FinSpec& f, std::ve
   o.num("limit_deg", f.limit_deg);
   o.num("rate_dps", f.rate_dps);
   o.num("lag_s", f.lag_s);
+  o.finish();
+}
+
+inline void read_surface(const Json& j, const std::string& path, SurfaceSpec& f, std::vector<std::string>& errors) {
+  ObjectReader o(j, path, errors);
+  o.str("name", f.name);
+  o.integer("stage", f.stage);
+  std::string kind;
+  if (o.str("kind", kind)) {
+    if (kind == "flap") {
+      f.kind = SurfaceKind::Flap;
+    } else if (kind == "grid_fin") {
+      f.kind = SurfaceKind::GridFin;
+    } else {
+      o.error(*o.get("kind"), "kind", "expected \"flap\" or \"grid_fin\"");
+    }
+  }
+  o.num("x_hinge_m", f.x_hinge);
+  o.num("azimuth_deg", f.azimuth_deg);
+  o.num("radius_m", f.radius);
+  o.num("area_m2", f.area);
+  o.num("chord_m", f.chord);
+  o.num("span_m", f.span);
+  o.num("sweep_deg", f.sweep_deg);
+  o.num("chord_dir", f.chord_dir);
+  o.num("stow_deg", f.stow_deg);
+  o.num("min_deg", f.min_deg);
+  o.num("max_deg", f.max_deg);
+  o.num("rate_dps", f.rate_dps);
+  o.num("lag_s", f.lag_s);
+  o.integer("channel", f.channel);
+  o.flag("deployed", f.deployed);
+  o.finish();
+}
+
+inline void read_parachute(const Json& j, const std::string& path, ParachuteSpec& f, std::vector<std::string>& errors) {
+  ObjectReader o(j, path, errors);
+  o.str("name", f.name);
+  o.integer("stage", f.stage);
+  o.num("drag_area_m2", f.drag_area);
+  o.num("inflation_s", f.inflation_s);
+  o.num("x_attach_m", f.x_attach);
+  o.num("max_speed_ms", f.max_speed_ms);
   o.finish();
 }
 
@@ -481,6 +530,9 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
     o.flag("ideal_roll_control", p.ideal_roll_control);
     o.flag("ground_contact", p.ground_contact);
     o.num("crash_speed_ms", p.crash_speed_ms);
+    o.flag("landing_model", p.landing_model);
+    o.num("landing_tilt_deg", p.landing_tilt_deg);
+    o.num("landing_lateral_ms", p.landing_lateral_ms);
     o.num("max_substep_s", p.max_substep);
     o.num("thrust_scale", p.thrust_scale);
     o.num("cd_scale", p.cd_scale);
@@ -502,6 +554,12 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
     o.num("power_on_base", a.power_on_base);
     o.num("roughness", a.wetted_roughness);
     o.flag("full_angle", a.full_angle);
+    o.flag("full_regime", a.full_regime);
+    o.num("newtonian_from_mach", a.newtonian_from_mach);
+    o.num("newtonian_to_mach", a.newtonian_to_mach);
+    o.num("nose_radius_m", a.nose_radius_m);
+    o.num("belly_heat_factor", a.belly_heat_factor);
+    o.num("emissivity", a.emissivity);
     std::vector<std::array<double, 2>> unused;
     if (const Json* tv = o.get("table")) {  // [[mach, ca, cn_alpha, x_cp_m], ...]
       if (tv->type != Json::Type::Array) {
@@ -592,6 +650,20 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
       p.spec.fins.push_back(f);
     }
   }
+  if (top.list("surfaces", list)) {
+    for (std::size_t i = 0; i < list.size(); ++i) {
+      SurfaceSpec f;
+      detail::read_surface(*list[i], item("", "surfaces", i), f, errors);
+      p.spec.surfaces.push_back(f);
+    }
+  }
+  if (top.list("parachutes", list)) {
+    for (std::size_t i = 0; i < list.size(); ++i) {
+      ParachuteSpec f;
+      detail::read_parachute(*list[i], item("", "parachutes", i), f, errors);
+      p.spec.parachutes.push_back(f);
+    }
+  }
   if (const Json* v = top.get("wheels")) {
     ObjectReader o(*v, "wheels", errors);
     WheelSpec& w = p.spec.wheels;
@@ -657,6 +729,25 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
         sc.turbulence.seed = static_cast<uint32_t>(seed);
       }
       tr.finish();
+    }
+    if (const Json* tw = o.get("tower")) {
+      ObjectReader tr(*tw, "scenario.tower", errors);
+      Tower& t = sc.tower;
+      t.enabled = true;
+      tr.flag("enabled", t.enabled);
+      tr.num("height_m", t.height_m);
+      tr.num("offset_y_m", t.offset_y_m);
+      tr.num("offset_z_m", t.offset_z_m);
+      tr.num("capture_radius_m", t.capture_radius_m);
+      tr.num("max_sink_ms", t.max_sink_ms);
+      tr.num("max_lateral_ms", t.max_lateral_ms);
+      tr.num("max_tilt_deg", t.max_tilt_deg);
+      tr.finish();
+    }
+    o.num("start_failure_prob", sc.start_failure_prob);
+    int start_seed = 7;
+    if (o.integer("start_seed", start_seed)) {
+      sc.start_seed = static_cast<uint32_t>(start_seed);
     }
     o.pairs("wind_profile", sc.wind_profile);
     std::vector<const Json*> gl;
@@ -783,11 +874,15 @@ inline std::string write_vehicle(const VehicleFile& v) {
        ", \"ideal_roll_control\": " + (p.ideal_roll_control ? "true" : "false") + ", \"ground_contact\": " + (p.ground_contact ? "true" : "false") + ", \"crash_speed_ms\": " +
        num_text(p.crash_speed_ms) + ", \"max_substep_s\": " + num_text(p.max_substep) + ", \"thrust_scale\": " + num_text(p.thrust_scale) + ", \"cd_scale\": " + num_text(p.cd_scale) +
        ", \"cn_scale\": " + num_text(p.cn_scale) + ", \"thrust_misalign_pitch_deg\": " + num_text(p.thrust_misalign_pitch_deg) + ", \"thrust_misalign_yaw_deg\": " +
-       num_text(p.thrust_misalign_yaw_deg) + "},\n";
+       num_text(p.thrust_misalign_yaw_deg) + (p.landing_model ? ", \"landing_model\": true, \"landing_tilt_deg\": " + num_text(p.landing_tilt_deg) + ", \"landing_lateral_ms\": " + num_text(p.landing_lateral_ms) : std::string()) + "},\n";
   o += "  \"aero\": {\"diameter_m\": " + num_text(p.diameter) + ", \"c_n_alpha\": " + num_text(p.c_n_alpha) + ", \"x_cp_m\": " + num_text(p.x_cp) + ", \"reference_diameter_m\": " +
        num_text(g.aero.reference_diameter_m) + ", \"crossflow_cd\": " + num_text(g.aero.crossflow_cd) + ", \"crossflow_eta\": " + num_text(g.aero.crossflow_eta) + ", \"rear_axial\": " +
        num_text(g.aero.rear_axial) + ", \"power_on_base\": " + num_text(g.aero.power_on_base) + ", \"roughness\": " + num_text(g.aero.wetted_roughness) + ", \"full_angle\": " +
        (g.aero.full_angle ? "true" : "false");
+  if (g.aero.full_regime) {
+    o += ", \"full_regime\": true, \"newtonian_from_mach\": " + num_text(g.aero.newtonian_from_mach) + ", \"newtonian_to_mach\": " + num_text(g.aero.newtonian_to_mach) + ", \"nose_radius_m\": " +
+         num_text(g.aero.nose_radius_m) + ", \"belly_heat_factor\": " + num_text(g.aero.belly_heat_factor) + ", \"emissivity\": " + num_text(g.aero.emissivity);
+  }
   if (!g.aero.table.empty()) {
     o += ", \"table\": [";
     for (std::size_t i = 0; i < g.aero.table.size(); ++i) {
@@ -849,6 +944,9 @@ inline std::string write_vehicle(const VehicleFile& v) {
     if (!st.throttle.empty()) {
       o += ", \"throttle\": " + pairs_text(st.throttle);
     }
+    if (st.guided || st.catch_pin_x != 0.0 || st.leg_x != 0.0) {
+      o += std::string(", \"guided\": ") + (st.guided ? "true" : "false") + ", \"catch_pin_x_m\": " + num_text(st.catch_pin_x) + ", \"leg_x_m\": " + num_text(st.leg_x);
+    }
     o += std::string("}") + (s + 1U < g.stages.size() ? "," : "") + "\n";
   }
   o += "  ],\n  \"engines\": [\n";
@@ -858,7 +956,8 @@ inline std::string write_vehicle(const VehicleFile& v) {
          num_text(en.exit_area) + ", \"isp_vac_s\": " + num_text(en.isp_vac) + ", \"gimbal\": " + (en.gimbal ? "true" : "false") + ", \"cant_pitch_deg\": " + num_text(en.cant_pitch_deg) +
          ", \"cant_yaw_deg\": " + num_text(en.cant_yaw_deg) + ", \"start_offset_s\": " + num_text(en.start_offset_s) + ", \"cutoff_time_s\": " + num_text(en.cutoff_time_s) +
          ", \"rise_s\": " + num_text(en.rise_s) + ", \"tail_s\": " + num_text(en.tail_s) + ", \"direction\": " + vec_text(en.dir) + ", \"control\": " + quoted(control_name(en.control)) +
-         ", \"full_cmd_deg\": " + num_text(en.full_cmd_deg) + "}" + (e + 1U < g.engines.size() ? "," : "") + "\n";
+         ", \"full_cmd_deg\": " + num_text(en.full_cmd_deg) + ", \"group\": " + std::to_string(en.group) + ", \"min_throttle\": " + num_text(en.min_throttle) + ", \"max_starts\": " +
+         std::to_string(en.max_starts) + "}" + (e + 1U < g.engines.size() ? "," : "") + "\n";
   }
   o += "  ],\n  \"payloads\": [";
   for (std::size_t i = 0; i < g.payloads.size(); ++i) {
@@ -885,6 +984,27 @@ inline std::string write_vehicle(const VehicleFile& v) {
          num_text(f.rate_dps) + ", \"lag_s\": " + num_text(f.lag_s) + "}";
   }
   o += "]";
+  if (!g.surfaces.empty()) {
+    o += ",\n  \"surfaces\": [";
+    for (std::size_t i = 0; i < g.surfaces.size(); ++i) {
+      const SurfaceSpec& f = g.surfaces[i];
+      o += std::string(i == 0U ? "" : ", ") + "{\"name\": " + quoted(f.name) + ", \"stage\": " + std::to_string(f.stage) + ", \"kind\": " + (f.kind == SurfaceKind::GridFin ? "\"grid_fin\"" : "\"flap\"") +
+           ", \"x_hinge_m\": " + num_text(f.x_hinge) + ", \"azimuth_deg\": " + num_text(f.azimuth_deg) + ", \"radius_m\": " + num_text(f.radius) + ", \"area_m2\": " + num_text(f.area) +
+           ", \"chord_m\": " + num_text(f.chord) + ", \"span_m\": " + num_text(f.span) + ", \"sweep_deg\": " + num_text(f.sweep_deg) + ", \"chord_dir\": " + num_text(f.chord_dir) +
+           ", \"stow_deg\": " + num_text(f.stow_deg) + ", \"min_deg\": " + num_text(f.min_deg) + ", \"max_deg\": " + num_text(f.max_deg) + ", \"rate_dps\": " + num_text(f.rate_dps) +
+           ", \"lag_s\": " + num_text(f.lag_s) + ", \"channel\": " + std::to_string(f.channel) + ", \"deployed\": " + (f.deployed ? "true" : "false") + "}";
+    }
+    o += "]";
+  }
+  if (!g.parachutes.empty()) {
+    o += ",\n  \"parachutes\": [";
+    for (std::size_t i = 0; i < g.parachutes.size(); ++i) {
+      const ParachuteSpec& f = g.parachutes[i];
+      o += std::string(i == 0U ? "" : ", ") + "{\"name\": " + quoted(f.name) + ", \"stage\": " + std::to_string(f.stage) + ", \"drag_area_m2\": " + num_text(f.drag_area) + ", \"inflation_s\": " +
+           num_text(f.inflation_s) + ", \"x_attach_m\": " + num_text(f.x_attach) + ", \"max_speed_ms\": " + num_text(f.max_speed_ms) + "}";
+    }
+    o += "]";
+  }
   if (g.wheels.enabled) {
     o += ",\n  \"wheels\": {\"stage\": " + std::to_string(g.wheels.stage) + ", \"torque_max_nm\": " + num_text(g.wheels.torque_max) + ", \"momentum_max_nms\": " + num_text(g.wheels.momentum_max) +
          ", \"full_cmd_deg\": " + num_text(g.wheels.full_cmd_deg) + "}";
@@ -922,6 +1042,15 @@ inline std::string write_vehicle(const VehicleFile& v) {
     o += std::string(i == 0U ? "" : ", ") + "{\"time_s\": " + num_text(failures[i].time) + ", \"engine\": " + std::to_string(failures[i].index) + "}";
   }
   o += "]";
+  if (sc.tower.enabled) {
+    const Tower& t = sc.tower;
+    o += ", \"tower\": {\"enabled\": true, \"height_m\": " + num_text(t.height_m) + ", \"offset_y_m\": " + num_text(t.offset_y_m) + ", \"offset_z_m\": " + num_text(t.offset_z_m) +
+         ", \"capture_radius_m\": " + num_text(t.capture_radius_m) + ", \"max_sink_ms\": " + num_text(t.max_sink_ms) + ", \"max_lateral_ms\": " + num_text(t.max_lateral_ms) +
+         ", \"max_tilt_deg\": " + num_text(t.max_tilt_deg) + "}";
+  }
+  if (sc.start_failure_prob != 0.0) {
+    o += ", \"start_failure_prob\": " + num_text(sc.start_failure_prob) + ", \"start_seed\": " + std::to_string(sc.start_seed);
+  }
   if (sc.has_initial) {
     o += ", \"start\": {\"position_m\": " + vec_text(sc.initial.r) + ", \"velocity_ms\": " + vec_text(sc.initial.v) + ", \"rates_dps\": " + vec_text(sc.initial.w * kRad2Deg) + "}";
   }
