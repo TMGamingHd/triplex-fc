@@ -190,16 +190,20 @@ class LogSource(threading.Thread):
             self.hub.ingest_line(rec["src"], rec["text"], when)
         elif k == "truth":
             self.hub.ingest_truth(rec["d"], when)
+        elif k in ("pose", "spec"):
+            self.hub.viewer.ingest(json.dumps(rec["d"], separators=(",", ":")), k)
         elif k == "note":
             with self.hub.lock:
                 self.hub.model.emit(when, rec.get("level", "info"), rec.get("src", "OP"), rec.get("kind", "note"), rec.get("text", ""), None, rec.get("fields") or {})
 
     def _rewind_to(self, t: float) -> None:
+        self.hub.viewer.muted = True             # the model is fed again from the start: the viewer's pages are not shown every pose on the way, only where it ends
         self.hub.reset_model()
         self._i = self._j = 0
         self.pos = self.t_start
         self._feed_until(t)
         self.pos = t
+        self.hub.viewer.flush()
 
     def run(self) -> None:
         last = time.monotonic()

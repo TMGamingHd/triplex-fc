@@ -8,6 +8,7 @@
 | Pico client (`tfc_peers pico`, `pico_link.py`) | Done, not run on a board (`../docs/design/PICO.md`) |
 | Fault-campaign runner (`campaign/`) | Done |
 | The flight console, a web page over all of this (`../console`, `../docs/design/CONSOLE.md`); `tfc_simd --telemetry` and `tfc_peers run --control` are its two hooks into the simulator and the peers | Done; live on `vcan0`; not run on a board |
+| The 3D viewer, a second page of the console (`../console/web/viewer`, `../docs/design/VIEWER.md`); `tfc_simd --viewer` and `tfc_fly --pose` send and write the vehicle's whole state (`../sim/vehicle/viewer_state.hpp`), and `../vehicles/starship.json` is a vehicle of the Starship class for it | Done; live on `vcan0`; not run on a board |
 
 Contents: [What the virtual peers are](#what-the-virtual-peers-are) ·
 [Which command do I want?](#which-command-do-i-want) ·

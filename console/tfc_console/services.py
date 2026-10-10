@@ -10,19 +10,23 @@ from .faultlab import EXPECT, FaultLab
 from .hardware import Hardware
 from .hub import Hub
 from .rig import Rig
-from .server import ApiError, App, Request
+from .server import ApiError, App, Raw, Request
 from .vehicles import Vehicles
+from .viewer import ViewerService
 
 
 def _bad(e: Exception) -> ApiError:
     return ApiError(504 if isinstance(e, TimeoutError) else 400, str(e))
 
 
-def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_dir: Path | None = None) -> dict:
+def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_dir: Path | None = None, pose=None) -> dict:
     vehicles = Vehicles(repo, state_dir or default_state_dir())
     commands = CommandService(hub, lambda: mgr.iface)
     hardware = Hardware(hub)
-    rig_svc = Rig(hub, repo, lambda: mgr.iface, lambda: truth.port, vehicles.sim_args) if rig else None
+    rig_svc = Rig(hub, repo, lambda: mgr.iface, lambda: truth.port, vehicles.sim_args, (lambda: pose.port) if pose is not None else None) if rig else None
+    viewer = ViewerService(hub, repo, (state_dir or default_state_dir()), vehicles)
+    app.viewer = hub.viewer
+    app.on_close.append(viewer.close)
     lab = FaultLab(hub, rig_svc) if rig_svc else None
 
     hub.extra["commands"] = commands.snapshot
@@ -30,7 +34,7 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
     hub.extra["vehicle"] = vehicles.snapshot
     hub.extra["rig"] = rig_svc.snapshot if rig_svc else (lambda: {"disabled": True})
     hub.extra["faults"] = lab.snapshot if lab else (lambda: {"available": False, "table": [], "disabled": True})
-    app.hello_extra = lambda: {"config": {**config_payload(), "commands": catalog(), "knobs": vehicles.knob_table(), "expect": {k: list(v) for k, v in EXPECT.items()}, "truth_port": truth.port}, "vehicles": vehicles.listing()}
+    app.hello_extra = lambda: {"config": {**config_payload(), "commands": catalog(), "knobs": vehicles.knob_table(), "expect": {k: list(v) for k, v in EXPECT.items()}, "truth_port": truth.port, "pose_port": pose.port if pose is not None else None}, "vehicles": vehicles.listing()}
     app.on_close.append(hardware.shutdown)
     if rig_svc:
         app.on_close.insert(0, rig_svc.shutdown)
@@ -203,4 +207,64 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
         except (ValueError, OSError) as e:
             raise _bad(e) from e
 
-    return {"vehicles": vehicles, "commands": commands, "hardware": hardware, "rig": rig_svc, "lab": lab}
+    # ---------------------------------------------------------------- the 3D viewer
+    @app.route("GET", "/api/viewer/state")
+    def _viewer_state(req: Request):
+        return 200, {**hub.viewer.status(), "pose_files": viewer.pose_files(), "models": viewer.model_files(), "vehicles": vehicles.listing(), "pose_port": pose.port if pose is not None else None,
+                     "flying": viewer.flying, "fly_available": vehicles.fly.exists()}
+
+    @app.route("POST", "/api/viewer/open")
+    def _viewer_open(req: Request):
+        b = req.body
+        try:
+            return 200, viewer.open(str(b.get("name", "")), float(b.get("speed", 1.0)), bool(b.get("loop")), b.get("autoplay", True) is not False)
+        except (ValueError, OSError) as e:
+            raise _bad(e) from e
+
+    @app.route("POST", "/api/viewer/control")
+    def _viewer_control(req: Request):
+        try:
+            return 200, viewer.control(str(req.body.get("action", "")), req.body.get("value"))
+        except (ValueError, TypeError) as e:
+            raise _bad(e) from e
+
+    @app.route("POST", "/api/viewer/close")
+    def _viewer_close(req: Request):
+        viewer.close()
+        return 200, hub.viewer.status()
+
+    @app.route("POST", "/api/viewer/fly")
+    def _viewer_fly(req: Request):
+        try:
+            text = _text_of(req.body)
+        except (ValueError, OSError) as e:
+            raise _bad(e) from e
+        if viewer.flying is not None:
+            raise ApiError(409, "a flight is being flown already")
+        label = str(req.body.get("name") or "flight")
+        sensors, pad = str(req.body.get("sensors", "vehicle")), int(req.body.get("pad", 300) or 0)
+
+        def job():
+            res = viewer.fly(text, label, sensors, pad)
+            if mgr.source is not None and getattr(mgr.source, "playing", False) is True and hub.replay:
+                mgr.disconnect()                    # a bus replay is playing: the flown flight takes the viewer, the bus replay is stopped
+            viewer.open(res["file"], 1.0, False, True)
+            return res
+        return 202, {"job": vehicles.jobs.start("fly", job)}
+
+    @app.route("POST", "/api/viewer/log")
+    def _viewer_log(req: Request):
+        """The page's own console, for a browser that has none at hand (a headless one under test): the line goes to this process's standard error, and nowhere else."""
+        import sys
+        print("viewer:", str(req.body.get("text", ""))[:2000], file=sys.stderr, flush=True)
+        return 200, {"ok": True}
+
+    @app.route("GET", "/api/viewer/model")
+    def _viewer_model(req: Request):
+        try:
+            body, ctype = viewer.model_bytes(req.arg("name", "") or "")
+        except ValueError as e:
+            raise ApiError(404, str(e)) from e
+        return 200, Raw(body, ctype)
+
+    return {"vehicles": vehicles, "commands": commands, "hardware": hardware, "rig": rig_svc, "lab": lab, "viewer": viewer}

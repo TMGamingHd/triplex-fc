@@ -14,3 +14,7 @@ __pycache__/
 
 # bench run logs (tools/bench/hil_run.sh)
 logs/
+
+# the 3D viewer: models a user puts in console/models (the folder's README stays)
+console/models/*
+!console/models/README.md

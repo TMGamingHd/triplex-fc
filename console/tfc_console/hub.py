@@ -19,6 +19,7 @@ from tfc_peers import protocol as P
 from . import constants as K
 from .lines import parse_line
 from .model import Event, Telemetry
+from .viewer import ViewerHub
 
 HISTORY_SAMPLES = 6000          # ten minutes of ten-per-second metrics
 FRAME_RING = 6000               # the bus monitor's window: the last frames, decoded when asked
@@ -40,6 +41,7 @@ class Hub:
         self.status: dict[str, object] = {}              # what the page shows about the source: set by the source
         self.extra: dict[str, Callable[[], object]] = {}   # more state for the snapshot (the rig, the faults, the commands), each a function so the hub does not import them
         self.recorder = None
+        self.viewer = ViewerHub()                        # the 3D viewer's poses: their own stream, so a console with no viewer open pays nothing for them
         self.event_listeners: list[Callable[[Event], None]] = []   # a service that wants to see every event (the command log matches the nodes' answers to the command)
         self._seq = 0
         self._last_snapshot: dict | None = None
@@ -84,6 +86,13 @@ class Hub:
             now = self.clock() if t is None else t
             self.model.feed_truth(now, d)
             self._record("truth", now, d)
+
+    def ingest_pose(self, raw: str, t: float | None = None) -> None:
+        """A pose or a spec from the simulator (one JSON object as it was sent). To the viewer's pages, and into the recording if there is one. While the viewer is playing a pose file the live ones are not shown (two flights at once are no flight), but they are still recorded."""
+        if self.viewer.source.get("kind") != "pose-file":
+            self.viewer.ingest(raw)
+        if self.recorder is not None:
+            self._record("pose", self.clock() if t is None else t, raw)
 
     def note(self, level: str, src: str, kind: str, text: str, fields: dict | None = None) -> None:
         """An event the console itself makes (an operator command sent, a process started)."""
@@ -247,6 +256,7 @@ class Hub:
             self.lines.clear()
             self._last_tick_t = -1.0
             self._last_snapshot = None
+        self.viewer.reset()
         self._publish("reset", {"t": time.time()})
 
 

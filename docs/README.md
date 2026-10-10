@@ -27,6 +27,7 @@
 | [SUPERVISOR.md](design/SUPERVISOR.md) | The supervisor (SUP-Lite): lines, ladder, commands |
 | [HARDWARE_OVERRIDE.md](design/HARDWARE_OVERRIDE.md) | The manual switches below the supervisor; their own failure modes |
 | [PICO.md](design/PICO.md) | The Pico: platform driver and fault injector |
+| [VIEWER.md](design/VIEWER.md) | The 3D viewer: the vehicle seen as a vehicle (a Starship-class stack or any vehicle file), the pose the simulator sends, the six lenses and what each number is (measured, derived or illustrative) |
 | [CONSOLE.md](design/CONSOLE.md) | The flight console: one web page that shows the bus, the nodes' consoles and the simulator's truth, and sends the operator's commands |
 | [VEHICLE_SIM.md](design/VEHICLE_SIM.md) | The 6-DOF ascent simulator, the platform and the bus runner |
 | [ENVIRONMENT.md](design/ENVIRONMENT.md) | The world: planets, rotation, J2, atmospheres and their dispersions, wind profiles, turbulence |

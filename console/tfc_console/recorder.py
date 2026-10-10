@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Recording a session: the bus as a `candump -L` log (the format `tfc_peers decode`, `tfc_replay` and this console's own replay read), and beside it a sidecar of what the bus does not carry.
 
-`console-<stamp>.log` is the bus; `console-<stamp>.side.jsonl` is one JSON object per line: the nodes' console lines (`k: line`), the simulator's telemetry (`k: truth`) and what the operator did (`k: note`).
+`console-<stamp>.log` is the bus; `console-<stamp>.side.jsonl` is one JSON object per line: the nodes' console lines (`k: line`), the simulator's telemetry (`k: truth`), the 3D viewer's poses and specs (`k: pose`, `k: spec`: the whole state fifty times a second) and what the operator did (`k: note`).
 Both count time from the start of the recording, so a replay lines them up. A log without a sidecar still replays (the bus alone is enough for the state, the votes and the commands seen on it).
 """
 from __future__ import annotations
@@ -53,6 +53,13 @@ class Recorder:
 
     def truth(self, t: float, d: dict) -> None:
         self._side_write(t, "truth", {"d": d})
+
+    def pose(self, t: float, raw: str) -> None:
+        """A pose or a spec of the 3D viewer, as the simulator sent it (already compact JSON): written as it is, without parsing it again."""
+        k = "spec" if raw.startswith('{"k":"spec"') else "pose"
+        with self._lock:
+            self._side.write('{"t":%.4f,"k":"%s","d":%s}\n' % (self._rel(t), k, raw))
+            self.lines += 1
 
     def event(self, t: float, e: dict) -> None:
         if e.get("src") in NOTE_SOURCES:

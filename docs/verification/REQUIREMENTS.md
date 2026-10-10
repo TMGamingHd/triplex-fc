@@ -207,6 +207,19 @@ These are requirements on a bench tool, not on the flight system: the console mu
 | TFC-CON-011 | The console's copies of core constants (tolerances, the persistence window, the ARM and counter windows, the phase table) and its reading of the nodes' console lines shall be checked against the C++ headers and the firmware's format strings, so that a change in `core/` or `firmware/` cannot leave it wrong without a test failing. | T | Verified (SIL) |
 | TFC-CON-012 | The console shall read the nodes' consoles, the supervisor and the Pico on their serial ports, and send only the supervisor's documented commands and bounded relay cuts. | T, M | Verified (SIL) against pseudo-terminals and a fake Pico; waits for the boards |
 
+## 3D viewer (ADR-035; docs/design/VIEWER.md)
+These are requirements on a bench tool: the viewer must show what the simulator has, label what it adds, and cost the rig nothing. "Live" means exercised with real firmware instances on `vcan0`.
+| ID | Requirement | Verif. | Status |
+|---|---|---|---|
+| TFC-VIEW-001 | Every number the simulator sends the viewer (the pose) shall be the simulator's own state or one of its own functions, and the pose shall be consistent with the vehicle it describes (position, attitude, air velocity with the wind taken out, tanks, gimbals, engines, stages). | T | Verified (SIL): 10 C++ tests, 14 mutants killed |
+| TFC-VIEW-002 | The viewer's data shall be output only: the flight, the campaign and the decision hash shall not change with it. | T, I | Verified (SIL): the flight tests and the campaign are unchanged |
+| TFC-VIEW-003 | The poses shall reach the page on a stream of their own; with no viewer open they shall cost the console a parse and nothing more; a page that cannot keep up shall lose its oldest poses, never the newest. | T | Verified (SIL) |
+| TFC-VIEW-004 | A recording that carries poses shall replay them with the bus; a seek shall show the viewer only where it ended; a pose file shall play with its own transport. | T | Verified (SIL) |
+| TFC-VIEW-005 | The viewer shall label every quantity it adds to the simulator's as derived (a formula) or illustrative (a picture), and say so on the page. | I | Verified (inspection of the six lenses) |
+| TFC-VIEW-006 | The viewer shall serve a model file only by name from `console/models/` to a page with the session token, and its page shall run under a content-security policy with no inline script. | T | Verified (SIL) |
+| TFC-VIEW-007 | With the live rig running, the viewer shall show the launch at the simulator's rate. | T, D | Verified (live, 50 poses a second, 59 frames a second); on a board: not run |
+| TFC-VIEW-008 | The viewer shall still show a flight that has only the console's 10 Hz telemetry, and say what is missing. | T, I | Verified (the 8 Oct recording) |
+
 ## Software quality
 | ID | Requirement | Verif. | Status |
 |---|---|---|---|

@@ -19,6 +19,7 @@ from .app import ROOT, WEB, SourceManager, register_core
 from .hub import Hub
 from .server import App, start_in_thread
 from .sources import TruthSource
+from .viewer import PoseSource
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,6 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8765, help="port to listen on (default 8765; 0 picks a free one)")
     p.add_argument("--token", default=None, help="session token (default: a random one, printed in the URL)")
     p.add_argument("--truth-port", type=int, default=TruthSource.DEFAULT_PORT, help=f"UDP port the simulator's telemetry is received on (default {TruthSource.DEFAULT_PORT}; give `tfc_simd --telemetry` the same). The rig the console starts is told it")
+    p.add_argument("--pose-port", type=int, default=PoseSource.DEFAULT_PORT, help=f"UDP port the 3D viewer's poses are received on (default {PoseSource.DEFAULT_PORT}; give `tfc_simd --viewer` the same). The rig the console starts is told it")
+    p.add_argument("--viewer", metavar="FILE", help="open the 3D viewer on a pose file (tfc_fly VEHICLE --pose FILE; .pose.jsonl or .pose.jsonl.gz): no bus, no rig needed")
     p.add_argument("--no-open", action="store_true", help="do not open the page in the browser")
     p.add_argument("--no-rig", action="store_true", help="do not offer to start and stop the rig's processes (the page can only watch and command)")
     p.add_argument("--repo", default=str(ROOT), help="the repository the binaries, vehicle files and logs are in (default: this one)")
@@ -56,16 +59,21 @@ def main(argv: list[str] | None = None) -> int:
     mgr = SourceManager(hub, repo)
     truth = TruthSource(hub, args.truth_port)
     truth.start()
+    pose = PoseSource(hub, args.pose_port)
+    pose.start()
     app = App(hub, WEB, args.host, args.port, args.token)
     register_core(app, mgr)
     from . import services                       # the parts that act on the rig; imported here so a read-only console (`--replay`) does not need them
-    services.install(app, hub, mgr, truth, repo, rig=not args.no_rig)
+    svc = services.install(app, hub, mgr, truth, repo, rig=not args.no_rig, pose=pose)
     yield_cpu()
     hub.start()
-    app.on_close.append(lambda: (mgr.disconnect(), truth.stop(), hub.stop()))
+    app.on_close.append(lambda: (mgr.disconnect(), truth.stop(), pose.stop(), hub.stop()))
     try:
         if args.replay:
             mgr.open_replay(Path(args.replay), args.speed)
+        elif args.viewer:
+            hub.status.update(kind="none", state="viewer file")
+            svc["viewer"].open_path(Path(args.viewer), args.speed)
         else:
             iface = args.iface or "vcan0"
             try:
@@ -77,8 +85,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
     start_in_thread(app)
-    url = app.url()
+    url = app.url("/viewer/" if args.viewer else "/")
     print(f"tfc-console: {url}", flush=True)
+    if not args.viewer:
+        print(f"             3D viewer: {app.url('/viewer/')}", flush=True)
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print("warning: listening beyond this machine; anyone who has the token can send commands to the rig", file=sys.stderr)
     if not args.no_open:
