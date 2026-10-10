@@ -13,7 +13,7 @@ precision highp float;
 ${NOISE_GLSL}
 varying vec3 vW;
 uniform vec3 uSun; uniform vec3 uSunCol; uniform vec3 uAmb; uniform vec3 uHaze; uniform vec3 uCam; uniform float uCoast; uniform float uTime;
-uniform float uFade; uniform float uMountR; uniform float uScale; uniform float uCamAlt;
+uniform float uFade; uniform float uMountR; uniform float uScale; uniform float uCamAlt; uniform float uImgOn;
 uniform vec3 uPadPos;     // the pad centre in the ground's own coordinates (the ground is a child of the pad, so 0)
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y); }
@@ -67,6 +67,8 @@ void main() {
   float fog = 1.0 - exp(-dist * 0.00007 * exp(-uCamAlt / 2500.0));      // the haze lives in the lowest kilometres: from high up there is less of it between the eye and the ground
   lit = mix(lit, uHaze, clamp(fog, 0.0, 1.0));
   float a = (1.0 - smoothstep(18000.0, 42000.0, dist)) * uFade;
+  // with a picture of the real ground under the sky shader, this flat made-up plane is only the pad's own apron and what is round it: it gives way to the picture beyond a few hundred metres
+  a *= mix(1.0, 1.0 - smoothstep(uMountR * 14.0, uMountR * 80.0, d), uImgOn);
   gl_FragColor = vec4(lit, a);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -82,7 +84,7 @@ export class Pad {
     this.groundMat = new THREE.ShaderMaterial({
       vertexShader: GROUND_VERT, fragmentShader: GROUND_FRAG, transparent: true, depthWrite: true, side: THREE.DoubleSide,
       uniforms: { uSun: { value: new THREE.Vector3(0, 1, 0) }, uSunCol: { value: new THREE.Vector3(1, 1, 1) }, uAmb: { value: new THREE.Vector3(.1, .12, .2) }, uHaze: { value: new THREE.Vector3(.5, .6, .75) }, uCam: { value: new THREE.Vector3() },
-        uCoast: { value: coastM }, uTime: { value: 0 }, uFade: { value: 1 }, uCamAlt: { value: 0 }, uMountR: { value: Math.max(2.5, diameter * 1.1) }, uScale: { value: Math.max(0.3, scale * 3) }, uPadPos: { value: new THREE.Vector3() } },
+        uCoast: { value: coastM }, uTime: { value: 0 }, uFade: { value: 1 }, uCamAlt: { value: 0 }, uImgOn: { value: 0 }, uMountR: { value: Math.max(2.5, diameter * 1.1) }, uScale: { value: Math.max(0.3, scale * 3) }, uPadPos: { value: new THREE.Vector3() } },
     });
     const gp = new THREE.PlaneGeometry(90000, 90000, 1, 1); gp.rotateX(-Math.PI / 2);
     this.ground = new THREE.Mesh(gp, this.groundMat); this.ground.position.y = 0; this.ground.renderOrder = 0; this.ground.frustumCulled = false;

@@ -1,10 +1,11 @@
 // Overview: the whole flight at a glance. The vehicle, the sky it is in, the numbers that matter (altitude, speed, Mach, dynamic pressure, mass, thrust, acceleration), the stages and what is left in them,
 // and the events as they happen. The camera, the light and the look of the scene are chosen here.
 import { Chart, legend } from '../../../js/charts.js';
-import { h, stat, statGrid, card, seg, toggle, slider, select, fmt, store, provenance } from '../ui.js';
+import { h, setText, stat, statGrid, card, seg, toggle, slider, select, fmt, store, provenance } from '../ui.js';
 import { CAMERAS } from '../cam.js';
 import { STYLES } from '../models/vehicle.js';
 import { DRESS } from '../models/starship.js';
+import { MODES } from '../imagery.js';
 import { AXES } from '../models/gltf.js';
 
 export default {
@@ -50,9 +51,18 @@ export default {
       slider('Hot-stage ring', 1, 6, 0.1, dr.ringHeight, (v) => { dr.ringHeight = v; }, (v) => v.toFixed(1) + ' m'), toggle('Catch pins', dr.pins, (v) => { dr.pins = v; }),
       h('button', { class: 'btn', type: 'button', id: 'v-dress-apply', onclick: redo }, 'Apply'),
       h('p', { class: 'note' }, 'Block 3 as reported: three grid fins, each 50 % larger in area than Block 2\'s (×1.22 in each direction here), set lower on the booster. These are a picture of public descriptions: the vehicle file, and so the physics, does not have them.'));
+    // the Earth: pictures of the real planet from NASA (a pack the user downloads), or the procedural planet
+    const im = world.imagery;
+    S.imgNote = h('p', { class: 'note', id: 'v-img-note' }, im.describe());
+    S.earth = h('div', { id: 'v-earth' },
+      im.present ? [h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Imagery'), select([['auto', 'Best there is'], ...MODES.map(([k, t]) => [k, t])], im.mode, (v) => { im.setMode(v); setTimeout(() => setText(S.imgNote, im.describe()), 400); }, 'Earth imagery')),
+        toggle('Lights of the night side', im.night, (v) => im.setNight(v)), S.imgNote,
+        h('p', { class: 'note' }, 'A picture of the ground, not terrain: it is of the year 2000 (Landsat) or a monthly composite (Blue Marble), and the sea in it is lit by the viewer\'s own sun. The sky, the air and the clouds are drawn over it as before.')]
+        : [h('p', { class: 'note' }, 'The planet is procedural: a coast at the pad and made-up continents. For pictures of the real Earth (NASA, public domain, about 13 MB) run ', h('code', {}, 'console/tfc-imagery'), ' once, then reload this page.')]);
     const look = [
       h('div', { class: 'v-row' }, camSeg),
       h('p', { class: 'note v-camhint' }, 'Drag to turn, wheel to zoom, right-drag to slide along the vehicle. Keys: 1–6 lenses, C next camera, Space pause, H hide the panels.'),
+      h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Earth')), S.earth,
       h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Model'), styles), S.import, (app.styleName === 'starship' || (app.styleName === 'auto' && /starship/i.test(app.spec.name || ''))) ? S.dress : null,
       slider('Sun elevation', -10, 90, 1, st.sunElev, (v) => { st.sunElev = v; store.set('v.sunEl', v); }, (v) => v + '°'),
       slider('Sun bearing', 0, 359, 1, st.sunBear, (v) => { st.sunBear = v; store.set('v.sunBear', v); }, (v) => v + '°'),

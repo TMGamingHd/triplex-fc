@@ -15,6 +15,8 @@ In the page: **Rig** tab, *Start* on "Closed loop with the launch sequence" (nee
 
 **Which vehicle the rig flies** is chosen on the Launch tab (*Vehicle on the rig*): pick it, and the console builds the three flight computers with that vehicle's own pitch program and gains (about half a minute, the real firmware; `docs/design/CONSOLE.md` section 8, ADR-036), then start the rig and launch: the 3D viewer shows what those computers do with it.
 
+**Earth imagery for the 3D viewer** is optional: `console/tfc-imagery` downloads about 13 MB from NASA GIBS (public domain) into `console/imagery/` (git-ignored); the viewer then draws the real Earth and says what the pictures are (`docs/design/VIEWER.md` section 12, ADR-038). Without it the planet is procedural.
+
 **The 3D viewer** is a second page of the same server, for a window of its own (a second monitor): the **3D** button in the console's header, or the `3D viewer:` address printed at start (`/viewer/` with the same token). It draws the vehicle (a Starship-class stack, any vehicle file, or a CAD model you put in `console/models/`) in a physically drawn sky, in six lenses, from the live simulator or a recorded flight: [`docs/design/VIEWER.md`](../docs/design/VIEWER.md). `console/tfc-console --viewer console/demo/starship-ascent.pose.jsonl.gz` needs no bus; the page's source menu flies any vehicle in `vehicles/` with the real flight software and plays it.
 
 No bus yet? `console/tfc-console --replay console/demo/launch-and-node-loss.log.gz`: a real run (a launch, then node B killed at T+23 s), with the nodes' consoles and the simulator's telemetry; play, pause, seek and speed are in the bar at the top of the page.

@@ -296,4 +296,16 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
             raise ApiError(404, str(e)) from e
         return 200, Raw(body, ctype)
 
+    @app.route("GET", "/api/viewer/imagery")
+    def _viewer_imagery(req: Request):
+        return 200, viewer.imagery.manifest()
+
+    @app.route("GET", "/api/viewer/imagery/file")
+    def _viewer_imagery_file(req: Request):
+        try:
+            body, ctype = viewer.imagery.file_bytes(req.arg("name", "") or "")
+        except ValueError as e:
+            raise ApiError(404, str(e)) from e
+        return 200, Raw(body, ctype)
+
     return {"vehicles": vehicles, "commands": commands, "hardware": hardware, "rig": rig_svc, "lab": lab, "viewer": viewer, "builder": builder}

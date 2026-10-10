@@ -1,6 +1,6 @@
 # The 3D viewer: the flight seen as a vehicle, not as numbers
 
-> Status: **built** (ADR-035, 9 Oct 2026): `console/web/viewer/` (the page: WebGL through three.js, vendored), `console/tfc_console/viewer.py` (the data path), `sim/vehicle/viewer_state.hpp` (what the simulator sends), `tfc_simd --viewer`, `tfc_fly --pose`, and a vehicle of the Starship V3 class, `vehicles/starship.json`. Tested on the host (C++: 10 tests, a flight of the vehicle through hot staging and 14 mutants; Python: 39 tests) and **live against the real firmware** (three flight-computer processes, ACT and the simulator on `vcan0`: 50 poses a second, 59 frames a second in the browser). The pictures were looked at in a real browser on a real GPU, which is the only check a picture has; **nothing here has run on a board**, and the GPU cost has been measured on one machine only (section 12).
+> Status: **built** (ADR-035, 9 Oct 2026): `console/web/viewer/` (the page: WebGL through three.js, vendored), `console/tfc_console/viewer.py` (the data path), `sim/vehicle/viewer_state.hpp` (what the simulator sends), `tfc_simd --viewer`, `tfc_fly --pose`, and a vehicle of the Starship V3 class, `vehicles/starship.json`. Tested on the host (C++: 10 tests, a flight of the vehicle through hot staging and 14 mutants; Python: 39 tests) and **live against the real firmware** (three flight-computer processes, ACT and the simulator on `vcan0`: 50 poses a second, 59 frames a second in the browser). The pictures were looked at in a real browser on a real GPU, which is the only check a picture has; **nothing here has run on a board**, and the GPU cost has been measured on one machine only (section 13).
 
 ![The Aerodynamics lens in its CP and CG view: the Starship-class stack at Mach 1.7, the centre of mass and the centre of pressure 56 m apart, the forces on it](img/viewer-stability.jpg)
 
@@ -67,7 +67,7 @@ The C++ tests (`tests/test_viewer_state.cpp`) hold the pose to the vehicle: the 
 
 **Two scenes, because the numbers do not fit in one.** A planet is 6,371 km across and a vehicle is 9 m. In one scene with one depth buffer, 32-bit floats cannot put a bolt and a horizon in the same frame. So the sky, the atmosphere and the planet are one fragment shader that works from the camera's place above the planet's centre (in kilometres), and everything near is drawn after it, in a scene whose origin is the vehicle's centre of gravity, in metres, with a depth buffer of its own: what is within a kilometre of the camera has millimetre precision (the transforms are done in JavaScript's doubles and only the small offsets reach the GPU).
 
-**The sky** is single scattering by Rayleigh and Mie particles with exponential density (scale heights 8 and 1.2 km): the blue sky, the red sunset, the white glow round the sun and the thin bright limb seen from orbit come out of it, and its thickness follows the simulator's planet. The planet's surface is **procedural** (a coast at the launch point, the sea downrange, land behind, drifting clouds, ice, lights on the night side): it is not a map of anywhere, because the viewer has no imagery to use offline. The vehicle is lit by the sun (its colour is the atmosphere's transmittance along the sun's path) and by the sky itself, which is rendered into a small cube at the vehicle's place a few times a second and filtered for its reflections and ambient light, so a steel tank reflects the real sky, the real ground or the black of space.
+**The sky** is single scattering by Rayleigh and Mie particles with exponential density (scale heights 8 and 1.2 km): the blue sky, the red sunset, the white glow round the sun and the thin bright limb seen from orbit come out of it, and its thickness follows the simulator's planet. The planet's surface is **procedural** (a coast at the launch point, the sea downrange, land behind, drifting clouds, ice, lights on the night side): it is not a map of anywhere unless an imagery pack is present (section 12). The vehicle is lit by the sun (its colour is the atmosphere's transmittance along the sun's path) and by the sky itself, which is rendered into a small cube at the vehicle's place a few times a second and filtered for its reflections and ambient light, so a steel tank reflects the real sky, the real ground or the black of space.
 
 ## 6. What is measured, derived and illustrative
 
@@ -126,7 +126,37 @@ Nothing in the viewer solves the air, and every flow picture says so. When a CFD
 
 The simulator drops a stage when it separates: it does not track it. The viewer carries the picture of it on with the speed it had, pushes it back by the separation's delta-v, lets gravity and a simple drag act on it and turns it slowly, until it is under the ground or ten minutes old. That is a picture, not a result (a booster that flips back and lands is not drawn), and the Overview says so.
 
-## 12. Cost, and what has not been measured
+## 12. Earth imagery
+
+The planet can wear pictures of the real Earth instead of the procedural one. Nothing of it is in the repository: `console/tfc-imagery` downloads a pack of about 13 MB into `console/imagery/` (git-ignored) from NASA's GIBS web map service, which needs no key and whose imagery is public domain, and writes a manifest that says what each file is, where it is on the Earth and where it came from (`tfc_console/imagery.py`, the docstring says why these layers). With no pack the viewer draws the procedural planet it always drew, and the Overview lens says how to get one.
+
+| Layer | What it is | Pixel | Memory on the GPU (RGBA8 with mip maps, computed) |
+|---|---|---|---|
+| Earth 4K | Blue Marble Next Generation: a cloud-free composite of MODIS (500 m source) | 9.8 km at the equator | 45 MB |
+| Earth 8K | the same at twice the size | 4.9 km | 179 MB |
+| Night lights | Black Marble (VIIRS), 4K | 9.8 km | 45 MB |
+| Site, regional | Landsat WELD annual composite, 4° × 4° round the pad (the United States only) | 108 m | 90 MB |
+| Site, local | the same, 1° × 1° | 27 m (the sensor's own 30 m) | 90 MB |
+
+The shader puts them on the planet from the longitude and latitude of each point (the pole and the pad's direction give the axes; the picture is placed at the launch site nearest in latitude to the simulator's launch point, which has a latitude and no longitude: 28.5° is Kennedy Space Center; the sites are `SITES` in `imagery.py`), takes the sampling gradients from the same coordinates with the jump of the date line taken out, so that the mip level is right at the seam, and layers the three scales (the 108 m and 27 m pictures fade in over their edges). The picture's colour is kept for the land and the sea (shoals, turbidity), the sea is found as what is bluer than it is red and dark, and is given the viewer's own sun glint; a picture magnified past its texels is given fine grain (the viewer's, not the picture's). The night side shows the Black Marble lights where the sea is not. The atmosphere, the clouds and the exposure are drawn over it as before. The near scene's flat ground (made up, with a coast of its own) gives way to the picture beyond a few hundred metres of the pad, so that the real ground is what the vehicle climbs over (seen at 3 km: the roads, the ponds and the marsh of the Cape); on the pad itself the apron and the ground round it are still the viewer's, and the picture is the horizon.
+
+![The launch complex of the Cape from 0 m and from 3 km with the 8K and site imagery: the pad's own ground, and the real roads, ponds and marsh beyond it](img/viewer-imagery.jpg)
+
+**What it is not.** A picture of the ground, not terrain: there is no height. The Landsat composite is **of the year 2000** (the newest annual composite the service returned with pixels over Florida: 2008 and 2010 came back empty), so the Cape is the Cape of that year, and the pads are not today's. Blue Marble is a monthly composite and the clouds in the viewer are its own, not the weather of the day. Outside the United States the picture is the 4.9 km or 9.8 km globe and nothing finer. Choices are in the Overview lens (*Imagery*: best there is, procedural, 4K, 8K, with the site, and the night lights); `?img=MODE` and `?night=0` set them from the address.
+
+**Which looks and performs best, measured** (`?bench=1`: each choice in turn, the same frame drawn 100 times with the GPU made to finish each one, the median and the 95th percentile; the development machine of section 13, a 1280 × 720 canvas, one lens (Overview), two views: 600 km above the pad looking 50° from the vertical, and 15 km up looking down the coast):
+
+| Choice | 600 km: median, p95 | 15 km: median, p95 |
+|---|---|---|
+| Procedural | 6 ms, 9 ms | 7 ms, 11 ms |
+| Earth 4K | 5 ms, 7 ms | 5 ms, 8 ms |
+| Earth 8K | 5 ms, 6 ms | 5 ms, 8 ms |
+| Earth 4K + the launch site | 4 ms, 5 ms | 5 ms, 8 ms |
+| Earth 8K + the launch site | 4 ms, 5 ms | 5 ms, 8 ms |
+
+**The pictures cost nothing the procedural planet did not**: a texture fetch is cheaper than the noise the procedural surface evaluates (so the viewer is a little faster with imagery), and the sky pass remains the cost. What they cost is **GPU memory and load time**: the most detailed choice holds about 400 MB of textures (8K day, night and two patches), which a laptop with a shared GPU may not like, and decoding the JPEGs takes a moment at the first choice (**not measured**). To the eye (the comparison was made at 350 km, 45° from the vertical): the procedural planet is a green plain with clouds, plainly made up; the 4K globe is right at orbital heights and soft below 300 km; the 8K globe is visibly sharper at the coasts; the site pictures are the difference between a map and a place from a few hundred kilometres down (in the 27 m picture at 15 km: a runway, the roads, the marsh channels and the edge of each field). **The recommendation is "Earth 8K + the launch site" where the GPU has the memory, "Earth 4K" where it has not**, and the viewer's default, *best there is*, takes the first. **Not measured**: the view from the pad (the benchmark did not report in the ground-level view: a bug of the benchmark or the page that has not been found), a GPU other than the development one, and any browser other than Firefox.
+
+## 13. Cost, and what has not been measured
 
 On the development machine (an NVIDIA GTX 1660 SUPER, Firefox 157, a 1600×900 window) the viewer holds 60 frames a second (the display's rate) with all six lenses; the sky pass is the cost (about 30 samples a pixel, a lower number in the cube that lights the vehicle). That is one machine: **no frame time has been measured on any other GPU**, and the *quality* setting that lowers the sky's samples and the resolution exists because a laptop will need it. The rig is sensitive to a loaded host; the viewer is a second browser process, and **starting a headless browser during a live rig run has cost a frame and a cascade of latches before** (`CONSOLE.md` section 8): open the viewer before a run, not during one.
 
@@ -136,7 +166,7 @@ There is no JavaScript engine on the bench, so the page's code is checked by thr
 
 ![The Propulsion lens: the cutaway with the liquid in each tank, the engine map, the thrust against altitude](img/viewer-propulsion.jpg)
 
-## 13. What it does not claim
+## 14. What it does not claim
 
 * It is a **bench and design tool**. Its sky is procedural, its Starship is the class's proportions, its flow is a picture.
 * It does not know what the flight computers decided; it shows the state of the vehicle they steer and, with the rig, the console's own view of them.
