@@ -91,7 +91,7 @@ export default {
       const row = el.children[i], cap = (st.tanks || []).reduce((a, t) => a + t.propellant_kg, 0), left = pose.prop ? pose.prop[i] : 0, on = !!((pose.stg ?? 255) & (1 << i)), ign = !!((pose.ign ?? 0) & (1 << i));
       const engines = spec.engines.map((e, k) => [e, k]).filter(([e]) => e.stage === i), running = engines.filter(([, k]) => (pose.eng || [])[k] > 0.02).length, failed = engines.filter(([, k]) => (pose.eng || [])[k] < 0).length;
       row.classList.toggle('gone', !on);
-      row.querySelector('.v-stage-state').textContent = !on ? 'separated' : running ? 'burning' : ign ? 'burnt out' : 'waiting';
+      row.querySelector('.v-stage-state').textContent = !on ? 'separated' : running ? 'burning' : pose.clamp ? 'on the pad' : ign ? 'burnt out' : 'waiting';
       row.querySelector('.v-bar i').style.width = (on && cap ? Math.max(0, Math.min(100, 100 * left / cap)) : 0).toFixed(1) + '%';
       row.querySelector('.v-stage-n').textContent = on ? `${fmt.eng(left)} kg of ${fmt.eng(cap)} kg; ${running} of ${engines.length} engines${failed ? `, ${failed} failed` : ''}` : '';
     });
