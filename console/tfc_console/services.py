@@ -10,9 +10,19 @@ from .faultlab import EXPECT, FaultLab
 from .hardware import Hardware
 from .hub import Hub
 from .rig import Rig
+from .rigbuild import RigBuilder
 from .server import ApiError, App, Raw, Request
 from .vehicles import Vehicles
 from .viewer import ViewerService
+
+
+def _safe(builder, vehicles) -> bool:
+    """Whether the chosen vehicle can be asked about (a file the reader cannot read has no images)."""
+    try:
+        builder.key(vehicles.active["name"], vehicles.active["knobs"])
+        return True
+    except (ValueError, OSError):
+        return False
 
 
 def _bad(e: Exception) -> ApiError:
@@ -23,7 +33,9 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
     vehicles = Vehicles(repo, state_dir or default_state_dir())
     commands = CommandService(hub, lambda: mgr.iface)
     hardware = Hardware(hub)
-    rig_svc = Rig(hub, repo, lambda: mgr.iface, lambda: truth.port, vehicles.sim_args, (lambda: pose.port) if pose is not None else None) if rig else None
+    builder = RigBuilder(hub, repo, vehicles)
+    rig_svc = Rig(hub, repo, lambda: mgr.iface, lambda: truth.port, vehicles.sim_args, (lambda: pose.port) if pose is not None else None,
+                  lambda: (builder.images(vehicles.active["name"], vehicles.active["knobs"]) if _safe(builder, vehicles) else None, vehicles.active["name"])) if rig else None
     viewer = ViewerService(hub, repo, (state_dir or default_state_dir()), vehicles)
     app.viewer = hub.viewer
     app.on_close.append(viewer.close)
@@ -32,6 +44,7 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
     hub.extra["commands"] = commands.snapshot
     hub.extra["hardware"] = hardware.snapshot
     hub.extra["vehicle"] = vehicles.snapshot
+    hub.extra["rigbuild"] = lambda: builder.status(vehicles.active["name"], vehicles.active["knobs"])
     hub.extra["rig"] = rig_svc.snapshot if rig_svc else (lambda: {"disabled": True})
     hub.extra["faults"] = lab.snapshot if lab else (lambda: {"available": False, "table": [], "disabled": True})
     app.hello_extra = lambda: {"config": {**config_payload(), "commands": catalog(), "knobs": vehicles.knob_table(), "expect": {k: list(v) for k, v in EXPECT.items()}, "truth_port": truth.port, "pose_port": pose.port if pose is not None else None}, "vehicles": vehicles.listing()}
@@ -207,6 +220,22 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
         except (ValueError, OSError) as e:
             raise _bad(e) from e
 
+    @app.route("GET", "/api/rig/vehicle")
+    def _rig_vehicle(req: Request):
+        return 200, {"active": vehicles.active, "build": builder.status(vehicles.active["name"], vehicles.active["knobs"]), "vehicles": vehicles.listing()}
+
+    @app.route("POST", "/api/rig/vehicle")
+    def _rig_vehicle_set(req: Request):
+        """Choose the vehicle the rig flies and, if its flight computers are not built, start building them. The rig must be stopped: a running one has the vehicle it started with."""
+        if rig_svc is not None and any(p.state in ("running", "frozen") for p in rig_svc.procs.values()):
+            raise ApiError(409, "the rig is running with its vehicle: stop it first, then choose another")
+        try:
+            vehicles.set_active(str(req.body.get("name", "reference")), req.body.get("knobs") or {})
+            builder.forget_failure()
+            return 200, {"active": vehicles.active, "build": builder.prepare(vehicles.active["name"], vehicles.active["knobs"])}
+        except (ValueError, OSError) as e:
+            raise _bad(e) from e
+
     # ---------------------------------------------------------------- the 3D viewer
     @app.route("GET", "/api/viewer/state")
     def _viewer_state(req: Request):
@@ -267,4 +296,4 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
             raise ApiError(404, str(e)) from e
         return 200, Raw(body, ctype)
 
-    return {"vehicles": vehicles, "commands": commands, "hardware": hardware, "rig": rig_svc, "lab": lab, "viewer": viewer}
+    return {"vehicles": vehicles, "commands": commands, "hardware": hardware, "rig": rig_svc, "lab": lab, "viewer": viewer, "builder": builder}

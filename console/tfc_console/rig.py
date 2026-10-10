@@ -59,10 +59,11 @@ class Proc:
 
 
 class Rig:
-    def __init__(self, hub: Hub, repo: Path, iface_of: Callable[[], str | None], telemetry_port: Callable[[], int], sim_args: Callable[[], list[str]], viewer_port: Callable[[], int] | None = None) -> None:
+    def __init__(self, hub: Hub, repo: Path, iface_of: Callable[[], str | None], telemetry_port: Callable[[], int], sim_args: Callable[[], list[str]], viewer_port: Callable[[], int] | None = None, images: Callable[[], tuple[list[Path] | None, str]] | None = None) -> None:
         self.hub, self.repo = hub, repo
         self.iface_of, self.telemetry_port, self.sim_args = iface_of, telemetry_port, sim_args
         self.viewer_port = viewer_port
+        self.images = images                                       # the three flight-computer images for the vehicle the rig is given, and its name (rigbuild.RigBuilder); None: the reference vehicle's, as always
         self.procs: dict[str, Proc] = {}
         self.profile: str | None = None
         self.lock = threading.RLock()
@@ -88,12 +89,13 @@ class Rig:
         act = self._exe("build/act_native")
         out: dict[str, dict] = {}
         # ---- the closed loop with the launch sequence: three real flight computers, ACT, the simulator clamped on the pad
-        fcs = [self._exe(f"build/launch_{n}") for n in "abc"]
+        built, vname = self.images() if self.images else (None, "reference")
+        fcs = list(built) if built else ([None, None, None] if self.images and vname != "reference" else [self._exe(f"build/launch_{n}") for n in "abc"])
         procs = [ProcSpec("SIM", [str(simd), "--iface", iface, "--hold", "--quiet", "--telemetry", str(self.telemetry_port()), *(["--viewer", str(self.viewer_port())] if self.viewer_port else []), *self.sim_args()], self.repo, simd if simd.exists() else None, 0.0, title="vehicle simulator (tfc_simd --hold)")]
         procs += [ProcSpec(n, [str(p) if p else ""], self.repo, p, 0.4 if i == 0 else 0.0, title=f"flight computer {n} (launch image)") for i, (n, p) in enumerate(zip("ABC", fcs))]
         procs.append(ProcSpec("ACT", [str(act) if act else ""], self.repo, act, 0.0, title="actuator node"))
-        out["closed-loop"] = {"title": "Closed loop with the launch sequence", "doc": "Three real flight-computer processes (nodes A, B and C, each calibrating its own IMU on the pad), the actuator node and the vehicle simulator clamped on the pad. "
-                              "Launch it from the Launch tab after about 12 s. Needs vcan0 and the launch images (tools/bench/sil_triplex.sh --build --launch).", "procs": procs}
+        out["closed-loop"] = {"title": "Closed loop with the launch sequence", "doc": f"Three real flight-computer processes (nodes A, B and C, each calibrating its own IMU on the pad), the actuator node and the vehicle simulator clamped on the pad, flying: {vname}. "
+                              "Launch it from the Launch tab after about 12 s. Needs vcan0 and the launch images (the reference vehicle's: tools/bench/sil_triplex.sh --build --launch; any other vehicle's are built from the Launch tab).", "procs": procs}
         # ---- the fault lab: FC-A is real, B and C are virtual peers whose faults the console changes while it runs
         a = self._exe("build/triplex_a", "build/native_sim")
         py = sys.executable
@@ -114,7 +116,7 @@ class Rig:
             if prof is None:
                 raise ValueError(f"unknown profile {name!r}")
             if not prof["ready"]:
-                raise ValueError(f"{prof['title']}: not built yet ({', '.join(prof['missing'])}); see tools/bench/sil_triplex.sh --build")
+                raise ValueError(f"{prof['title']}: not built yet ({', '.join(prof['missing'])}); the reference vehicle's images: tools/bench/sil_triplex.sh --build --launch; another vehicle's are built from the Launch tab)")
             if self.iface_of() is None or self.hub.replay:
                 raise ValueError("attach the console to a live interface (vcan0) before starting a rig on it")
             if any(p.state in ("running", "frozen") for p in self.procs.values()):

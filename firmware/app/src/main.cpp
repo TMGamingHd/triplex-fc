@@ -19,7 +19,13 @@
 #include <cstring>
 
 #include "sim_imu.hpp"
+// The pitch program and the gains this image carries: the committed ones (the reference vehicle's), or those of another vehicle for the rig (tools/bench/build_vehicle_rig.py generates a header with
+// `tfc_gen_tables --vehicle FILE` and builds with -DTFC_TABLES_HEADER=that file). The flight code is the same either way: only these numbers differ.
+#ifdef TFC_FLIGHT_TABLES_HEADER
+#include TFC_FLIGHT_TABLES_HEADER
+#else
 #include "flight_tables.hpp"
+#endif
 #include "tfc/act.hpp"
 #include "tfc/flight.hpp"
 #include "tfc/imu_calibration.hpp"
@@ -311,7 +317,13 @@ int main() {
     tfc::GainSchedule gains;
     tfc::Guidance guidance;
     fc::tables::load(gains, guidance);
-    g_flight = tfc::FlightFunction(gains, guidance);
+    if (IS_ENABLED(CONFIG_TFC_ESTIMATOR_NO_ACCEL)) {
+      tfc::EstimatorConfig est;
+      est.use_accel = false;  // a vehicle under thrust: the specific force is not gravity (SIM_FIDELITY.md 3.2)
+      g_flight = tfc::FlightFunction(gains, guidance, est);
+    } else {
+      g_flight = tfc::FlightFunction(gains, guidance);
+    }
   }
 
   printk("release 0x%04x\n", static_cast<unsigned>(kReleaseId));

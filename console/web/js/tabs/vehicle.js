@@ -131,16 +131,15 @@ export default {
     if (!R.built) { R.built = true; list(S); load('reference', S); }
     const a = s.vehicle && s.vehicle.active;
     R.active.innerHTML = '';
-    if (a) R.active.append(icon('info'), h('div', {}, h('b', {}, 'The rig’s vehicle: '), a.name, Object.keys(a.knobs).length ? ` with ${Object.keys(a.knobs).length} knob${Object.keys(a.knobs).length > 1 ? 's' : ''} changed` : '', '. It takes effect when the rig is next started (Rig tab). ',
-      h('span', { class: 'note' }, 'The flight computers in the rig carry the pitch program and gains of the reference vehicle, compiled in: another vehicle needs tfc_gen_tables --vehicle and a rebuild of the firmware, so the preview flies any vehicle, but the rig is only right for the reference one and its plant departures.')));
+    if (a) R.active.append(icon('info'), h('div', {}, h('b', {}, 'The rig’s vehicle: '), a.name, Object.keys(a.knobs).length ? ` with ${Object.keys(a.knobs).length} knob${Object.keys(a.knobs).length > 1 ? 's' : ''} changed` : '', '. It takes effect when the rig is next started (Launch tab). ',
+      h('span', { class: 'note' }, 'Choosing a vehicle for the rig builds the three flight computers with that vehicle’s own pitch program and gains (about half a minute, the real firmware); the Launch tab shows the build and starts the rig. The preview needs no build.')));
   },
 };
 
 async function useForRig() {
-  const warn = R.name !== 'reference';
-  if (warn) {
-    const r = await modal({ title: 'Use this vehicle for the rig?', body: h('p', { style: { margin: 0 } }, 'The flight computers in the rig carry the reference vehicle’s tables. They will fly this vehicle with the wrong program and gains; the run shows how they cope, it does not show a designed controller. To fly it properly, generate its tables (tfc_gen_tables --vehicle FILE) and rebuild the firmware.'), buttons: [{ label: 'Cancel', value: 'no' }, { label: 'Use it anyway', kind: 'warn', value: 'yes' }] });
-    if (r !== 'yes') return;
-  }
-  try { await api('/api/vehicle/active', { name: R.name, knobs: R.knobs }); toast(`The rig will fly ${R.name} the next time it starts.`, 'ok'); } catch (e) { toast(e.message, 'warn', 8000); }
+  // the same call as the Launch tab's vehicle card: the rig's vehicle is chosen and, if its flight computers are not built, they are built (the rig must be stopped)
+  try {
+    const r = await api('/api/rig/vehicle', { name: R.name, knobs: R.knobs });
+    toast(r.build.state === 'ready' ? `The rig will fly ${R.name}: its flight computers are built. Start the rig on the Launch tab.` : `Building the flight computers for ${R.name}: the Launch tab shows the progress.`, 'ok', 6000);
+  } catch (e) { toast(e.message, 'warn', 9000); }
 }
