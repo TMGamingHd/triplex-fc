@@ -36,6 +36,7 @@ export async function run(kind, ctx) {
     await tab('launch');
     const lb = $('#btn-launch');
     if (lb && !lb.disabled) {
+      const launchesBefore = (S.snap.commands.log || []).filter((r) => r.op === 'launch').length;      // a console that has launched before (an earlier run of this test) has them in its log
       lb.click();
       const inp = await waitFor(() => $('#launch-confirm'), 2000);
       log(!!inp, 'the launch asks for a second confirmation');
@@ -45,7 +46,7 @@ export async function run(kind, ctx) {
       inp.value = 'LAUNCH'; inp.dispatchEvent(new Event('input')); log(!$('#launch-go').disabled, 'typing LAUNCH enables it');
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await sleep(200);
       log(!$('#launch-confirm'), 'Escape closes the dialog without sending');
-      log(!((S.snap.commands.log || []).some((r) => r.op === 'launch')), 'no launch command was sent');
+      log((S.snap.commands.log || []).filter((r) => r.op === 'launch').length === launchesBefore, 'no launch command was sent');
     } else log(true, `launch button not enabled (${S.snap.phase.name}, go=${S.snap.go_nogo.go}): dialog test skipped`);
     // ---- a no-op command through the page
     await tab('commands');

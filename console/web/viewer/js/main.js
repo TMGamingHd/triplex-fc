@@ -337,12 +337,15 @@ async function bench() {
   const modes = (Q.get('bench') === '1' ? 'procedural,earth-4k,earth-8k,site-4k,site-8k' : Q.get('bench')).split(',');
   await new Promise((r) => setTimeout(r, 3000));
   for (const m of modes) {
+    const tLoad = performance.now();
     world.imagery.setMode(m);
     for (let i = 0; i < 400 && (world.imagery.applied === '' || world.imagery.busy); i++) await new Promise((r) => setTimeout(r, 50));
+    const loadMs = Math.round(performance.now() - tLoad);
+    const tFirst = performance.now(); world.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); const firstMs = Math.round(performance.now() - tFirst);      // the first frame with the new pictures: this is where they are uploaded to the GPU and their mip maps made               // from the choice to the pictures being on the planet: the fetch, the decode and the upload of what had not been loaded yet (pictures are kept: a later mode that reuses one pays nothing for it)
     const t = [];
     for (let i = 0; i < 100; i++) { const a = performance.now(); world.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); const b = performance.now(); if (i >= 10) t.push(b - a); await next(); }
     t.sort((x, y) => x - y);
-    say(JSON.stringify({ mode: m, state: world.imagery.state, median_ms: +t[t.length >> 1].toFixed(1), p95_ms: +t[Math.floor(t.length * 0.95)].toFixed(1), size: [world.renderer.domElement.width, world.renderer.domElement.height] }));
+    say(JSON.stringify({ mode: m, state: world.imagery.state, load_ms: loadMs, first_frame_ms: firstMs, median_ms: +t[t.length >> 1].toFixed(1), p95_ms: +t[Math.floor(t.length * 0.95)].toFixed(1), size: [world.renderer.domElement.width, world.renderer.domElement.height] }));
   }
   say('done');
 }

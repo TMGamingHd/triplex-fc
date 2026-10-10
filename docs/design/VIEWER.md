@@ -144,17 +144,17 @@ The shader puts them on the planet from the longitude and latitude of each point
 
 **What it is not.** A picture of the ground, not terrain: there is no height. The Landsat composite is **of the year 2000** (the newest annual composite the service returned with pixels over Florida: 2008 and 2010 came back empty), so the Cape is the Cape of that year, and the pads are not today's. Blue Marble is a monthly composite and the clouds in the viewer are its own, not the weather of the day. Outside the United States the picture is the 4.9 km or 9.8 km globe and nothing finer. Choices are in the Overview lens (*Imagery*: best there is, procedural, 4K, 8K, with the site, and the night lights); `?img=MODE` and `?night=0` set them from the address.
 
-**Which looks and performs best, measured** (`?bench=1`: each choice in turn, the same frame drawn 100 times with the GPU made to finish each one, the median and the 95th percentile; the development machine of section 13, a 1280 × 720 canvas, one lens (Overview), two views: 600 km above the pad looking 50° from the vertical, and 15 km up looking down the coast):
+**Which looks and performs best, measured** (`?bench=1`: each choice in turn, the same frame drawn 100 times with the GPU made to finish each one, the median and the 95th percentile; the development machine of section 13, a 1280 × 720 canvas, one lens (Overview), three views: 600 km above the pad looking 50° from the vertical, 15 km up looking down the coast, and on the pad):
 
-| Choice | 600 km: median, p95 | 15 km: median, p95 |
-|---|---|---|
-| Procedural | 6 ms, 9 ms | 7 ms, 11 ms |
-| Earth 4K | 5 ms, 7 ms | 5 ms, 8 ms |
-| Earth 8K | 5 ms, 6 ms | 5 ms, 8 ms |
-| Earth 4K + the launch site | 4 ms, 5 ms | 5 ms, 8 ms |
-| Earth 8K + the launch site | 4 ms, 5 ms | 5 ms, 8 ms |
+| Choice | 600 km: median, p95 | 15 km: median, p95 | on the pad: median, p95 |
+|---|---|---|---|
+| Procedural | 6 ms, 9 ms | 7 ms, 11 ms | 5 ms, 8 ms |
+| Earth 4K | 5 ms, 7 ms | 5 ms, 8 ms | 5 ms, 6 ms |
+| Earth 8K | 5 ms, 6 ms | 5 ms, 8 ms | 5 ms, 6 ms |
+| Earth 4K + the launch site | 4 ms, 5 ms | 5 ms, 8 ms | 5 ms, 6 ms |
+| Earth 8K + the launch site | 4 ms, 5 ms | 5 ms, 8 ms | 5 ms, 6 ms |
 
-**The pictures cost nothing the procedural planet did not**: a texture fetch is cheaper than the noise the procedural surface evaluates (so the viewer is a little faster with imagery), and the sky pass remains the cost. What they cost is **GPU memory and load time**: the most detailed choice holds about 400 MB of textures (8K day, night and two patches), which a laptop with a shared GPU may not like, and decoding the JPEGs takes a moment at the first choice (**not measured**). To the eye (the comparison was made at 350 km, 45° from the vertical): the procedural planet is a green plain with clouds, plainly made up; the 4K globe is right at orbital heights and soft below 300 km; the 8K globe is visibly sharper at the coasts; the site pictures are the difference between a map and a place from a few hundred kilometres down (in the 27 m picture at 15 km: a runway, the roads, the marsh channels and the edge of each field). **The recommendation is "Earth 8K + the launch site" where the GPU has the memory, "Earth 4K" where it has not**, and the viewer's default, *best there is*, takes the first. **Not measured**: the view from the pad (the benchmark did not report in the ground-level view: a bug of the benchmark or the page that has not been found), a GPU other than the development one, and any browser other than Firefox.
+**The pictures cost nothing the procedural planet did not**: a texture fetch is cheaper than the noise the procedural surface evaluates (so the viewer is a little faster with imagery), and the sky pass remains the cost. What they cost is **GPU memory and load time**: the most detailed choice holds about 400 MB of textures (8K day, night and two patches), which a laptop with a shared GPU may not like, and the pictures have to be fetched and decoded at the first choice: **50 to 70 ms for each choice on this machine** (from the server on the same machine; the benchmark polls every 50 ms, so that is an upper bound with a floor of 50), after which the first frames draw them. **Not measured**: the upload to the GPU as a cost of its own (it happens in the frame the picture first appears in, which the benchmark does not isolate), and the fetch over a real network. To the eye (the comparison was made at 350 km, 45° from the vertical): the procedural planet is a green plain with clouds, plainly made up; the 4K globe is right at orbital heights and soft below 300 km; the 8K globe is visibly sharper at the coasts; the site pictures are the difference between a map and a place from a few hundred kilometres down (in the 27 m picture at 15 km: a runway, the roads, the marsh channels and the edge of each field). **The recommendation is "Earth 8K + the launch site" where the GPU has the memory, "Earth 4K" where it has not**, and the viewer's default, *best there is*, takes the first. **Not measured**: a GPU other than the development one, and any browser other than Firefox. (A first attempt at the pad view reported nothing; it was the run, not the page: the same benchmark, rerun alone, reports in every view.)
 
 ## 13. Cost, and what has not been measured
 

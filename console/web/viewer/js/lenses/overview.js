@@ -100,6 +100,7 @@ export default {
       S.evCount = app.events.length;
       S.events.replaceChildren(...app.events.slice(-12).reverse().map((e) => h('li', { class: e.level }, h('span', { class: 'mono' }, fmt.t(e.t)), ' ', e.text)));
     }
+    if (S.imgNote) setText(S.imgNote, app.world.imagery.describe());           // what is on the planet changes after the pictures have loaded, which is after this lens mounted
     for (const c of Object.values(S.charts)) c.draw(app.data.hist);
   },
   unmount() { this.s = null; },
