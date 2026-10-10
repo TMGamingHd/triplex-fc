@@ -719,6 +719,19 @@ class Vehicle6 {
     return tmp.angular_accel_with(c);
   }
 
+  // The centre of gravity of stage `s` alone with `prop_kg` of propellant, from its own aft end (for the design of the landing: where the pins are against where the centre of gravity is).
+  [[nodiscard]] double stage_cg_from_aft(std::size_t s, double prop_kg) const {
+    Vehicle6 tmp = *this;
+    for (std::size_t k = 0; k < tmp.g_.stages.size(); ++k) {
+      tmp.active_[k] = k == s;
+    }
+    tmp.payload_active_.fill(false);
+    tmp.s_.prop = std::array<double, kMaxStages>{};
+    tmp.s_.prop[s] = std::clamp(prop_kg, 0.0, tmp.capacity(s));
+    tmp.refresh_fixed();
+    return tmp.mass_props_state(tmp.s_, -1).x_cg - tmp.g_.stages[s].x_start;
+  }
+
   // Put the vehicle at an attitude and rate (for the design run that forces the attitude to the guidance's, and for tests).
   void set_attitude(const Q4& q, const V3& w) {
     s_.q = normalized(q);
@@ -1248,8 +1261,8 @@ class Vehicle6 {
   void add_surface_loads(Loads& l, const State& s, const Air& air, const V3& vrel, const MassProps& mp) const {
     for (std::size_t i = 0; i < g_.surfaces.size(); ++i) {
       const SurfaceSpec& sf = g_.surfaces[i];
-      if (!active_[static_cast<std::size_t>(sf.stage)]) {
-        continue;
+      if (!active_[static_cast<std::size_t>(sf.stage)] || (!surf_deployed_[i] && sf.kind == SurfaceKind::GridFin)) {
+        continue;   // (a grid fin folded against the skin does nothing)
       }
       const V3 pt = surface_point(sf, surf_pos_[i]);
       const V3 rc{pt.x - mp.x_cg, pt.y, pt.z};
@@ -1661,6 +1674,20 @@ class Vehicle6 {
     }
   }
 
+  // The fraction of a stage's main engines' rated thrust that is running now.
+  [[nodiscard]] double stage_power(std::size_t st) const {
+    double running = 0.0;
+    double rated = 0.0;
+    for (std::size_t e = 0; e < g_.engines.size(); ++e) {
+      const EngineSpec& en = g_.engines[e];
+      if (en.control == Control::None && static_cast<std::size_t>(en.stage) == st) {
+        running += frac_[e] * en.thrust_vac;
+        rated += en.thrust_vac;
+      }
+    }
+    return rated > 0.0 ? running / rated : 0.0;
+  }
+
   // The fraction of the main engines' rated thrust that is running (the plume fills the wake and takes drag off the base).
   [[nodiscard]] double power_fraction() const {
     double running = 0.0;
@@ -1778,11 +1805,14 @@ class Vehicle6 {
         frac_[e] = 0.0;
         continue;
       }
-      if (g_.stages[st].guided) {
+      const bool guided = g_.stages[st].guided;
+      if (guided && en.control == Control::None) {
         update_guided_engine(e, h);
         continue;
       }
-      const bool lit = t_ign_[st] >= 0.0 && t_ >= t_ign_[st] + en.start_offset_s && s_.prop[st] > kEmptyProp && !failed_[e] && (en.cutoff_time_s < 0.0 || t_ < en.cutoff_time_s);
+      // (a thruster of a stage the computers drive needs only propellant in the stage: it works before the main engines have ever been lit)
+      const bool lit = guided ? (s_.prop[st] > kEmptyProp && !failed_[e])
+                              : (t_ign_[st] >= 0.0 && t_ >= t_ign_[st] + en.start_offset_s && s_.prop[st] > kEmptyProp && !failed_[e] && (en.cutoff_time_s < 0.0 || t_ < en.cutoff_time_s));
       double duty = 1.0;  // a thruster fires in proportion to the command that asks for it
       switch (en.control) {
         case Control::None:
@@ -1806,7 +1836,10 @@ class Vehicle6 {
           duty = std::clamp(-ctrl_.roll_deg / en.full_cmd_deg, 0.0, 1.0);
           break;
       }
-      const double cmd = lit ? throttle_of(g_.stages[st], t_ - t_ign_[st]) * duty : 0.0;
+      if (guided && duty > 0.0 && (en.control == Control::PitchPlus || en.control == Control::PitchMinus || en.control == Control::YawPlus || en.control == Control::YawMinus) && stage_power(st) > 0.05) {
+        duty = 0.0;   // the gimbal steers while the main engines burn: the pitch and yaw thrusters are inhibited then (the roll ones are not: the gimbal has no roll)
+      }
+      const double cmd = lit ? (guided ? duty : throttle_of(g_.stages[st], t_ - t_ign_[st]) * duty) : 0.0;
       const double tau = cmd > frac_[e] ? en.rise_s : en.tail_s;
       frac_[e] = (tau > 0.0 && failed_[e] == false) ? frac_[e] + ((cmd - frac_[e]) * (1.0 - std::exp(-h / tau))) : cmd;
     }

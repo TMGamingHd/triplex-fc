@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Aerodynamic control surfaces and parachutes (host only). See docs/design/AERODYNAMICS.md section 9.
 //
-// A surface is a flat plate (a flap) or a lattice that acts as one (a grid fin) on a hinge. Deflected, it turns the air that meets it and the force it feels, at its own place on the vehicle, is the
+// A surface is a flat plate (a flap) or a lattice that acts as one (a grid fin) on a hinge. A grid fin is a plate in the plane of the axis and the radius (chord along the axis, span along the radius), hinged on a shaft along the radius, whose
+// webs are turned toward the stream by the deflection. Deflected, it turns the air that meets it and the force it feels, at its own place on the vehicle, is the
 // vehicle's control: the ship of a Starship-class stack steers through the atmosphere on its four flaps, the booster on its grid fins, a rocket with canards on those. The force is that of a plate in
 // a stream:
 //   * a normal force on the face that meets the air: the linear lift of the planform at small angles and the cross-flow of a flat plate at large ones, C_n(alpha) = CNalpha sin(alpha) cos(alpha) + Cd90 sin^2(alpha),
@@ -94,10 +95,14 @@ inline SurfaceFrame surface_frame(const SurfaceSpec& s, double deflection_deg) {
   return f;
 }
 
-// Where the surface's load acts: the middle of its chord from the hinge, at its radius from the axis.
+// Where the surface's load acts: the middle of a flap's chord from its hinge; the middle of a grid fin's radial span (its shaft is at the middle of its length along the axis).
 inline V3 surface_point(const SurfaceSpec& s, double deflection_deg) {
-  const SurfaceFrame f = surface_frame(s, deflection_deg);
   const double phi = s.azimuth_deg * kDeg2Rad;
+  if (s.kind == SurfaceKind::GridFin) {
+    const double rr = s.radius + (0.5 * s.span);
+    return V3{s.x_hinge, rr * std::cos(phi), rr * std::sin(phi)};
+  }
+  const SurfaceFrame f = surface_frame(s, deflection_deg);
   const V3 hinge{s.x_hinge, s.radius * std::cos(phi), s.radius * std::sin(phi)};
   return hinge + (f.chord * (0.5 * s.chord));
 }

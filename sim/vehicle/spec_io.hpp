@@ -15,6 +15,7 @@
 
 #include "design.hpp"
 #include "json.hpp"
+#include "mission_spec.hpp"
 #include "vehicle6.hpp"
 
 namespace sim {
@@ -26,6 +27,7 @@ struct VehicleFile {
   Params params;
   Scenario scenario;
   Plan plan;
+  MissionSpec mission;   // the mission its computers fly (absent: the pitch program and gain tables of `plan`)
 };
 
 namespace detail {
@@ -509,6 +511,201 @@ inline void read_plan(const Json& j, const std::string& path, Plan& plan, std::v
   o.finish();
 }
 
+
+// The mission of the computers: phases, mixers, the tower, the design settings (docs/design/VEHICLE_SPEC.md section 9).
+inline bool read_int_list(const Json& j, const std::string& key, std::vector<int>& out, std::vector<std::string>& errors, const std::string& path) {
+  const Json* v = nullptr;
+  for (const auto& f : j.fields) {
+    if (f.first == key) {
+      v = &f.second;
+    }
+  }
+  if (v == nullptr) {
+    return false;
+  }
+  if (v->type != Json::Type::Array) {
+    errors.push_back(path + "." + key + ": expected a list of whole numbers");
+    return false;
+  }
+  out.clear();
+  for (const Json& it : v->items) {
+    if (it.type != Json::Type::Number || it.number != std::floor(it.number)) {
+      errors.push_back(path + "." + key + ": expected whole numbers");
+      return false;
+    }
+    out.push_back(static_cast<int>(it.number));
+  }
+  return true;
+}
+
+inline void read_phase(const Json& j, const std::string& path, PhaseSpec& ph, std::vector<std::string>& errors) {
+  ObjectReader o(j, path, errors);
+  o.str("name", ph.name);
+  o.str("kind", ph.kind);
+  o.str("hold", ph.hold);
+  if (const Json* e = o.get("end")) {
+    ObjectReader er(*e, child(path, "end"), errors);
+    static const char* const kKeys[] = {"time_s", "speed_ms", "apoapsis_after_s", "altitude_below_m", "altitude_above_m", "mass_below_kg", "aligned_deg"};
+    for (const char* k : kKeys) {
+      double v = 0.0;
+      if (er.num(k, v)) {
+        ph.end_kind = k;
+        ph.end_value = v;
+      }
+    }
+    bool flag = false;
+    if (er.flag("cutoff", flag) && flag) {
+      ph.end_kind = "cutoff";
+    }
+    if (er.flag("touchdown", flag) && flag) {
+      ph.end_kind = "touchdown";
+    }
+    double ign = 0.0;
+    if (er.num("ignition_below_m", ign)) {
+      ph.end_kind = "ignition";
+      ph.end_value = ign;
+    }
+    er.finish();
+  }
+  read_int_list(j, "groups", ph.groups, errors, path);
+  (void)o.get("groups");
+  std::vector<const Json*> ev;
+  if (o.list("events", ev)) {
+    for (const Json* x : ev) {
+      if (x->type == Json::Type::String) {
+        ph.events.push_back(x->text);
+      } else {
+        errors.push_back(child(path, "events") + ": expected a list of names");
+      }
+    }
+  }
+  o.integer("mixer", ph.mixer);
+  o.num("throttle", ph.throttle);
+  o.pairs("throttle_track", ph.throttle_track);
+  o.pairs("program", ph.program);
+  o.num("slew_dps", ph.slew_dps);
+  o.num("mass_set_kg", ph.mass_set_kg);
+  o.vec3("fixed", ph.fixed);
+  if (const Json* t = o.get("target")) {
+    ObjectReader tr(*t, child(path, "target"), errors);
+    tr.num("radius_m", ph.target_radius_m);
+    tr.num("speed_ms", ph.target_speed_ms);
+    tr.num("gamma_deg", ph.target_gamma_deg);
+    tr.num("circular_km", ph.circular_km);
+    tr.num("apogee_km", ph.apogee_km);
+    tr.num("perigee_km", ph.perigee_km);
+    tr.num("cutoff_km", ph.cutoff_km);
+    tr.finish();
+  }
+  o.num("burnout_mass_kg", ph.burnout_mass_kg);
+  o.num("bias_m", ph.bias_m);
+  o.num("reserve_mass_kg", ph.reserve_mass_kg);
+  o.num("pitch_up_deg", ph.pitch_up_deg);
+  o.num("alpha_max_deg", ph.alpha_max_deg);
+  o.num("gain_deg_per_km", ph.gain_deg_per_km);
+  o.num("alpha_brake_deg", ph.alpha_brake_deg);
+  o.num("gate_speed_ms", ph.gate_speed_ms);
+  o.num("gate_height_m", ph.gate_height_m);
+  o.num("brake_max_deg", ph.brake_max_deg);
+  o.num("lift_area_per_deg_m2", ph.lift_area_per_deg_m2);
+  if (const Json* lg = o.get("landing_groups")) {
+    ObjectReader lr(*lg, child(path, "landing_groups"), errors);
+    read_int_list(*lg, "one", ph.landing_groups[0], errors, child(path, "landing_groups"));
+    read_int_list(*lg, "two", ph.landing_groups[1], errors, child(path, "landing_groups"));
+    read_int_list(*lg, "three", ph.landing_groups[2], errors, child(path, "landing_groups"));
+    read_int_list(*lg, "many", ph.landing_groups[3], errors, child(path, "landing_groups"));
+    (void)lr.get("many");
+    (void)lr.get("one");
+    (void)lr.get("two");
+    (void)lr.get("three");
+    lr.finish();
+  }
+  o.num("drogue_altitude_m", ph.drogue_altitude_m);
+  o.num("main_altitude_m", ph.main_altitude_m);
+  o.finish();
+}
+
+inline void read_mission(const Json& j, MissionSpec& m, std::vector<std::string>& errors) {
+  ObjectReader o(j, "mission", errors);
+  m.present = true;
+  if (const Json* s = o.get("site")) {
+    ObjectReader sr(*s, "mission.site", errors);
+    sr.num("offset_y_m", m.site_offset_y_m);
+    sr.num("offset_z_m", m.site_offset_z_m);
+    sr.num("arm_height_m", m.arm_height_m);
+    sr.num("capture_radius_m", m.capture_radius_m);
+    sr.finish();
+  }
+  o.num("ignition_margin", m.ignition_margin);
+  if (const Json* l = o.get("landing")) {
+    ObjectReader lr(*l, "mission.landing", errors);
+    lr.num("sink_ms", m.sink_ms);
+    lr.num("tilt_max_deg", m.tilt_max_deg);
+    lr.num("tilt_final_deg", m.tilt_final_deg);
+    lr.num("final_height_m", m.final_height_m);
+    lr.num("engine_thrust_n", m.engine_thrust_n);
+    lr.num("engine_min_throttle", m.engine_min_throttle);
+    lr.num("decel_plan_ms2", m.decel_plan_ms2);
+    lr.num("propellant_kg", m.landing_propellant_kg);
+    lr.finish();
+  }
+  if (const Json* a = o.get("air")) {
+    ObjectReader ar(*a, "mission.air", errors);
+    ar.num("ballistic_coefficient_kg_m2", m.ballistic_coefficient);
+    ar.num("scale_height_m", m.scale_height_m);
+    ar.finish();
+  }
+  if (const Json* l = o.get("limits")) {
+    ObjectReader lr(*l, "mission.limits", errors);
+    lr.num("command_deg", m.command_limit_deg);
+    lr.num("integrator_deg", m.integrator_limit_deg);
+    lr.num("slew_deg_per_frame", m.slew_deg_per_frame);
+    lr.finish();
+  }
+  if (const Json* d = o.get("design")) {
+    ObjectReader dr(*d, "mission.design", errors);
+    dr.num("wn", m.wn);
+    dr.num("zeta", m.zeta);
+    dr.num("ki_over_kp", m.ki_over_kp);
+    dr.num("kp_max", m.kp_max);
+    dr.num("b_min", m.b_min);
+    dr.num("sample_s", m.sample_s);
+    dr.num("max_time_s", m.max_time_s);
+    dr.num("tail_s", m.tail_s);
+    dr.finish();
+  }
+  std::vector<const Json*> list;
+  if (o.list("mixers", list)) {
+    for (std::size_t i = 0; i < list.size(); ++i) {
+      ObjectReader mr(*list[i], item("mission", "mixers", i), errors);
+      MixerSpec mx;
+      mr.str("name", mx.name);
+      mr.flag("gimbal", mx.gimbal);
+      mr.flag("roll_thrusters", mx.roll_thrusters);
+      read_int_list(*list[i], "surfaces", mx.surfaces, errors, item("mission", "mixers", i));
+      (void)mr.get("surfaces");
+      mr.finish();
+      m.mixers.push_back(mx);
+    }
+  }
+  const auto plan = [&](const char* key, std::vector<PhaseSpec>& out) {
+    std::vector<const Json*> ph;
+    if (o.list(key, ph)) {
+      for (std::size_t i = 0; i < ph.size(); ++i) {
+        PhaseSpec p;
+        read_phase(*ph[i], item("mission", key, i), p, errors);
+        out.push_back(p);
+      }
+    }
+  };
+  plan("main", m.main);
+  static const char* const kStageKeys[] = {"stage0", "stage1", "stage2", "stage3", "stage4", "stage5"};
+  for (std::size_t s = 0; s < kMaxStages; ++s) {
+    plan(kStageKeys[s], m.stage[s]);
+  }
+  o.finish();
+}
+
 }  // namespace detail
 
 // Read a vehicle from the text of a file. True if it is a usable description; otherwise `errors` says what is wrong, each with its place.
@@ -803,6 +1000,9 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
   }
   if (const Json* v = top.get("design")) {
     detail::read_plan(*v, "design", out.plan, errors);
+  }
+  if (const Json* v = top.get("mission")) {
+    detail::read_mission(*v, out.mission, errors);
   }
   top.finish();
   if (errors.size() == before) {

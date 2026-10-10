@@ -18,6 +18,7 @@
 #include "avionics.hpp"
 #include "vehicle6.hpp"
 #include "tfc/mission.hpp"
+#include "tfc/peg.hpp"
 
 namespace sim {
 
@@ -30,14 +31,16 @@ struct BodyLog {
   double mass = 0.0;
 };
 
-// The stiffness and effectiveness of the three axes at a point of a design run: angular acceleration per radian of attitude (a) and per degree of demand (b), roll, yaw, pitch.
+// What a design run measures at a point of the flight: the aerodynamic stiffness of the three axes and the effect of one degree of each effector on the angular acceleration (rad/s^2, body axes x y z = roll, yaw,
+// pitch): the gimbal in the pitch plane, the gimbal in the yaw plane, the roll thrusters, and each of the four surface channels.
 struct AxisProbe {
   double t = 0.0;               // s since T-zero
   int body = 0;
+  int stage = -1;               // -1: the main body, else the stage whose computers these are
   uint8_t phase = 0U;
   double t_in_phase = 0.0;
-  std::array<double, 3> a{};    // 1/s^2
-  std::array<double, 3> b{};    // rad/s^2 per degree of demand
+  std::array<double, 3> a{};    // 1/s^2 per radian of attitude: roll, yaw, pitch
+  std::array<std::array<double, 3>, 7> col{};   // [0] gimbal pitch, [1] gimbal yaw, [2] roll thrusters, [3..6] surface channels 0..3
 };
 
 struct WorldConfig {
@@ -65,6 +68,7 @@ class MissionWorld {
     uint32_t born = 0U;                   // the world frame it began on
     bool control_off = false;
     uint8_t last_phase = 0U;
+    uint32_t seeded = 0U;                 // the phases whose PEG solution has been recorded
     Body(const Params& p, const Scenario& s) : veh(p, s) {}
     Body(Vehicle6&& v) : veh(std::move(v)) {}
   };
@@ -112,12 +116,33 @@ class MissionWorld {
   void set_main_controls(const Controls& c) { bodies_[0]->ctl = c; }
   [[nodiscard]] const WorldConfig& config() const { return cfg_; }
 
+  // What a design run learns: the burn solution of each PEG phase when it began, by body (-1: main, else the stage) and phase; and the mass each stage had when it was let go.
+  struct Seed {
+    int stage = -1;
+    uint8_t phase = 0U;
+    std::array<double, tfc::peg::kUnknowns> sol{};
+  };
+  [[nodiscard]] const std::vector<Seed>& seeds() const { return seeds_; }
+  [[nodiscard]] double spawn_mass(std::size_t stage) const { return stage < kMaxStages ? spawn_mass_[stage] : 0.0; }
+  // Has every body reached the last phase of its mission (or ended on the ground)?
+  [[nodiscard]] bool finished() const {
+    for (const std::unique_ptr<Body>& b : bodies_) {
+      const bool ended = b->veh.landed() || b->veh.caught() || b->veh.crashed();
+      const bool last = b->tables == nullptr || (b->ideal != nullptr ? b->ideal->phase() + 1U >= b->tables->n_phases : false);
+      if (!ended && !last) {
+        return false;
+      }
+    }
+    return true;
+  }
+
  private:
   void attach(Body& b) {
     if (cfg_.ideal) {
       if (b.tables != nullptr) {
         b.ideal = std::make_unique<tfc::gnc::Mission>();
         b.ideal->configure(b.tables);
+        b.ideal->set_design_mode(true);
       }
     } else if (b.tables != nullptr && !(cfg_.main_external && b.stage < 0)) {
       AvionicsConfig ac = cfg_.avionics;
@@ -177,6 +202,10 @@ class MissionWorld {
     }
     const tfc::gnc::Output mo = b.ideal->step(in);
     b.last_phase = mo.phase;
+    if (b.tables->phase[mo.phase].kind == tfc::gnc::kind::kPeg && (b.seeded & (1U << mo.phase)) == 0U) {
+      b.seeded |= 1U << mo.phase;
+      seeds_.push_back(Seed{b.stage, mo.phase, b.ideal->peg_solution()});
+    }
     const tfc::gnc::Mixer& mx = b.tables->mixer[mo.mixer < tfc::gnc::kMaxMixers ? mo.mixer : 0U];
     Controls c;
     c.throttle = static_cast<double>(mo.throttle);
@@ -188,44 +217,40 @@ class MissionWorld {
     b.ctl = c;
     b.veh.set_attitude(Q4{mo.q_ref.w, mo.q_ref.x, mo.q_ref.y, mo.q_ref.z}, V3{mo.w_ref.x, mo.w_ref.y, mo.w_ref.z});
     if (probe_ && cfg_.probe_every != 0U && frame_ % cfg_.probe_every == 0U) {
-      emit_probe(b, mo, mx, ff);
+      emit_probe(b, mo, ff);
     }
   }
 
-  void emit_probe(Body& b, const tfc::gnc::Output& mo, const tfc::gnc::Mixer& mx, uint32_t ff) {
-    constexpr double kStep = 0.5;   // degrees of demand, and half a degree of attitude, for the differences
+  void emit_probe(Body& b, const tfc::gnc::Output& mo, uint32_t ff) {
+    constexpr double kStep = 0.5;   // degrees of an effector, and of attitude, for the differences
     AxisProbe pr;
     pr.t = static_cast<double>(ff) * 0.01;
     pr.body = b.stage < 0 ? 0 : 1;
+    pr.stage = b.stage;
     pr.phase = mo.phase;
     pr.t_in_phase = b.ideal->phase_time_s();
     const V3 base = b.veh.angular_accel_with(b.ctl);
+    const auto diff = [&base, kStep](const V3& v) { return std::array<double, 3>{(v.x - base.x) / kStep, (v.y - base.y) / kStep, (v.z - base.z) / kStep}; };
+    Controls c = b.ctl;
+    c.pitch_deg += kStep;
+    pr.col[0] = diff(b.veh.angular_accel_with(c));
+    c = b.ctl;
+    c.yaw_deg += kStep;
+    pr.col[1] = diff(b.veh.angular_accel_with(c));
+    c = b.ctl;
+    c.roll_deg += kStep;
+    pr.col[2] = diff(b.veh.angular_accel_with(c));
+    for (std::size_t k = 0; k < kSurfaceChannels; ++k) {
+      c = b.ctl;
+      c.surface_deg[k] += kStep;
+      pr.col[3U + k] = diff(b.veh.angular_accel_with(c));
+    }
     for (int axis = 0; axis < 3; ++axis) {   // 0 roll, 1 yaw, 2 pitch
-      Controls c = b.ctl;
-      apply_demand(c, mx, axis, kStep);
-      const V3 up = b.veh.angular_accel_with(c);
-      const double db = axis == 0 ? up.x - base.x : (axis == 1 ? up.y - base.y : up.z - base.z);
-      pr.b[static_cast<std::size_t>(axis)] = db / kStep;
       const V3 turned = b.veh.angular_accel_turned(b.ctl, axis, kStep * kDeg2Rad);
       const double da = axis == 0 ? turned.x - base.x : (axis == 1 ? turned.y - base.y : turned.z - base.z);
       pr.a[static_cast<std::size_t>(axis)] = da / (kStep * kDeg2Rad);
     }
     probe_(pr);
-  }
-
-  // The commands that `deg` degrees of demand on an axis (0 roll, 1 yaw, 2 pitch) makes, through the phase's mixer, added to those already in `c`.
-  static void apply_demand(Controls& c, const tfc::gnc::Mixer& mx, int axis, double deg) {
-    if (axis == 0) {
-      c.roll_deg += static_cast<double>(mx.roll) * deg;
-    } else if (axis == 1) {
-      c.yaw_deg += static_cast<double>(mx.gimbal_yaw) * deg;
-    } else {
-      c.pitch_deg += static_cast<double>(mx.gimbal_pitch) * deg;
-    }
-    for (unsigned k = 0; k < 4U; ++k) {
-      const float gain = axis == 0 ? mx.from_roll[k] : (axis == 1 ? mx.from_yaw[k] : mx.from_pitch[k]);
-      c.surface_deg[k] += static_cast<double>(gain) * deg;
-    }
   }
 
   void spawn(Body& parent, const Detached& d) {
@@ -236,6 +261,12 @@ class MissionWorld {
     child->tables = d.stage >= 0 && static_cast<std::size_t>(d.stage) < kMaxStages ? cfg_.stage_tables[static_cast<std::size_t>(d.stage)] : nullptr;
     child->veh.step(parent.veh.time() - d.t, Controls{});   // bring it to the instant the parent has reached
     attach(*child);
+    if (d.stage >= 0 && static_cast<std::size_t>(d.stage) < kMaxStages) {
+      spawn_mass_[static_cast<std::size_t>(d.stage)] = child->veh.mass();
+    }
+    if (child->ideal != nullptr) {
+      child->ideal->set_mass(child->veh.mass());
+    }
     if (child->av != nullptr) {
       child->av->align_to(child->veh);
       child->av->set_pad(false);
@@ -248,6 +279,8 @@ class MissionWorld {
   uint32_t frame_ = 0U;
   uint32_t t0_ = 0U;
   bool clamped_ = false;
+  std::vector<Seed> seeds_;
+  std::array<double, kMaxStages> spawn_mass_{};
   std::function<void(const AxisProbe&)> probe_;
   std::function<void(const BodyLog&)> log_;
   uint32_t log_every_ = 0U;

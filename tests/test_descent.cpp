@@ -117,7 +117,6 @@ Landing land(Vec3 offset_h, double h0, double v_down, Vec3 v_h, double mass) {
   tfc::descent::Engines eng;
   eng.thrust_each = 2.45e6;
   eng.min_throttle = 0.4;
-  eng.max_count = 3U;
   tfc::descent::PoweredDescent pd;
   Landing L;
   L.mass = mass;
@@ -184,25 +183,24 @@ TFC_TEST(descent_the_burn_waits_for_the_stopping_height_and_the_engine_count_fol
   tgt.point = Vec3{g.radius + 60.0, 0.0, 0.0};
   tfc::descent::Engines eng;
   eng.thrust_each = 2.45e6;
-  eng.max_count = 3U;
   // high up and fast: not yet, and the attitude to be in is against the velocity
   tfc::descent::PoweredDescent pd;
   const Vec3 r_high = tgt.point + Vec3{20000.0, 0.0, 0.0};
   const tfc::descent::DescentOut early = pd.update(r_high, Vec3{-300.0, 0.0, 0.0}, 290000.0, tgt, eng, g, 1.15, false);
   CHECK(!early.ignite && early.height > 19000.0 && early.direction.x > 0.99);
   // at the stopping height: go
-  const double h_stop = tfc::descent::PoweredDescent::stopping_height(300.0, 290000.0, eng, tfc::dm::norm(g.at(r_high)), tgt.sink_ms);
+  const double h_stop = tfc::descent::PoweredDescent::stopping_height(300.0, tgt.decel_plan, tgt.sink_ms);
   CHECK(h_stop > 1500.0 && h_stop < 4000.0);
   const tfc::descent::DescentOut now = pd.update(tgt.point + Vec3{h_stop * 1.1, 0.0, 0.0}, Vec3{-300.0, 0.0, 0.0}, 290000.0, tgt, eng, g, 1.15, false);
   CHECK(now.ignite && now.engines == 3U && now.throttle > 0.9);
   // slow and low: one engine at a throttle that holds it, and not more than the three
   tfc::descent::PoweredDescent pd2;
   const tfc::descent::DescentOut slow = pd2.update(tgt.point + Vec3{5.0, 0.0, 0.0}, Vec3{-1.0, 0.0, 0.0}, 150000.0, tgt, eng, g, 1.15, true);
-  CHECK(slow.engines == 1U && slow.throttle >= eng.min_throttle - 1e-12 && slow.throttle <= 1.0);
+  CHECK(slow.engines == 1U && slow.option == 0U && slow.throttle >= eng.min_throttle - 1e-12 && slow.throttle <= 1.0);
   pd2.reset();
-  CHECK(pd2.engines() == 0U);
-  // a vehicle the engines cannot hold up cannot be stopped: the stopping height is "infinite"
-  CHECK(tfc::descent::PoweredDescent::stopping_height(300.0, 5.0e6, eng, 9.8, 0.5) > 1.0e8);
+  CHECK(!pd2.running());
+  // a gentler plan stops later: the stopping height is inversely proportional to the deceleration planned
+  CHECK(std::fabs(tfc::descent::PoweredDescent::stopping_height(300.0, 7.5, 0.5) - (2.0 * tfc::descent::PoweredDescent::stopping_height(300.0, 15.0, 0.5))) < 1e-9);
   // the horizontal error pulls the thrust toward the point, within the tilt limit
   tfc::descent::PoweredDescent pd3;
   const tfc::descent::DescentOut off = pd3.update(tgt.point + Vec3{600.0, 500.0, 0.0}, Vec3{-80.0, 0.0, 0.0}, 290000.0, tgt, eng, g, 1.15, true);

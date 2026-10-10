@@ -59,6 +59,7 @@ constexpr uint8_t kCutoff = 6U;         // the guidance in the phase says the bu
 constexpr uint8_t kMassBelow = 7U;      // the estimated mass has fallen to end_value kg
 constexpr uint8_t kAligned = 8U;        // the attitude is within end_value degrees of the reference (and at least a second in the phase)
 constexpr uint8_t kTouchdown = 9U;      // at or below the target point's height, or the burn has run out
+constexpr uint8_t kIgnition = 10U;      // the landing burn is due: the height above the target point is under end_value metres and has come down to the stopping height at the planned deceleration
 }  // namespace end
 
 // The attitude of a coast.
@@ -201,6 +202,7 @@ class Mission {
     tab_ = t;
     mass_ = t != nullptr ? t->mass0 : 1.0;
   }
+  void set_mass(double m) noexcept { mass_ = m; }   // (a stage's computers know the stage's mass when it is let go)
   [[nodiscard]] bool configured() const noexcept { return tab_ != nullptr && tab_->n_phases > 0U; }
 
   // T-zero: the first phase begins with the attitude the vehicle has.
@@ -215,6 +217,11 @@ class Mission {
   }
 
   [[nodiscard]] Output step(const Inputs& in) noexcept;
+
+  // For the design of the mission on the host: with this on, a PEG phase that has no seed solves its burn from scratch at its first frame (thousands of predictions at once), so that the solution can be recorded and
+  // given to the flight computers as the seed (`peg_solution`). It is never on in flight.
+  void set_design_mode(bool on) noexcept { design_ = on; }
+  [[nodiscard]] std::array<double, peg::kUnknowns> peg_solution() const noexcept { return peg_.solution(); }
 
   [[nodiscard]] bool started() const noexcept { return started_; }
   [[nodiscard]] uint8_t phase() const noexcept { return phase_; }
@@ -278,6 +285,7 @@ class Mission {
   peg::Peg peg_{};
   peg::Output peg_out_{};
   bool peg_busy_ = false;
+  bool design_ = false;
   descent::PoweredDescent descent_{};
   descent::DescentOut land_out_{};
   Vec3 miss_{};
@@ -356,6 +364,13 @@ inline bool Mission::ended(const Inputs& in) const noexcept {
   if (p.end == end::kAligned) {
     return t >= 1.0 && dm::norm(att::error_vector(in.q, q_target_)) * dm::kRadToDeg <= ev;
   }
+  if (p.end == end::kIgnition) {
+    const Vec3 pt = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0}) * (dm::norm(tab_->site) + tab_->landing_height);
+    const Vec3 upt = dm::unit(pt, Vec3{1.0, 0.0, 0.0});
+    const double h = dm::dot(in.r - pt, upt);
+    const double v_down = dm::max_(-dm::dot(in.v, upt), 0.0);
+    return h <= ev && h <= descent::PoweredDescent::stopping_height(v_down, tab_->landing.decel_plan, tab_->landing.sink_ms) * tab_->ignition_margin + 1.0;
+  }
   if (p.end == end::kTouchdown) {
     const Vec3 pt = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0}) * (dm::norm(tab_->site) + tab_->landing_height);
     return dm::dot(in.r - pt, dm::unit(pt, Vec3{1.0, 0.0, 0.0})) <= 0.1;
@@ -418,7 +433,12 @@ inline void Mission::step_peg(const Inputs& in, Output& out) noexcept {
       burn.exhaust_speed = static_cast<double>(p.thrust) / dm::max_(static_cast<double>(p.mdot), 1.0e-9);
       burn.burn_time_max = dm::max_((mass_ - static_cast<double>(p.p[8])) / dm::max_(static_cast<double>(p.mdot) * static_cast<double>(p.throttle), 1.0e-9), 0.0);
       peg_.begin(in.r, in.v, tgt, burn);
-      peg_busy_ = true;
+      if (design_ && !peg_.started()) {
+        (void)peg_.solve(tab_->nav.gravity, 0.05, 100);
+        peg_out_ = peg_.output();
+      } else {
+        peg_busy_ = true;
+      }
     }
     if (peg_.work(tab_->nav.gravity)) {
       peg_busy_ = false;
@@ -438,9 +458,13 @@ inline void Mission::step_peg(const Inputs& in, Output& out) noexcept {
 }
 
 inline void Mission::step_coast(const Inputs& in, Output& out) noexcept {
-  reference_toward(hold_direction(ph(), in));
-  out.groups = 0U;
-  out.throttle = 0.0F;
+  const Phase& p = ph();
+  reference_toward(hold_direction(p, in));
+  if (p.groups == 0U) {
+    out.throttle = 0.0F;
+  } else {
+    flow_ = static_cast<double>(p.mdot) * static_cast<double>(p.throttle);   // (a burn at a held attitude: the engines of the hot stage running while the stages are still together)
+  }
 }
 
 inline void Mission::step_boostback(const Inputs& in, Output& out) noexcept {
@@ -461,6 +485,8 @@ inline void Mission::step_boostback(const Inputs& in, Output& out) noexcept {
         cutoff_ = true;
       } else {
         steer_ = dm::unit(m, steer_);
+        const double e = static_cast<double>(p.p[2]) * dm::kDegToRad;   // the thrust is lifted this far above the horizontal: a higher arc, a steeper and slower fall
+        steer_ = dm::unit((steer_ * dm::cos_(e)) + (up * dm::sin_(e)), steer_);
       }
     }
     if (mass_ <= static_cast<double>(p.p[1])) {
@@ -481,19 +507,36 @@ inline void Mission::step_glide(const Inputs& in, Output& out) noexcept {
   const Phase& p = ph();
   const Vec3 up = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0});
   const Vec3 vel = dm::unit(in.v, -up);
+  const Vec3 catch_pt = up * (dm::norm(tab_->site) + tab_->landing_height);
   if ((in_phase_ % kGlidePeriod) == 0U) {
-    const Vec3 catch_pt = up * (dm::norm(tab_->site) + tab_->landing_height);
     const descent::Impact pred = descent::descent_predict(in.r, in.v, tab_->nav.gravity, tab_->drag, dm::norm(catch_pt), 1.0, 600U);
     if (pred.valid) {
       miss_ = dm::perp(catch_pt - pred.point, up);
+      tof_ = pred.tof;
     }
   }
-  // tilt the nose toward the side the vehicle is to be pushed to, by an angle in proportion to the miss across its path, up to the limit
+  // Steer by lift, as a zero-effort miss: the angle of attack that, kept to the end of the fall, gives the sideways acceleration that cancels the miss across the path, a = 2 miss / t^2,
+  // from the lift per degree the air at this dynamic pressure gives (p[3] square metres per degree of angle of attack, times q over the mass); a steady angle toward the site (p[2]) adds drag.
   const Vec3 across = dm::perp(miss_, vel);
-  const double k = static_cast<double>(p.p[1]);
-  const double alpha = dm::clamp_(k * dm::norm(across), 0.0, static_cast<double>(p.p[0])) * dm::kDegToRad;
-  aoa_deg_ = alpha * dm::kRadToDeg;
-  const Vec3 side = dm::unit(across, Vec3{0.0, 1.0, 0.0});
+  const double speed = dm::norm(in.v);
+  const double alt = altitude(in);
+  const double rho = tab_->drag.rho0 * dm::exp_(-dm::max_(alt, 0.0) / tab_->drag.scale_height);
+  const double q = 0.5 * rho * speed * speed;
+  const double a_per_deg = dm::max_(q * static_cast<double>(p.p[3]) / mass_, 1.0e-3);   // m/s^2 per degree
+  const double t_go = dm::max_(tof_, 5.0);
+  const Vec3 a_need = across * (2.0 / (t_go * t_go));
+  // and the extra angle that slows the fall to the speed the air at this height should bring a falling body to (the speed at the gate scaled by the square root of the density ratio, as a terminal speed is):
+  // the tilt is backward against the horizontal motion, so the lift it makes takes speed out of the sideways motion too
+  const double rho_gate = tab_->drag.rho0 * dm::exp_(-static_cast<double>(p.p[5]) / tab_->drag.scale_height);
+  const double v_ref = static_cast<double>(p.p[4]) * dm::sqrt_(rho_gate / dm::max_(rho, 1.0e-9));
+  const double over = dm::clamp_((speed - v_ref) / dm::max_(v_ref, 1.0), 0.0, 1.0);
+  const Vec3 horiz = dm::perp(in.v, up);
+  const Vec3 back = dm::unit(dm::perp(-horiz, vel), Vec3{0.0, 1.0, 0.0});
+  const Vec3 want = (a_need / a_per_deg) + (back * (over * static_cast<double>(p.p[6])));   // degrees
+  const double alpha_deg = dm::min_(dm::norm(want), static_cast<double>(p.p[0]));
+  const double alpha = alpha_deg * dm::kDegToRad;
+  aoa_deg_ = alpha_deg;
+  const Vec3 side = dm::unit(want, back);
   const Vec3 axis = (-vel * dm::cos_(alpha)) + (side * dm::sin_(alpha));
   reference_toward(axis);
   out.groups = 0U;
@@ -514,10 +557,10 @@ inline void Mission::step_landing(const Inputs& in, Output& out) noexcept {
     out.throttle = 0.0F;
     return;
   }
-  const unsigned n = land_out_.engines < 1U ? 1U : (land_out_.engines > 3U ? 3U : land_out_.engines);
-  out.groups = static_cast<uint8_t>(p.p[n - 1U]);
+  const unsigned opt = land_out_.option < descent::kEngineOptions ? land_out_.option : 0U;
+  out.groups = static_cast<uint8_t>(p.p[opt]);
   out.throttle = static_cast<float>(land_out_.throttle);
-  flow_ = static_cast<double>(p.mdot) * static_cast<double>(n) * land_out_.throttle;
+  flow_ = static_cast<double>(p.mdot) * static_cast<double>(land_out_.engines) * land_out_.throttle;
 }
 
 inline void Mission::step_chute(const Inputs& in, Output& out) noexcept {

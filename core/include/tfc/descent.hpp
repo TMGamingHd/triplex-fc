@@ -12,6 +12,7 @@
 //
 // All arithmetic is + - * / and sqrt on doubles through dmath.hpp, with fixed-length loops. No heap, no exceptions, no RTTI.
 #pragma once
+#include <array>
 #include <cstdint>
 
 #include "tfc/dmath.hpp"
@@ -136,18 +137,24 @@ struct LandingTarget {
   double tilt_max_deg = 12.0;      // the most the thrust may lean from the vertical, far from the ground
   double tilt_final_deg = 2.5;     // ... and near the ground
   double final_height_m = 25.0;    // the height over which the limit comes down from the first to the second
+  double decel_plan = 15.0;        // m/s^2: the net deceleration (beyond holding up the weight) the burn is planned on: it is lit when the stopping distance at this deceleration reaches the height
 };
 
+// The engines the landing burn may use: the numbers of engines it may run (in increasing order), each engine's full thrust and the lowest throttle it holds. A burn starts with as many as it needs to stop in time and
+// drops to fewer as the thrust it asks for falls.
+constexpr unsigned kEngineOptions = 4U;
 struct Engines {
   double thrust_each = 2.2e6;      // N, one engine at full throttle (the running ones add up)
   double min_throttle = 0.4;
-  unsigned max_count = 3U;         // engines that may be used for the burn
+  std::array<unsigned, kEngineOptions> counts{1U, 2U, 3U, 3U};
+  unsigned options = 3U;           // how many of `counts` are in use
 };
 
 struct DescentOut {
   Vec3 direction{0.0, 0.0, 1.0};   // unit vector of the thrust the vehicle wants
   double throttle = 0.0;           // of the engines that are on (0 to 1)
   unsigned engines = 3U;           // how many to run
+  unsigned option = 0U;            // which of the options of `Engines` that is
   double accel_cmd = 0.0;          // m/s^2, the thrust acceleration asked for
   double height = 0.0;             // m above the target point
   double time_to_go = 0.0;
@@ -159,14 +166,10 @@ class PoweredDescent {
  public:
   PoweredDescent() noexcept = default;
 
-  // The stopping height: how far above the target point the vehicle must be at the latest to ignite and still stop, at the full thrust of `engines.max_count` engines at mass `mass`.
-  [[nodiscard]] static double stopping_height(double v_down, double mass, const Engines& eng, double g_local, double sink) noexcept {
-    const double a_net = (eng.thrust_each * static_cast<double>(eng.max_count) / mass) - g_local;
-    if (!(a_net > 0.1)) {
-      return 1.0e9;   // the engines cannot hold it up: it cannot be stopped
-    }
+  // The stopping height: how far above the target point the vehicle must be to be stopped at the arrival speed `sink` by the planned deceleration `decel` (m/s^2, beyond the weight).
+  [[nodiscard]] static double stopping_height(double v_down, double decel, double sink) noexcept {
     const double v2 = dm::max_((v_down * v_down) - (sink * sink), 0.0);
-    return v2 / (2.0 * a_net);
+    return v2 / (2.0 * dm::max_(decel, 0.1));
   }
 
   // One cycle. `ignition_margin` is the multiple of the stopping height at which to start (1.15 leaves a reserve for the start-up and the lateral correction).
@@ -181,7 +184,7 @@ class PoweredDescent {
     const double g_local = dm::norm(grav.at(r));
     const double v_down = dm::max_(-v_z, 0.0);
     out.height = h;
-    const double h_stop = stopping_height(v_down, mass, eng, g_local, tgt.sink_ms);
+    const double h_stop = stopping_height(v_down, tgt.decel_plan, tgt.sink_ms);
     out.ignite = burning || h <= (h_stop * ignition_margin) + 1.0;
     out.miss = e_h;
     if (!out.ignite) {
@@ -208,35 +211,36 @@ class PoweredDescent {
     const double a_mag = dm::norm(a_vec);
     out.accel_cmd = a_mag;
     out.direction = a_vec / a_mag;
-    // engines: the fewest that can deliver the thrust asked for at their lowest throttle... the most that can at their highest
+    // engines: the fewest that can deliver the thrust asked for at their highest throttle, held while the thrust asked for is not well under what the next fewer could give
     const double thrust = mass * a_mag;
-    unsigned n = 1U;
-    for (unsigned k = 1U; k <= eng.max_count; ++k) {
-      n = k;
-      if (thrust <= eng.thrust_each * static_cast<double>(k)) {
+    unsigned opt = eng.options > 0U ? eng.options - 1U : 0U;
+    for (unsigned k = 0; k < eng.options; ++k) {
+      if (thrust <= eng.thrust_each * static_cast<double>(eng.counts[k])) {
+        opt = k;
         break;
       }
     }
-    // with hysteresis: do not drop an engine until the thrust asked for is well under what one fewer can hold; do not hold one more than needed once the thrust is under its lowest
-    if (engines_ > 0U && engines_ <= eng.max_count) {
-      if (n < engines_ && thrust > 0.9 * eng.thrust_each * static_cast<double>(n)) {
-        n = engines_;
-      }
-      if (n > engines_ && thrust < 1.0 * eng.thrust_each * static_cast<double>(engines_)) {
-        n = engines_;
-      }
+    if (have_option_ && opt < option_ && thrust > 0.9 * eng.thrust_each * static_cast<double>(eng.counts[opt])) {
+      opt = option_;   // do not drop an engine until the thrust asked for is well under what the smaller number can hold
     }
-    engines_ = n;
-    out.engines = n;
-    out.throttle = dm::clamp_(thrust / (eng.thrust_each * static_cast<double>(n)), eng.min_throttle, 1.0);
+    if (have_option_ && opt > option_ && thrust < eng.thrust_each * static_cast<double>(eng.counts[option_])) {
+      opt = option_;   // and do not add one while the running ones can still give it
+    }
+    option_ = opt;
+    have_option_ = true;
+    out.option = opt;
+    out.engines = eng.counts[opt];
+    out.throttle = dm::clamp_(thrust / (eng.thrust_each * static_cast<double>(out.engines)), eng.min_throttle, 1.0);
     return out;
   }
 
-  void reset() noexcept { engines_ = 0U; }
-  [[nodiscard]] unsigned engines() const noexcept { return engines_; }
+  void reset() noexcept { have_option_ = false; }
+  [[nodiscard]] bool running() const noexcept { return have_option_; }
+  [[nodiscard]] unsigned option() const noexcept { return option_; }
 
  private:
-  unsigned engines_ = 0U;
+  unsigned option_ = 0U;
+  bool have_option_ = false;
 };
 
 }  // namespace tfc::descent
