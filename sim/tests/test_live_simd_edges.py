@@ -128,6 +128,43 @@ class SimdEdges(unittest.TestCase):
         finally:
             mon.close()
 
+    def test_a_long_flight_is_followed_a_starship_class_ascent_is_450_s_after_the_pad_and_the_countdown_and_a_number_beyond_the_limit_is_not(self):
+        """The limit on a SYNC frame number is 100,000 (1,000 s), no longer 30,000: a late simulator joins a flight 45,000 frames old at frame 60,000, and a number past the limit is ignored."""
+        self.proc.terminate()
+        self.proc.wait(timeout=5)
+        self.proc = subprocess.Popen([SIMD, "--iface", "vcan0", "--hold", "--quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.3)
+        mon = B.SocketCanBus("vcan0")
+        mon.set_filter([(P.ID_SIM_FLAGS, 0x7FF)])
+
+        def run(frame0, mission0, count):
+            got = None
+            for i in range(count):
+                k = frame0 + i
+                self.bus.send(0, P.pack_sync(k, k & 0xFF, mission0 + i))
+                time.sleep(0.002)
+                self.bus.send(0, P.pack_act_out(P.ActOut(state=1), k & 0xFF))
+                time.sleep(0.008)
+                f = mon.recv(0.0)
+                while f is not None:
+                    s = P.unpack_sim_flags(f)
+                    if s is not None:
+                        got = s.time_frames
+                    f = mon.recv(0.0)
+            return got
+        try:
+            self.assertIsNone(run(100_001, 1001 + 45000, 60), "a SYNC frame number past 100,000 is not a frame number of this run: ignored, the world does not move")
+            got = None
+            for start in range(0, 600, 60):               # the fast-forward to that age takes seconds in a debug build: keep sending until it answers
+                got = run(60_000 + start, 1001 + 45000 + start, 60)
+                if got is not None and got >= 45000:
+                    break
+            self.assertIsNotNone(got)
+            self.assertGreaterEqual(got, 45000)
+            self.assertLess(got, 46000)
+        finally:
+            mon.close()
+
     def test_without_acts_frames_the_simulator_holds_and_keeps_going(self):
         self.assertGreater(self.send_frames(range(0, 100), act=False), 80)  # a sensor frame for every SYNC, from the held command
         self.assertIsNone(self.proc.poll())
