@@ -4,9 +4,10 @@
 // the simulator and the 3D viewer have a vehicle of that class to fly. Nothing in the project's claims depends on its numbers. docs/design/VEHICLE_SPEC.md says what every field means.
 // Booster: 33 engines of 2.746 MN at sea level (280 tf; thrust_vac = sea-level thrust + 101325 Pa x exit area), 13 of them on the gimbal (the inner three and the ring of ten), the outer 20 fixed. Ship: three
 // sea-level engines that gimbal and three vacuum engines (larger nozzle, higher Isp) that gimbal too. Fly it with the vehicle's own sensors, as the other large vehicles.
-// The ascent follows a pitch program (design.program: the angle of the long axis from the vertical against time) shaped like a heavy launcher's: nearly vertical for 14 s, then tipping over to 55 degrees at hot staging and
-// 72 degrees by shut-down (the tilts the flight computers steer are about two pad axes and lose their meaning close to the horizontal, so the program stops short of it). Fly it:
-//   build/host/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 300 --pose starship.pose.jsonl
+// The ascent follows a pitch program (design.program: the angle of the long axis from the vertical against time) shaped like a heavy launcher's: vertical for 10 s, then tipping over to 64 degrees at staging and
+// 85 degrees (nearly horizontal) at the ship's cut-off at 491 s, the suborbital trajectory of Flight 12 and not an orbit. Fly it with a pad phase long enough for the flight computers to calibrate their gyros
+// (10 s of rest; the project's examples use 1500 frames, 15 s): with 300 frames the gyro bias is not removed and the yaw drifts to about 10 degrees by the end, which is the sensor's bias and not the vehicle's.
+//   build/host/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 1500 --pose starship.pose.jsonl
 {
   "name": "starship-v3-class",
   "description": "Starship V3 (Block 3) class: two stages, 9 m diameter, 124 m, about 5.4 kt at lift-off, 33 Raptor 3 + 6 Raptor 3, methane and liquid oxygen, hot staging. Public numbers and my estimates, not SpaceX data.",
@@ -20,7 +21,7 @@
      ],
      "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 72.3, "d_aft_m": 9.0, "d_fore_m": 9.0}],
      "separate_on_burnout": true, "separate_delay_s": 2.0, "separation_dv_ms": 1.5,
-     "throttle": [[0, 1.0], [38, 1.0], [52, 0.8], [85, 0.8], [100, 1.0]]},   // down through max-Q (45 s on Flight 12)
+     "throttle": [[0, 0.98], [38, 0.98], [52, 0.78], [85, 0.78], [100, 0.98]]},   // down through max-Q (45 s on Flight 12)
     {"name": "ship", "dry_mass_kg": 200000, "x_start_m": 72.3, "length_m": 52.1, "radius_m": 4.5, "inertia_factor": 0.55, "x_cg_dry_m": 93.5,
      "tanks": [
        {"propellant_kg": 352000, "x_bottom_m": 76.3, "radius_m": 4.4, "density_kg_m3": 424},
@@ -28,7 +29,7 @@
      ],
      "sections": [{"kind": "tube", "x_start_m": 72.3, "length_m": 36.0, "d_aft_m": 9.0, "d_fore_m": 9.0},
                   {"kind": "nose", "x_start_m": 108.3, "length_m": 16.1, "d_aft_m": 9.0, "d_fore_m": 0, "shape": "ogive"}],
-     "ignite_time_s": 144.0, "throttle": [[0, 0.85]], "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
+     "ignite_time_s": 142.4, "throttle": [[0, 0.85]], "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
   ],
   "engines": [
     // Raptor 3: 280 tf = 2.746 MN at sea level; thrust_vac = that + 101325 Pa x 1.33 m^2 exit area; Isp 366 s in vacuum gives the 349 s at sea level that is reported (350 s)
