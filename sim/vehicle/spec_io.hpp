@@ -584,6 +584,7 @@ inline void read_phase(const Json& j, const std::string& path, PhaseSpec& ph, st
   o.pairs("throttle_track", ph.throttle_track);
   o.pairs("program", ph.program);
   o.num("slew_dps", ph.slew_dps);
+  o.num("wn_rad_s", ph.wn_rad_s);
   o.num("mass_set_kg", ph.mass_set_kg);
   o.vec3("fixed", ph.fixed);
   if (const Json* t = o.get("target")) {

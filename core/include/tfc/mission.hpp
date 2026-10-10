@@ -102,28 +102,81 @@ struct Mixer {
   std::array<float, 4> hi{};
 };
 
+// How the demand of the three axes goes to the four surfaces: degrees of each surface per unit of demand. The effect of a surface on the vehicle changes by an order of magnitude through a descent (and
+// its sign, relative to the others, with the Mach number and the angle of attack), so the allocation is part of the schedule, with the gains, not one for the whole phase.
+struct SurfAlloc {
+  std::array<float, 4> from_pitch{};
+  std::array<float, 4> from_yaw{};
+  std::array<float, 4> from_roll{};
+};
+
 struct GainTrack {
   uint8_t n = 0U;
+  bool has_alloc = false;                    // the track carries its own allocation (a phase that flies on surfaces); otherwise the mixer's is used
   std::array<uint32_t, kGainPoints> frame{};
   std::array<att::Gains3, kGainPoints> gains{};
+  std::array<SurfAlloc, kGainPoints> alloc{};
+  std::array<float, kGainPoints> thrust{};   // the thrust (N) the gains were designed at: the gimbal turns the vehicle in proportion to it, so a flight with another thrust scales the gimbal command by the ratio
   // The gains at `f` frames into the phase: linear between the points, held beyond them.
   [[nodiscard]] att::Gains3 at(uint32_t f) const noexcept {
     if (n == 0U) {
       return att::Gains3{};
     }
-    if (f <= frame[0]) {
-      return gains[0];
+    unsigned a = 0U;
+    unsigned b = 0U;
+    float k = 0.0F;
+    segment(f, a, b, k);
+    return att::Gains3{lerp(gains[a].roll, gains[b].roll, k), lerp(gains[a].yaw, gains[b].yaw, k), lerp(gains[a].pitch, gains[b].pitch, k)};
+  }
+  // The allocation to the surfaces at `f` frames into the phase.
+  [[nodiscard]] SurfAlloc alloc_at(uint32_t f) const noexcept {
+    SurfAlloc out;
+    if (n == 0U) {
+      return out;
     }
-    for (unsigned i = 1; i < n && i < kGainPoints; ++i) {
-      if (f <= frame[i]) {
-        const float k = static_cast<float>(f - frame[i - 1U]) / static_cast<float>(frame[i] - frame[i - 1U]);
-        return att::Gains3{lerp(gains[i - 1U].roll, gains[i].roll, k), lerp(gains[i - 1U].yaw, gains[i].yaw, k), lerp(gains[i - 1U].pitch, gains[i].pitch, k)};
-      }
+    unsigned a = 0U;
+    unsigned b = 0U;
+    float k = 0.0F;
+    segment(f, a, b, k);
+    for (std::size_t i = 0; i < 4U; ++i) {
+      out.from_pitch[i] = alloc[a].from_pitch[i] + (k * (alloc[b].from_pitch[i] - alloc[a].from_pitch[i]));
+      out.from_yaw[i] = alloc[a].from_yaw[i] + (k * (alloc[b].from_yaw[i] - alloc[a].from_yaw[i]));
+      out.from_roll[i] = alloc[a].from_roll[i] + (k * (alloc[b].from_roll[i] - alloc[a].from_roll[i]));
     }
-    return gains[n - 1U];
+    return out;
+  }
+  // The thrust the gains were designed at, at `f` frames into the phase.
+  [[nodiscard]] float thrust_at(uint32_t f) const noexcept {
+    if (n == 0U) {
+      return 0.0F;
+    }
+    unsigned a = 0U;
+    unsigned b = 0U;
+    float k = 0.0F;
+    segment(f, a, b, k);
+    return thrust[a] + (k * (thrust[b] - thrust[a]));
   }
 
  private:
+  // The two points `f` is between and the way from the first to the second (held at the ends).
+  void segment(uint32_t f, unsigned& a, unsigned& b, float& k) const noexcept {
+    a = 0U;
+    b = 0U;
+    k = 0.0F;
+    if (f <= frame[0]) {
+      return;
+    }
+    for (unsigned i = 1; i < n && i < kGainPoints; ++i) {
+      if (f <= frame[i]) {
+        a = i - 1U;
+        b = i;
+        k = static_cast<float>(f - frame[i - 1U]) / static_cast<float>(frame[i] - frame[i - 1U]);
+        return;
+      }
+    }
+    a = static_cast<unsigned>(n - 1U);
+    b = a;
+  }
   static att::AxisGains lerp(const att::AxisGains& a, const att::AxisGains& b, float k) noexcept {
     return att::AxisGains{a.kp + (k * (b.kp - a.kp)), a.kd + (k * (b.kd - a.kd)), a.ki + (k * (b.ki - a.ki))};
   }
@@ -165,7 +218,10 @@ struct Tables {
   Vec3 site{6378137.0, 0.0, 0.0};                // the pad (the landing site) on the ground, navigation frame
   double ground_radius = 6378137.0;              // the sphere the ground is on
   descent::LandingTarget landing;                // the catch point is `site` raised by landing.point_height (see below)
-  double landing_height = 0.0;                   // the catch point's height above the ground
+  double landing_height = 0.0;                   // the centre of gravity's height above the ground when the pins are at the arms, with the vehicle at `landing_mass_ref`
+  double landing_height_slope = 0.0;             // and how much that height changes per kg more of vehicle mass (the propellant left moves the centre of gravity toward the engines)
+  double landing_mass_ref = 0.0;
+  double arm_height = 0.0;                       // the height of the tower's arms above the ground: the pins are this far up when the centre of gravity is at `catch_height()`
   descent::Engines engines;
   descent::DragModel drag;
   double ignition_margin = 1.15;
@@ -192,6 +248,7 @@ struct Output {
   uint8_t phase = 0U;
   uint8_t mixer = 0U;
   bool control = true;               // false: the attitude loop is not used (a parachute descent)
+  float thrust = 0.0F;               // N, the thrust the engines are commanded to give
 };
 
 class Mission {
@@ -224,12 +281,16 @@ class Mission {
   [[nodiscard]] std::array<double, peg::kUnknowns> peg_solution() const noexcept { return peg_.solution(); }
 
   [[nodiscard]] bool started() const noexcept { return started_; }
+  // The height of the centre of gravity above the ground at which the pins are at the arms, for the mass the vehicle has now.
+  [[nodiscard]] double catch_height() const noexcept { return tab_->landing_height + (tab_->landing_height_slope * (mass_ - tab_->landing_mass_ref)); }
   [[nodiscard]] uint8_t phase() const noexcept { return phase_; }
   [[nodiscard]] double phase_time_s() const noexcept { return static_cast<double>(in_phase_) * kDt; }
   [[nodiscard]] double mass() const noexcept { return mass_; }
   [[nodiscard]] const peg::Output& peg_out() const noexcept { return peg_out_; }
   [[nodiscard]] const descent::DescentOut& landing_out() const noexcept { return land_out_; }
   [[nodiscard]] Vec3 miss() const noexcept { return miss_; }
+  [[nodiscard]] Quat reference() const noexcept { return q_ref_; }   // (the attitude the loop is asked to hold now, and the one it is turning toward)
+  [[nodiscard]] Quat target() const noexcept { return q_target_; }
   [[nodiscard]] double aoa_deg() const noexcept { return aoa_deg_; }
   [[nodiscard]] bool cutoff() const noexcept { return cutoff_; }
 
@@ -365,14 +426,15 @@ inline bool Mission::ended(const Inputs& in) const noexcept {
     return t >= 1.0 && dm::norm(att::error_vector(in.q, q_target_)) * dm::kRadToDeg <= ev;
   }
   if (p.end == end::kIgnition) {
-    const Vec3 pt = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0}) * (dm::norm(tab_->site) + tab_->landing_height);
+    const Vec3 pt = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0}) * (dm::norm(tab_->site) + catch_height());
     const Vec3 upt = dm::unit(pt, Vec3{1.0, 0.0, 0.0});
     const double h = dm::dot(in.r - pt, upt);
     const double v_down = dm::max_(-dm::dot(in.v, upt), 0.0);
     return h <= ev && h <= descent::PoweredDescent::stopping_height(v_down, tab_->landing.decel_plan, tab_->landing.sink_ms) * tab_->ignition_margin + 1.0;
   }
   if (p.end == end::kTouchdown) {
-    const Vec3 pt = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0}) * (dm::norm(tab_->site) + tab_->landing_height);
+    // (the burn aims `aim_below_m` under the catch point, so that the pins come down through the arms with the engines still holding the vehicle: the phase ends there, not at the catch point)
+    const Vec3 pt = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0}) * (dm::norm(tab_->site) + catch_height() - tab_->landing.aim_below_m);
     return dm::dot(in.r - pt, dm::unit(pt, Vec3{1.0, 0.0, 0.0})) <= 0.1;
   }
   return false;
@@ -471,9 +533,14 @@ inline void Mission::step_boostback(const Inputs& in, Output& out) noexcept {
   const Phase& p = ph();
   if (!cutoff_ && (in_phase_ % kBoostPeriod) == 0U) {
     const Vec3 up = dm::unit(in.r, Vec3{1.0, 0.0, 0.0});
-    const descent::Impact imp = descent::ballistic_impact(in.r, in.v, tab_->nav.gravity.mu, tab_->ground_radius);
+    // where the vehicle would come down if the engines stopped now, with the air of the way down (the same predictor the glide steers by): the burn ends when that point has come back to the catch point
+    const double catch_radius = dm::norm(tab_->site) + catch_height();
+    // (the engines go on pushing for a while after the command to stop: the impulse they still give is thrust over mass times their decay time, p[3], along the thrust)
+    const double a_thrust = static_cast<double>(p.thrust) * static_cast<double>(p.throttle) / mass_;
+    const Vec3 v_cut = in.v + (dm::rotate(in.q, Vec3{1.0, 0.0, 0.0}) * (a_thrust * static_cast<double>(p.p[3])));   // (along the axis the engines really push along, not the one asked for)
+    const descent::Impact imp = descent::descent_predict(in.r, v_cut, tab_->nav.gravity, tab_->drag, catch_radius, 1.0, 900U);
     if (imp.valid) {
-      const Vec3 target = dm::unit(tab_->site, up) * tab_->ground_radius;
+      const Vec3 target = dm::unit(tab_->site, up) * catch_radius;
       Vec3 m = dm::perp(target - imp.point, up);
       if (dm::norm(travel_) < 0.5) {
         travel_ = dm::unit(m, Vec3{1.0, 0.0, 0.0});   // the direction from the first impact point to the site: the burn ends when the impact point has come that way as far as the aim point
@@ -507,7 +574,7 @@ inline void Mission::step_glide(const Inputs& in, Output& out) noexcept {
   const Phase& p = ph();
   const Vec3 up = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0});
   const Vec3 vel = dm::unit(in.v, -up);
-  const Vec3 catch_pt = up * (dm::norm(tab_->site) + tab_->landing_height);
+  const Vec3 catch_pt = up * (dm::norm(tab_->site) + catch_height());
   if ((in_phase_ % kGlidePeriod) == 0U) {
     const descent::Impact pred = descent::descent_predict(in.r, in.v, tab_->nav.gravity, tab_->drag, dm::norm(catch_pt), 1.0, 600U);
     if (pred.valid) {
@@ -547,7 +614,7 @@ inline void Mission::step_landing(const Inputs& in, Output& out) noexcept {
   const Phase& p = ph();
   const Vec3 up = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0});
   descent::LandingTarget tgt = tab_->landing;
-  tgt.point = up * (dm::norm(tab_->site) + tab_->landing_height);
+  tgt.point = up * (dm::norm(tab_->site) + catch_height());
   land_out_ = descent_.update(in.r, in.v, mass_, tgt, tab_->engines, tab_->nav.gravity, tab_->ignition_margin, burning_);
   burning_ = burning_ || land_out_.ignite;
   miss_ = land_out_.miss;
@@ -560,6 +627,7 @@ inline void Mission::step_landing(const Inputs& in, Output& out) noexcept {
   const unsigned opt = land_out_.option < descent::kEngineOptions ? land_out_.option : 0U;
   out.groups = static_cast<uint8_t>(p.p[opt]);
   out.throttle = static_cast<float>(land_out_.throttle);
+  out.thrust = static_cast<float>(tab_->engines.thrust_each * static_cast<double>(land_out_.engines) * land_out_.throttle);
   flow_ = static_cast<double>(p.mdot) * static_cast<double>(land_out_.engines) * land_out_.throttle;
 }
 
@@ -614,6 +682,9 @@ inline Output Mission::step(const Inputs& in) noexcept {
   if (p.kind == kind::kHold || p.kind == kind::kDone) {
     out.groups = 0U;
     out.throttle = 0.0F;
+  }
+  if (p.kind != kind::kLanding) {
+    out.thrust = out.groups != 0U ? p.thrust * out.throttle : 0.0F;
   }
   mass_ = dm::max_(mass_ - (flow_ * kDt), 1.0);
   ++in_phase_;

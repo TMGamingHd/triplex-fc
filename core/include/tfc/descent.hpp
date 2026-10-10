@@ -138,6 +138,7 @@ struct LandingTarget {
   double tilt_final_deg = 2.5;     // ... and near the ground
   double final_height_m = 25.0;    // the height over which the limit comes down from the first to the second
   double aim_below_m = 0.0;        // the profile ends this far below the point, so that the vehicle passes through the point (the arms' height) still moving down, at about the sink speed
+  double horizon_min_s = 8.0;      // the horizontal correction takes at least this long (s)
   double approach_s = 8.0;         // the last of the descent follows v = sink + h / approach_s, gentler than the planned deceleration gives
   double decel_plan = 15.0;        // m/s^2: the net deceleration (beyond holding up the weight) the burn is planned on: it is lit when the stopping distance at this deceleration reaches the height
 };
@@ -206,7 +207,9 @@ class PoweredDescent {
     // horizontal: ZEM / ZEV over the time to go (the time the vertical profile takes: 2 h / (v_down + sink), at least a second and a half)
     const double t_go = dm::clamp_(2.0 * h_rem / (v_down + tgt.sink_ms), 1.5, 60.0);
     out.time_to_go = t_go;
-    Vec3 a_h = (e_h * (-6.0 / (t_go * t_go))) - (v_h * (4.0 / t_go));
+    // (the horizontal horizon is the vertical one while that is long, and never shorter than `horizon_min_s`: a position loop faster than the attitude loop that has to tilt the vehicle for it would oscillate)
+    const double t_h = dm::max_(t_go, tgt.horizon_min_s);
+    Vec3 a_h = (e_h * (-6.0 / (t_h * t_h))) - (v_h * (4.0 / t_h));
     // the tilt limit, coming down towards the final value as the ground nears
     const double blend = dm::clamp_(h / dm::max_(tgt.final_height_m, 1.0), 0.0, 1.0);
     const double tilt_max = (tgt.tilt_final_deg + (blend * (tgt.tilt_max_deg - tgt.tilt_final_deg))) * dm::kDegToRad;

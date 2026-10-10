@@ -79,6 +79,9 @@ class FlightFunction {
 
   // At the command slot: update the estimator, run the controller with this frame's gains and reference, and return the command with the digest.
   [[nodiscard]] Command step() noexcept {
+    if (gnc_ != nullptr) {
+      estimator_.set_use_accel(mission_set_ && pad_);   // on the pad the accelerometer measures gravity and corrects the tilt; in flight it measures thrust and drag, which are not gravity
+    }
     estimator_.update(consensus_.consensus(), kFramePeriodS);
     if (gnc_ != nullptr) {
       return step_gnc();
@@ -128,6 +131,8 @@ class FlightFunction {
     if (fix_pending_) {
       nav_.apply_fix(gnss_.fix());
       fix_pending_ = false;
+      const dm::Vec3 turn = nav_.take_attitude_correction();   // (the level frame's axes are the navigation frame's Y, Z, X)
+      estimator_.rotate_level({static_cast<float>(turn.y), static_cast<float>(turn.z), static_cast<float>(turn.x)});
     }
     const bool flight = !mission_set_ || !pad_;
     Command c;
@@ -167,20 +172,38 @@ class FlightFunction {
     const gnc::Inputs mi = mission_inputs();
     const gnc::Output mo = mission_.step(mi);
     const gnc::Mixer& mx = gnc_->mixer[mo.mixer < gnc::kMaxMixers ? mo.mixer : 0U];
+    // the gimbal turns the vehicle in proportion to the thrust: the gains were designed at a thrust, and a flight at another (a landing burn on one engine, then on thirteen) takes the demand to the gimbal
+    // scaled by the ratio, and lets the demand reach as far as the gimbal's own limit does
+    const gnc::GainTrack& track = gnc_->gains[mo.phase < gnc::kMaxPhases ? mo.phase : 0U];
+    double eff = 1.0;
+    const double thrust_design = static_cast<double>(track.thrust_at(phase_frames(mo.phase)));
+    if (thrust_design > kThrustFloorN && static_cast<double>(mo.thrust) > kThrustFloorN) {
+      eff = dm::clamp_(thrust_design / static_cast<double>(mo.thrust), 0.1, 10.0);
+    }
+    att::Limits lim_demand = gnc_->limits;
+    lim_demand.command_deg = static_cast<float>(static_cast<double>(lim_demand.command_deg) / eff);
+    lim_demand.integrator_deg = static_cast<float>(static_cast<double>(lim_demand.integrator_deg) / eff);
+    lim_demand.slew_deg_per_frame = static_cast<float>(static_cast<double>(lim_demand.slew_deg_per_frame) / eff);
     att::Demand d{};
     if (mo.control) {
-      d = att_ctrl_.step(mi.q, mi.w, mo.q_ref, mo.w_ref, gnc_->gains[mo.phase < gnc::kMaxPhases ? mo.phase : 0U].at(phase_frames(mo.phase)), gnc_->limits, kFramePeriodS, mi.attitude_valid);
+      d = att_ctrl_.step(mi.q, mi.w, mo.q_ref, mo.w_ref, track.at(phase_frames(mo.phase)), lim_demand, kFramePeriodS, mi.attitude_valid);
     }
     const double lim = static_cast<double>(gnc_->limits.command_deg);
-    cmd_pitch_ = dm::clamp_(static_cast<double>(mx.gimbal_pitch) * d.pitch, -lim, lim);
-    cmd_yaw_ = dm::clamp_(static_cast<double>(mx.gimbal_yaw) * d.yaw, -lim, lim);
+    cmd_pitch_ = dm::clamp_(static_cast<double>(mx.gimbal_pitch) * d.pitch * eff, -lim, lim);
+    cmd_yaw_ = dm::clamp_(static_cast<double>(mx.gimbal_yaw) * d.yaw * eff, -lim, lim);
     prop_.throttle = mo.throttle;
     prop_.groups = mo.groups;
     prop_.events = mo.events;
     prop_.phase = mo.phase;
     prop_.roll_deg = static_cast<float>(static_cast<double>(mx.roll) * d.roll);
+    gnc::SurfAlloc al;
+    if (track.has_alloc) {
+      al = track.alloc_at(phase_frames(mo.phase));
+    } else {
+      al = gnc::SurfAlloc{mx.from_pitch, mx.from_yaw, mx.from_roll};
+    }
     for (unsigned k = 0; k < 4U; ++k) {
-      const double u = static_cast<double>(mx.trim[k]) + (static_cast<double>(mx.from_pitch[k]) * d.pitch) + (static_cast<double>(mx.from_yaw[k]) * d.yaw) + (static_cast<double>(mx.from_roll[k]) * d.roll);
+      const double u = static_cast<double>(mx.trim[k]) + (static_cast<double>(al.from_pitch[k]) * d.pitch) + (static_cast<double>(al.from_yaw[k]) * d.yaw) + (static_cast<double>(al.from_roll[k]) * d.roll);
       surf_.deg[k] = static_cast<float>(dm::clamp_(u, static_cast<double>(mx.lo[k]), static_cast<double>(mx.hi[k])));
     }
   }
@@ -188,6 +211,7 @@ class FlightFunction {
   // Frames into the current phase, for the gain schedule.
   [[nodiscard]] uint32_t phase_frames(uint8_t phase) const noexcept { return phase == mission_.phase() ? static_cast<uint32_t>(mission_.phase_time_s() * 100.0 + 0.5) : 0U; }
 
+  static constexpr double kThrustFloorN = 1.0e4;   // below this the thrust is nothing to scale by
   GainSchedule gains_{};
   Guidance guidance_{};
   SensorConsensus consensus_{};

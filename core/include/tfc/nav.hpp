@@ -58,6 +58,10 @@ struct NavConfig {
   double gate_pos_m = 2000.0;     // a fix further than this from the inertial solution is not believed
   double gate_vel_ms = 60.0;
   uint32_t gate_frames = 30U;     // this many fixes in a row outside the gate: start again from the fix
+  // Attitude aiding: under thrust the velocity the fixes keep correcting, across the specific force, is the attitude error (the inertial solution turns the specific force by that error, and the error
+  // integrates into velocity). The share of it taken out of the estimated attitude at each fix, and the smallest specific force (m/s^2) at which it is observable.
+  double k_att = 0.02;
+  double f_att_min = 8.0;
 };
 
 struct GnssFix {
@@ -89,6 +93,7 @@ class Navigator {
     } else {
       f_sensor_ = Vec3{};
     }
+    dt_ = dt;
     const Vec3 f = sensor_to_nav(q, f_sensor_);
     f_nav_ = f;
     const Vec3 a0 = f + cfg_.gravity.at(r_);
@@ -106,6 +111,12 @@ class Navigator {
     const Vec3 dv = fix.v - v_;
     last_dr_ = dr;
     last_dv_ = dv;
+    const double f_mag = dm::norm(f_nav_);
+    const double span = static_cast<double>(since_fix_) * dt_;
+    if (have_fix_ && cfg_.k_att > 0.0 && f_mag > cfg_.f_att_min && span > 0.0 && dm::norm(dr) <= cfg_.gate_pos_m && dm::norm(dv) <= cfg_.gate_vel_ms) {
+      // (in steady state the innovation is -(error x f) T / k_vel, so the error across f is -k_vel (f x dv) / (f^2 T); the estimate is turned back by a share of it)
+      att_corr_ = att_corr_ + (dm::cross(f_nav_, dv) * (cfg_.k_att * cfg_.k_vel / (f_mag * f_mag * span)));
+    }
     if (!have_fix_) {
       r_ = fix.r;
       v_ = fix.v;
@@ -132,6 +143,13 @@ class Navigator {
     since_fix_ = 0U;
     rejected_ = 0U;
     ++fixes_;
+  }
+
+  // The turn (a rotation vector in the navigation frame, rad) the attitude estimate should be given to come closer to what the fixes say, since the last call.
+  [[nodiscard]] Vec3 take_attitude_correction() noexcept {
+    const Vec3 c = att_corr_;
+    att_corr_ = Vec3{};
+    return c;
   }
 
   [[nodiscard]] Vec3 position() const noexcept { return r_; }
@@ -174,6 +192,8 @@ class Navigator {
   Vec3 f_sensor_{};
   Vec3 last_dr_{};
   Vec3 last_dv_{};
+  Vec3 att_corr_{};
+  double dt_ = 0.01;
   uint32_t since_fix_ = 0U;
   uint32_t holds_ = 0U;
   uint32_t rejected_ = 0U;

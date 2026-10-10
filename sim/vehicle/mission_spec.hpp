@@ -22,6 +22,7 @@ struct PhaseSpec {
   double throttle = 1.0;
   std::vector<std::array<double, 2>> throttle_track;   // [seconds in the phase, fraction]
   double slew_dps = 20.0;
+  double wn_rad_s = 0.0;            // the bandwidth of the attitude loop in this phase (0: the design's)
   std::vector<std::array<double, 2>> program;   // a "program" phase: the pitch plane tilt (degrees from the vertical, toward downrange) against the seconds in the phase
   double mass_set_kg = 0.0;         // the mass estimate takes this value at the start of the phase (0: unchanged)
   V3 fixed{1.0, 0.0, 0.0};          // a coast with the "fixed" hold: the direction

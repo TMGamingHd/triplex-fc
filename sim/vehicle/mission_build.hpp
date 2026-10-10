@@ -229,6 +229,15 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
       ph.p[0] = static_cast<float>(ps.bias_m);
       ph.p[1] = static_cast<float>(ps.reserve_mass_kg);
       ph.p[2] = static_cast<float>(ps.pitch_up_deg);
+      double tail = 0.0;   // how long the engines go on pushing after the command to shut down (their first-order decay time): the burn is ended early by that much impulse
+      unsigned n_eng = 0U;
+      for (const EngineSpec& e : g.engines) {
+        if (e.control == Control::None && e.group >= 0 && ((ph.groups >> e.group) & 1U) != 0U) {
+          tail += e.tail_s;
+          ++n_eng;
+        }
+      }
+      ph.p[3] = static_cast<float>(n_eng > 0U ? tail / static_cast<double>(n_eng) : 0.0);
     } else if (ph.kind == kind::kGlide) {
       ph.p[0] = static_cast<float>(ps.alpha_max_deg);
       ph.p[1] = static_cast<float>(ps.gain_deg_per_km / 1000.0);
@@ -296,6 +305,11 @@ inline bool build_mission(const VehicleFile& f, BuiltMission& out, std::vector<s
     const StageSpec& st = f.params.spec.stages[s];
     const double cg = v.stage_cg_from_aft(s, m.landing_propellant_kg);
     out.stage[s].landing_height = m.arm_height_m - (st.catch_pin_x - cg);
+    constexpr double kMoreProp = 100000.0;   // the slope: the same at a hundred tonnes more propellant
+    const double cg_more = v.stage_cg_from_aft(s, m.landing_propellant_kg + kMoreProp);
+    out.stage[s].landing_height_slope = ((m.arm_height_m - (st.catch_pin_x - cg_more)) - out.stage[s].landing_height) / kMoreProp;
+    out.stage[s].landing_mass_ref = st.dry_mass + m.landing_propellant_kg;
+    out.stage[s].arm_height = m.arm_height_m;
   }
   return ok;
 }

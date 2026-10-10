@@ -40,6 +40,7 @@ struct AxisProbe {
   uint8_t phase = 0U;
   double t_in_phase = 0.0;
   std::array<double, 3> a{};    // 1/s^2 per radian of attitude: roll, yaw, pitch
+  double thrust = 0.0;          // N, the thrust the vehicle had at the probe
   std::array<std::array<double, 3>, 7> col{};   // [0] gimbal pitch, [1] gimbal yaw, [2] roll thrusters, [3..6] surface channels 0..3
 };
 
@@ -69,6 +70,8 @@ class MissionWorld {
     bool control_off = false;
     uint8_t last_phase = 0U;
     uint32_t seeded = 0U;                 // the phases whose PEG solution has been recorded
+    double drag_num = 0.0;                // sums for the ballistic coefficient the glide measured (see drag_beta)
+    double drag_den = 0.0;
     Body(const Params& p, const Scenario& s) : veh(p, s) {}
     Body(Vehicle6&& v) : veh(std::move(v)) {}
   };
@@ -124,6 +127,15 @@ class MissionWorld {
   };
   [[nodiscard]] const std::vector<Seed>& seeds() const { return seeds_; }
   [[nodiscard]] double spawn_mass(std::size_t stage) const { return stage < kMaxStages ? spawn_mass_[stage] : 0.0; }
+  // The ballistic coefficient (m / (Cd A), kg/m^2) the stage's glide measured, 0 if it did not glide: the guidance's model of the way down is made to match this.
+  [[nodiscard]] double drag_beta(std::size_t stage) const {
+    for (const std::unique_ptr<Body>& b : bodies_) {
+      if (b->stage == static_cast<int>(stage) && b->drag_den > 0.0) {
+        return b->drag_num / b->drag_den;
+      }
+    }
+    return 0.0;
+  }
   // Has every body reached the last phase of its mission (or ended on the ground)?
   [[nodiscard]] bool finished() const {
     for (const std::unique_ptr<Body>& b : bodies_) {
@@ -178,6 +190,9 @@ class MissionWorld {
       return;   // the main body stands clamped
     }
     b.veh.step(0.01, b.ctl);
+    if (b.ideal != nullptr && b.tables != nullptr && b.tables->phase[b.last_phase].kind == tfc::gnc::kind::kGlide) {
+      sample_drag(b);
+    }
     if (log_ && log_every_ != 0U && frame_ % log_every_ == 0U) {
       BodyLog l;
       l.t = static_cast<double>(flight_frame()) * 0.01;
@@ -221,6 +236,25 @@ class MissionWorld {
     }
   }
 
+  // The drag the vehicle really has on its way down, against the model the guidance predicts with (density rho0 exp(-h / H), drag deceleration q / beta): the deceleration along the velocity from the plant's own
+  // aerodynamic force, weighted by the dynamic pressure so that the thick air counts for most.
+  void sample_drag(Body& b) {
+    const State& s = b.veh.state();
+    const double speed = norm(s.v);
+    const tfc::descent::DragModel& dm = b.tables->drag;
+    const double rho = dm.rho0 * std::exp(-std::max(b.veh.altitude(), 0.0) / dm.scale_height);
+    const double q = 0.5 * rho * speed * speed;
+    if (!(q > 500.0) || !(s.m > 1.0)) {
+      return;
+    }
+    const Loads l = b.veh.current_loads();
+    const double a_drag = -dot(l.f_aero, rotate_inv(s.q, s.v) / speed) / s.m;
+    if (a_drag > 0.0) {
+      b.drag_num += q * q;
+      b.drag_den += q * a_drag;
+    }
+  }
+
   void emit_probe(Body& b, const tfc::gnc::Output& mo, uint32_t ff) {
     constexpr double kStep = 0.5;   // degrees of an effector, and of attitude, for the differences
     AxisProbe pr;
@@ -229,6 +263,7 @@ class MissionWorld {
     pr.stage = b.stage;
     pr.phase = mo.phase;
     pr.t_in_phase = b.ideal->phase_time_s();
+    pr.thrust = b.veh.current_loads().thrust;
     const V3 base = b.veh.angular_accel_with(b.ctl);
     const auto diff = [&base, kStep](const V3& v) { return std::array<double, 3>{(v.x - base.x) / kStep, (v.y - base.y) / kStep, (v.z - base.z) / kStep}; };
     Controls c = b.ctl;

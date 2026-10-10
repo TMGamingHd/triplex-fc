@@ -197,14 +197,10 @@ class Avionics {
     for (unsigned k = 0; k < 4U; ++k) {
       c.surface_deg[k] = static_cast<double>(tfc::mid3(ff_[0].surf().deg[k], ff_[1].surf().deg[k], ff_[2].surf().deg[k]));
     }
-    roll_cmd_ = static_cast<double>(tfc::mid3(p0.roll_deg, p1.roll_deg, p2.roll_deg));
+    c.roll_deg = static_cast<double>(tfc::mid3(p0.roll_deg, p1.roll_deg, p2.roll_deg));
     return c;
   }
 
- public:
-  [[nodiscard]] double roll_command_deg() const { return roll_cmd_; }
-
- private:
   AvionicsConfig cfg_;
   std::array<tfc::FlightFunction, 3> ff_;
   std::array<ImuModel, 3> imu_;
@@ -213,7 +209,6 @@ class Avionics {
   bool on_pad_ = true;
   uint32_t flight_frame_ = 0U;
   std::array<uint16_t, 3> last_digests_{};
-  mutable double roll_cmd_ = 0.0;
 };
 
 }  // namespace sim
