@@ -82,7 +82,7 @@ In the order they were found, each of them a thing that made a closed-loop boost
 ## 7. What is not done
 
 * The ship's **deorbit, entry and landing**. The plant has flaps and a belly-first Newtonian aerodynamics and the sequencer has a glide phase, but no mission flies the ship down.
-* **Dispersions in the booster's return.** The mission flies the built-in mean wind profile (crossrange, `wind_scale` 1) with no gusts, no turbulence, no engine failure and every engine lighting when commanded; the Monte Carlo (`tfc_mc`) has not been pointed at it. One in twelve GNSS noise seeds already misses the catch.
+* **Dispersions in the booster's return.** The mission flies the built-in mean wind profile (crossrange, `wind_scale` 1) with no gusts, no turbulence, no engine failure and every engine lighting when commanded; the Monte Carlo (`tfc_mc`) has not been pointed at it. One in nine GNSS noise seeds already misses the catch.
 * **The firmware, the rig, the console and the viewer** do not fly or show a mission (`GNC.md` section 11): `tfc_mission --pose FILE --pose-body N` writes a pose file for one body (the booster is body 1) with the writer `tfc_fly --pose` uses, and the viewer's replay opens it without error; **I have not looked at it in a browser**, and the stack and the stage together, and the tower, are not drawn.
 * **Real tower behaviour**: the arms are a capture window (a position, a sink speed, a drift and a tilt), not a mechanism.
 * **A real vehicle's numbers**: see section 2.

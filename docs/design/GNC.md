@@ -124,11 +124,11 @@ The `mission` block of a vehicle file (`VEHICLE_SPEC.md` section 9) holds: the *
 |---|---|---|
 | Ship's orbit | **234.1 x 257.2 km**, 7,753 m/s | 229.2 x 255.3 km |
 | Booster | **caught by the tower**, centre of gravity 2.4 m from the site (the pins within the 1.5 m capture), 334,521 kg left (59.5 t of propellant) | caught, 0.6 m |
-| Noise seeds 1 to 12 | 11 caught, 1 crashed 5.4 m off | |
+| GNSS noise seeds 1 to 36 | **32 caught, 4 crashed** (seeds 3, 20, 27, 29: 5.4, 3.4, 4.1 and 3.0 m from the site) | |
 | GNSS accuracy 0.1, 0.5, 1, 2, 3 m | all caught | |
 | GNSS accuracy 4 m and 6 m | crashed 2.2 and 2.5 m from the site | |
 
-The ship's orbit is circular to within about 5 % of the altitude, not exact: the PEG cut-off lead is the engines' decay time times the acceleration, and the decay is not exactly exponential in the plant. The catch is not robust: it needs a GNSS receiver of 3 m or better (a real tower would use differential corrections for the final approach; the model has none) and one seed in twelve missed. `rocket_recovery.json` lands under its parachutes in both modes.
+The ship's orbit is circular to within about 5 % of the altitude, not exact: the PEG cut-off lead is the engines' decay time times the acceleration, and the decay is not exactly exponential in the plant. The catch is not robust: it needs a GNSS receiver of 3 m or better (a real tower would use differential corrections for the final approach; the model has none) and one seed in nine missed. `rocket_recovery.json` lands under its parachutes in both modes.
 
 **Wall time**: the whole Starship mission, design included, takes about 6 s in a release build (51 engines, 5,660 t at lift-off); under the sanitizers it is too long for the unit tests, which is why `test_mission_sim.cpp` flies the small vehicles.
 

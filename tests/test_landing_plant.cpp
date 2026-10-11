@@ -713,3 +713,136 @@ TFC_TEST(aero_flying_tail_first_the_force_along_the_axis_changes_sign_and_a_turn
   const sim::Loads b = load_at(shaped_body(true), 2.0, 20.0, 0.0);
   CHECK(a.m_aero.z == b.m_aero.z);
 }
+
+// ---- the rest of the plant: jettison by event, surfaces of a stage that has gone, a hop, a vehicle held on a turning planet ----
+
+TFC_TEST(plant_the_jettison_event_lets_the_first_payload_go_once_and_takes_its_mass) {
+  sim::Params p = bare_stage(1000.0, 6.0, 0.5);
+  sim::PayloadSpec pl;
+  pl.name = "satellite";
+  pl.mass = 200.0;
+  pl.x = 5.0;
+  p.spec.payloads.push_back(pl);
+  sim::PayloadSpec second = pl;
+  second.name = "second";
+  second.mass = 50.0;
+  p.spec.payloads.push_back(second);
+  sim::Vehicle6 v(p, aloft(100000.0, 0.0));
+  const double m0 = v.mass();
+  sim::Controls c;
+  v.step(0.01, c);
+  CHECK(near_abs(v.mass(), m0, 1e-9));
+  c.events = sim::ev::kJettison;
+  v.step(0.01, c);
+  CHECK(near_abs(v.mass(), m0 - 200.0, 1e-6));
+  v.step(0.01, c);   // the level stays up: only a rising edge lets one go
+  CHECK(near_abs(v.mass(), m0 - 200.0, 1e-6));
+  c.events = 0U;
+  v.step(0.01, c);
+  c.events = sim::ev::kJettison;
+  v.step(0.01, c);
+  CHECK(near_abs(v.mass(), m0 - 250.0, 1e-6));
+  c.events = 0U;
+  v.step(0.01, c);
+  c.events = sim::ev::kJettison;
+  v.step(0.01, c);   // nothing left to let go
+  CHECK(near_abs(v.mass(), m0 - 250.0, 1e-6));
+}
+
+TFC_TEST(plant_the_surfaces_of_a_stage_that_has_gone_leave_with_it_and_the_probe_of_a_surface_command_changes_the_acceleration) {
+  sim::Params p;
+  p.ground_contact = false;
+  p.landing_model = true;
+  p.gravity_scale = 0.0;
+  sim::StageSpec lo;
+  lo.name = "lower";
+  lo.dry_mass = 4000.0;
+  lo.length = 10.0;
+  lo.radius = 1.5;
+  lo.x_cg_dry = 5.0;
+  lo.separate_time_s = 1.0;
+  sim::StageSpec hi;
+  hi.name = "upper";
+  hi.dry_mass = 2000.0;
+  hi.x_start = 10.0;
+  hi.length = 8.0;
+  hi.radius = 1.5;
+  hi.x_cg_dry = 14.0;
+  p.spec.stages = {lo, hi};
+  sim::SurfaceSpec flap = flap_at(0.0);
+  flap.stage = 0;
+  flap.x_hinge = 8.0;
+  flap.radius = 1.5;
+  flap.channel = 0;
+  flap.min_deg = -30.0;
+  flap.max_deg = 30.0;
+  flap.rate_dps = 100.0;
+  p.spec.surfaces.push_back(flap);
+  sim::SurfaceSpec grid = grid_fin_at(90.0);
+  grid.stage = 1;
+  grid.x_hinge = 12.0;
+  grid.radius = 1.5;
+  grid.channel = 1;
+  grid.deployed = false;
+  p.spec.surfaces.push_back(grid);
+  sim::FinSpec fin;
+  fin.stage = 0;
+  fin.x_hinge = 1.0;
+  fin.area_each = 0.5;
+  fin.lift_slope = 3.0;
+  p.spec.fins.push_back(fin);
+  sim::Scenario sc = aloft(20000.0, 0.0);
+  sc.initial.v = sim::V3{0.0, 600.0, 0.0};   // flying downrange fast in thin air, the nose along +X: a large angle of attack
+  sim::Vehicle6 v(p, sc);
+  // the probe: the command moves the flap, so the angular acceleration it gives is not the one with the flap at zero
+  sim::Controls c0;
+  sim::Controls c1;
+  c1.surface_deg[0] = 15.0;
+  v.step(0.001, c0);
+  const sim::V3 a0 = v.angular_accel_with(c0);
+  const sim::V3 a1 = v.angular_accel_with(c1);
+  CHECK(sim::norm(a1 - a0) > 0.0);
+  // the stowed grid fin of the upper stage does nothing; the flap and the fins of the lower stage go with it at the separation
+  for (int k = 0; k < 150; ++k) {
+    v.step(0.01, c0);
+  }
+  CHECK(!v.stage_active(0) && v.stage_active(1));
+  std::vector<sim::Detached> d = v.take_detached();
+  CHECK(d.size() == 1U);
+  if (d.size() == 1U) {
+    CHECK(d[0].spec.surfaces.size() == 1U && d[0].spec.surfaces[0].stage == 0 && near_abs(d[0].spec.surfaces[0].x_hinge, 8.0, 1e-9));
+  }
+  for (int k = 0; k < 50; ++k) {
+    v.step(0.01, c1);   // the remaining vehicle goes on with a surface command for a surface that left
+  }
+  CHECK(v.mass() < 2000.0 + 1.0);
+}
+
+TFC_TEST(ground_a_vehicle_that_touches_the_ground_moving_up_hops_and_a_stage_held_on_a_turning_planet_goes_round_with_it) {
+  sim::Tower none;
+  // a touch with an upward speed is not a landing
+  sim::Vehicle6 hop = booster_at(0.1, -3.0, false, none);   // (a negative sink is up)
+  sim::Controls c = hop.controls();
+  for (int k = 0; k < 10; ++k) {
+    hop.step(0.01, c);
+  }
+  CHECK(!hop.landed() && !hop.crashed());
+  // on a planet that turns, the stage that has landed is carried round: its velocity is the ground's
+  sim::Params p = bare_stage(20000.0, 30.0, 2.0);
+  p.ground_contact = true;
+  p.landing_model = true;
+  p.spec.planet.rotation_rate = 1.0e-7;   // (slowly: the ground goes round at 0.6 m/s, inside what a touchdown tolerates)
+  sim::Scenario sc;
+  sc.has_initial = true;
+  sc.initial.r = sim::V3{sim::kEarthR + 15.3, 0.0, 0.0};   // (the base is 0.3 m up)
+  sc.initial.v = sim::V3{-1.0, 0.0, 0.0};
+  sim::Vehicle6 v(p, sc);
+  for (int k = 0; k < 1200 && !v.landed() && !v.crashed(); ++k) {
+    v.step(0.01, sim::Controls{});
+  }
+  CHECK(v.landed());
+  const sim::V3 where = v.state().r;
+  v.step(1.0, sim::Controls{});
+  CHECK(sim::norm(v.state().r - where) > 0.0 && sim::norm(v.state().r - where) < 1.0);   // carried round by the planet's turning
+  CHECK(v.landed());
+}

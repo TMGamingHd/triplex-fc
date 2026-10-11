@@ -572,3 +572,128 @@ TFC_TEST(missionfile_names_that_are_not_known_are_not_taken_for_any_other) {
   CHECK(!ok);
   CHECK(sim::detail::mask_of({0, 3, 7, 8, -1}) == 0x89U);   // a group outside 0 to 7 is left out
 }
+
+namespace {
+// The smallest vehicle with `extra` (more top-level members) added.
+std::string with(const std::string& extra) {
+  return R"({
+  "name": "plant",
+  "stages": [{"dry_mass_kg": 1000, "length_m": 6, "radius_m": 0.5, "x_cg_dry_m": 3,
+              "tanks": [{"propellant_kg": 4000, "x_bottom_m": 0.5, "radius_m": 0.5, "density_kg_m3": 1000}]}],
+  "engines": [{"stage": 0, "thrust_vac_n": 100000, "exit_area_m2": 0.05, "isp_vac_s": 300}])" + (extra.empty() ? std::string() : ",\n  " + extra) + "\n}";
+}
+const char* kFlap = R"("surfaces": [{"name": "f", "x_hinge_m": 1, "radius_m": 0.5, "area_m2": 0.5, "chord_m": 0.5, "span_m": 1)";
+}  // namespace
+
+TFC_TEST(missionfile_the_tower_the_failing_starts_the_surfaces_and_the_parachutes_are_read_written_and_read_again) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  const std::string text = with(R"("scenario": {"tower": {"height_m": 55, "offset_y_m": 3, "offset_z_m": 4, "capture_radius_m": 2, "max_sink_ms": 3, "max_lateral_ms": 2, "max_tilt_deg": 4}, "start_failure_prob": 0.25, "start_seed": 11},
+    "surfaces": [{"name": "flap", "x_hinge_m": 1, "radius_m": 0.5, "area_m2": 0.5, "chord_m": 0.5, "span_m": 1, "channel": 2}, {"name": "fin", "kind": "grid_fin", "x_hinge_m": 1, "radius_m": 0.5, "area_m2": 0.5, "chord_m": 0.5, "span_m": 1, "deployed": false}],
+    "parachutes": [{"name": "c", "drag_area_m2": 10, "inflation_s": 2, "x_attach_m": 5, "max_speed_ms": 100}],
+    "aero": {"diameter_m": 1.0, "full_regime": true, "newtonian_from_mach": 2.5, "newtonian_to_mach": 5.5, "nose_radius_m": 0.3, "belly_heat_factor": 0.2, "emissivity": 0.8})");
+  CHECK(reads(text, v, errors));
+  CHECK(errors.empty());
+  const sim::Tower& t = v.scenario.tower;
+  CHECK(t.enabled && near_abs(t.height_m, 55.0, 1e-12) && near_abs(t.offset_z_m, 4.0, 1e-12) && near_abs(t.max_tilt_deg, 4.0, 1e-12) && near_abs(t.capture_radius_m, 2.0, 1e-12));
+  CHECK(near_abs(v.scenario.start_failure_prob, 0.25, 1e-12) && v.scenario.start_seed == 11U);
+  CHECK(v.params.spec.surfaces.size() == 2U && v.params.spec.surfaces[0].kind == sim::SurfaceKind::Flap && v.params.spec.surfaces[1].kind == sim::SurfaceKind::GridFin && !v.params.spec.surfaces[1].deployed);
+  CHECK(v.params.spec.parachutes.size() == 1U && v.params.spec.aero.full_regime);
+  const std::string written = sim::write_vehicle(v);
+  sim::VehicleFile w;
+  CHECK(reads(written, w, errors));
+  CHECK(errors.empty() && sim::write_vehicle(w) == written);
+  CHECK(w.scenario.tower.enabled && w.scenario.start_seed == 11U && w.params.spec.surfaces.size() == 2U);
+}
+
+TFC_TEST(missionfile_a_plant_that_cannot_be_built_is_refused_for_each_reason) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(!reads(with(R"("surfaces": [{"kind": "wing", "x_hinge_m": 1, "radius_m": 0.5, "area_m2": 0.5, "chord_m": 0.5, "span_m": 1}])"), v, errors) && mentions(errors, "flap"));
+  std::string many = R"("surfaces": [)";
+  for (unsigned i = 0; i <= sim::kMaxSurfaces; ++i) {
+    many += std::string(i == 0U ? "" : ", ") + R"({"x_hinge_m": 1, "radius_m": 0.5, "area_m2": 0.5, "chord_m": 0.5, "span_m": 1})";
+  }
+  CHECK(!reads(with(many + "]"), v, errors) && mentions(errors, "at most"));
+  CHECK(!reads(with(std::string(kFlap) + R"(, "stage": 4}])"), v, errors) && mentions(errors, "stage"));
+  CHECK(!reads(with(R"("surfaces": [{"x_hinge_m": 1, "radius_m": 0.5, "area_m2": 0, "chord_m": 0.5, "span_m": 1}])"), v, errors) && mentions(errors, "area_m2"));
+  CHECK(!reads(with(R"("surfaces": [{"x_hinge_m": 1, "radius_m": 0.5, "area_m2": 1, "chord_m": 0.5, "span_m": 1, "min_deg": 5, "max_deg": -5}])"), v, errors) && mentions(errors, "max_deg"));
+  CHECK(!reads(with(R"("surfaces": [{"x_hinge_m": 1, "radius_m": 0.5, "area_m2": 1, "chord_m": 0.5, "span_m": 1, "channel": 9}])"), v, errors) && mentions(errors, "channel"));
+  std::string chutes = R"("parachutes": [)";
+  for (unsigned i = 0; i <= sim::kMaxParachutes; ++i) {
+    chutes += std::string(i == 0U ? "" : ", ") + R"({"drag_area_m2": 5})";
+  }
+  CHECK(!reads(with(chutes + "]"), v, errors) && mentions(errors, "at most"));
+  CHECK(!reads(with(R"("parachutes": [{"drag_area_m2": 5, "stage": 3}])"), v, errors) && mentions(errors, "stage"));
+  CHECK(!reads(with(R"("parachutes": [{"drag_area_m2": 0}])"), v, errors) && mentions(errors, "drag_area_m2"));
+  CHECK(!reads(with(R"("aero": {"diameter_m": 1, "full_regime": true, "newtonian_from_mach": 6, "newtonian_to_mach": 4})"), v, errors) && mentions(errors, "newtonian_to_mach"));
+  CHECK(!reads(with(R"("aero": {"diameter_m": 1, "emissivity": 2})"), v, errors) && mentions(errors, "emissivity"));
+  std::string bad_group = with("");
+  bad_group.replace(bad_group.find("\"isp_vac_s\": 300"), 16U, "\"isp_vac_s\": 300, \"group\": 9");
+  CHECK(!reads(bad_group, v, errors) && mentions(errors, "group"));
+  CHECK(!reads(with(R"("planet": {"preset": "earth", "atmosphere": "exponential", "temperature_k": 20})"), v, errors) && mentions(errors, "temperature"));
+  CHECK(reads(with(R"("planet": {"preset": "earth", "atmosphere": "none"})"), v, errors));
+  CHECK(v.params.spec.planet.atmosphere == sim::AtmosphereKind::None);
+  CHECK(!reads(with(R"("planet": {"atmosphere": "steam"})"), v, errors) && mentions(errors, "atmosphere"));
+  // a file that is not there, and one that is wrong: the path goes in front of each problem
+  CHECK(!sim::load_vehicle_file("/nonexistent/nowhere.json", v, errors));
+  const std::string path = "/tmp/tfc_test_bad_plant.json";
+  std::FILE* f = std::fopen(path.c_str(), "w");
+  CHECK(f != nullptr);
+  if (f != nullptr) {
+    const std::string bad = with(R"("parachutes": [{"drag_area_m2": 0}])");
+    std::fwrite(bad.data(), 1U, bad.size(), f);
+    std::fclose(f);
+    errors.clear();
+    CHECK(!sim::load_vehicle_file(path, v, errors) && !errors.empty() && errors[0].find(path) == 0U);
+    std::remove(path.c_str());
+  }
+}
+
+TFC_TEST(missionworld_the_demand_goes_to_the_surfaces_by_the_allocation_of_the_point_of_the_schedule_and_a_computer_without_a_mission_ignores_gnss_frames) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(reads(tiny(R"({"main": [{"kind": "coast"}]})"), v, errors));
+  const sim::Vehicle6 veh(v.params, v.scenario);
+  // one phase that holds an attitude 90 degrees from the vehicle's, on surfaces, with its own allocation
+  tfc::gnc::Tables t;
+  t.n_phases = 1U;
+  t.mass0 = veh.mass();
+  t.phase[0].kind = tfc::gnc::kind::kCoast;
+  t.phase[0].hold = tfc::gnc::hold::kFixed;
+  t.phase[0].p[1] = 1.0F;
+  t.phase[0].slew_dps = 1000.0F;
+  t.mixer[0].lo = {-20.0F, -20.0F, -20.0F, -20.0F};
+  t.mixer[0].hi = {20.0F, 20.0F, 20.0F, 20.0F};
+  t.gains[0].n = 1U;
+  t.gains[0].has_alloc = true;
+  t.gains[0].gains[0].pitch = {1.0F, 0.0F, 0.0F};
+  t.gains[0].gains[0].yaw = {1.0F, 0.0F, 0.0F};
+  t.gains[0].alloc[0].from_pitch[0] = 1.0F;
+  t.gains[0].alloc[0].from_yaw[1] = -1.0F;
+  t.nav.r0 = tfc::dm::Vec3{veh.state().r.x, veh.state().r.y, veh.state().r.z};
+  sim::AvionicsConfig cfg;
+  cfg.tables = &t;
+  cfg.calibrate_on_pad = false;
+  sim::Avionics av(cfg);
+  av.align_to(veh);
+  av.set_pad(false);
+  sim::Controls c;
+  for (uint32_t k = 0; k < 40U; ++k) {
+    c = av.step(k, veh, c);
+  }
+  CHECK(std::fabs(c.surface_deg[0]) > 0.5 || std::fabs(c.surface_deg[1]) > 0.5);   // the error of 90 degrees gives a demand and the allocation of the point puts it on a surface
+  CHECK(av.computer(0).mission().phase() == 0U);
+  // a computer that flies no mission does not take a GNSS frame
+  tfc::FlightFunction plain;
+  tfc::nav::GnssFix fix;
+  fix.r = tfc::dm::Vec3{6378137.0, 0.0, 0.0};
+  const tfc::GnssRaw raw = tfc::nav::to_raw(fix);
+  CHECK(!plain.on_gnss_frame(tfc::pack_gnss(0U, raw, 0U)));
+  // and one that does, takes only the frames of its own frame number
+  tfc::FlightFunction pilot;
+  pilot.enable_gnc(&t);
+  pilot.begin_frame(7U, 0x07U);
+  CHECK(!pilot.on_gnss_frame(tfc::pack_gnss(0U, raw, 3U)));   // (a late fix of an earlier frame)
+  CHECK(!pilot.on_gnss_frame(tfc::pack_gnss(0U, raw, 7U)) && !pilot.on_gnss_frame(tfc::pack_gnss(1U, raw, 7U)) && pilot.on_gnss_frame(tfc::pack_gnss(2U, raw, 7U)));
+}
