@@ -25,7 +25,7 @@
       "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 72.3, "d_aft_m": 9.0, "d_fore_m": 9.0}],
       "guided": true,
       "separation_dv_ms": 1.5,
-      "catch_pin_x_m": 60.0,
+      "catch_pin_x_m": 61.0,
       "gimbal_limit_deg": 8,
       "gimbal_rate_dps": 15,
       "gimbal_lag_s": 0.08
@@ -47,6 +47,7 @@
         {"kind": "nose", "x_start_m": 108.3, "length_m": 16.1, "d_aft_m": 9.0, "d_fore_m": 0, "shape": "ogive"}
       ],
       "guided": true,
+      "catch_pin_x_m": 40.0,
       "gimbal_limit_deg": 6,
       "gimbal_rate_dps": 15,
       "gimbal_lag_s": 0.08
@@ -453,7 +454,7 @@
       "thrust_vac_n": 2584000,
       "exit_area_m2": 1.33,
       "isp_vac_s": 350,
-      "group": 5,
+      "group": 7,
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8
@@ -464,7 +465,7 @@
       "thrust_vac_n": 2584000,
       "exit_area_m2": 1.33,
       "isp_vac_s": 350,
-      "group": 5,
+      "group": 7,
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8
@@ -641,7 +642,7 @@
       "name": "grid fin 1",
       "stage": 0,
       "kind": "grid_fin",
-      "x_hinge_m": 61.8,
+      "x_hinge_m": 61.0,
       "azimuth_deg": 0.0,
       "radius_m": 4.5,
       "area_m2": 11.1,
@@ -658,8 +659,8 @@
       "name": "grid fin 2",
       "stage": 0,
       "kind": "grid_fin",
-      "x_hinge_m": 61.8,
-      "azimuth_deg": 90.0,
+      "x_hinge_m": 61.0,
+      "azimuth_deg": 96.0,
       "radius_m": 4.5,
       "area_m2": 11.1,
       "chord_m": 4.15,
@@ -675,8 +676,8 @@
       "name": "grid fin 3",
       "stage": 0,
       "kind": "grid_fin",
-      "x_hinge_m": 61.8,
-      "azimuth_deg": 180.0,
+      "x_hinge_m": 61.0,
+      "azimuth_deg": 264.0,
       "radius_m": 4.5,
       "area_m2": 11.1,
       "chord_m": 4.15,
@@ -705,7 +706,8 @@
       "max_deg": 110,
       "rate_dps": 30,
       "lag_s": 0.05,
-      "channel": -1
+      "channel": 0,
+      "deployed": false
     },
     {
       "name": "aft flap starboard",
@@ -724,7 +726,8 @@
       "max_deg": 110,
       "rate_dps": 30,
       "lag_s": 0.05,
-      "channel": -1
+      "channel": 1,
+      "deployed": false
     },
     {
       "name": "forward flap port",
@@ -732,7 +735,7 @@
       "kind": "flap",
       "axial_hinge": true,
       "x_hinge_m": 102.3,
-      "azimuth_deg": 80,
+      "azimuth_deg": 112,
       "radius_m": 4.5,
       "area_m2": 16.2,
       "chord_m": 2.7,
@@ -743,7 +746,8 @@
       "max_deg": 110,
       "rate_dps": 30,
       "lag_s": 0.05,
-      "channel": -1
+      "channel": 2,
+      "deployed": false
     },
     {
       "name": "forward flap starboard",
@@ -751,7 +755,7 @@
       "kind": "flap",
       "axial_hinge": true,
       "x_hinge_m": 102.3,
-      "azimuth_deg": 280,
+      "azimuth_deg": 248,
       "radius_m": 4.5,
       "area_m2": 16.2,
       "chord_m": 2.7,
@@ -762,14 +766,17 @@
       "max_deg": 110,
       "rate_dps": 30,
       "lag_s": 0.05,
-      "channel": -1
+      "channel": 3,
+      "deployed": false
     }
   ],
   "mission": {
     "site": {"offset_y_m": 0, "offset_z_m": 400, "arm_height_m": 70, "capture_radius_m": 1.5},
     "ignition_margin": 1.2,
     "landing": {
+      "main_propellant_kg": 0,
       "sink_ms": 0.5,
+      "aim_below_m": 1.8,
       "tilt_max_deg": 40,
       "tilt_final_deg": 2.5,
       "final_height_m": 25,
@@ -800,13 +807,13 @@
         "program": [[0, 0], [10, 0], [30, 15], [60, 30], [100, 45], [130, 56]]
       },
       {"name": "MECO", "kind": "coast", "hold": "inertial", "end": {"time_s": 0.6}, "groups": [], "mixer": 0, "slew_dps": 5},
-      {"name": "hot staging", "kind": "coast", "hold": "inertial", "end": {"time_s": 1.4}, "groups": [5, 6], "mixer": 0, "throttle": 1.0, "slew_dps": 5},
+      {"name": "hot staging", "kind": "coast", "hold": "inertial", "end": {"time_s": 1.4}, "groups": [5, 6, 7], "mixer": 0, "throttle": 1.0, "slew_dps": 5},
       {
         "name": "separation",
         "kind": "coast",
         "hold": "inertial",
         "end": {"time_s": 1.0},
-        "groups": [5, 6],
+        "groups": [5, 6, 7],
         "events": ["separate"],
         "mixer": 0,
         "throttle": 1.0,
@@ -817,7 +824,7 @@
         "name": "ship ascent",
         "kind": "peg",
         "end": {"cutoff": true},
-        "groups": [5, 6],
+        "groups": [5, 6, 7],
         "mixer": 0,
         "throttle": 1.0,
         "target": {"circular_km": 250},

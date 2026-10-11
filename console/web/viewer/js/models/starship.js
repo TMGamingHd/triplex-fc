@@ -71,15 +71,7 @@ export function decorateStarship(model) {
         holder.add(f); g.add(holder);
       }
     }
-    // the catch pins, where the file says the arms take the stage (`catch_pin_x_m` from its aft end), one each side across the line to the tower (the tower stands toward model +X, the pins are at +-Z)
-    if (dress.pins) {
-      const py = (booster.spec.x_start_m || 0) + (booster.spec.catch_pin_x_m || (booster.spec.length_m - 12));
-      for (const sgn of [1, -1]) {
-        const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 1.8, 14), m.steel); pin.rotation.x = Math.PI / 2; pin.position.set(0, py, sgn * (R + 0.7));
-        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 0.5, 16), m.dark); base.rotation.x = Math.PI / 2; base.position.set(0, py, sgn * (R + 0.15));
-        g.add(pin, base);
-      }
-    }
+    // the catch pins are on the pods of the two flank grid fins (models/flaps.js): the fins are the stage's load-bearing points, the arms take it there
   }
   // ---- the ship
   if (ship) {
@@ -100,7 +92,7 @@ export function decorateStarship(model) {
 }
 
 let _tile = null;
-function tileMaterial() {
+export function tileMaterial() {
   if (_tile) return _tile;
   const t = tileTextures();
   return (_tile = new THREE.MeshStandardMaterial({ color: 0x777777, map: t.map, bumpMap: t.bump, bumpScale: 2.2, metalness: 0.05, roughness: 0.52 }));

@@ -42,9 +42,9 @@ export default {
     // the Starship's details that are still a choice of the viewer: the ring's height and the pins
     const dr = app.dress, redo = () => { app.saveDress(); app.rebuild(); };
     S.dress = h('div', { id: 'v-dress' },
-      slider('Hot-stage ring', 1, 6, 0.1, dr.ringHeight, (v) => { dr.ringHeight = v; }, (v) => v.toFixed(1) + ' m'), toggle('Catch pins', dr.pins, (v) => { dr.pins = v; }),
+      slider('Hot-stage ring', 1, 6, 0.1, dr.ringHeight, (v) => { dr.ringHeight = v; }, (v) => v.toFixed(1) + ' m'),
       h('button', { class: 'btn', type: 'button', id: 'v-dress-apply', onclick: redo }, 'Apply'),
-      h('p', { class: 'note' }, 'The grid fins and the flaps are the vehicle file\'s own surfaces, drawn at the deflection the simulator reports (they change the aerodynamics); the catch pins are where the file says the arms take the stage. What is left here is a picture of public descriptions: the hot-stage ring\'s height and whether the pins are drawn. It changes nothing about the flight.'));
+      h('p', { class: 'note' }, 'The grid fins and the flaps are the vehicle file\'s own surfaces, drawn at the deflection the simulator reports (they change the aerodynamics); the catch pins are where the file says the arms take the stage. What is left here is a picture of public descriptions: the hot-stage ring\'s height. It changes nothing about the flight.'));
     // the Earth: pictures of the real planet from NASA (a pack the user downloads), or the procedural planet
     const im = world.imagery;
     S.imgNote = h('p', { class: 'note', id: 'v-img-note' }, im.describe());

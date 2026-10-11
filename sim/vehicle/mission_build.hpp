@@ -34,6 +34,7 @@ inline uint8_t kind_of(const std::string& k, bool& ok) {
   if (k == "coast") return kCoast;
   if (k == "boostback") return kBoostback;
   if (k == "glide") return kGlide;
+  if (k == "belly") return kBelly;
   if (k == "landing") return kLanding;
   if (k == "chute") return kChute;
   if (k == "done") return kDone;
@@ -120,6 +121,25 @@ inline double mean_tail_s(const VehicleSpec& g, uint8_t mask) {
     }
   }
   return n > 0U ? tail / static_cast<double>(n) : 0.0;
+}
+
+// The catch height of a stage's centre of gravity above the arms' pins, and how it changes with the propellant: the pins at the arms' height, ahead of the centre of gravity by the distance between them; the slope is
+// the same at another amount of propellant, up to a hundred tonnes more (or less, if the stage is already as full as it goes).
+inline void set_catch_height(const Vehicle6& v, const StageSpec& st, std::size_t stage, double propellant_kg, double arm_height_m, tfc::gnc::Tables& t) {
+  const double cg = v.stage_cg_from_aft(stage, propellant_kg);
+  t.landing_height = arm_height_m - (st.catch_pin_x - cg);
+  double capacity = 0.0;
+  for (const TankSpec& tk : st.tanks) {
+    capacity += tk.propellant;
+  }
+  const double room = capacity - propellant_kg;
+  const double step = room > 1.0 ? std::min(100000.0, room) : -std::min(100000.0, std::max(propellant_kg, 0.0));
+  if (std::fabs(step) > 1.0) {
+    const double cg_more = v.stage_cg_from_aft(stage, propellant_kg + step);
+    t.landing_height_slope = ((arm_height_m - (st.catch_pin_x - cg_more)) - t.landing_height) / step;
+  }
+  t.landing_mass_ref = st.dry_mass + propellant_kg;
+  t.arm_height = arm_height_m;
 }
 
 }  // namespace detail
@@ -257,6 +277,14 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
       ph.p[4] = static_cast<float>(ps.gate_speed_ms);
       ph.p[5] = static_cast<float>(ps.gate_height_m);
       ph.p[6] = static_cast<float>(ps.brake_max_deg);
+    } else if (ph.kind == kind::kBelly) {
+      ph.p[0] = static_cast<float>(ps.alpha_deg);
+      ph.p[1] = static_cast<float>(ps.alpha_min_deg);
+      ph.p[2] = static_cast<float>(ps.alpha_max_deg);
+      ph.p[3] = static_cast<float>(ps.gain_deg_per_km / 1000.0);
+      ph.p[4] = static_cast<float>(ps.beta_kg_m2);
+      ph.p[5] = static_cast<float>(ps.bank_gain_deg_per_km / 1000.0);
+      ph.p[6] = static_cast<float>(ps.bank_max_deg);
     } else if (ph.kind == kind::kLanding) {
       unsigned options = 0U;
       for (std::size_t n = 0; n < 4U; ++n) {
@@ -302,6 +330,9 @@ inline bool build_mission(const VehicleFile& f, BuiltMission& out, std::vector<s
       t.mixer[i].gimbal_pitch = m.mixers[i].gimbal ? 1.0F : 0.0F;
       t.mixer[i].gimbal_yaw = m.mixers[i].gimbal ? 1.0F : 0.0F;
       t.mixer[i].roll = m.mixers[i].roll_thrusters ? 1.0F : 0.0F;
+      for (std::size_t k = 0; k < 4U; ++k) {
+        t.mixer[i].trim[k] = static_cast<float>(m.mixers[i].trim_deg[k]);
+      }
     }
   };
   set_mixers(out.main);
@@ -313,22 +344,12 @@ inline bool build_mission(const VehicleFile& f, BuiltMission& out, std::vector<s
     out.has_stage[s] = true;
     ok = build_plan(f, v, m.stage[s], "stage" + std::to_string(s), out.stage[s], errors) && ok;
     set_mixers(out.stage[s]);
-    const StageSpec& st = f.params.spec.stages[s];
-    const double cg = v.stage_cg_from_aft(s, m.landing_propellant_kg);
-    out.stage[s].landing_height = m.arm_height_m - (st.catch_pin_x - cg);
-    // the slope: the same at another amount of propellant, up to a hundred tonnes more (or less, if the stage is already as full as it goes)
-    double capacity = 0.0;
-    for (const TankSpec& tk : st.tanks) {
-      capacity += tk.propellant;
-    }
-    const double room = capacity - m.landing_propellant_kg;
-    const double step = room > 1.0 ? std::min(100000.0, room) : -std::min(100000.0, std::max(m.landing_propellant_kg, 0.0));
-    if (std::fabs(step) > 1.0) {
-      const double cg_more = v.stage_cg_from_aft(s, m.landing_propellant_kg + step);
-      out.stage[s].landing_height_slope = ((m.arm_height_m - (st.catch_pin_x - cg_more)) - out.stage[s].landing_height) / step;
-    }
-    out.stage[s].landing_mass_ref = st.dry_mass + m.landing_propellant_kg;
-    out.stage[s].arm_height = m.arm_height_m;
+    detail::set_catch_height(v, f.params.spec.stages[s], s, m.landing_propellant_kg, m.arm_height_m, out.stage[s]);
+  }
+  // the main body lands too (a ship coming home): its catch height is the top stage's, with the propellant the file says is left in it
+  if (m.main_landing_propellant_kg > 0.0) {
+    const std::size_t top = f.params.spec.stages.size() - 1U;
+    detail::set_catch_height(v, f.params.spec.stages[top], top, m.main_landing_propellant_kg, m.arm_height_m, out.main);
   }
   return ok;
 }

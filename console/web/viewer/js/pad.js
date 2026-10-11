@@ -118,7 +118,8 @@ export class Pad {
     }
     // the tower: four legs, bracing every few metres, two arms where the vehicle's top stage is, a lightning rod
     const TH = L * 1.19, tw = Math.max(3, L * 0.075), tx = Math.max(24, D * 3.4 + tw), tz = 0;
-    const tower = new THREE.Group(); tower.position.set(tx, 0, tz); S.add(tower);
+    const tower = new THREE.Group(); tower.position.set(this.opts.second ? 0 : tx, 0, this.opts.second ? tx : tz); S.add(tower);
+    if (this.opts.second) tower.rotation.y = -Math.PI / 2;                      // a catch pad's tower is downrange of the stage, its arms either side of it: they take the two flank fins' pins (the stage's spine fin faces downrange)
     const col = Math.max(0.5, tw * 0.09), step = Math.max(2.5, tw * 0.8);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) tower.add(bar(new THREE.Vector3(sx * tw / 2, 0, sz * tw / 2), new THREE.Vector3(sx * tw / 2, TH, sz * tw / 2), col, steel));
     for (let y = 0; y < TH; y += step) {

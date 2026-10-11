@@ -2,7 +2,7 @@
 // Fly a vehicle's MISSION: read a vehicle description that has a `mission` block (docs/design/GNC.md, docs/design/RECOVERY.md), design the mission on its nominal flight (the gains of the attitude loop, the
 // allocation to the surfaces, the guidance's starting solutions, the drag of the way down), then fly it for real: every body (the stack, then the stages that are let go) on three flight computers with
 // their sensor models, a GNSS receiver, the navigation filter, the guidance and the voted commands, in the vehicle simulator. Reports what happened to each body and what the mission was meant to do.
-//   tfc_mission VEHICLE.json [--ideal] [--seed N] [--gnss-sigma M] [--pad FRAMES] [--max-time S] [--design-only] [--expect-catch] [--expect-orbit] [--expect-landing]
+//   tfc_mission VEHICLE.json [--ideal] [--seed N] [--gnss-sigma M] [--pad FRAMES] [--max-time S] [--min-time S] [--design-only] [--expect-catch] [--expect-orbit] [--expect-landing]
 //                            [--csv FILE] [--every S] [--pose FILE] [--pose-body N] [--pose-hz N] [--pose-others]
 // --ideal: the attitude of every body is forced to the one its mission asks for (the guidance and the plant without the sensors and the loop). --expect-*: exit 3 unless the stated outcome happened
 // (a booster caught by the tower, a ship in an orbit with its perigee above 100 km, a stage on its legs or its parachute at a speed the legs and the parachute can take).
@@ -30,6 +30,7 @@ struct Options {
   double gnss_sigma = 2.0;
   uint32_t pad_frames = 1500U;
   double max_time = 0.0;
+  double min_time = 0.0;          // do not end before this many seconds (a ship coasting in orbit is 'done' as soon as the booster is: this keeps the run going to the deorbit)
   double every = 10.0;
   const char* csv = nullptr;
   const char* pose = nullptr;
@@ -40,7 +41,7 @@ struct Options {
 
 void usage() {
   std::fprintf(stderr,
-               "usage: tfc_mission VEHICLE.json [--ideal] [--seed N] [--gnss-sigma M] [--pad FRAMES] [--max-time S] [--design-only] [--expect-catch] [--expect-orbit] [--expect-landing]\n"
+               "usage: tfc_mission VEHICLE.json [--ideal] [--seed N] [--gnss-sigma M] [--pad FRAMES] [--max-time S] [--min-time S] [--design-only] [--expect-catch] [--expect-orbit] [--expect-landing]\n"
                "                                [--csv FILE] [--every S] [--pose FILE] [--pose-body N] [--pose-hz N] [--pose-others]\n");
 }
 
@@ -68,6 +69,8 @@ bool parse(int argc, char** argv, Options& o) {
       o.gnss_sigma = std::strtod(argv[++i], nullptr);
     } else if (a == "--pad" && more) {
       o.pad_frames = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+    } else if (a == "--min-time" && more) {
+      o.min_time = std::strtod(argv[++i], nullptr);
     } else if (a == "--max-time" && more) {
       o.max_time = std::strtod(argv[++i], nullptr);
     } else if (a == "--every" && more) {
@@ -305,7 +308,7 @@ int main(int argc, char** argv) {
       }
       all_done = all_done && (ended || settled);
     }
-    if (all_done) {
+    if (all_done && t >= opt.min_time) {
       if (tail_since < 0.0) {
         tail_since = t;
       }

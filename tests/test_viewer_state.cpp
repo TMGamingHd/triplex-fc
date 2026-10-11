@@ -80,6 +80,16 @@ TFC_TEST(viewer_spec_is_json_and_matches_the_vehicle) {
   CHECK(near_abs(j.find("radius_m")->number, veh.planet().radius, 1.0));
 }
 
+TFC_TEST(viewer_spec_carries_the_centre_of_mass_the_vehicle_has_at_t_zero) {
+  sim::VehicleFile vf = load("two_stage_launcher.json");
+  sim::Vehicle6 veh(vf.params, vf.scenario);
+  sim::Json spec;
+  std::string err;
+  CHECK(sim::parse_json(sim::viewer_spec_json(vf, veh), spec, err));
+  CHECK(near_abs(get(spec, "cg0_m").number, veh.mass_props().x_cg, 1e-3));
+  CHECK(get(spec, "cg0_m").number > 1.0);
+}
+
 TFC_TEST(viewer_pose_is_consistent_with_the_vehicle) {
   sim::VehicleFile vf = load("two_stage_launcher.json");
   vf.scenario.wind_scale = 0.0;                        // no wind: the velocity through the air is the velocity

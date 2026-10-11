@@ -151,7 +151,7 @@ inline void fit_plan(const MissionSpec& ms, const VehicleSpec& spec, tfc::gnc::T
         if (sf.channel == ch) {
           tab.mixer[idx].lo[static_cast<std::size_t>(ch)] = static_cast<float>(sf.min_deg);
           tab.mixer[idx].hi[static_cast<std::size_t>(ch)] = static_cast<float>(sf.max_deg);
-          travel[static_cast<std::size_t>(ch)] = std::min(std::fabs(sf.min_deg), std::fabs(sf.max_deg));
+          travel[static_cast<std::size_t>(ch)] = std::min(ms.mixers[idx].trim_deg[static_cast<std::size_t>(ch)] - sf.min_deg, sf.max_deg - ms.mixers[idx].trim_deg[static_cast<std::size_t>(ch)]);   // the travel each way about the trim
           break;
         }
       }
@@ -181,7 +181,8 @@ inline void fit_plan(const MissionSpec& ms, const VehicleSpec& spec, tfc::gnc::T
     for (const int ch : used) {
       for (const SurfaceSpec& sf : spec.surfaces) {
         if (sf.channel == ch) {
-          travel[static_cast<std::size_t>(ch)] = std::min(std::fabs(sf.min_deg), std::fabs(sf.max_deg));
+          const double tr0 = mixer_idx < ms.mixers.size() ? ms.mixers[mixer_idx].trim_deg[static_cast<std::size_t>(ch)] : 0.0;
+          travel[static_cast<std::size_t>(ch)] = std::min(tr0 - sf.min_deg, sf.max_deg - tr0);
           break;
         }
       }

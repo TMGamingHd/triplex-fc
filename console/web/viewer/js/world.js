@@ -111,7 +111,7 @@ export class World {
   addCatchPad(spec, L, D) {
     const site = spec.vehicle && spec.vehicle.mission && spec.vehicle.mission.site;
     if (!site || !(Math.abs(site.offset_y_m || 0) + Math.abs(site.offset_z_m || 0) > 60)) return;       // within 60 m it is the launch mount's own tower
-    const second = new Pad(L, D, this.mountH, 1600, { second: true, armY: site.arm_height_m || 70 });
+    const second = new Pad(L, D, this.mountH, 1600, { second: true, armY: (site.arm_height_m || 70) + this.mountH });                  // the simulator's ground is the level of the launch tail; the picture's ground is the launch mount's height below it
     second.structures.position.set(site.offset_z_m || 0, 0, site.offset_y_m || 0);                       // the pad's frame: x crossrange, z downrange
     this.pad.structures.add(second.structures);
     this.catchPad = second;
@@ -150,7 +150,7 @@ export class World {
     this.time.wall = wall;
     const spec = this.spec;
     const R = spec.planet.radius;
-    if (this.padCG == null && pose) this.padCG = pose.cg;
+    if (this.padCG == null && pose) this.padCG = this.spec.cg0 ?? ctx.padCg ?? pose.cg;                // the ground level is the main vehicle's at the pad, whichever body is followed
     const rv = (R - (this.padCG ?? pose.cg) - this.mountH);                 // the surface the pad stands on: the vehicle's tail sits `mountH` above it, its CG `cg` above that
     const rS = toScene(pose.r); this.rS = rS; this.tt = pose.tt;
     const qs = new THREE.Quaternion(...quatToScene(pose.q)).normalize(); this.qs = qs;

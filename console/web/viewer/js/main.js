@@ -146,7 +146,7 @@ function rebuildVehicle() {
   if (keep) setLens(keep.id);
 }
 data.onSpec.push(() => { data.focus = Q.get('follow') || 'main'; app.curSpec = null; rebuildVehicle(); });
-data.onReset.push(() => { world.trail.clear(); world.smoke.clear(); app.events.length = 0; tracker.prev = null; tracker.liftoff = false; tracker.space = false; tracker.qpeak = 0; });
+data.onReset.push(() => { data.padCg = null; world.padCG = null; world.trail.clear(); world.smoke.clear(); app.events.length = 0; tracker.prev = null; tracker.liftoff = false; tracker.space = false; tracker.qpeak = 0; });
 
 // ---- the events: what happened, from the poses
 const tracker = { prev: null, qpeak: 0, qpeakT: 0, maxQDone: false, liftoff: false, space: false };
@@ -352,13 +352,14 @@ function loop(now) {
   if (Q.get('static')) pose = staticPose();
   else { const t = data.clock.frame(data.buf, data.source, false); pose = t == null ? null : data.buf.at(t); }
   const raw = pose;                                                          // the pose as the simulator sent it, with the other bodies in it
+  if (raw && data.padCg == null) data.padCg = raw.cg;                          // the main body's centre of mass on the pad: the ground is placed from it
   if (pose) { const v = data.view(pose); pose = v.pose; if (v.spec !== app.curSpec) { app.curSpec = v.spec; if (world.spec !== v.spec) rebuildVehicle(); } updateFollow(raw); }
   if (pose && Q.get('finsout')) pose = { ...pose, sdep: 255 };                 // ?finsout=1: every surface deployed, to look at deployed grid fins without flying the return
   if (pose && Q.get('flapdeg')) pose = { ...pose, surf: (app.spec.surfaces || []).map(() => +Q.get('flapdeg')) };      // ?flapdeg=40: every surface at that deflection, to look at a deployed flap without flying one
   if (pose) {
     app.pose = pose;
     try {
-      world.frame(pose, dt, app.wall, { specFor: (o) => data.specFor(o) });
+      world.frame(pose, dt, app.wall, { specFor: (o) => data.specFor(o), padCg: data.padCg });
       updateLocator(pose);
       const d = app.d = derive(pose, app.spec);
       if (app.lens) app.lens.update(app, pose, d, dt);

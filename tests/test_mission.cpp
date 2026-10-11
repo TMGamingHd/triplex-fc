@@ -269,6 +269,12 @@ TFC_TEST(sequencer_the_landing_phases_end_at_the_stopping_height_and_at_the_catc
   CHECK(ends_when(end::kIgnition, 6000.0F, inputs_at(8000.0, Vec3{-316.0, 0.0, 0.0}), inputs_at(2000.0, Vec3{-316.0, 0.0, 0.0}), 100000.0, 3U, landing_tables));
   CHECK(!ends_when(end::kIgnition, 6000.0F, inputs_at(8000.0, Vec3{-316.0, 0.0, 0.0}), inputs_at(7000.0, Vec3{-316.0, 0.0, 0.0}), 100000.0, 3U, landing_tables));   // not under the height
   CHECK(!ends_when(end::kIgnition, 6000.0F, inputs_at(5000.0, Vec3{-100.0, 0.0, 0.0}), inputs_at(4900.0, Vec3{-100.0, 0.0, 0.0}), 100000.0, 3U, landing_tables));   // under it but not yet due
+  {
+    // a vehicle in orbit on the far side of the planet is far "below" the site along the site's up: it must not light up there
+    Inputs far = inputs_at(239000.0, Vec3{316.0, 0.0, 0.0});
+    far.r = Vec3{-(kR + 239000.0), 0.0, 0.0};
+    CHECK(!ends_when(end::kIgnition, 6000.0F, inputs_at(8000.0, Vec3{-316.0, 0.0, 0.0}), far, 100000.0, 3U, landing_tables));
+  }
   // touchdown: at the catch point, which the burn aims 2 m under
   CHECK(ends_when(end::kTouchdown, 0.0F, inputs_at(60.0, Vec3{-1.0, 0.0, 0.0}), inputs_at(37.5, Vec3{-1.0, 0.0, 0.0}), 100000.0, 3U, landing_tables));
   // the catch height follows the mass
@@ -719,4 +725,80 @@ TFC_TEST(sequencer_a_burn_that_has_cut_off_stays_cut_off_and_a_prediction_that_f
   gm.start(esc);
   const Output og = gm.step(esc);
   CHECK(og.groups == 0U && norm(gm.miss()) == 0.0);
+}
+
+TFC_TEST(sequencer_a_belly_entry_holds_the_nose_raised_from_the_velocity_and_the_prediction_steers_the_angle_and_the_bank) {
+  const tfc::nav::Gravity g;
+  const auto belly = [&g](double alpha, double alpha_min, double alpha_max, double per_m, double beta, double bank_per_m, double bank_max) {
+    Tables t = plain(1);
+    t.nav.gravity = g;
+    t.site = Vec3{kR, 0.0, 0.0};
+    t.ground_radius = kR;
+    t.phase[0].kind = kind::kBelly;
+    t.phase[0].p[0] = static_cast<float>(alpha);
+    t.phase[0].p[1] = static_cast<float>(alpha_min);
+    t.phase[0].p[2] = static_cast<float>(alpha_max);
+    t.phase[0].p[3] = static_cast<float>(per_m);
+    t.phase[0].p[4] = static_cast<float>(beta);
+    t.phase[0].p[5] = static_cast<float>(bank_per_m);
+    t.phase[0].p[6] = static_cast<float>(bank_max);
+    return t;
+  };
+  const Vec3 v{-50.0, 100.0, 0.0};
+  const auto at = [&v](double y, double z) {
+    Inputs in = inputs_at(30000.0, v);
+    in.r = Vec3{kR + 30000.0, y, z};
+    return in;
+  };
+  const Vec3 vel = tfc::dm::unit(v, Vec3{1.0, 0.0, 0.0});
+  const auto angle_deg = [&vel](const Vec3& axis) { return std::acos(dot(axis, vel)) * tfc::dm::kRadToDeg; };
+  const auto fly = [](const Tables& t, const Inputs& in) {
+    Mission m;
+    m.configure(&t);
+    m.start(in);
+    const Output out = m.step(in);
+    CHECK(out.groups == 0U && out.throttle == 0.0F);   // no thrust: the surfaces do the steering
+    return std::make_pair(axis_of(m), m.miss());
+  };
+  // without a gain the angle is the nominal one, raised toward the vertical (the +x of the site) across the velocity, and with no bank the lift is in the plane of the fall
+  {
+    const Tables t = belly(70.0, 50.0, 88.0, 0.0, 0.0, 0.0, 0.0);
+    const auto [axis, miss] = fly(t, at(0.0, 0.0));
+    CHECK(near_abs(angle_deg(axis), 70.0, 0.01) && axis.x > vel.x && near_abs(axis.z, 0.0, 1.0e-9));
+    (void)miss;
+  }
+  // a miss short of the site lowers the angle to its smallest (the most lift), a miss beyond it raises it to its largest
+  {
+    const Tables t = belly(70.0, 50.0, 88.0, 1.0, 0.0, 0.0, 0.0);
+    CHECK(near_abs(angle_deg(fly(t, at(-1.0e6, 0.0)).first), 50.0, 0.01));
+    CHECK(near_abs(angle_deg(fly(t, at(1.0e6, 0.0)).first), 88.0, 0.01));
+  }
+  // the ballistic coefficient of the phase replaces the tables' in the prediction: a lighter fall comes down short of where a heavier one does
+  {
+    const Tables light = belly(70.0, 50.0, 88.0, 0.0, 50.0, 0.0, 0.0);
+    const Tables heavy = belly(70.0, 50.0, 88.0, 0.0, 5000.0, 0.0, 0.0);
+    CHECK(fly(light, at(0.0, 0.0)).second.y != fly(heavy, at(0.0, 0.0)).second.y);
+  }
+  // a miss across the track banks the whole attitude about the velocity toward the site, up to the most it may bank
+  {
+    const Tables t = belly(70.0, 50.0, 88.0, 0.0, 0.0, 1.0, 20.0);
+    const Vec3 right = fly(t, at(0.0, 5000.0)).first;     // the vehicle is to the +z of the track: the lift tilts to -z
+    const Vec3 left = fly(t, at(0.0, -5000.0)).first;
+    CHECK(near_abs(right.z, -std::sin(70.0 * tfc::dm::kDegToRad) * std::sin(20.0 * tfc::dm::kDegToRad), 1.0e-6));
+    CHECK(near_abs(left.z, -right.z, 1.0e-6));
+    CHECK(near_abs(angle_deg(right), 70.0, 0.01));      // the bank turns the lift, it does not change the angle
+    const Tables soft = belly(70.0, 50.0, 88.0, 0.0, 0.0, 1.0e-4, 20.0);
+    const Vec3 small = fly(soft, at(0.0, 5000.0)).first;
+    CHECK(small.z < 0.0 && small.z > right.z);            // below the limit the bank follows the miss
+  }
+  // a state that never reaches the ground has no miss and the angle stays nominal
+  {
+    const Tables t = belly(70.0, 50.0, 88.0, 1.0, 0.0, 1.0, 20.0);
+    Inputs esc = inputs_at(50000.0, Vec3{20000.0, 0.0, 0.0});
+    Mission m;
+    m.configure(&t);
+    m.start(esc);
+    (void)m.step(esc);
+    CHECK(norm(m.miss()) == 0.0);
+  }
 }

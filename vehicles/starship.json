@@ -14,7 +14,7 @@
   "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08},
   "aero": {"diameter_m": 9.0, "roughness": 1.2},
   "stages": [
-    {"name": "booster", "dry_mass_kg": 220000, "x_start_m": 0, "length_m": 72.3, "radius_m": 4.5, "inertia_factor": 0.55, "catch_pin_x_m": 60.0, "x_cg_dry_m": 25,
+    {"name": "booster", "dry_mass_kg": 220000, "x_start_m": 0, "length_m": 72.3, "radius_m": 4.5, "inertia_factor": 0.55, "catch_pin_x_m": 61.0, "x_cg_dry_m": 25,
      "tanks": [
        {"propellant_kg": 748000, "x_bottom_m": 3.0, "radius_m": 4.4, "density_kg_m3": 424},       // methane, low (22 % of the propellant: oxidiser to fuel 3.55)
        {"propellant_kg": 2652000, "x_bottom_m": 32.5, "radius_m": 4.4, "density_kg_m3": 1141}     // liquid oxygen, above it
@@ -43,18 +43,18 @@
   "payloads": [
     {"name": "payload", "mass_kg": 37500, "x_m": 112}       // Flight 12's twenty Starlink V3 mass simulators and two modified Starlink V2, about 37.5 t
   ],
-  // The booster's three grid fins, folded against the skin for the climb (V3 has three, set low on the stage; the sizes and places are my estimates, as the mission file's) and the ship's four flaps (public numbers are few: two small forward flaps near the nose and two large aft flaps at the tail; the sizes and places are my estimates, docs/design/VIEWER.md section 7).
+  // The booster's three grid fins, folded against the skin for the climb (V3 has three, in a T: one on the spine, one on each flank 96 degrees round, the leeward side open, set low on the stage; the sizes and places are my estimates, as the mission file's) and the ship's four flaps (public numbers are few: two small forward flaps near the nose and two large aft flaps at the tail; the sizes and places are my estimates, docs/design/VIEWER.md section 7).
   // They are hinged along the body's axis (axial_hinge) and, for the climb, held standing straight out (stow_deg 90): edge-on to a stream along the axis, so they carry only their friction, as the flaps
   // of the real ship do in the climb. In the belly flop (a stream across the vehicle) the same plate is broadside to it; the deflection is its angle to that stream. No command here (channel -1): the
   // mission file vehicles/missions/starship_return.json commands them for the ship's entry. x_hinge is the aft end of the hinge, which runs forward by span_m; chord_m is the width of the plate.
   "surfaces": [
-    {"name": "grid fin 1", "stage": 0, "kind": "grid_fin", "x_hinge_m": 61.8, "azimuth_deg": 0,   "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68, "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": -1, "deployed": false},
-    {"name": "grid fin 2", "stage": 0, "kind": "grid_fin", "x_hinge_m": 61.8, "azimuth_deg": 90,  "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68, "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": -1, "deployed": false},
-    {"name": "grid fin 3", "stage": 0, "kind": "grid_fin", "x_hinge_m": 61.8, "azimuth_deg": 180, "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68, "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": -1, "deployed": false},
+    {"name": "grid fin 1", "stage": 0, "kind": "grid_fin", "x_hinge_m": 61.0, "azimuth_deg": 0,   "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68, "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": -1, "deployed": false},
+    {"name": "grid fin 2", "stage": 0, "kind": "grid_fin", "x_hinge_m": 61.0, "azimuth_deg": 96,  "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68, "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": -1, "deployed": false},
+    {"name": "grid fin 3", "stage": 0, "kind": "grid_fin", "x_hinge_m": 61.0, "azimuth_deg": 264, "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68, "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": -1, "deployed": false},
     {"name": "aft flap port",      "stage": 1, "kind": "flap", "axial_hinge": true, "x_hinge_m": 73.6,  "azimuth_deg": 80,  "radius_m": 4.5, "area_m2": 36.9, "chord_m": 4.1, "span_m": 9.0, "chord_dir": 1,  "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": -1},
     {"name": "aft flap starboard", "stage": 1, "kind": "flap", "axial_hinge": true, "x_hinge_m": 73.6,  "azimuth_deg": 280, "radius_m": 4.5, "area_m2": 36.9, "chord_m": 4.1, "span_m": 9.0, "chord_dir": -1, "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": -1},
-    {"name": "forward flap port",      "stage": 1, "kind": "flap", "axial_hinge": true, "x_hinge_m": 102.3, "azimuth_deg": 80,  "radius_m": 4.5, "area_m2": 16.2, "chord_m": 2.7, "span_m": 6.0, "chord_dir": 1,  "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": -1},
-    {"name": "forward flap starboard", "stage": 1, "kind": "flap", "axial_hinge": true, "x_hinge_m": 102.3, "azimuth_deg": 280, "radius_m": 4.5, "area_m2": 16.2, "chord_m": 2.7, "span_m": 6.0, "chord_dir": -1, "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": -1}
+    {"name": "forward flap port",      "stage": 1, "kind": "flap", "axial_hinge": true, "x_hinge_m": 102.3, "azimuth_deg": 112, "radius_m": 4.5, "area_m2": 16.2, "chord_m": 2.7, "span_m": 6.0, "chord_dir": 1,  "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": -1},
+    {"name": "forward flap starboard", "stage": 1, "kind": "flap", "axial_hinge": true, "x_hinge_m": 102.3, "azimuth_deg": 248, "radius_m": 4.5, "area_m2": 16.2, "chord_m": 2.7, "span_m": 6.0, "chord_dir": -1, "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": -1}
   ],
   "design": {"t_end_s": 491, "program": [[0,0],[10,0],[30,14],[60,32],[100,52],[144,64],[200,72],[280,79],[380,83],[491,85]],
              "gains": {"every_s": 0, "wn": 0.5, "zeta": 0.8, "ki_over_kp": 0.15, "b_min": 0.02}}
