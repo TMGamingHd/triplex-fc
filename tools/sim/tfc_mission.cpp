@@ -3,7 +3,7 @@
 // allocation to the surfaces, the guidance's starting solutions, the drag of the way down), then fly it for real: every body (the stack, then the stages that are let go) on three flight computers with
 // their sensor models, a GNSS receiver, the navigation filter, the guidance and the voted commands, in the vehicle simulator. Reports what happened to each body and what the mission was meant to do.
 //   tfc_mission VEHICLE.json [--ideal] [--seed N] [--gnss-sigma M] [--pad FRAMES] [--max-time S] [--design-only] [--expect-catch] [--expect-orbit] [--expect-landing]
-//                            [--csv FILE] [--every S] [--pose FILE] [--pose-body N] [--pose-hz N]
+//                            [--csv FILE] [--every S] [--pose FILE] [--pose-body N] [--pose-hz N] [--pose-others]
 // --ideal: the attitude of every body is forced to the one its mission asks for (the guidance and the plant without the sensors and the loop). --expect-*: exit 3 unless the stated outcome happened
 // (a booster caught by the tower, a ship in an orbit with its perigee above 100 km, a stage on its legs or its parachute at a speed the legs and the parachute can take).
 #include <cmath>
@@ -34,13 +34,14 @@ struct Options {
   const char* csv = nullptr;
   const char* pose = nullptr;
   std::size_t pose_body = 0U;
+  bool pose_others = false;       // every pose carries the poses of the other bodies (the stage that returns), for the 3D viewer
   uint32_t pose_hz = 20U;
 };
 
 void usage() {
   std::fprintf(stderr,
                "usage: tfc_mission VEHICLE.json [--ideal] [--seed N] [--gnss-sigma M] [--pad FRAMES] [--max-time S] [--design-only] [--expect-catch] [--expect-orbit] [--expect-landing]\n"
-               "                                [--csv FILE] [--every S] [--pose FILE] [--pose-body N] [--pose-hz N]\n");
+               "                                [--csv FILE] [--every S] [--pose FILE] [--pose-body N] [--pose-hz N] [--pose-others]\n");
 }
 
 bool parse(int argc, char** argv, Options& o) {
@@ -75,6 +76,8 @@ bool parse(int argc, char** argv, Options& o) {
       o.csv = argv[++i];
     } else if (a == "--pose" && more) {
       o.pose = argv[++i];
+    } else if (a == "--pose-others") {
+      o.pose_others = true;
     } else if (a == "--pose-body" && more) {
       o.pose_body = static_cast<std::size_t>(std::strtoul(argv[++i], nullptr, 10));
     } else if (a == "--pose-hz" && more) {
@@ -263,7 +266,22 @@ int main(int argc, char** argv) {
         std::fprintf(pose, "%s\n", sim::viewer_spec_json(bf, b.veh).c_str());
         pose_spec_written = true;
       }
-      std::fprintf(pose, "%s\n", sim::viewer_pose_json(b.veh, t, sim::PoseExtra{}).c_str());
+      sim::PoseExtra extra;
+      if (opt.pose_others) {
+        std::string list = "[";
+        for (std::size_t i = 0; i < world.bodies(); ++i) {
+          if (i == opt.pose_body) {
+            continue;
+          }
+          const sim::MissionWorld::Body& ob = world.body(i);
+          list += std::string(list.size() > 1U ? "," : "") + "{\"name\":\"" + ob.name + "\",\"stage\":" + std::to_string(ob.stage) + ",\"pose\":" + sim::viewer_pose_json(ob.veh, t, sim::PoseExtra{}) + "}";
+        }
+        list += "]";
+        if (list.size() > 2U) {
+          extra.others = list;
+        }
+      }
+      std::fprintf(pose, "%s\n", sim::viewer_pose_json(b.veh, t, extra).c_str());
     }
     // the mission is over when every body that was let go has ended and the stack has reached the last phase of its plan
     bool all_done = world.bodies() > 0U;

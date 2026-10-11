@@ -23,13 +23,21 @@ exec sleep 60
 """
 
 
-def fake_repo(root: Path, missing=()):
+SIM_SCRIPT = """#!/bin/sh
+sleep %s
+printf 'tfc_simd on vcan0: waiting for SYNC\\n'
+exec sleep 60
+"""
+
+
+def fake_repo(root: Path, missing=(), sim_ready_after: float | None = 0.0):
+    """sim_ready_after: seconds the stand-in simulator takes to print its ready line (a real one takes seconds); None: it never prints it."""
     for rel in ("build/host/tfc_simd", "build/launch_a/zephyr/zephyr.exe", "build/launch_b/zephyr/zephyr.exe", "build/launch_c/zephyr/zephyr.exe", "build/act_native/zephyr/zephyr.exe"):
         if rel in missing:
             continue
         p = root / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(SCRIPT)
+        p.write_text(SIM_SCRIPT % sim_ready_after if rel.endswith("tfc_simd") and sim_ready_after is not None else SCRIPT)
         p.chmod(p.stat().st_mode | stat.S_IXUSR)
 
 
@@ -231,6 +239,37 @@ class Isolated(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             self.rig.isolate(True)
         self.assertIn("only 4 logical CPUs", str(cm.exception))
+
+
+class StartOrder(unittest.TestCase):
+    """The computers start only once the simulator can answer them: a Starship's simulator takes seconds to start, and computers that came up meanwhile counted the missing IMU frames as faults and were never ready."""
+
+    def make(self, sim_ready_after):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name)
+        fake_repo(repo, sim_ready_after=sim_ready_after)
+        hub = Hub()
+        rig = Rig(hub, repo, lambda: "vcan0", lambda: 45679, lambda: [])
+        self.addCleanup(rig.shutdown)
+        return hub, rig
+
+    def test_the_computers_wait_for_a_slow_simulator(self):
+        hub, rig = self.make(1.5)
+        rig.start_profile("closed-loop")
+        self.assertTrue(wait_for(lambda: len(rig.procs) == 5 and all(p.state == "running" for p in rig.procs.values()), 10.0), rig.snapshot())
+        sim, a = rig.procs["SIM"], rig.procs["A"]
+        self.assertGreaterEqual(a.started - sim.started, 1.4)            # A was started after the simulator's ready line, not 0.4 s after the simulator
+        self.assertTrue(sim.ready.is_set())
+        self.assertFalse(any(e.level == "warn" and "did not say it was ready" in e.text for e in hub.model.events))
+
+    def test_a_simulator_that_never_says_it_is_ready_does_not_hold_the_rig_for_good(self):
+        hub, rig = self.make(None)
+        rig.ready_timeout_s = 0.8
+        rig.start_profile("closed-loop")
+        self.assertTrue(wait_for(lambda: len(rig.procs) == 5 and all(p.state == "running" for p in rig.procs.values()), 10.0), rig.snapshot())
+        self.assertTrue(any("did not say it was ready" in e.text for e in hub.model.events))
+        self.assertGreaterEqual(rig.procs["A"].started - rig.procs["SIM"].started, 0.7)
 
 
 class NothingIsLeftBehind(unittest.TestCase):

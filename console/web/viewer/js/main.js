@@ -48,7 +48,8 @@ st.plumes = store.get('v.plumes', true); st.trail = store.get('v.trail', true); 
 
 const app = {
   world, data, events: [], wall: 0, dt: 0.016, pose: null, d: null, lens: null, styleName: Q.get('style') || store.get('v.style', 'auto'),
-  get spec() { return data.spec; }, get vehicle() { return world.vehicle; },
+  curSpec: null,                                               // the spec of the body that is followed (the main body's, or the spec of one stage of it)
+  get spec() { return this.curSpec || data.spec; }, get vehicle() { return world.vehicle; },
   left: h('aside', { id: 'v-left', class: 'v-dock', 'aria-label': 'Left panels' }), right: h('aside', { id: 'v-right', class: 'v-dock', 'aria-label': 'Right panels' }),
   models: [], gltf: Object.assign({ axis: '+y', fitLength: true, roll: 0, offset: 0, scale: 1, scene: null, name: null }, store.get('v.gltf', {}), { scene: null, name: null }),
   /** The model files in console/models/, as the server lists them. */
@@ -75,14 +76,37 @@ const srcChip = h('button', { class: 'chip muted v-chip', id: 'v-src', type: 'bu
 const vehChip = h('span', { class: 'chip muted', id: 'v-veh' }, '—');
 const clockEl = h('div', { id: 'v-clock', 'aria-live': 'off' }, 'T —');
 const lensBar = h('nav', { id: 'v-lenses', role: 'tablist', 'aria-label': 'Lenses' }, LENSES.map((l) => h('button', { type: 'button', role: 'tab', dataset: { id: l.id }, 'aria-selected': 'false', onclick: () => setLens(l.id) }, l.label, h('kbd', {}, l.key))));
-const camBtn = h('button', { class: 'v-iconbtn', type: 'button', id: 'v-cam', title: 'Next camera (C)', onclick: () => nextCamera() }, 'Camera: ', h('b', {}, 'orbit'));
 const top = h('header', { id: 'v-top' },
   h('div', { class: 'v-brand' }, h('svg', { viewBox: '0 0 32 32', 'aria-hidden': 'true' }, h('path', { d: 'M16 4l4 9v8l-4 5-4-5v-8z', fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2.2, 'stroke-linejoin': 'round' })), h('span', {}, 'TFC ', h('small', {}, '3D viewer'))),
   srcChip, vehChip, clockEl, h('span', { class: 'v-spacer' }), lensBar, h('span', { class: 'v-spacer' }),
-  camBtn,
   h('a', { class: 'v-iconbtn', href: '/', target: '_blank', rel: 'noopener', title: 'The flight console', onclick: (e) => { e.preventDefault(); window.open('/?token=' + encodeURIComponent(sessionStorage.getItem('tfc.token') || ''), '_blank'); } }, 'Console ↗'),
   h('button', { class: 'v-iconbtn', type: 'button', id: 'v-hide', title: 'Hide or show the panels (H)', onclick: () => toggleUI() }, 'Panels'));
 const bottom = h('div', { id: 'v-bottom' });
+// where the vehicle is when it is too small to see (the tracking, the wide, the ground and the earth views of a vehicle far away): a ring round it and what it is doing
+const locator = h('div', { id: 'v-locator', hidden: true }, h('i', {}), h('span', {}));
+// the cameras: always on the screen, whatever the lens, with what the current one does said under it (they were a card of the overview lens, which made them invisible in the other five)
+const camHint = h('div', { id: 'v-camhint' });
+// which body to follow, when the flight has more than one (a stage that returns to a pad of its own): the simulator flies each, and the viewer follows the one chosen
+const followBar = h('nav', { id: 'v-follow', 'aria-label': 'Follow', role: 'group', hidden: true });
+let followKey = '';
+function updateFollow(raw) {
+  const names = data.bodies(raw), key = names.join('|') + '|' + data.focus;
+  if (key === followKey) return;
+  followKey = key;
+  followBar.hidden = names.length < 2;
+  const label = (n) => n === 'main' ? (data.spec.stages.length > 1 ? 'Ship' : 'Vehicle') : n.charAt(0).toUpperCase() + n.slice(1);
+  followBar.replaceChildren(h('span', { class: 'v-follow-lbl' }, 'Follow'), ...names.map((n) => h('button', { type: 'button', dataset: { id: n }, 'aria-pressed': String(n === data.focus), title: n === 'main' ? 'The main vehicle (the ship, after the stages have left)' : 'The ' + n + ', flown by its own computers', onclick: () => setFocus(n) }, label(n))));
+}
+function setFocus(n) {
+  if (data.focus === n) return;
+  data.focus = n; data.hist = { t: [], s: {} }; tracker.prev = null; app.events.length = 0; followKey = '';
+  world.rig.firstFrame = true;
+  toast('Following ' + (n === 'main' ? 'the main vehicle' : 'the ' + n), 'info', 2500);
+}
+const camBar = h('div', { id: 'v-cams' }, h('nav', { 'aria-label': 'Camera', role: 'group' }, CAMERAS.map((c) => h('button', { type: 'button', dataset: { id: c.id }, 'aria-pressed': 'false', title: c.hint, onclick: () => { world.rig.set(c.id); store.set('v.cam', c.id); syncCamSeg(); } }, c.label))), camHint, followBar);
+// the docks can be folded away one at a time (H hides everything); a narrow window starts with the right one folded
+const dockBtn = (side, glyph) => h('button', { type: 'button', class: 'v-dockbtn', id: 'v-tg-' + side, 'aria-label': `Hide or show the ${side} panels`, title: `Hide or show the ${side} panels`, onclick: () => setDock(side, document.body.classList.contains('no-' + side)) }, glyph);
+function setDock(side, show) { document.body.classList.toggle('no-' + side, !show); store.set('v.dock.' + side, show); const b = document.getElementById('v-tg-' + side); if (b) b.textContent = side === 'left' ? (show ? '‹' : '›') : (show ? '›' : '‹'); }
 // what the page says when nothing has arrived: where the data can come from, and a button for each
 const empty = h('div', { class: 'v-empty card v-card', hidden: true },
   h('header', {}, h('h3', {}, 'Nothing to show yet')),
@@ -93,12 +117,17 @@ const empty = h('div', { class: 'v-empty card v-card', hidden: true },
       h('button', { class: 'btn', type: 'button', onclick: () => fly('starship') }, 'Fly the Starship-class vehicle'),
       h('button', { class: 'btn', type: 'button', onclick: () => openMenu() }, 'More…')),
     h('p', { class: 'note' }, 'Flying a vehicle runs the real flight software on it (tfc_fly, a few seconds) and plays the result. The live rig is started from the console\'s Rig tab.')));
-ui.append(top, app.left, app.right, bottom, empty);
+ui.append(top, app.left, app.right, locator, camBar, dockBtn('left', '‹'), dockBtn('right', '›'), bottom, empty);
+setDock('left', store.get('v.dock.left', true)); setDock('right', store.get('v.dock.right', window.innerWidth >= 1280));
 app.empty = empty;
 
 function toggleUI() { document.body.classList.toggle('hideui'); }
 function nextCamera() { const i = CAMERAS.findIndex((c) => c.id === world.rig.mode); const n = CAMERAS[(i + 1) % CAMERAS.length]; world.rig.set(n.id); store.set('v.cam', n.id); syncCamSeg(); }
-function syncCamSeg() { const s = app.lens && app.lens.s && app.lens.s.camSeg; if (s) s.setValue(world.rig.mode); }
+function syncCamSeg() {
+  const m = world.rig.mode;
+  for (const b of camBar.querySelectorAll('button')) b.setAttribute('aria-pressed', b.dataset.id === m ? 'true' : 'false');
+  const c = CAMERAS.find((x) => x.id === m); const t = c ? c.hint : ''; if (camHint.textContent !== t) camHint.textContent = t;
+}
 
 // ---- lenses
 function setLens(id) {
@@ -113,10 +142,10 @@ function setLens(id) {
 function rebuildVehicle() {
   const keep = app.lens;
   if (keep) { try { keep.unmount(app); } catch (e) { console.error(e); } app.lens = null; }
-  world.setVehicle(data.spec, app.styleName, { gltf: app.styleName.startsWith('gltf:') ? app.gltf : null, dress: app.dress });
+  world.setVehicle(app.spec, app.styleName, { gltf: app.styleName.startsWith('gltf:') ? app.gltf : null, dress: app.dress, padSpec: data.spec });
   if (keep) setLens(keep.id);
 }
-data.onSpec.push(() => rebuildVehicle());
+data.onSpec.push(() => { data.focus = Q.get('follow') || 'main'; app.curSpec = null; rebuildVehicle(); });
 data.onReset.push(() => { world.trail.clear(); world.smoke.clear(); app.events.length = 0; tracker.prev = null; tracker.liftoff = false; tracker.space = false; tracker.qpeak = 0; });
 
 // ---- the events: what happened, from the poses
@@ -159,6 +188,10 @@ async function openMenu() {
     for (const v of state.vehicles) m.append(h('button', { class: 'item', type: 'button', onclick: () => { close(); fly(v.name); } }, v.name, h('small', {}, (v.description || '').slice(0, 110))));
     m.append(h('p', { class: 'note' }, 'This runs tfc_fly (a few seconds, up to a minute for a long flight), then plays the result: every vehicle in vehicles/ can be seen this way, whatever the rig itself flies.'));
   }
+  if ((state.missions || []).length) {
+    m.append(h('h4', {}, 'Fly a whole mission (the flight computers fly it)'));
+    for (const n of state.missions) m.append(h('button', { class: 'item', type: 'button', onclick: () => { close(); flyMission(n); } }, n, h('small', {}, n.includes('starship') ? 'Ascent, hot staging, the ship to orbit, the booster back to a second pad and caught. About 10 s; then Follow the ship or the booster.' : 'A plan with phases, flown on the same tables.')));
+  }
   m.append(h('h4', {}, 'Live'), h('p', { class: 'note' }, `Poses from a running tfc_simd arrive on UDP port ${state.pose_port} (the rig the console starts is told it). They are shown as soon as they come.`));
   document.body.append(m);
   setTimeout(() => document.addEventListener('pointerdown', function away(e) { if (menu && !menu.contains(e.target) && !srcChip.contains(e.target)) close(); if (!menu) document.removeEventListener('pointerdown', away); }), 0);
@@ -172,6 +205,19 @@ function describeSource(state) {
   if (data.live) return `Live: ${data.rateEst.toFixed(0)} poses a second from the simulator.`;
   if (data.truthSeen) return 'Only the console\'s 10 Hz telemetry is arriving (no poses: an older simulator): the vehicle is placed and turned, but there are no forces, no air and no per-engine state.';
   return 'No data yet. Start the rig from the console, or open a recorded flight, or fly a vehicle from this menu.';
+}
+
+async function flyMission(name) {
+  toast(`Flying the mission ${name} on the flight computers' tables...`, 'info', 20000);
+  try {
+    const { job } = await api('/api/viewer/fly', { mission: name });
+    for (let i = 0; i < 1200; i++) {
+      await new Promise((r) => setTimeout(r, 800));
+      const j = await api('/api/job?id=' + job);
+      if (j.state === 'done') { toast(`${name}: flown, playing it. Follow: Ship or Booster, under the cameras.`, 'ok', 6000); return; }
+      if (j.state === 'failed') { toast(`${name}: ${j.error}`, 'crit', 12000); return; }
+    }
+  } catch (e) { toast(e.message, 'crit', 9000); }
 }
 
 async function fly(name) {
@@ -229,7 +275,7 @@ function updateBottom() {
   }
   const bits = [`${(1000 / Math.max(1, frameMs)).toFixed(0)} fps`];
   if (data.live) bits.push(`${data.rateEst.toFixed(0)} poses/s`); else if (data.truthSeen) bits.push('10 Hz truth only');
-  bits.push(data.spec.name);
+  bits.push(app.spec.name);
   tb.info.textContent = bits.join('   ');
 }
 
@@ -246,11 +292,10 @@ function updateHeader(pose) {
   if (srcChip.className !== wanted) srcChip.className = wanted;
   const span = srcChip.querySelector('span'); if (span.textContent !== text) span.textContent = text;
   srcChip.querySelector('.dot').className = 'dot ' + cls.replace('muted', '') + (kind === 'live' ? ' live' : '');
-  if (vehChip.textContent !== data.spec.name) vehChip.textContent = data.spec.name;
+  if (vehChip.textContent !== app.spec.name) vehChip.textContent = app.spec.name;
   if (pose) {
     const t = fmt.t(pose.t); if (clockEl.textContent !== t) clockEl.textContent = t;
     clockEl.className = pose.t >= 0 && !pose.clamp ? 'fl' : 'cd';
-    const cname = CAMERAS.find((c) => c.id === world.rig.mode)?.label.toLowerCase() || world.rig.mode; const b = camBtn.querySelector('b'); if (b.textContent !== cname) b.textContent = cname;
   }
 }
 
@@ -260,7 +305,8 @@ canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clie
 canvas.addEventListener('pointermove', (e) => { if (!drag) return; world.rig.drag(e.clientX - drag.x, e.clientY - drag.y, drag.slide); drag.x = e.clientX; drag.y = e.clientY; syncCamSeg(); });
 canvas.addEventListener('pointerup', () => { drag = null; canvas.classList.remove('dragging'); });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-canvas.addEventListener('wheel', (e) => { e.preventDefault(); if (world.rig.mode === 'ground') world.rig.gfov = Math.min(110, Math.max(4, world.rig.gfov * Math.exp(e.deltaY * 0.001))); else world.rig.zoom(e.deltaY); }, { passive: false });
+canvas.addEventListener('dblclick', () => { world.rig.recenter(); syncCamSeg(); });
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); if (world.rig.mode === 'ground') world.rig.gzoom = Math.min(4, Math.max(0.12, world.rig.gzoom * Math.exp(e.deltaY * 0.001))); else world.rig.zoom(e.deltaY); }, { passive: false });
 window.addEventListener('keydown', (e) => {
   if (/INPUT|SELECT|TEXTAREA/.test((document.activeElement && document.activeElement.tagName) || '')) return;
   const k = e.key.toLowerCase(), lens = LENSES.find((l) => l.key === e.key);
@@ -286,17 +332,34 @@ function staticPose() {
   p.fae = [-qd * 70, qd * 70 * 2.5 * a * Math.PI / 180, 0]; p.fth = [p.thr, 0, 0]; p.m = 4e6;
   return p;
 }
+const _lv = new THREE.Vector3();
+function updateLocator(pose) {
+  const cam = world.camera, spec = app.spec;
+  if (!pose) { locator.hidden = true; return; }
+  const d = Math.max(cam.position.length(), 1);                                               // the vehicle is at the origin of the near scene
+  const px = (spec.extent(pose.stg, pose.pay).length / d) * innerHeight / (2 * Math.tan(cam.fov * Math.PI / 360));        // how tall it is on the screen
+  _lv.set(0, 0, 0).project(cam);
+  if (px > 40 || _lv.z > 1 || _lv.z < -1 || Math.abs(_lv.x) > 1.05 || Math.abs(_lv.y) > 1.05) { locator.hidden = true; return; }
+  locator.hidden = false;
+  locator.style.transform = `translate(${((_lv.x * 0.5 + 0.5) * innerWidth).toFixed(1)}px, ${((1 - (_lv.y * 0.5 + 0.5)) * innerHeight).toFixed(1)}px)`;
+  const t = `${spec.name}  ${(pose.alt / 1000).toFixed(pose.alt < 1e5 ? 1 : 0)} km  ${pose.spd.toFixed(0)} m/s`;
+  const sp = locator.querySelector('span'); if (sp.textContent !== t) sp.textContent = t;
+}
 function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000); frameMs += ((now - last) - frameMs) * 0.05; last = now;
   app.wall = now / 1000; app.dt = dt;
   let pose = null;
   if (Q.get('static')) pose = staticPose();
   else { const t = data.clock.frame(data.buf, data.source, false); pose = t == null ? null : data.buf.at(t); }
+  const raw = pose;                                                          // the pose as the simulator sent it, with the other bodies in it
+  if (pose) { const v = data.view(pose); pose = v.pose; if (v.spec !== app.curSpec) { app.curSpec = v.spec; if (world.spec !== v.spec) rebuildVehicle(); } updateFollow(raw); }
+  if (pose && Q.get('flapdeg')) pose = { ...pose, surf: (app.spec.surfaces || []).map(() => +Q.get('flapdeg')) };      // ?flapdeg=40: every surface at that deflection, to look at a deployed flap without flying one
   if (pose) {
     app.pose = pose;
     try {
-      world.frame(pose, dt, app.wall, {});
-      const d = app.d = derive(pose, data.spec);
+      world.frame(pose, dt, app.wall, { specFor: (o) => data.specFor(o) });
+      updateLocator(pose);
+      const d = app.d = derive(pose, app.spec);
       if (app.lens) app.lens.update(app, pose, d, dt);
       world.render(); frames++;
     } catch (e) { console.error('frame', e); }
@@ -316,9 +379,11 @@ function loop(now) {
 
 // ---- go
 buildBottom();
-world.setVehicle(data.spec, app.styleName.startsWith('gltf:') ? 'auto' : app.styleName, { dress: app.dress });
+world.setVehicle(data.spec, app.styleName.startsWith('gltf:') ? 'auto' : app.styleName, { dress: app.dress, padSpec: data.spec });
+if (Q.get('follow')) data.focus = Q.get('follow');                       // ?follow=booster: start by following a body other than the main one
 if (Q.get('cam') || store.get('v.cam', null)) world.rig.set(Q.get('cam') || store.get('v.cam', 'orbit'));
-if (Q.get('gaz')) world.rig.gaz = +Q.get('gaz'); if (Q.get('gel')) world.rig.gel = +Q.get('gel'); if (Q.get('gfov')) world.rig.gfov = +Q.get('gfov'); if (Q.get('gpos')) world.rig.gpos = Q.get('gpos').split(',').map(Number);
+syncCamSeg();
+if (Q.get('gaz')) world.rig.gaz = +Q.get('gaz'); if (Q.get('gel')) world.rig.gel = +Q.get('gel'); if (Q.get('gzoom')) world.rig.gzoom = +Q.get('gzoom'); if (Q.get('gpos')) world.rig.gpos = Q.get('gpos').split(',').map(Number);
 if (Q.get('yaw')) world.rig.yaw = +Q.get('yaw'); if (Q.get('pitch')) world.rig.pitch = +Q.get('pitch'); if (Q.get('dist')) world.rig.dist = +Q.get('dist'); if (Q.get('anchor')) world.rig.anchor = +Q.get('anchor');
 if (Q.get('dbgmode')) world.sky.u.uDebug.value.x = +Q.get('dbgmode');
 if (Q.get('el')) st.sunElev = +Q.get('el'); if (Q.get('bear')) st.sunBear = +Q.get('bear'); if (Q.get('cloud')) st.cloud = +Q.get('cloud');

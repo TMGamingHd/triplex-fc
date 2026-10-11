@@ -3,7 +3,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { Chart, legend } from '../../../js/charts.js';
 import { h, stat, statGrid, card, toggle, provenance, fmt, store } from '../ui.js';
-import { Arrow, Label, line, setLine } from '../gfx.js';
+import { Arrow, Label, line, setLine, declutter } from '../gfx.js';
 import { quatToScene } from '../data.js';
 
 const RAD = Math.PI / 180, DEG = 180 / Math.PI;
@@ -11,16 +11,16 @@ const ACT = ['Standby', 'Nominal', 'Safe'];
 
 function wireGhost(vehicle, cg) {
   const g = new THREE.Group(), mat = new THREE.LineBasicMaterial({ color: 0x4cc9f0, transparent: true, opacity: 0.7, depthTest: false, toneMapped: false });
-  const pts = [];
-  for (const st of vehicle.stages) {
-    const p = st.profile; if (!p.length) continue;
+  vehicle.stages.forEach((st, si) => {                           // one set of lines per stage, so that a stage that has left is not drawn
+    const pts = [];
+    const p = st.profile; if (!p.length) return;
     const M = 12;
     for (let j = 0; j < M; j++) { const a = (j / M) * Math.PI * 2; for (let i = 0; i < p.length - 1; i++) pts.push(new THREE.Vector3(Math.cos(a) * p[i].r, p[i].x - cg, Math.sin(a) * p[i].r), new THREE.Vector3(Math.cos(a) * p[i + 1].r, p[i + 1].x - cg, Math.sin(a) * p[i + 1].r)); }
     const x0 = p[0].x, x1 = p[p.length - 1].x;
     for (let x = x0; x <= x1; x += Math.max(6, (x1 - x0) / 6)) { const r = vehicle.bodyRadiusAt(Math.min(x, x1 - 1e-3)) || p[0].r; for (let j = 0; j < 24; j++) { const a = (j / 24) * Math.PI * 2, b = ((j + 1) / 24) * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * r, x - cg, Math.sin(a) * r), new THREE.Vector3(Math.cos(b) * r, x - cg, Math.sin(b) * r)); } }
-  }
-  const geo = new THREE.BufferGeometry().setFromPoints(pts);
-  const l = new THREE.LineSegments(geo, mat); l.renderOrder = 80; l.frustumCulled = false; g.add(l);
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    const l = new THREE.LineSegments(geo, mat); l.renderOrder = 80; l.frustumCulled = false; l.userData.stage = si; g.add(l);
+  });
   return g;
 }
 
@@ -42,7 +42,7 @@ export default {
       tilt: new Chart(h('canvas'), { height: 110, window: 120, series: [{ key: 'tilt_p', label: 'pitch tilt °', color: 'var(--info)' }, { key: 'ref_p', label: 'program °', color: 'var(--faint)', dash: [5, 4] }] }),
       gim: new Chart(h('canvas'), { height: 110, window: 120, series: [{ key: 'gim_p', label: 'gimbal pitch °', color: 'var(--accent)' }, { key: 'gim_y', label: 'gimbal yaw °', color: 'var(--nSIM)' }], zero: true }),
     };
-    const ch = (t, c) => card(t, [c.c, legend(c.o.series)]);
+    let chN = 0; const ch = (t, c) => card(t, [c.c, legend(c.o.series)], null, { open: chN++ === 0 });
     app.right.replaceChildren(card('Show', [toggle('The attitude the program asks for (wire ghost)', S.ghost, (v) => { S.ghost = v; store.set('att.ghost', v); }), toggle('Body axes and the velocity', S.axes, (v) => { S.axes = v; store.set('att.axes', v); })]),
       card('The computers', [S.nodes, h('p', { class: 'note' }, 'From the console\'s own state: shown when the rig, or a replay of it, is running.')]), ch('Attitude error', S.charts.err), ch('Tilt against the program', S.charts.tilt), ch('Gimbal', S.charts.gim),
       card('Where the numbers come from', [provenance('measured', 'the attitude, the rates, the gimbal angles, the program and the actuator node\'s command: the simulator\'s state and the flight computers\' own output.'), provenance('illustrative', 'the wire ghost: the vehicle turned by the error, about the centre of mass.')]));
@@ -58,7 +58,7 @@ export default {
     world.rig.set('orbit'); world.rig.yaw = 0.9; world.rig.pitch = 0.2; world.rig.dist = 1.9; world.rig.anchor = 0.5;
   },
   update(app, pose, d, dt) {
-    const S = this.s, s = S.st, spec = app.spec, L = spec.length, R = spec.diameter / 2;
+    const S = this.s, s = S.st, spec = app.spec, ext = spec.extent(pose.stg, pose.pay), L = ext.length, R = ext.diameter / 2;
     const tilt = pose.tilt || [0, 0], ref = pose.ref || [0, 0];
     const ep = tilt[0] - ref[0], ey = tilt[1] - ref[1];
     // the attitude error as an angle between two axes
@@ -96,8 +96,10 @@ export default {
       S.ghostObj.quaternion.set(sq[0], sq[1], sq[2], sq[3]);
       S.ghostObj.position.set(0, 0, 0);
       if (Math.abs(S.ghostCg - pose.cg) > 0.5) { S.ghostObj.removeFromParent(); S.ghostObj = wireGhost(app.vehicle, pose.cg); S.group.add(S.ghostObj); S.ghostCg = pose.cg; }
-      S.errL.setText(`error ${err.toFixed(2)}°`); S.errL.object.position.set(R * 1.3, spec.length - pose.cg, 0);
+      S.errL.setText(`error ${err.toFixed(2)}°`); S.errL.object.position.set(R * 1.3, ext.x1 - pose.cg, 0);
     }
+    for (const c of S.ghostObj.children) c.visible = (((pose.stg ?? 255) >> c.userData.stage) & 1) === 1;      // the program's wire ghost is of what is still there
+    declutter([S.errL, S.velL, ...S.axL, S.upL, S.rateL], app.world.camera, innerWidth, innerHeight);
     for (const c of Object.values(S.charts)) c.draw(app.data.hist);
   },
   drawNodes(app, sn) {

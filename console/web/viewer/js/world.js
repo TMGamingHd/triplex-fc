@@ -47,6 +47,7 @@ export class World {
     this.worldOverlay = new THREE.Group(); this.nearScene.add(this.worldOverlay);   // and in the near scene's own frame
     this.settings = { sunElev: 28, sunBear: 135, cloud: 0.35, style: 'auto', stars: 1, trail: true, plumes: true, pad: true, atmosphereQuality: 0.6 };
     this.vehicle = null; this.pad = null; this.plumes = null; this.debris = []; this.padCG = null; this.last = { stg: null };
+    this.bodies = new Map();                                     // the other bodies of a mission (the stage that returns): name -> {model, plumes, holder, spec}
     this.trail = new Trail(); this.nearScene.add(this.trail.mesh);
     this.smoke = new PadSmoke(); this.nearScene.add(this.smoke.bb.mesh);
     this.vehicleGroup = new THREE.Group(); this.nearScene.add(this.vehicleGroup);   // rotated by the vehicle's attitude, the origin at its CG
@@ -86,17 +87,38 @@ export class World {
   setVehicle(spec, style = 'auto', opts = {}) {
     this.disposeVehicle();
     this.spec = spec;
+    this.style = style; this.opts = opts;
     this.vehicle = new VehicleModel(spec, style, opts);
     this.modelHolder.add(this.vehicle.root);
     this.plumes = new Plumes(this.vehicle);
-    const L = spec.length, D = spec.diameter;
+    // the site is sized by the whole vehicle and stays when the viewer turns to follow one stage of it: only a new vehicle makes a new pad
+    const sized = opts.padSpec || spec;
+    const L = sized.length, D = sized.diameter;
     this.mountH = Math.min(22, Math.max(2, D * 2.2)) + 0.4;
-    if (this.pad) { this.nearScene.remove(this.pad.group); }
-    this.pad = new Pad(L, D, this.mountH, 1600);
-    this.nearScene.add(this.pad.group);
-    this.padCG = null; this.trail.clear(); this.smoke.clear(); this.last.stg = null;
+    if (this.padSized !== sized) {
+      if (this.pad) { this.nearScene.remove(this.pad.group); }
+      this.pad = new Pad(L, D, this.mountH, 1600);
+      this.nearScene.add(this.pad.group);
+      this.addCatchPad(sized, L, D);
+      this.padSized = sized; this.padCG = null;
+    }
+    this.trail.clear(); this.smoke.clear(); this.last.stg = null;
     for (const d of this.debris) this.nearScene.remove(d.group); this.debris = [];
+    this.clearBodies();
     this.rig.firstFrame = true;
+  }
+  /** The mission's catch tower, when the vehicle file has one, is a pad of its own at its place (the launch frame's y downrange, z crossrange), with the catch arms at its height. */
+  addCatchPad(spec, L, D) {
+    const site = spec.vehicle && spec.vehicle.mission && spec.vehicle.mission.site;
+    if (!site || !(Math.abs(site.offset_y_m || 0) + Math.abs(site.offset_z_m || 0) > 60)) return;       // within 60 m it is the launch mount's own tower
+    const second = new Pad(L, D, this.mountH, 1600, { second: true, armY: site.arm_height_m || 70 });
+    second.structures.position.set(site.offset_z_m || 0, 0, site.offset_y_m || 0);                       // the pad's frame: x crossrange, z downrange
+    this.pad.structures.add(second.structures);
+    this.catchPad = second;
+  }
+  clearBodies() {
+    for (const b of this.bodies.values()) { b.plumes.dispose(); this.nearScene.remove(b.holder); }
+    this.bodies.clear();
   }
   disposeVehicle() {
     if (this.plumes) { this.plumes.dispose(); this.plumes = null; }
@@ -155,7 +177,8 @@ export class World {
     }
 
     // the camera
-    const camCtx = { len: spec.length, diameter: spec.diameter, axis, up, down, padRel, cg: pose.cg, alt: pose.alt, dt, quat: qs };
+    const ext = spec.extent(pose.stg, pose.pay);                              // the part of the vehicle that is still there
+    const camCtx = { len: ext.length, x0: ext.x0, diameter: ext.diameter, axis, up, down, padRel, cg: pose.cg, alt: pose.alt, dt, quat: qs };
     this.rig.update(camCtx);
     const camPos = this.camera.position;
 
@@ -199,21 +222,45 @@ export class World {
 
     // the exhaust trail, the pad's smoke, the stages let go
     const thrustFrac = pose.thr > 0 ? Math.min(1, pose.thr / (pose.m * 9.80665 * 1.6)) : 0;     // about 1 at the thrust-to-weight of a launcher on the pad
-    const tailWorld = [rS[0] + axis.x * -pose.cg, rS[1] + axis.y * -pose.cg, rS[2] + axis.z * -pose.cg];
+    const tailWorld = [rS[0] + axis.x * (ext.x0 - pose.cg), rS[1] + axis.y * (ext.x0 - pose.cg), rS[2] + axis.z * (ext.x0 - pose.cg)];
     const airRho = pose.air ? pose.air[2] : 1.2;
     if (s.trail && pose.thr > 0 && !pose.clamp) {
       const wnd = pose.wind ? toScene(pose.wind) : [0, 0, 0];
-      this.trail.emit(pose.tt, tailWorld, spec.diameter * 0.55, Math.min(1, Math.pow(airRho / 1.2, 0.4)), wnd);
+      this.trail.emit(pose.tt, tailWorld, ext.diameter * 0.55, Math.min(1, Math.pow(airRho / 1.2, 0.4)), wnd);
     }
     this.trail.update(pose.tt, rS, camPos, [0.95, 0.96, 1.0].map((c, i) => c * (0.8 + 0.25 * T[i])), 60);
     this.trailVisible = s.trail;
     this.trail.mesh.visible = s.trail;
     const padM = new THREE.Matrix4().compose(padRel, padQ, new THREE.Vector3(1, 1, 1));
     const light = [T[0] * 0.9 + 0.1, T[1] * 0.9 + 0.1, T[2] * 0.9 + 0.1].map((x) => x * Math.max(0.12, Math.min(1.1, sun.dot(up) * 1.1 + 0.3)));
-    this.smoke.update(dt, pose.tt, { alt: pose.alt + pose.cg, thrust: pose.thr > 0 ? Math.min(1, thrustFrac * 1.5) : 0, radius: spec.diameter * 0.6 }, this.camera, padM, light);
+    this.smoke.update(dt, pose.tt, { alt: pose.alt + pose.cg, thrust: pose.thr > 0 ? Math.min(1, thrustFrac * 1.5) : 0, radius: ext.diameter * 0.6 }, this.camera, padM, light);
 
+    this.stepBodies(pose, rS, wall, ctx);
     this.stepDebris(pose, dt, rS, qs, axis);
     this.last.stg = pose.stg;
+  }
+
+  /** The other bodies: each a vehicle of its own at the place and attitude the simulator gives it, with its own engines and plumes. One that is not in the pose any more is removed. */
+  stepBodies(pose, rS, wall, ctx) {
+    const seen = new Set();
+    for (const o of pose.others || []) {
+      const spec = ctx.specFor ? ctx.specFor(o) : null;
+      if (!spec || !o.pose) continue;
+      seen.add(o.name);
+      let b = this.bodies.get(o.name);
+      if (b && b.spec !== spec) { b.plumes.dispose(); this.nearScene.remove(b.holder); this.bodies.delete(o.name); b = null; }
+      if (!b) {
+        const model = new VehicleModel(spec, this.style, this.opts);
+        const holder = new THREE.Group(), mh = new THREE.Group(); mh.add(model.root); holder.add(mh); this.nearScene.add(holder);
+        b = { model, plumes: new Plumes(model), holder, mh, spec }; this.bodies.set(o.name, b);
+      }
+      const p = o.pose, q = new THREE.Quaternion(...quatToScene(p.q)).normalize(), r = toScene(p.r);
+      b.holder.position.set(r[0] - rS[0], r[1] - rS[1], r[2] - rS[2]); b.holder.quaternion.copy(q);
+      b.mh.position.set(0, -p.cg, 0);
+      b.model.apply(p);
+      b.plumes.update(p.cgt || p.lnd ? { ...p, eng: [] } : p, wall, { glow: 1 });         // a stage in the arms or on the ground has its engines off
+    }
+    for (const [name, b] of [...this.bodies]) if (!seen.has(name)) { b.plumes.dispose(); this.nearScene.remove(b.holder); this.bodies.delete(name); }
   }
 
   stepDebris(pose, dt, rS, qs, axis) {
@@ -221,7 +268,7 @@ export class World {
     if (this.last.stg != null && this.vehicle) {
       for (let i = 0; i < spec.stages.length; i++) {
         const was = (this.last.stg >> i) & 1, now = (stg >> i) & 1;
-        if (was && !now && dt > 0 && dt < 1) {
+        if (was && !now && dt > 0 && dt < 1 && !(pose.others || []).some((o) => o.stage === i)) {      // (the simulator follows a stage that has a body of its own)
           const st = spec.stages[i], mid = (st.x_start_m || 0) + st.length_m * 0.45;
           const clone = this.vehicle.stages[i].group.clone(true);
           clone.traverse((o) => { if (o.material && o.material.isShaderMaterial) o.visible = false; if (o.isSprite) o.visible = false; });

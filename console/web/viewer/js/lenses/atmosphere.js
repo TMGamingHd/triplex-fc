@@ -29,7 +29,7 @@ export default {
     S.qSeg = seg(Object.entries(QTY).map(([id, q]) => [id, { T: 'Temp', p: 'Pressure', rho: 'Density', a: 'Sound', wind: 'Wind' }[id], q.label]), S.q, (v) => { S.q = v; store.set('atm.q', v); }, 'quantity');
     S.charts = { p: new Chart(h('canvas'), { height: 100, window: 120, series: [{ key: 'p_amb', label: 'ambient pressure Pa', color: 'var(--info)' }] }), rho: new Chart(h('canvas'), { height: 100, window: 120, series: [{ key: 'rho', label: 'density kg/m³', color: 'var(--nC)' }] }),
       alt: new Chart(h('canvas'), { height: 100, window: 120, series: [{ key: 'alt', label: 'altitude m', color: 'var(--accent)' }] }) };
-    const ch = (t, c) => card(t, [c.c, legend(c.o.series)]);
+    let chN = 0; const ch = (t, c) => card(t, [c.c, legend(c.o.series)], null, { open: chN++ === 0 });
     app.right.replaceChildren(card('Profile, with the vehicle on it', [h('div', { class: 'v-row' }, S.qSeg), S.canvas, toggle('Show the layers in the sky', S.shells, (v) => { S.shells = v; store.set('atm.shells', v); }, 'Faint shells at the layer boundaries, brightest where seen edge-on')]),
       ch('Ambient pressure', S.charts.p), ch('Density', S.charts.rho), ch('Altitude', S.charts.alt),
       card('Where the numbers come from', [provenance('measured', 'pressure, density, temperature and the speed of sound at the vehicle, and the mean wind: the simulator\'s atmosphere (US 1976 standard, with the scenario\'s dispersions) sampled every kilometre.'),
@@ -39,7 +39,7 @@ export default {
   update(app, pose, d, dt) {
     const S = this.s, s = S.st, { spec, world } = app, air = pose.air || us1976(pose.alt), [T, p, rho, a] = air;
     const wind = spec.airAt(pose.alt)[4], std = us1976(pose.alt);
-    const mu = viscosity(T), lam = mu / p * Math.sqrt(Math.PI * 287.053 * T / 2), kn = lam / spec.diameter, H = 287.053 * T / 9.80665;
+    const mu = viscosity(T), lam = mu / p * Math.sqrt(Math.PI * 287.053 * T / 2), kn = lam / spec.extent(pose.stg, pose.pay).diameter, H = 287.053 * T / 9.80665;
     s.p.set(p >= 100 ? p.toFixed(0) : p >= 1 ? p.toFixed(1) : p.toExponential(1)); s.rho.set(rho >= 0.01 ? rho.toFixed(4) : rho.toExponential(2)); s.T.set(T.toFixed(1)); s.a.set(a.toFixed(0)); s.wind.set(wind.toFixed(1)); s.mu.set((mu * 1e6).toFixed(2));
     s.lam.set(lam < 0.01 ? lam.toExponential(1) : lam.toFixed(lam < 1 ? 3 : 1)); s.kn.set(kn < 0.001 ? kn.toExponential(1) : kn.toFixed(kn < 1 ? 3 : 1)); s.H.set((H / 1000).toFixed(1)); s.pr.set((100 * p / 101325).toFixed(p / 101325 < 0.01 ? 4 : 2));
     const drho = 100 * (rho / std[2] - 1), dT = T - std[0];

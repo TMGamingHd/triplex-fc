@@ -1264,6 +1264,9 @@ class Vehicle6 {
       if (!active_[static_cast<std::size_t>(sf.stage)] || (!surf_deployed_[i] && sf.kind == SurfaceKind::GridFin)) {
         continue;   // (a grid fin folded against the skin does nothing)
       }
+      if (sf.kind == SurfaceKind::Flap && std::fabs(surf_pos_[i]) < 0.05) {
+        continue;   // (a flap lying flush is part of the skin: the body's loads already count that area, and four of them cost a Starship's every step 40 % more for nothing)
+      }
       const V3 pt = surface_point(sf, surf_pos_[i]);
       const V3 rc{pt.x - mp.x_cg, pt.y, pt.z};
       const V3 v_air = vrel + cross(s.w, rc);   // the velocity of the surface's own point through the air

@@ -141,7 +141,9 @@ inline SurfaceLoad surface_load(const SurfaceSpec& s, double deflection_deg, con
   } else {
     const double ar = s.span * s.span / s.area;
     cn_alpha = aero::wing_lift_slope(ar, s.sweep_deg * kDeg2Rad, mach);
-    ca = 0.02;
+    // skin friction of the flap's two faces, once it stands out of the skin: lying flush it is part of the skin (the body's own friction already counts that area), so it adds nothing; it is exposed
+    // fully by 10 degrees
+    ca = 0.02 * aero::smoothstep(0.0, 10.0 * kDeg2Rad, std::fabs(deflection_deg) * kDeg2Rad);
   }
   const double sa = std::sin(alpha);
   const double ca_ang = std::cos(alpha);

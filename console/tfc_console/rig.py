@@ -20,7 +20,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -44,6 +44,8 @@ class ProcSpec:
     delay_s: float = 0.0        # wait this long after the previous process before starting
     control: bool = False       # keep stdin as a pipe for commands (the peers' --control)
     title: str = ""
+    ready_on: str = ""         # a text its console prints when it is ready for the processes that follow (the simulator's "waiting for SYNC"); the rig waits for it, up to `ready_timeout_s`, before starting the next
+    ready_timeout_s: float = 60.0
 
 
 @dataclass
@@ -57,6 +59,7 @@ class Proc:
     restarts: int = 0
     lines: int = 0
     reader: threading.Thread | None = None
+    ready: threading.Event = field(default_factory=threading.Event)
 
 
 class Rig:
@@ -72,6 +75,7 @@ class Rig:
         self.line_hooks: list[Callable[[str, str], None]] = []     # called with (process name, line) for every line: how the fault service reads the peers' answers
         self._starter: threading.Thread | None = None
         self.message = ""
+        self.ready_timeout_s: float | None = None                  # overrides every process's own wait for its ready line (tests)
         # Every child is started by this one thread. The parent-death signal (PR_SET_PDEATHSIG) fires when the *thread* that started the child ends, not the process, so a child started from a short-lived
         # request thread would be killed as soon as that thread returned. This thread lives as long as the console does.
         self._spawn_jobs: queue.Queue = queue.Queue()
@@ -93,7 +97,7 @@ class Rig:
         # ---- the closed loop with the launch sequence: three real flight computers, ACT, the simulator clamped on the pad
         built, vname = self.images() if self.images else (None, "reference")
         fcs = list(built) if built else ([None, None, None] if self.images and vname != "reference" else [self._exe(f"build/launch_{n}") for n in "abc"])
-        procs = [ProcSpec("SIM", [str(simd), "--iface", iface, "--hold", "--quiet", "--telemetry", str(self.telemetry_port()), *(["--viewer", str(self.viewer_port())] if self.viewer_port else []), *self.sim_args()], self.repo, simd if simd.exists() else None, 0.0, title="vehicle simulator (tfc_simd --hold)")]
+        procs = [ProcSpec("SIM", [str(simd), "--iface", iface, "--hold", "--quiet", "--telemetry", str(self.telemetry_port()), *(["--viewer", str(self.viewer_port())] if self.viewer_port else []), *self.sim_args()], self.repo, simd if simd.exists() else None, 0.0, title="vehicle simulator (tfc_simd --hold)", ready_on="waiting for SYNC")]
         procs += [ProcSpec(n, [str(p) if p else ""], self.repo, p, 0.4 if i == 0 else 0.0, title=f"flight computer {n} (launch image)") for i, (n, p) in enumerate(zip("ABC", fcs))]
         procs.append(ProcSpec("ACT", [str(act) if act else ""], self.repo, act, 0.0, title="actuator node"))
         out["closed-loop"] = {"title": "Closed loop with the launch sequence", "doc": f"Three real flight-computer processes (nodes A, B and C, each calibrating its own IMU on the pad), the actuator node and the vehicle simulator clamped on the pad, flying: {vname}. "
@@ -139,6 +143,13 @@ class Rig:
             if self.procs.get(s.name) is None:
                 return                                 # stopped while starting
             self._spawn(self.procs[s.name])
+            if s.ready_on:
+                # The next process must not start before this one can answer it. The simulator of a big vehicle takes seconds to start (it designs its flight first), and the computers that start meanwhile
+                # get no IMU data for hundreds of frames, which they count as faults: they came up never ready, and the launch said NO-GO for good (a Starship, 11 Oct 2026).
+                proc = self.procs.get(s.name)
+                limit = s.ready_timeout_s if self.ready_timeout_s is None else self.ready_timeout_s
+                if proc is not None and not proc.ready.wait(limit):
+                    self.hub.note("warn", "CON", "rig", f"{s.name} did not say it was ready within {limit:.0f} s ({s.ready_on!r}): starting the rest anyway")
         self.message = "running"
 
     def _child_setup(self) -> None:
@@ -206,6 +217,8 @@ class Rig:
                 if text.strip():
                     p.lines += 1
                     self.hub.ingest_line(p.spec.name, text)
+                    if p.spec.ready_on and p.spec.ready_on in text:
+                        p.ready.set()
                     for fn in list(self.line_hooks):
                         fn(p.spec.name, text)
         code = p.popen.wait() if p.popen is not None else None

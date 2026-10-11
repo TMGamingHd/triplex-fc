@@ -29,6 +29,9 @@ struct PoseExtra {
   int act_mode = -1;            // -1: not known
   bool clamped = false;         // held on the pad by the clamps
   unsigned frame = 0U;          // the simulator's frame number
+  // The other bodies of a mission world (a stage that was let go and flies on under its own computers): a JSON array of {"name", "stage", "pose"}, each `pose` a whole pose of that body from its own
+  // `viewer_pose_json`. Empty: there are none. The viewer draws each as a vehicle of its own.
+  std::string others;
 };
 
 namespace viewer_detail {
@@ -248,6 +251,20 @@ inline std::string viewer_pose_json(const Vehicle6& veh, double t_s, const PoseE
     }
     o.close(']');
   }
+  if (!g.surfaces.empty()) {
+    o.key("surf");                                  // the deflection of each articulated surface (flaps, grid fins) now, degrees, in the order of the vehicle file's "surfaces"
+    o.open('[');
+    for (std::size_t i = 0; i < g.surfaces.size(); ++i) {
+      o.num(veh.surface_deg(i), 2);
+    }
+    o.close(']');
+    o.key("sdep");                                  // which of them are deployed (bit i: surface i); a grid fin that is not is folded against the skin
+    std::uint32_t bits = 0;
+    for (std::size_t i = 0; i < g.surfaces.size() && i < 32U; ++i) {
+      bits |= (veh.surface_deployed(i) ? 1U : 0U) << i;
+    }
+    o.integer(bits);
+  }
   o.key("prop");
   o.open('[');
   for (std::size_t st = 0; st < g.stages.size(); ++st) {
@@ -277,6 +294,8 @@ inline std::string viewer_pose_json(const Vehicle6& veh, double t_s, const PoseE
   o.kvi("pay", static_cast<long>(pay));
   o.kvi("gnd", veh.on_ground() ? 1 : 0);
   o.kvi("crash", veh.crashed() ? 1 : 0);
+  o.kvi("cgt", veh.caught() ? 1 : 0);     // held by the catch tower
+  o.kvi("lnd", veh.landed() ? 1 : 0);     // standing on the ground after a landing
   o.kvi("clamp", x.clamped ? 1 : 0);
   if (veh.slosh_count() > 0U) {
     o.key("slosh");
@@ -310,6 +329,10 @@ inline std::string viewer_pose_json(const Vehicle6& veh, double t_s, const PoseE
   o.num(x.cmd_yaw_deg, 3);
   o.close(']');
   o.kvi("act", x.act_mode);
+  if (!x.others.empty()) {
+    o.key("others");
+    o.raw(x.others.c_str());
+  }
   o.close('}');
   return o.str();
 }

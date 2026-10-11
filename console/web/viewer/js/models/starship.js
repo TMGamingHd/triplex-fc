@@ -1,6 +1,6 @@
 // The Starship dressing: what makes a 9 m stainless stack look like one, laid over the generic body that vehicle.js builds from the spec (the diameters, the stage lengths and the engines are the spec's own).
 //   booster: a hot-stage ring with its vents at the top, grid fins stowed against the skin below it (three on Block 3, four before), two catch pins, the engine skirt and its thrust plate, soot on the lower tank;
-//   ship:    heat-shield tiles on the belly and the nose, two forward and two aft flaps stowed against the skin.
+//   ship:    heat-shield tiles on the belly and the nose (its flaps are the vehicle file's surfaces: models/flaps.js).
 // The proportions are of the vehicle class (public figures), not drawings; no markings are drawn. The details a person may want to change (the fins' number, size and place, the flaps, the ring) are `dress`,
 // the page's Starship panel; V3 is the default. docs/design/VIEWER.md lists what is drawn from the spec and what is a visual choice.
 import * as THREE from '../../vendor/three.module.js';
@@ -11,8 +11,8 @@ const TAU = Math.PI * 2;
 /** The parts of the dressing that are a choice and not the vehicle file's: Block 3 as reported (three grid fins, each 50 % larger in area than Block 2's, set lower on the booster) and Block 2 before it.
  *  finScale is linear (the fin of Block 2 is 2.2 m by 3.4 m here), finDrop the metres from the bottom of the hot-stage ring to the top of the fin. These are illustrations of public descriptions, not drawings. */
 export const DRESS = {
-  v3: { name: 'Block 3 (V3)', fins: 3, finScale: 1.22, finDrop: 5.0, flapScale: 1.0, ringHeight: 3.4, pins: true },
-  v2: { name: 'Block 2 (V2)', fins: 4, finScale: 1.0, finDrop: 1.6, flapScale: 1.0, ringHeight: 3.4, pins: true },
+  v3: { name: 'Block 3 (V3)', fins: 3, finScale: 1.22, finDrop: 5.0, ringHeight: 3.4, pins: true },
+  v2: { name: 'Block 2 (V2)', fins: 4, finScale: 1.0, finDrop: 1.6, ringHeight: 3.4, pins: true },
 };
 export const dressOf = (d) => Object.assign({}, DRESS.v3, d || {});
 
@@ -32,19 +32,6 @@ function gridFin(mats, w = 2.2, hgt = 3.4, depth = 0.55) {
   bar(w, t * 2, depth, 0, hgt / 2, 0); bar(w, t * 2, depth, 0, -hgt / 2, 0); bar(t * 2, hgt, depth, w / 2, 0, 0); bar(t * 2, hgt, depth, -w / 2, 0, 0);
   for (let i = 1; i < n; i++) { bar(t, hgt, depth * 0.9, -w / 2 + (w * i) / n, 0, 0); bar(w, t, depth * 0.9, 0, -hgt / 2 + (hgt * i) / n, 0); }
   const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, w * 0.5, 12), mats.steel); hinge.rotation.z = Math.PI / 2; hinge.position.set(0, -hgt / 2 - 0.15, 0); g.add(hinge);
-  return g;
-}
-
-function flap(mats, w, hgt, thick = 0.4) {
-  const tileMat = tileMaterial();
-  const g = new THREE.Group();
-  const shape = new THREE.Shape();                    // a rounded, slightly tapered flap
-  shape.moveTo(-w / 2, 0); shape.lineTo(w / 2, 0); shape.lineTo(w * 0.42, hgt); shape.lineTo(-w * 0.42, hgt); shape.closePath();
-  const geo = new THREE.ExtrudeGeometry(shape, { depth: thick, bevelEnabled: true, bevelSize: 0.06, bevelThickness: 0.06, bevelSegments: 1 });
-  geo.translate(0, 0, -thick / 2);
-  const m = new THREE.Mesh(geo, mats.steel); g.add(m);
-  const pg = new THREE.PlaneGeometry(w * 0.9, hgt * 0.93); pg.attributes.uv.array.forEach((v, i, a) => { a[i] = v * (i % 2 ? hgt / 2.6 : w / 2.6); });
-  const tileSide = new THREE.Mesh(pg, tileMat); tileSide.position.set(0, hgt / 2, thick / 2 + 0.09); g.add(tileSide);
   return g;
 }
 
@@ -102,10 +89,7 @@ export function decorateStarship(model) {
     const grow = (p, d) => p.map((q) => ({ x: q.x, r: q.r + d }));
     if (tubeProf.length) g.add(new THREE.Mesh(lathe(grow(tubeProf, 0.035), { segments: 40, phiStart: belly - bellyHalf, phiLength: 2 * bellyHalf, ring: 2.6, colour: () => [1, 1, 1], uRepeat: 0.33 }), tileMat));
     if (noseProf.length) g.add(new THREE.Mesh(lathe(grow(noseProf, 0.035), { segments: 56, phiStart: belly - Math.PI * 0.72, phiLength: Math.PI * 1.44, ring: 2.6, colour: () => [1, 1, 1], uRepeat: 0.33 }), tileMat));
-    // the flaps: forward pair just under the nose, aft pair at the tail, on the sides of the belly, stowed against the skin
-    const place = (x, w, h, a) => { const holder = new THREE.Group(); holder.rotation.y = a; const f = flap(m, w, h); f.rotation.set(0, 0, 0); f.position.set(0, x, R + 0.28); f.userData.tile = true; holder.add(f); g.add(holder); return f; };
-    const fwdX = tubeEnd - 5.2, aftX = x0 + 1.4;
-    for (const s of [-1, 1]) { place(fwdX, 2.6 * dress.flapScale, 5.0 * dress.flapScale, belly + s * (Math.PI * 0.46)); place(aftX, 4.6 * dress.flapScale, 9.0 * dress.flapScale, belly + s * (Math.PI * 0.46)); }
+    // the flaps are not drawn here: they are the vehicle file's `surfaces`, built and moved by models/flaps.js
     // the base: the engine skirt of the ship
     const sk = new THREE.Mesh(new THREE.CircleGeometry(R * 0.97, 48), m.plate); sk.geometry.rotateX(-Math.PI / 2); sk.position.y = x0 + 1.6; g.add(sk);
   }

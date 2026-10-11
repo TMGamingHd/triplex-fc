@@ -65,6 +65,8 @@ export class Chart {
     if (o.yMin != null) lo = o.yMin;
     if (o.yMax != null) hi = o.yMax;
     if (hi - lo < 1e-9) { hi += 0.5; lo -= 0.5; }
+    // a line that is flat to within noise would otherwise get an axis of 73.5M, 73.5M, 73.5M: the range is at least 2 % of the size of the numbers (centred on them), so the ticks stay readable
+    if (o.yMin == null && o.yMax == null) { const mag = Math.max(Math.abs(lo), Math.abs(hi)), floor = o.minSpan != null ? o.minSpan : 0.02 * mag; if (hi - lo < floor) { const mid = (hi + lo) / 2; hi = mid + floor / 2; lo = mid - floor / 2; } }
     if (o.yMin == null) lo -= (hi - lo) * 0.06;
     if (o.yMax == null) hi += (hi - lo) * 0.06;
     const step = niceStep(hi - lo, Math.max(2, Math.floor(ph / 38)));

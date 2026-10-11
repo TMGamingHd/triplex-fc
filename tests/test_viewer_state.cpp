@@ -207,6 +207,82 @@ TFC_TEST(viewer_pose_marks_a_failed_engine) {
   CHECK(j.find("eng")->items[2].number > 0.9);
 }
 
+TFC_TEST(viewer_pose_carries_the_deflection_of_every_surface_and_the_starship_has_four_flaps_lying_flush) {
+  sim::VehicleFile vf = load("starship.json");
+  CHECK(vf.params.spec.surfaces.size() == 4U);
+  for (const sim::SurfaceSpec& f : vf.params.spec.surfaces) {
+    CHECK(f.kind == sim::SurfaceKind::Flap);
+    CHECK(f.stage == 1);                                                   // the ship's
+    CHECK(f.stow_deg == 0.0);                                              // flush with the skin in the climb
+    CHECK(f.channel < 0);
+    CHECK(f.area > 0.0 && f.chord > 0.0 && f.span > 0.0);
+  }
+  sim::Vehicle6 veh(vf.params, vf.scenario);
+  sim::Json spec;
+  std::string err;
+  CHECK(sim::parse_json(sim::viewer_spec_json(vf, veh), spec, err));
+  CHECK(get(get(spec, "vehicle"), "surfaces").items.size() == 4U);                         // the viewer is given the table it draws them from
+  sim::PoseExtra x;
+  sim::Json j;
+  CHECK(sim::parse_json(sim::viewer_pose_json(veh, 0.0, x), j, err));
+  CHECK(get(j, "surf").items.size() == 4U);
+  for (const sim::Json& d : get(j, "surf").items) {
+    CHECK(near_abs(d.number, 0.0, 1e-9));
+  }
+  CHECK(get(j, "sdep").type == sim::Json::Type::Number);
+  // a vehicle without surfaces says nothing of them
+  sim::VehicleFile ref = load("reference.json");
+  sim::Vehicle6 rv(ref.params, ref.scenario);
+  sim::Json rj;
+  CHECK(sim::parse_json(sim::viewer_pose_json(rv, 0.0, x), rj, err));
+  CHECK(rj.find("surf") == nullptr);
+}
+
+TFC_TEST(a_vehicle_with_its_flaps_flush_flies_exactly_as_one_without_them_and_a_standing_flap_changes_the_load) {
+  sim::VehicleFile with = load("starship.json");
+  sim::VehicleFile without = load("starship.json");
+  without.params.spec.surfaces.clear();
+  sim::Vehicle6 a(with.params, with.scenario);
+  sim::Vehicle6 b(without.params, without.scenario);
+  for (int i = 0; i < 6000; ++i) {                                      // 60 s of the climb, through max-Q's approach
+    a.step(0.01, 0.0, 0.0);
+    b.step(0.01, 0.0, 0.0);
+  }
+  const sim::Loads la = a.current_loads();
+  const sim::Loads lb = b.current_loads();
+  CHECK(la.f_aero.x == lb.f_aero.x && la.f_aero.y == lb.f_aero.y && la.f_aero.z == lb.f_aero.z);    // flush: bit for bit the same
+  CHECK(la.m_aero.x == lb.m_aero.x && la.m_aero.y == lb.m_aero.y && la.m_aero.z == lb.m_aero.z);
+  CHECK(a.altitude() == b.altitude());
+  // the same flaps standing 40 degrees out are plates in the stream: the load is not the same
+  with.params.spec.surfaces[0].stow_deg = 40.0;
+  with.params.spec.surfaces[1].stow_deg = 40.0;
+  sim::Vehicle6 c(with.params, with.scenario);
+  for (int i = 0; i < 6000; ++i) {
+    c.step(0.01, 0.0, 0.0);
+  }
+  const sim::Loads lc = c.current_loads();
+  CHECK(!(lc.f_aero.x == lb.f_aero.x && lc.f_aero.y == lb.f_aero.y && lc.f_aero.z == lb.f_aero.z));
+}
+
+TFC_TEST(viewer_pose_carries_the_poses_of_other_bodies_and_says_when_a_stage_is_caught_or_landed) {
+  sim::VehicleFile vf = load("two_stage_launcher.json");
+  sim::Vehicle6 veh(vf.params, vf.scenario);
+  sim::Vehicle6 other(vf.params, vf.scenario);
+  sim::PoseExtra x;
+  sim::Json j;
+  std::string err;
+  CHECK(sim::parse_json(sim::viewer_pose_json(veh, 0.0, x), j, err));
+  CHECK(j.find("others") == nullptr);                                         // none: nothing is said of them
+  CHECK(get(j, "cgt").number == 0.0 && get(j, "lnd").number == 0.0 && get(j, "crash").number == 0.0);
+  x.others = "[{\"name\":\"booster\",\"stage\":0,\"pose\":" + sim::viewer_pose_json(other, 0.0, sim::PoseExtra{}) + "}]";
+  CHECK(sim::parse_json(sim::viewer_pose_json(veh, 0.0, x), j, err));
+  CHECK(get(j, "others").items.size() == 1U);
+  const sim::Json& o = get(j, "others").items[0];
+  CHECK(get(o, "name").text == "booster" && get(o, "stage").number == 0.0);
+  CHECK(get(get(o, "pose"), "eng").items.size() == get(j, "eng").items.size());   // a whole pose of its own, in the same layout
+  CHECK(get(get(o, "pose"), "r").items.size() == 3U);
+}
+
 TFC_TEST(viewer_pose_reference_vehicle_and_every_example) {
   const char* files[] = {"reference.json", "sounding_rocket.json", "spacecraft.json", "launcher_dynamics.json"};
   for (const char* f : files) {

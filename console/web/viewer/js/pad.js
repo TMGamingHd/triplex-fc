@@ -76,11 +76,14 @@ void main() {
 
 export class Pad {
   /** vehicleLength and diameter size the site; mountHeight is where the vehicle's tail stands above the ground. */
-  constructor(length, diameter, mountHeight, coastM = 1600) {
-    this.group = new THREE.Group(); this.group.name = 'pad';
+  /** opts.second: the site of a second pad (no ground of its own: it stands on the first pad's); opts.armY: the height of the catch arms in metres (the mission's `arm_height_m`). */
+  constructor(length, diameter, mountHeight, coastM = 1600, opts = {}) {
+    this.opts = opts;
+    this.group = new THREE.Group(); this.group.name = opts.second ? 'second pad' : 'pad';
     this.length = length; this.diameter = diameter; this.mountH = mountHeight;
     const scale = Math.max(0.12, Math.min(1, length / 123));
     this.scale = scale;
+    if (opts.second) { this.structures = new THREE.Group(); this.group.add(this.structures); this.build(length, diameter, mountHeight, scale); return; }
     this.groundMat = new THREE.ShaderMaterial({
       vertexShader: GROUND_VERT, fragmentShader: GROUND_FRAG, transparent: true, depthWrite: true, side: THREE.DoubleSide,
       uniforms: { uSun: { value: new THREE.Vector3(0, 1, 0) }, uSunCol: { value: new THREE.Vector3(1, 1, 1) }, uAmb: { value: new THREE.Vector3(.1, .12, .2) }, uHaze: { value: new THREE.Vector3(.5, .6, .75) }, uCam: { value: new THREE.Vector3() },
@@ -128,11 +131,11 @@ export class Pad {
     const dark = new THREE.MeshStandardMaterial({ color: 0x4a4f56, metalness: 0.7, roughness: 0.5 });
     for (const side of [-1, 1]) {
       const arm = new THREE.Mesh(new THREE.BoxGeometry(armLen, armH, armW), dark);
-      arm.position.set(-(armLen / 2) - tw * 0.5, L * 0.74 + side * D * 0.2, side * D * 0.62); tower.add(arm);
-      const pad2 = new THREE.Mesh(new THREE.BoxGeometry(armW * 1.4, armH * 1.5, armW * 1.4), steel); pad2.position.set(-armLen - tw * 0.5, L * 0.74 + side * D * 0.2, side * D * 0.62); tower.add(pad2);
-      for (let i = 1; i < 6; i++) { const rib = new THREE.Mesh(new THREE.BoxGeometry(armH * 0.25, armH * 1.25, armW * 1.12), steel); rib.position.set(-(armLen * i / 6) - tw * 0.5, L * 0.74 + side * D * 0.2, side * D * 0.62); tower.add(rib); }
+      arm.position.set(-(armLen / 2) - tw * 0.5, (this.opts.armY ?? L * 0.74) + side * D * 0.2, side * D * 0.62); tower.add(arm);
+      const pad2 = new THREE.Mesh(new THREE.BoxGeometry(armW * 1.4, armH * 1.5, armW * 1.4), steel); pad2.position.set(-armLen - tw * 0.5, (this.opts.armY ?? L * 0.74) + side * D * 0.2, side * D * 0.62); tower.add(pad2);
+      for (let i = 1; i < 6; i++) { const rib = new THREE.Mesh(new THREE.BoxGeometry(armH * 0.25, armH * 1.25, armW * 1.12), steel); rib.position.set(-(armLen * i / 6) - tw * 0.5, (this.opts.armY ?? L * 0.74) + side * D * 0.2, side * D * 0.62); tower.add(rib); }
     }
-    const car = new THREE.Mesh(new THREE.BoxGeometry(tw * 0.6, D * 1.6, tw * 1.05), orange); car.position.set(-tw * 0.1, L * 0.74, 0); tower.add(car);
+    const car = new THREE.Mesh(new THREE.BoxGeometry(tw * 0.6, D * 1.6, tw * 1.05), orange); car.position.set(-tw * 0.1, (this.opts.armY ?? L * 0.74), 0); tower.add(car);
     // lightning masts and a tank farm
     for (const [mx, mz] of [[-170, -150], [170, -150], [-170, 170], [170, 170]].map(([a, b]) => [a * Math.max(.4, s * 1.1), b * Math.max(.4, s * 1.1)])) {
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.7, L * 1.0, 8), steel); mast.position.set(mx, L * 0.5, mz); S.add(mast);
@@ -145,5 +148,10 @@ export class Pad {
     }
     const bld = new THREE.Mesh(new THREE.BoxGeometry(D * 4, D * 0.9, D * 2), concrete); bld.position.set(-D * 12, D * 0.45, D * 7); S.add(bld);
     const roof = new THREE.Mesh(new THREE.BoxGeometry(D * 4.1, D * 0.08, D * 2.1), dark); roof.position.set(-D * 12, D * 0.94, D * 7); S.add(roof);
+    if (this.opts.second) {                                  // the first pad's ground draws its apron and its scorch; a second pad has to bring its own
+      const apronR = Math.max(2.5, D * 1.1) * 8;
+      const apron = new THREE.Mesh(new THREE.CylinderGeometry(apronR, apronR, 0.12, 64), new THREE.MeshStandardMaterial({ color: 0x57554f, roughness: 0.95 })); apron.position.y = 0.06; S.add(apron);
+      const scorch = new THREE.Mesh(new THREE.CylinderGeometry(D * 3.6, D * 3.6, 0.14, 48), new THREE.MeshStandardMaterial({ color: 0x1d1c1b, roughness: 1 })); scorch.position.y = 0.07; S.add(scorch);
+    }
   }
 }

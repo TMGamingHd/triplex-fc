@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import queue
 import socket
+import os
 import subprocess
 import threading
 import time
@@ -362,6 +363,35 @@ class ViewerService:
             self.hub.viewer.set_source(kind="none")
 
     # ------------------------------------------------------------------ fly a vehicle with the real flight software, then play it
+    def missions(self) -> list[str]:
+        """The mission files there are (`vehicles/missions/*.json`): a vehicle with a plan the flight computers fly, a stage's return among them."""
+        d = self.repo / "vehicles" / "missions"
+        return sorted(p.stem for p in d.glob("*.json")) if d.is_dir() else []
+
+    def fly_mission(self, name: str, hz: int = 20) -> dict:
+        """Runs `tfc_mission` on a mission file (the whole stack, the ship to orbit and the booster back to its pad, on the flight computers' own tables) and writes the poses of every body, for the viewer to follow."""
+        if name not in self.missions():
+            raise ValueError(f"no mission named {name!r}")
+        exe = Path(os.environ.get("TFC_MISSION_BIN") or self.vehicles.fly.parent / "tfc_mission")
+        if not exe.exists():
+            raise ValueError(f"{exe} is not built (cmake --build build/host --target tfc_mission)")
+        if hz < 1 or hz > 100:
+            raise ValueError("the pose rate is 1 to 100 per second")
+        self.scratch.mkdir(parents=True, exist_ok=True)
+        out = self.scratch / f"{name}.pose.jsonl"
+        argv = [str(exe), str(self.repo / "vehicles" / "missions" / f"{name}.json"), "--pose", str(out), "--pose-hz", str(hz), "--pose-others"]
+        with self.lock:
+            self.flying = {"label": name, "started": time.time()}
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=1800)
+        finally:
+            with self.lock:
+                self.flying = None
+        output = (r.stdout + r.stderr).strip()
+        if not out.exists() or out.stat().st_size == 0:
+            raise ValueError("tfc_mission wrote no poses:\n" + output)
+        return {"file": out.name, "ok": r.returncode == 0, "output": output, "bytes": out.stat().st_size}
+
     def fly(self, text: str, label: str, sensors: str = "vehicle", pad: int = 300, hz: int = 50) -> dict:
         """Runs `tfc_fly` on a vehicle text and writes its poses; the caller (a job) opens the result."""
         fly = self.vehicles.fly

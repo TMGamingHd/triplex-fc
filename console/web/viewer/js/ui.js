@@ -13,9 +13,19 @@ export function stat(label, unit = '', hint = '') {
 
 export const statGrid = (cols, ...stats) => h('div', { class: 'stats', style: { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` } }, stats.map((s) => s.el));
 
-/** A card with a title, in a dock. */
-export function card(title, body, tools) {
-  return h('article', { class: 'card v-card' }, h('header', {}, h('h3', {}, title), tools ? h('div', { class: 'tools' }, tools) : null), h('div', { class: 'body' }, body));
+/** A card with a title, in a dock. Click the header to fold it: the state is remembered per title. `opts.open === false` starts it folded; the provenance card always does, because it is a reference and not a reading. */
+export function card(title, body, tools, opts = {}) {
+  const key = 'v.card.' + (opts.key || title);
+  const folded = opts.open === false || title === 'Where the numbers come from';
+  let open = store.get(key, null);
+  if (open === null || open === undefined) open = !folded;
+  const art = h('article', { class: 'card v-card' + (open ? '' : ' collapsed') });
+  const head = h('header', { role: 'button', tabindex: 0, 'aria-expanded': String(open), title: 'Click to fold or unfold' }, h('h3', {}, title), tools ? h('div', { class: 'tools', onclick: (e) => e.stopPropagation() }, tools) : null);
+  const flip = () => { open = !open; art.classList.toggle('collapsed', !open); head.setAttribute('aria-expanded', String(open)); store.set(key, open); };
+  head.addEventListener('click', flip);
+  head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } });
+  art.append(head, h('div', { class: 'body' }, body));
+  return art;
 }
 
 /** A segmented control: options [[value, label, hint]], current value, onchange(value). */

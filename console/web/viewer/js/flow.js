@@ -27,7 +27,7 @@ void main() {
   float c = -dot(n, uF);                                  // 1 where the surface faces the wind
   float cp = c > 0.0 ? uCpMax * c * c : -0.05 - 0.3 / (1.0 + 0.5 * uMach * uMach) * (1.0 - c * c * 0.0) * min(1.0, -c * 2.0 + 0.3);
   float t;
-  if (uMode < 1.5) { t = cp < 0.0 ? 0.5 + 0.5 * cp / 0.5 : 0.5 + 0.5 * cp / max(uCpMax, 1.0); }
+  if (uMode < 1.5) { t = cp < 0.0 ? 0.5 - 0.5 * pow(clamp(-cp / 0.3, 0.0, 1.0), 0.6) : 0.5 + 0.5 * pow(clamp(cp / (0.35 * max(uCpMax, 0.5)), 0.0, 1.0), 0.6); }   // a stretch (a power of 0.6) so that the small differences over most of the skin show as colours: the ends are the stagnation and the suction
   else { float f = c > 0.0 ? sqrt(c) : 0.0; float Tw = uT + (uT0 - uT) * (0.9 * f + 0.08); t = (Tw - uT) / max(uT0 - uT, 1.0) * 0.5 + 0.5 * step(0.0, uT0 - uT - 1.0) * (Tw - uT) / max(uT0 - uT, 1.0); }
   vec3 col = cmap(clamp(t, 0.0, 1.0));
   float iso = uBands > 0.5 ? 0.12 * smoothstep(0.42, 0.5, abs(fract(t * 10.0) - 0.5)) : 0.0;   // contour lines
@@ -68,18 +68,27 @@ export class CpSurface {
 
 /* ------------------------------------------------------------------------------------------------------------------------------ the streamlines */
 const SL_VERT = /* glsl */`
-attribute vec3 aColor; attribute float aDist;
-varying vec3 vC; varying float vD;
-void main() { vC = aColor; vD = aDist; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+attribute vec3 aOther; attribute float aSide; attribute vec3 aColor; attribute float aDist; attribute float aFade;
+uniform vec2 uRes; uniform float uWidth;
+varying vec3 vC; varying float vD; varying float vSide; varying float vFade;
+void main() {
+  vC = aColor; vD = aDist; vSide = aSide; vFade = aFade;
+  vec4 a = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec4 b = projectionMatrix * modelViewMatrix * vec4(aOther, 1.0);
+  vec2 sa = a.xy / a.w * uRes * 0.5, sb = b.xy / b.w * uRes * 0.5;       // in pixels
+  vec2 dir = sb - sa; float l = length(dir); dir = l > 1e-4 ? dir / l : vec2(1.0, 0.0);
+  vec2 off = vec2(-dir.y, dir.x) * aSide * uWidth * 0.5;
+  gl_Position = vec4((sa + off) / (uRes * 0.5) * a.w, a.z, a.w);
+}`;
 const SL_FRAG = /* glsl */`
 precision highp float;
 uniform float uTime, uOpacity, uSpeed;
-varying vec3 vC; varying float vD;
+varying vec3 vC; varying float vD; varying float vSide; varying float vFade;
 void main() {
   float s = fract(vD * 0.18 - uTime * uSpeed);
-  float dash = 0.35 + 0.65 * smoothstep(0.0, 0.2, s) * (1.0 - smoothstep(0.55, 0.9, s));
-  gl_FragColor = vec4(vC * (0.7 + 0.8 * dash), uOpacity * dash);
-  #include <tonemapping_fragment>
+  float dash = 0.45 + 0.55 * smoothstep(0.0, 0.2, s) * (1.0 - smoothstep(0.55, 0.9, s));
+  float edge = 1.0 - smoothstep(0.55, 1.0, abs(vSide));                       // soft across the ribbon
+  gl_FragColor = vec4(vC * (0.8 + 0.2 * dash), uOpacity * dash * vFade * (0.35 + 0.65 * edge));
   #include <colorspace_fragment>
 }`;
 
@@ -88,8 +97,8 @@ export class Streamlines {
   constructor(model) {
     this.model = model; this.key = '';
     this.geo = new THREE.BufferGeometry();
-    this.mat = new THREE.ShaderMaterial({ vertexShader: SL_VERT, fragmentShader: SL_FRAG, transparent: true, depthWrite: false, uniforms: { uTime: { value: 0 }, uOpacity: { value: 0.6 }, uSpeed: { value: 1 } } });
-    this.obj = new THREE.LineSegments(this.geo, this.mat); this.obj.frustumCulled = false; this.obj.renderOrder = 8;
+    this.mat = new THREE.ShaderMaterial({ vertexShader: SL_VERT, fragmentShader: SL_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide, uniforms: { uTime: { value: 0 }, uOpacity: { value: 0.8 }, uSpeed: { value: 0.35 }, uRes: { value: new THREE.Vector2(1600, 900) }, uWidth: { value: 2.2 } } });
+    this.obj = new THREE.Mesh(this.geo, this.mat); this.obj.frustumCulled = false; this.obj.renderOrder = 8;
     model.root.add(this.obj);
     this.lastBuild = -1;
   }
@@ -106,7 +115,7 @@ export class Streamlines {
     return [0, 0];
   }
   update(d, stgBits, spec, tWall, wallDt) {
-    this.mat.uniforms.uTime.value = tWall;
+    this.mat.uniforms.uTime.value = tWall; this.mat.uniforms.uRes.value.set(window.innerWidth, window.innerHeight);
     if (!this.obj.visible) return;
     const key = [Math.round(d.fhat[0] * 400), Math.round(d.fhat[1] * 400), Math.round(d.fhat[2] * 400), Math.round(d.M * 20), stgBits].join(',');
     if (key === this.key || tWall - this.lastBuild < 0.1) return;
@@ -115,7 +124,7 @@ export class Streamlines {
   }
   build(d, stgBits, spec) {
     const segs = this.profile(stgBits);
-    if (!segs.length) { this.geo.setDrawRange(0, 0); return; }
+    if (!segs.length) { this.geo.setIndex([]); this.geo.setDrawRange(0, 0); return; }
     const x0 = segs[0][0], x1 = segs[segs.length - 1][2], L = x1 - x0, Rmax = Math.max(...segs.map((s) => Math.max(s[1], s[3])));
     const fb = d.fhat;                                          // the direction the air moves, body frame (x forward, y, z)
     const f = new THREE.Vector3(fb[2], fb[0], fb[1]).normalize(); // in the model's axes: Y along the vehicle
@@ -127,13 +136,20 @@ export class Streamlines {
     const e2 = new THREE.Vector3().crossVectors(f, e1).normalize();
     const c = new THREE.Vector3(0, (x0 + x1) / 2, 0);
     const s0 = 0.58 * L * Math.max(proj, 0.15) + 3 * Rmax + 0.25 * L * (1 - Math.max(proj, 0.0));
-    const nS = 17, tVals = [-2.4, -1.6, -1.15, -0.85, 0.85, 1.15, 1.6, 2.4, 0.0];
-    const M = d.M, supersonic = M > 1.05;
+        const M = d.M, supersonic = M > 1.05;
     const tipY = x1;
     // the nose's cone angle, for the shock
     const noseAng = this.noseAngle(segs);
     const beta = supersonic ? (coneShockCached(M, Math.min(noseAng + d.alpha * RAD * 0.5, 1.2)) ?? Math.asin(1 / M)) : Math.PI / 2;
-    const pos = [], col = [], dist = [];
+    const pos = [], oth = [], side = [], col = [], dist = [], fades = [], idx = [];
+    const quad = (p0, p1, rgb, d0, d1, fade) => {      // one segment as a ribbon: four vertices, each with the other end of its segment and its side
+      const n = pos.length / 3;
+      pos.push(p0.x, p0.y, p0.z, p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p1.x, p1.y, p1.z);
+      oth.push(p1.x, p1.y, p1.z, p1.x, p1.y, p1.z, p0.x, p0.y, p0.z, p0.x, p0.y, p0.z);
+      side.push(-1, 1, -1, 1); dist.push(d0, d0, d1, d1); fades.push(fade, fade, fade, fade);
+      for (let k = 0; k < 4; k++) col.push(rgb[0], rgb[1], rgb[2]);
+      idx.push(n, n + 1, n + 2, n + 1, n + 3, n + 2);
+    };
     const u = new THREE.Vector3(), p = new THREE.Vector3(), tmp = new THREE.Vector3();
     const ds = Math.max(0.01 * L, 0.18), maxSteps = Math.ceil((2.4 * L + 2 * s0) / ds);
     const fieldAt = (P, out) => {
@@ -154,11 +170,12 @@ export class Streamlines {
       out.x += dx * fade; out.z += dz * fade;
       return false;
     };
-    for (let i = 0; i < nS; i++) {
-      const s = (-0.55 + 1.1 * i / (nS - 1)) * L * Math.max(proj, 0.12);
-      for (const t of tVals) {
-        const tt = t * Rmax * (Math.abs(t) > 1.0 ? 1.0 : 1.0);
-        p.copy(c).addScaledVector(e1, s).addScaledVector(e2, tt).addScaledVector(f, -s0);
+    // the seeds: rings of lines released well ahead of the nose, on the line of the wind through its tip, at three distances from it; they bend over the nose and the shoulders and run down the body, which is where the air is disturbed
+    const tipPt = new THREE.Vector3(0, tipY, 0), nRing = 14;
+    for (let i = 0; i < nRing; i++) {
+      const phi = (i / nRing) * Math.PI * 2 + 0.2;
+      for (const rr of [1.12, 1.6, 2.3]) {
+        p.copy(tipPt).addScaledVector(f, -0.32 * L).addScaledVector(e1, Math.cos(phi) * rr * Rmax).addScaledVector(e2, Math.sin(phi) * rr * Rmax);
         let dd = 0;
         const u2 = new THREE.Vector3();
         for (let k = 0; k < maxSteps; k++) {
@@ -170,20 +187,29 @@ export class Streamlines {
           if (fieldAt(tmp, u2)) break;
           u2.normalize();
           const next = p.clone().addScaledVector(u2, ds);
-          // the colour: where the air is slow the pressure is high (Bernoulli: Cp = 1 - (speed ratio)^2)
-          const cp = Math.max(-1.2, Math.min(cpStagnation(M), 1 - sp * sp));
-          const tcol = cp < 0 ? 0.5 + 0.5 * cp / 0.6 : 0.5 + 0.5 * cp / Math.max(cpStagnation(M), 1);
+          // the colour: the pressure the skin below the line feels (the modified Newtonian value of the nearest station: high where the skin faces the wind, a little suction where it lies along it), fading with the square of the distance
+          // from the body as a disturbance does. The potential flow's own speed hardly changes along a line (its disturbance is across the stream), so it cannot colour them.
+          const [Rn, Rxn] = this.rOf(segs, p.y), rhoN = Math.hypot(p.x, p.z);
+          const facing = Rxn * Rxn / (1 + Rxn * Rxn), cpMax = cpStagnation(M);
+          const cpSkin = Rn > 1e-3 ? (facing > 1e-4 ? cpMax * facing : -0.05) : 0;
+          const cp = cpSkin * Math.pow(Math.min(1, Rn / Math.max(rhoN, 1e-3)), 2);
+          const tcol = cp < 0 ? 0.5 - 0.5 * Math.pow(Math.min(1, -cp / 0.3), 0.6) : 0.5 + 0.5 * Math.pow(Math.min(1, cp / (0.35 * Math.max(cpMax, 0.5))), 0.6);
           const rgb = colormap(tcol);
-          pos.push(p.x, p.y, p.z, next.x, next.y, next.z); col.push(rgb[0], rgb[1], rgb[2], rgb[0], rgb[1], rgb[2]); dist.push(dd, dd + ds);
+          const R0 = this.rOf(segs, p.y)[0], rho0 = Math.hypot(p.x, p.z);                  // how far from the body this step is, in body radii: lines far out fade away
+          quad(p, next, rgb, dd, dd + ds, Math.max(0.18, Math.min(1, 1.3 - 0.45 * (rho0 / Math.max(R0, Rmax * 0.5, 1e-3) - 1))));
           p.copy(next); dd += ds;
           if (Math.abs(p.y - c.y) > L * 1.3 + s0 * 1.2) break;
         }
       }
     }
     this.geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    this.geo.setAttribute('aOther', new THREE.Float32BufferAttribute(oth, 3));
+    this.geo.setAttribute('aSide', new THREE.Float32BufferAttribute(side, 1));
     this.geo.setAttribute('aColor', new THREE.Float32BufferAttribute(col, 3));
     this.geo.setAttribute('aDist', new THREE.Float32BufferAttribute(dist, 1));
-    this.geo.setDrawRange(0, pos.length / 3);
+    this.geo.setAttribute('aFade', new THREE.Float32BufferAttribute(fades, 1));
+    this.geo.setIndex(idx);
+    this.geo.setDrawRange(0, idx.length);
     this.geo.boundingSphere = new THREE.Sphere(c.clone(), L * 3);
   }
   noseAngle(segs) {
@@ -207,7 +233,7 @@ uniform float uTime, uOpacity; uniform vec3 uColor;
 void main() {
   float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 1.6);
   float ring = 0.5 + 0.5 * sin(vS * 60.0 - uTime * 5.0);
-  float a = (0.10 + 0.55 * f) * (1.0 - vS) * (0.7 + 0.3 * ring) * uOpacity;
+  float a = (0.03 + 0.42 * f) * pow(1.0 - vS, 1.5) * (0.7 + 0.3 * ring) * uOpacity * 0.7;     // a thin bright rim that fades down the cone: it was a sheet that hid the vehicle
   gl_FragColor = vec4(uColor * (0.6 + 0.8 * f), a);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -225,7 +251,7 @@ export class Shock {
     this.geo = new THREE.BufferGeometry();
     this.pos = new THREE.BufferAttribute(pos, 3); this.nrm = new THREE.BufferAttribute(nrm, 3);
     this.geo.setAttribute('position', this.pos); this.geo.setAttribute('normal', this.nrm); this.geo.setAttribute('aS', new THREE.BufferAttribute(aS, 1)); this.geo.setIndex(idx);
-    this.mat = new THREE.ShaderMaterial({ vertexShader: SHOCK_VERT, fragmentShader: SHOCK_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, uniforms: { uTime: { value: 0 }, uOpacity: { value: 1 }, uColor: { value: new THREE.Vector3(0.45, 0.75, 1.0) } } });
+    this.mat = new THREE.ShaderMaterial({ vertexShader: SHOCK_VERT, fragmentShader: SHOCK_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, uniforms: { uTime: { value: 0 }, uOpacity: { value: 1 }, uColor: { value: new THREE.Vector3(1.0, 0.42, 0.85) } } });
     this.obj = new THREE.Mesh(this.geo, this.mat); this.obj.frustumCulled = false; this.obj.renderOrder = 7; this.obj.visible = false;
     model.root.add(this.obj);
     this.angle = null;
