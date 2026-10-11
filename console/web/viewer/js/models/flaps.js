@@ -13,7 +13,8 @@ import { tileMaterial } from './starship.js';
 import { canvasTexture } from './common.js';
 
 const DEG = Math.PI / 180;
-const FOLD_S = 1.5;                         // seconds a grid fin takes to fold or deploy
+const FOLD_S = 1.5;
+const POD_UP_M = 1.5;                       // the fin's shaft is this far above the catch pin (the file puts the fins at `x_hinge_m` 62.5 and the pins at `catch_pin_x_m` 61.0): the fins rest on the arms                         // seconds a grid fin takes to fold or deploy
 
 let _steel = null, _dark = null, _web = null, _rib = null, _lee = null, _grid = null;
 const steel = () => _steel || (_steel = new THREE.MeshStandardMaterial({ color: 0xd2d7dd, metalness: 0.55, roughness: 0.38 }));
@@ -35,65 +36,61 @@ const leeward = () => {
   return (_lee = new THREE.MeshStandardMaterial({ map: tex, metalness: 0.5, roughness: 0.42, side: THREE.DoubleSide }));
 };
 
-/** The panel of an axial-hinge flap, flat on the skin (the pivot turns it out): `len` along the axis from y = 0, `wid` round the body from the hinge toward the side `s` (+1 or -1), on a hull of radius R.
- *  Faces: the outer one (a steel frame round a black tile face), the inner one (dark), and the edge all round. The plan is a trapezoid: the free edge is shorter than the hinge edge, its corners rounded. */
-export function axialFlapGeometry(R, len, wid, s, thick = 0.6, gap = 0.22) {
-  const NU = 14, NV = 12, pos = [], idx = [], groups = [];
-  const half = (v) => { const t = Math.max(0, (v - 0.8) / 0.2); return 0.5 * len * (1 - 0.2 * v) * (1 - 0.35 * t * t); };       // half the length at v (0 at the hinge, 1 at the free edge)
-  const at = (u, v, rad) => {
-    const th = (s * v * wid) / R;
-    return [rad * Math.sin(th), len / 2 + u * half(v), rad * Math.cos(th) - R];                                                // wrapped round the hull, the hinge at (0, ., 0)
+/** The plan of a Starship flap, as the pictures of the ship show it: a flat, thick plate in the shape of a trapezoid. The long edge is the hinge, along the body; the outer edge is shorter and the leading edge (the one
+ *  toward the nose) is swept back; the corners are cut, not round. `aft`: the big rear flaps (a long root, a strongly swept leading edge, the trailing edge nearly square to the hull); the forward flaps are smaller
+ *  and the more pointed ("ears"). Returns the outline as [along the hinge (0 to len), outward from it (0 to wid)] points, round the plate. */
+export function flapOutline(len, wid, aft) {
+  const lead = aft ? [0.66, 0.15] : [0.62, 0.20], c = Math.min(0.4, 0.06 * wid);      // where the outer edge begins and ends along the axis (as fractions of the length); the cut of the corners
+  const y0 = len * lead[1], y1 = len * lead[0];
+  return [[0, 0], [len, 0], [len - c * 0.3, c * 1.2], [y1 + c * 1.1, wid - c * 0.55], [y1, wid], [y0 + c * 0.6, wid], [y0 - c * 0.2, wid - c * 0.8], [0 + c * 0.2, c * 1.1]];
+}
+
+/** A flat flap: the outline extruded `thick` out of the plane, the hinge along Y at the origin, the plate lying toward `s` (+1 or -1) along X and its thickness along +Z. Faces: the outer one (the tile face), the inner
+ *  one (the leeward face: bare steel) and the edge all round; the texture follows the plan, so that tiles and weld lines are in the plate's own scale. */
+export function flatFlapGeometry(len, wid, s, aft, thick = 0.5) {
+  const ol = flapOutline(len, wid, aft), n = ol.length, pos = [], uv = [], idx = [], groups = [];
+  const at = (pt, z) => [s * pt[1], pt[0], z];
+  const face = (z, flip, mat) => {
+    const base = pos.length / 3;
+    for (const pt of ol) { pos.push(...at(pt, z)); uv.push(pt[1] / 3.0, pt[0] / 3.0); }
+    const st = idx.length;
+    for (let i = 1; i < n - 1; i++) idx.push(...((flip !== (s < 0)) ? [base, base + i + 1, base + i] : [base, base + i, base + i + 1]));
+    groups.push([st, idx.length - st, mat]);
   };
-  const layer = (rad) => { const base = pos.length / 3; for (let j = 0; j <= NV; j++) for (let i = 0; i <= NU; i++) pos.push(...at((2 * i) / NU - 1, j / NV, rad)); return base; };
-  const face = (base, flip, pick) => {
-    const bins = [[], [], []];
-    for (let j = 0; j < NV; j++) for (let i = 0; i < NU; i++) {
-      const a = base + j * (NU + 1) + i, b = a + 1, c = a + NU + 1, d = c + 1;
-      bins[pick(i, j)].push(...(flip !== (s < 0) ? [a, c, b, b, c, d] : [a, b, c, b, d, c]));
-    }
-    bins.forEach((tri, m) => { if (tri.length) { groups.push([idx.length, tri.length, m]); idx.push(...tri); } });
-  };
-  const outer = layer(R + gap + thick), inner = layer(R + gap);
-  const bins5 = (base, flip, pick) => {
-    const bins = [[], [], [], [], []];
-    for (let j = 0; j < NV; j++) for (let i = 0; i < NU; i++) {
-      const a = base + j * (NU + 1) + i, b = a + 1, c = a + NU + 1, d = c + 1;
-      bins[pick(i, j)].push(...(flip !== (s < 0) ? [a, c, b, b, c, d] : [a, b, c, b, d, c]));
-    }
-    bins.forEach((tri, m) => { if (tri.length) { groups.push([idx.length, tri.length, m]); idx.push(...tri); } });
-  };
-  bins5(outer, false, () => 1);                                                                  // the windward face: the tiles, all of it
-  bins5(inner, true, (i, j) => ((i === 3 || i === 10 || j === 4 || j === 8) ? 4 : 3));            // the leeward face: bare steel with the ribs showing as darker lines
-  const start = idx.length, ring = [];
-  for (let i = 0; i <= NU; i++) ring.push(i);
-  for (let j = 1; j <= NV; j++) ring.push(j * (NU + 1) + NU);
-  for (let i = NU - 1; i >= 0; i--) ring.push(NV * (NU + 1) + i);
-  for (let j = NV - 1; j >= 1; j--) ring.push(j * (NU + 1));
-  for (let k = 0; k < ring.length; k++) { const a = ring[k], b = ring[(k + 1) % ring.length]; idx.push(outer + a, inner + a, outer + b, outer + b, inner + a, inner + b); }
-  groups.push([start, idx.length - start, 2]);
+  face(thick, false, 1);                                     // outer: the tiles
+  face(0, true, 3);                                          // inner: the steel
+  const base = pos.length / 3, st = idx.length;
+  for (let i = 0; i < n; i++) { pos.push(...at(ol[i], thick), ...at(ol[i], 0)); uv.push(ol[i][1] / 3.0, ol[i][0] / 3.0, ol[i][1] / 3.0, ol[i][0] / 3.0); }
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n, a = base + 2 * i, b = base + 2 * j;            // outer(i), inner(i), outer(j), inner(j)
+    idx.push(...((s > 0) ? [a, a + 1, b, b, a + 1, b + 1] : [a, b, a + 1, b, b + 1, a + 1]));
+  }
+  groups.push([st, idx.length - st, 2]);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geo.setIndex(idx);
-  for (const [st, n, m] of groups) geo.addGroup(st, n, m);
+  for (const [a, c, m] of groups) geo.addGroup(a, c, m);
   geo.computeVertexNormals();
   return geo;
 }
 
-/** A grid fin standing out along +Z from its shaft at the origin: a robust squared-off frame `depth` deep along Y (the cells' axis) and `span` long along Z, `thick` across X, filled with a dense square lattice
- *  (perpendicular ribs, open pockets the air goes straight through), raw dark metal with a lighter bead along the frame's joints. */
-export function gridFinMesh(depth, span, thick = 0.5) {
+/** A grid fin, as the pictures of Falcon and Super Heavy show it: a flat lattice whose face is `width` along X (the tangent) by `span` along Z (the radius), standing out from its shaft at the origin along +Z, and `depth`
+ *  thin along Y, the axis: the cells open along Y, the way the air goes when the stage falls, so that with the stage upright the fin is parallel to the ground. A strong frame round a square lattice, dark metal, a lighter
+ *  bead along the joints of the frame. */
+export function gridFinMesh(width, span, depth = 0.7) {
   const g = new THREE.Group();
-  const bar = (sx, sy, sz, y, z, m) => { const b = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), m); b.position.set(0, y, z); g.add(b); };
-  const f = Math.max(0.2, thick * 0.38), t = Math.max(0.07, thick * 0.1), nY = 9, nZ = 6;       // the frame's bar, an inner rib
-  bar(thick, depth, f, 0, f / 2, web());                                                          // the root bar, on the shaft
-  bar(thick, depth, f, 0, span - f / 2, web());                                                   // the tip bar
-  bar(thick, f, span, depth / 2 - f / 2, span / 2, web()); bar(thick, f, span, -depth / 2 + f / 2, span / 2, web());   // the two sides
-  for (let i = 1; i < nY; i++) bar(thick * 0.9, t, span - 2 * f, -depth / 2 + (i * depth) / nY, span / 2, web());      // the ribs along the span
-  for (let k = 1; k < nZ; k++) bar(thick * 0.9, depth - 2 * f, t, 0, f + (k * (span - 2 * f)) / nZ, web());            // and across it
-  for (const [y, z] of [[depth / 2 - f, f], [-depth / 2 + f, f], [depth / 2 - f, span - f], [-depth / 2 + f, span - f]]) {   // a weld bead at each inner corner of the frame
-    const bead = new THREE.Mesh(new THREE.SphereGeometry(f * 0.42, 8, 6), rib()); bead.position.set(thick * 0.5, y, z); g.add(bead);
+  const bar = (sx, sy, sz, x, z, m) => { const b = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), m); b.position.set(x, 0, z); g.add(b); };
+  const f = 0.26, t = 0.09, nX = 12, nZ = 8;                                                      // the frame's bar, a rib, the cells across and along
+  bar(width, depth, f, 0, f / 2, web());                                                          // the root bar, on the shaft
+  bar(width, depth, f, 0, span - f / 2, web());                                                   // the tip bar
+  bar(f, depth, span, -width / 2 + f / 2, span / 2, web()); bar(f, depth, span, width / 2 - f / 2, span / 2, web());   // the two sides
+  for (let i = 1; i < nX; i++) bar(t, depth * 0.94, span - 2 * f, -width / 2 + (i * width) / nX, span / 2, web());     // the ribs along the radius
+  for (let k = 1; k < nZ; k++) bar(width - 2 * f, depth * 0.94, t, 0, f + (k * (span - 2 * f)) / nZ, web());          // and across it
+  for (const [x, z] of [[-width / 2 + f, f], [width / 2 - f, f], [-width / 2 + f, span - f], [width / 2 - f, span - f]]) {   // a weld bead at each inner corner of the frame
+    const bead = new THREE.Mesh(new THREE.SphereGeometry(f * 0.42, 8, 6), rib()); bead.position.set(x, depth * 0.5, z); g.add(bead);
   }
-  for (const y of [depth / 2, -depth / 2]) { const bead = new THREE.Mesh(new THREE.BoxGeometry(thick * 1.04, t * 1.2, span * 0.96), rib()); bead.position.set(0, y, span / 2); g.add(bead); }
+  for (const x of [-width / 2, width / 2]) { const bead = new THREE.Mesh(new THREE.BoxGeometry(t * 1.3, depth * 1.04, span * 0.96), rib()); bead.position.set(x, 0, span / 2); g.add(bead); }
   return g;
 }
 
@@ -101,11 +98,11 @@ export function gridFinMesh(depth, span, thick = 0.5) {
  *  arm takes the stage. Frame: the fin's holder (Z the radius, X the tangent, Y the axis), the origin on the skin at the fin's height. */
 export function finPod(R, depth, withPin) {
   const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), dark()); body.scale.set(Math.max(1.1, depth * 0.34), Math.max(1.4, depth * 0.52), 0.95); body.position.set(0, 0, R + 0.2); g.add(body);   // the pod: an egg 2.8 m tall, 1.9 m wide
-  const base = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2.2, depth * 0.55), Math.max(2.8, depth * 0.75), 0.5), web()); base.position.set(0, 0, R - 0.02); g.add(base);                       // its reinforced base on the skin
-  const plate = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2.6, depth * 0.62), Math.max(3.2, depth * 0.84), 0.12), rib()); plate.position.set(0, 0, R + 0.28); g.add(plate);                  // a doubler plate round it, its edge a bright weld
+  const body = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), dark()); body.scale.set(1.15, 2.4, 0.95); body.position.set(0, POD_UP_M * 0.5, R + 0.2); g.add(body);       // the pod: an egg 4.8 m tall from the pin to the shaft, 2.3 m wide
+  const base = new THREE.Mesh(new THREE.BoxGeometry(2.4, 4.6, 0.5), web()); base.position.set(0, POD_UP_M * 0.5, R - 0.02); g.add(base);                                  // its reinforced base on the skin
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(2.8, 5.0, 0.12), rib()); plate.position.set(0, POD_UP_M * 0.5, R + 0.28); g.add(plate);                              // a doubler plate round it, its edge a bright weld
   if (withPin) {
-    const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 1.5, 16), steel()); pin.rotation.x = Math.PI / 2; pin.position.set(0, 0, R + 1.55); g.add(pin);                              // the catch pin, out of the pod's outer face
+    const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 1.5, 16), steel()); pin.rotation.x = Math.PI / 2; pin.position.set(0, 0, R + 1.55); g.add(pin);       // the catch pin, out of the pod's outer face, a metre and a half under the fin
     const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.35, 16), web()); collar.rotation.x = Math.PI / 2; collar.position.set(0, 0, R + 0.95); g.add(collar);
   }
   return g;
@@ -118,11 +115,11 @@ export function buildSurface(sf, index) {
   const f = { group: holder, kind: sf.kind, spec: sf, index, fold: sf.deployed === false ? 1 : 0, deg: sf.stow_deg || 0 };
   if (sf.kind === 'grid_fin') {
     const flank = Math.abs(Math.sin((sf.azimuth_deg || 0) * DEG)) > 0.9;                                       // the two flank fins are the ones the arms take: their pods carry the pins
-    const podG = finPod(R, sf.chord_m, flank); podG.position.set(0, sf.x_hinge_m, 0); holder.add(podG);
+    const podG = finPod(R, sf.chord_m, flank); podG.position.set(0, sf.x_hinge_m - POD_UP_M, 0); holder.add(podG);
     const shaft = new THREE.Group(); shaft.position.set(0, sf.x_hinge_m, R + 1.05); holder.add(shaft);     // the shaft above the pod, at the middle of the fin's depth
-    const fold = new THREE.Group(); shaft.add(fold);                      // folds about the depth axis (Y): 0 standing out along the radius, 90 lying along the skin round the body
+    const fold = new THREE.Group(); shaft.add(fold);                      // folds about the tangent (X): 0 standing out along the radius, parallel to the ground; 90 lying along the skin toward the tail
     const turn = new THREE.Group(); fold.add(turn);                       // turns about the shaft (Z) by the deflection
-    turn.add(gridFinMesh(sf.chord_m, sf.span_m));
+    turn.add(gridFinMesh(sf.chord_m, sf.span_m));                       // the face: the file's chord_m across (the tangent) by span_m out (the radius): its area_m2
     const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.72, 0.9, 16), steel()); housing.rotation.x = Math.PI / 2; housing.position.z = -0.05; shaft.add(housing);
     let seen = false;
     f.set = (deg, deployed, dt = 0.016) => {
@@ -130,23 +127,20 @@ export function buildSurface(sf, index) {
       if (!seen) { f.fold = want; seen = true; }                          // the first time it is as the pose says, not on its way
       else { const step = Math.min(dt, 0.1) / FOLD_S; f.fold += Math.max(-step, Math.min(step, want - f.fold)); }
       const e = f.fold * f.fold * (3 - 2 * f.fold);
-      fold.rotation.y = e * (Math.PI / 2);
+      fold.rotation.x = e * (Math.PI / 2);
       turn.rotation.z = -(deg || 0) * DEG;                                // the simulator's chord turns from the axis toward the tangent with the deflection
     };
     f.set(sf.stow_deg || 0, sf.deployed !== false, 1);
     return f;
   }
   if (sf.axial_hinge) {
-    const s = sf.chord_dir >= 0 ? 1 : -1, len = sf.span_m, wid = sf.chord_m;
-    const pivot = new THREE.Group(); pivot.position.set(0, sf.x_hinge_m, R); holder.add(pivot);
-    pivot.add(new THREE.Mesh(axialFlapGeometry(R, len, wid, s), [steel(), tileMaterial(), dark(), leeward(), rib()]));
-    // the hinge, exposed and heavy: a steel barrel along the hinge line, a bracket at each end, an actuator housing at the middle with two linkage rods to the plate, and a half-shell fairing over the barrel that
-    // keeps the stream out of the gap
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, len * 1.02, 14), steel()); barrel.position.set(0, len / 2, 0.28); pivot.add(barrel);
-    for (const y of [0.04 * len, 0.96 * len]) { const br = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 1.1), dark()); br.position.set(0, y, 0.1); pivot.add(br); }
-    const act = new THREE.Mesh(new THREE.BoxGeometry(0.9, Math.max(1.4, len * 0.14), 0.8), dark()); act.position.set(-s * 0.25, len * 0.5, 0.5); pivot.add(act);
-    for (const y of [0.42, 0.58]) { const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 1.6, 8), steel()); rod.position.set(-s * 0.55, len * y, 0.95); rod.rotation.z = s * 0.9; pivot.add(rod); }
-    const fair = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, len * 0.98, 16, 1, true, 0, Math.PI), dark()); fair.position.set(0, len / 2, 0.3); fair.rotation.y = s > 0 ? Math.PI / 2 + Math.PI : Math.PI / 2; pivot.add(fair);
+    const s = sf.chord_dir >= 0 ? 1 : -1, len = sf.span_m, wid = sf.chord_m, aft = len > 7.5;                 // the big rear flaps and the smaller forward ones
+    const pivot = new THREE.Group(); pivot.position.set(0, sf.x_hinge_m, R + 0.15); holder.add(pivot);
+    pivot.add(new THREE.Mesh(flatFlapGeometry(len, wid, s, aft), [steel(), tileMaterial(), dark(), leeward(), rib()]));
+    // the hinge, tight to the body: a barrel along the hinge line with a bracket at each end and a low half-shell fairing over it that keeps the stream out of the gap
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, len * 1.0, 14), steel()); barrel.position.set(0, len / 2, 0.22); pivot.add(barrel);
+    for (const y of [0.05 * len, 0.95 * len]) { const br = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.8), dark()); br.position.set(0, y, 0.1); pivot.add(br); }
+    const fair = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, len * 0.96, 16, 1, true, 0, Math.PI), dark()); fair.position.set(0, len / 2, 0.22); fair.rotation.y = s > 0 ? Math.PI / 2 + Math.PI : Math.PI / 2; pivot.add(fair);
     f.pivot = pivot;
     f.set = (deg) => { f.deg = deg; pivot.rotation.y = -s * deg * DEG; };  // about the axis: the free edge, flat toward +X for s = +1, turns out to +Z
     f.set(sf.stow_deg || 0);

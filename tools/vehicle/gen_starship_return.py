@@ -87,7 +87,7 @@ def plant():
             "tanks": [{"propellant_kg": 1252000, "x_bottom_m": 76.3, "radius_m": 4.5, "density_kg_m3": 1141}, {"propellant_kg": 348000, "x_bottom_m": 94.0, "radius_m": 4.5, "density_kg_m3": 424}],
             "sections": [{"kind": "tube", "x_start_m": 72.3, "length_m": 36.0, "d_aft_m": 9.0, "d_fore_m": 9.0}, {"kind": "nose", "x_start_m": 108.3, "length_m": 16.1, "d_aft_m": 9.0, "d_fore_m": 0, "shape": "ogive"}],
             "guided": True, "catch_pin_x_m": SHIP["pin_x_m"], "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
-    surfaces = [{"name": "grid fin %d" % (i + 1), "stage": 0, "kind": "grid_fin", "x_hinge_m": 61.0, "azimuth_deg": az, "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68,
+    surfaces = [{"name": "grid fin %d" % (i + 1), "stage": 0, "kind": "grid_fin", "x_hinge_m": 62.5, "azimuth_deg": az, "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68,
                  "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": i, "deployed": False} for i, az in enumerate((0.0, 96.0, 264.0))]   # three in a T (11 Oct 2026, the owner's description of the V3 booster): one on the spine, one on each flank about 96 degrees round, the leeward side open
     # the ship's four flaps, as in vehicles/starship.json: hinged along the axis and standing straight out (90) for the climb, edge-on to the stream. They take no command until the entry deploys them (deployed false:
     # stowed at 90); then channels 0 to 3 move them about the mixer's trim (the ship's own mixers; the booster's grid fins use channels 0 to 2 of their own body)
