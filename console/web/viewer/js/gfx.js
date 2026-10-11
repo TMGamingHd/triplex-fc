@@ -29,8 +29,30 @@ export class Label {
     this.tex.needsUpdate = true;
     this.sprite.scale.set(o.size * w / 40, o.size * h / 40, 1);                  // the height of one line is `size` of the screen's height
   }
-  setAnchor(ax, ay) { this.sprite.center.set(ax, ay); return this; }
+  setAnchor(ax, ay) { this.sprite.center.set(ax, ay); this.base = [ax, ay]; return this; }
   get object() { return this.sprite; }
+}
+
+/** Pushes labels that would sit on top of one another apart, on the screen: each is first put back at the anchor its lens gave it, then, in the order given (the first keeps its place), moved up or down by whole label heights
+ *  until it touches nothing already placed (at most three steps each way). A label that is hidden, or behind the camera, is left out. `W`, `H`: the size of the canvas in pixels. */
+export function declutter(labels, camera, W, H, pad = 4) {
+  const placed = [], v = new THREE.Vector3();
+  const shown = (o) => { for (let n = o; n; n = n.parent) if (!n.visible) return false; return true; };
+  for (const L of labels) {
+    const sp = L.sprite;
+    if (!sp || !shown(sp)) continue;
+    const base = L.base || [sp.center.x, sp.center.y];
+    sp.center.set(base[0], base[1]);
+    sp.getWorldPosition(v).project(camera);
+    if (v.z > 1 || v.z < -1) continue;
+    const px = (v.x * 0.5 + 0.5) * W, py = (1 - (v.y * 0.5 + 0.5)) * H, w = sp.scale.x * H, h = sp.scale.y * H;
+    const left = px - base[0] * w, top0 = py - (1 - base[1]) * h;
+    const free = (t) => !placed.some((r) => left < r.x + r.w + pad && left + w + pad > r.x && t < r.y + r.h + pad && t + h + pad > r.y);
+    let dy = 0;
+    for (let k = 1; k <= 6 && !free(top0 + dy); k++) dy = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (h + pad);
+    sp.center.y = base[1] + dy / h;                                         // the sprite's anchor moves down by dy pixels when its y grows by dy / h
+    placed.push({ x: left, y: top0 + dy, w, h });
+  }
 }
 
 /** An arrow from `origin` along `dir`, `length` long, with a head in proportion. */

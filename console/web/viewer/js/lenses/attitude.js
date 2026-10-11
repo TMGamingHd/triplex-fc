@@ -3,7 +3,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { Chart, legend } from '../../../js/charts.js';
 import { h, stat, statGrid, card, toggle, provenance, fmt, store } from '../ui.js';
-import { Arrow, Label, line, setLine } from '../gfx.js';
+import { Arrow, Label, line, setLine, declutter } from '../gfx.js';
 import { quatToScene } from '../data.js';
 
 const RAD = Math.PI / 180, DEG = 180 / Math.PI;
@@ -42,7 +42,7 @@ export default {
       tilt: new Chart(h('canvas'), { height: 110, window: 120, series: [{ key: 'tilt_p', label: 'pitch tilt °', color: 'var(--info)' }, { key: 'ref_p', label: 'program °', color: 'var(--faint)', dash: [5, 4] }] }),
       gim: new Chart(h('canvas'), { height: 110, window: 120, series: [{ key: 'gim_p', label: 'gimbal pitch °', color: 'var(--accent)' }, { key: 'gim_y', label: 'gimbal yaw °', color: 'var(--nSIM)' }], zero: true }),
     };
-    const ch = (t, c) => card(t, [c.c, legend(c.o.series)]);
+    let chN = 0; const ch = (t, c) => card(t, [c.c, legend(c.o.series)], null, { open: chN++ === 0 });
     app.right.replaceChildren(card('Show', [toggle('The attitude the program asks for (wire ghost)', S.ghost, (v) => { S.ghost = v; store.set('att.ghost', v); }), toggle('Body axes and the velocity', S.axes, (v) => { S.axes = v; store.set('att.axes', v); })]),
       card('The computers', [S.nodes, h('p', { class: 'note' }, 'From the console\'s own state: shown when the rig, or a replay of it, is running.')]), ch('Attitude error', S.charts.err), ch('Tilt against the program', S.charts.tilt), ch('Gimbal', S.charts.gim),
       card('Where the numbers come from', [provenance('measured', 'the attitude, the rates, the gimbal angles, the program and the actuator node\'s command: the simulator\'s state and the flight computers\' own output.'), provenance('illustrative', 'the wire ghost: the vehicle turned by the error, about the centre of mass.')]));
@@ -98,6 +98,7 @@ export default {
       if (Math.abs(S.ghostCg - pose.cg) > 0.5) { S.ghostObj.removeFromParent(); S.ghostObj = wireGhost(app.vehicle, pose.cg); S.group.add(S.ghostObj); S.ghostCg = pose.cg; }
       S.errL.setText(`error ${err.toFixed(2)}°`); S.errL.object.position.set(R * 1.3, spec.length - pose.cg, 0);
     }
+    declutter([S.errL, S.velL, ...S.axL, S.upL, S.rateL], app.world.camera, innerWidth, innerHeight);
     for (const c of Object.values(S.charts)) c.draw(app.data.hist);
   },
   drawNodes(app, sn) {

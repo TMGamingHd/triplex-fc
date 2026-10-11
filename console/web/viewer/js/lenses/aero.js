@@ -3,7 +3,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { Chart, legend } from '../../../js/charts.js';
 import { h, stat, statGrid, card, seg, toggle, slider, provenance, fmt, store } from '../ui.js';
-import { Label, Arrow, mark, line, setLine, legendCanvas } from '../gfx.js';
+import { Label, Arrow, mark, line, setLine, legendCanvas, declutter } from '../gfx.js';
 import { CpSurface, Streamlines, Shock, Condensation } from '../flow.js';
 import { RAD } from '../physics.js';
 
@@ -13,8 +13,8 @@ export default {
   id: 'aero', label: 'Aerodynamics', key: '2',
   mount(app) {
     const { world, vehicle, spec } = app;
-    const S = (this.s = { opts: store.get('aero.opts', { view: 'flow', cgcp: true, forces: true, wind: true, arc: true, streams: true, shock: true, cond: true, pmode: 0, opacity: 0.85, contours: true }), objs: [] });
-    const o = S.opts, save = () => store.set('aero.opts', o);
+    const S = (this.s = { opts: store.get('aero.opts2', { view: 'flow', cgcp: true, forces: true, xcgcp: false, xforces: false, wind: true, arc: true, streams: true, shock: true, cond: true, pmode: 0, opacity: 0.85, contours: true }), objs: [] });
+    const o = S.opts, save = () => store.set('aero.opts2', o);
     { const v = new URLSearchParams(window.__query || location.search).get('view'); if (v) o.view = v; }      // ?view=flow|pressure|stability, for looking at one view in a screenshot
     const g = S.group = new THREE.Group(); g.name = 'aero overlays'; world.modelHolder.add(g);
     // 3D objects
@@ -56,19 +56,24 @@ export default {
     app.left.replaceChildren(...left);
 
     // ---- the right dock: what to draw, and the history
+    // what to draw: a view tells one story, and only its own switches are shown. Flow: the air. Pressure: the skin. CP and CG: the forces and the stability. The extras of the other views are off until asked for.
+    const grp = (id, ...kids) => h('div', { id, class: 'v-opts' }, kids);
     const rows = [
       h('div', { class: 'v-row' }, views),
-      toggle('Centre of pressure and centre of mass', o.cgcp, (v) => set('cgcp', v)), toggle('Forces: thrust, weight, aerodynamic, drag, lift', o.forces, (v) => set('forces', v)),
-      toggle('Relative wind', o.wind, (v) => set('wind', v)), toggle('Angle of attack', o.arc, (v) => set('arc', v)),
-      toggle('Streamlines', o.streams, (v) => set('streams', v)), toggle('Shock', o.shock, (v) => set('shock', v)), toggle('Transonic cloud', o.cond, (v) => set('cond', v), 'The Prandtl-Glauert cloud near Mach 1 in humid air'),
-      h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Pressure on the skin'), pmode), slider('Opacity', 0, 1, 0.05, o.opacity, (v) => { o.opacity = v; save(); }, (v) => Math.round(v * 100) + ' %'),
-      toggle('Contour lines', o.contours, (v) => { o.contours = v; save(); S.cpSurf.mat.uniforms.uBands.value = v ? 1 : 0; }),
-      h('div', { class: 'v-legend' }, legendCanvas(), h('div', { class: 'v-legend-ends' }, h('span', { text: 'suction' }), h('span', { text: 'ambient' }), h('span', { text: 'stagnation' }))),
+      h('p', { class: 'note', id: 'v-aero-says' }, ''),
+      grp('v-aero-flow', toggle('Streamlines', o.streams, (v) => set('streams', v)), toggle('Shock', o.shock, (v) => set('shock', v)), toggle('Relative wind', o.wind, (v) => set('wind', v)), toggle('Angle of attack', o.arc, (v) => set('arc', v)),
+        toggle('Transonic cloud', o.cond, (v) => set('cond', v), 'The Prandtl-Glauert cloud near Mach 1 in humid air')),
+      grp('v-aero-pressure', h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Pressure on the skin'), pmode), slider('Opacity', 0, 1, 0.05, o.opacity, (v) => { o.opacity = v; save(); }, (v) => Math.round(v * 100) + ' %'),
+        toggle('Contour lines', o.contours, (v) => { o.contours = v; save(); S.cpSurf.mat.uniforms.uBands.value = v ? 1 : 0; }),
+        h('div', { class: 'v-legend' }, legendCanvas(), h('div', { class: 'v-legend-ends' }, h('span', { text: 'suction' }), h('span', { text: 'ambient' }), h('span', { text: 'stagnation' })))),
+      grp('v-aero-stability', toggle('Centre of pressure and centre of mass', o.cgcp, (v) => set('cgcp', v)), toggle('Forces: thrust, weight, aerodynamic, drag, lift', o.forces, (v) => set('forces', v))),
+      grp('v-aero-extra', h('div', { class: 'v-lbl', style: { margin: '8px 0 2px' } }, 'Also draw, in this view'), toggle('Centre of pressure and centre of mass', o.xcgcp, (v) => set('xcgcp', v)), toggle('Forces', o.xforces, (v) => set('xforces', v))),
     ];
+    S.says = { flow: 'The air going round the vehicle: streamlines, the shock, the relative wind and the angle of attack.', pressure: 'The pressure on the skin.', stability: 'Where the forces act and whether the air turns the vehicle back into the wind.' };
     const mkChart = (series, opt = {}) => { const c = new Chart(h('canvas'), { height: 110, window: 60, series, ...opt }); return c; };
     S.charts = { alpha: mkChart([{ key: 'alpha', label: 'α °', color: 'var(--accent)' }], { zero: true }), q: mkChart([{ key: 'q', label: 'q Pa', color: 'var(--warn)' }]), mach: mkChart([{ key: 'mach', label: 'Mach', color: 'var(--ok)' }]),
       margin: mkChart([{ key: 'static_margin', label: 'static margin (cal)', color: 'var(--nC)' }], { zero: true }), pos: mkChart([{ key: 'cg', label: 'x CG m', color: 'var(--ok)' }, { key: 'cp', label: 'x CP m', color: 'var(--accent)' }]) };
-    const ch = (t, c) => card(t, [c.c, legend(c.o.series)]);
+    let chN = 0; const ch = (t, c) => card(t, [c.c, legend(c.o.series)], null, { open: chN++ === 0 });
     app.right.replaceChildren(
       card('What to draw', rows),
       card('Where the numbers come from', [provenance('measured', 'Mach, angle of attack, the air, the forces, the centre of mass and the centre of pressure: the simulator\'s own state.'),
@@ -81,8 +86,13 @@ export default {
 
   applyView(app, camera = false) {
     const S = this.s, o = S.opts, v = o.view;
-    S.streams.setVisible(o.streams && v === 'flow'); S.shock.setVisible(o.shock && v !== 'stability'); S.cpSurf.setVisible(v !== 'stability');
-    S.showMarks = o.cgcp || v === 'stability'; S.showForces = o.forces || v === 'stability';
+    S.streams.setVisible(o.streams && v === 'flow'); S.shock.setVisible(o.shock && v === 'flow'); S.cpSurf.setVisible(v === 'pressure');
+    S.showMarks = v === 'stability' ? o.cgcp : o.xcgcp;                        // the markers and the dimension line
+    S.showForces = v === 'stability' ? o.forces : o.xforces;
+    S.showWind = v === 'flow' && o.wind; S.showArc = v === 'flow' && o.arc; S.showCond = v === 'flow' && o.cond;
+    const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+    show('v-aero-flow', v === 'flow'); show('v-aero-pressure', v === 'pressure'); show('v-aero-stability', v === 'stability'); show('v-aero-extra', v !== 'stability');
+    const says = document.getElementById('v-aero-says'); if (says) says.textContent = S.says[v] || '';
     if (camera) {
       const r = app.world.rig;
       if (v === 'stability') { r.set('orbit'); r.yaw = Math.PI / 2; r.pitch = 0.0; r.dist = 1.95; r.anchor = 0.5; }
@@ -141,14 +151,14 @@ export default {
     // the relative wind: an arrow ahead of the nose pointing the way the air moves
     {
       const a = A.wind, f = new THREE.Vector3(d.fhat[2], d.fhat[0], d.fhat[1]);
-      const show = o.wind && d.V > 5;
+      const show = S.showWind && d.V > 5;
       a.a.object.visible = a.l.object.visible = show;
       if (show) { const Ln = Lv * 0.3, start = new THREE.Vector3(0, Lv, 0).addScaledVector(f, -Ln * 1.15 - R * 1.5); a.a.set(start, f, Ln, Math.max(0.2, R * 0.08)); a.l.setText(`WIND ${d.V.toFixed(0)} m/s`); a.l.object.position.copy(start); }
     }
     // the angle of attack: an arc at the CG between the axis and the velocity through the air
     {
       const vhat = new THREE.Vector3(d.vhat[2], d.vhat[0], d.vhat[1]), ax = new THREE.Vector3(0, 1, 0), r0 = Lv * 0.18;
-      const show = o.arc && d.alpha > 0.15 && d.V > 5;
+      const show = S.showArc && d.alpha > 0.15 && d.V > 5;
       S.arc.visible = S.arcL.object.visible = show;
       if (show) {
         const ang = ax.angleTo(vhat), n = new THREE.Vector3().crossVectors(ax, vhat).normalize(), pts = [];
@@ -162,8 +172,8 @@ export default {
     S.cpSurf.update(d, mode === 2 ? 2 : 0, o.opacity);
     S.streams.update(d, pose.stg ?? 255, spec, app.wall, dt);
     const segs = S.streams.profile(pose.stg ?? 255);
-    if (segs.length && S.shock.visible) { const tip = segs[segs.length - 1][2]; S.shock.update(d, tip, S.streams.noseAngle(segs), Math.min(spec.length * 0.9, 90), app.wall); }
-    S.cond.update({ ...d, alt: pose.alt }, (spec.length) * 0.86, R, world.camera, [1, 1, 1].map((x, i) => (world.sunT ? world.sunT[i] : 1)), o.cond && view !== 'stability', app.wall);
+    if (segs.length && S.shock.visible) { const tip = segs[segs.length - 1][2]; S.shock.update(d, tip, S.streams.noseAngle(segs), Math.min(spec.length * 0.45, 55), app.wall); }
+    S.cond.update({ ...d, alt: pose.alt }, (spec.length) * 0.86, R, world.camera, [1, 1, 1].map((x, i) => (world.sunT ? world.sunT[i] : 1)), S.showCond, app.wall);
 
     // the readouts
     const st = S.stats;
@@ -175,6 +185,7 @@ export default {
     S.stab.margin.set(d.margin.toFixed(2), d.margin >= 0 ? 'ok' : 'warn'); S.stab.gap.set(Math.abs(gap).toFixed(1)); S.stab.xcg.set(pose.cg.toFixed(1)); S.stab.xcp.set(pose.cp.toFixed(1));
     S.verdict.className = 'v-verdict ' + (stable ? 'ok' : 'warn');
     S.verdict.textContent = d.q < 200 ? 'Almost no air: the aerodynamic forces are negligible; the position of the centre of pressure is the vehicle\'s own shape.' : stable ? 'Statically stable: the air turns the vehicle back into the wind.' : 'Statically unstable: the air turns the vehicle away from the wind. The gimbals hold it.';
+    declutter([S.cpL, S.cgL, S.dimL, A.aero.l, A.thrust.l, A.weight.l, A.drag.l, A.lift.l, A.wind.l, S.arcL], world.camera, innerWidth, innerHeight);
     this.drawDiagram(app, pose, d);
     for (const c of Object.values(S.charts)) c.draw(app.data.hist);
   },

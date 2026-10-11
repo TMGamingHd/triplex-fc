@@ -25,8 +25,30 @@ body.hideui #v-top { background: transparent; border-color: transparent; }
 .v-iconbtn:hover { border-color: var(--line2); background: var(--panel3); }
 
 /* ---- the docks */
-.v-dock { position: fixed; top: 60px; bottom: 56px; width: 344px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 10px; padding: 2px 4px 10px 2px; z-index: 10; scrollbar-width: thin; }
+.v-dock { position: fixed; top: 60px; bottom: 56px; width: 330px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 10px; padding: 2px 4px 10px 2px; z-index: 10; scrollbar-width: thin; }
 #v-left { left: 10px; } #v-right { right: 10px; }
+.v-dock { padding-bottom: 28px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent); }   /* the last card fades out instead of being cut at a hard edge: it says "there is more, scroll" */
+body.no-left #v-left, body.no-right #v-right { display: none; }
+/* the buttons that fold a dock away, on the edge of the screen */
+.v-dockbtn { position: fixed; top: 50%; z-index: 12; width: 18px; height: 56px; margin-top: -28px; padding: 0; border: 1px solid var(--line); background: color-mix(in srgb, var(--bg2) 82%, transparent); color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; backdrop-filter: blur(8px); }
+.v-dockbtn:hover { color: var(--text); border-color: var(--line2); }
+#v-tg-left { left: 0; border-radius: 0 8px 8px 0; border-left: 0; } #v-tg-right { right: 0; border-radius: 8px 0 0 8px; border-right: 0; }
+body:not(.no-left) #v-tg-left { left: 350px; } body:not(.no-right) #v-tg-right { right: 350px; }
+/* the cameras */
+#v-cams { position: fixed; left: 50%; bottom: 58px; transform: translateX(-50%); z-index: 11; display: flex; flex-direction: column; align-items: center; gap: 4px; max-width: calc(100vw - 80px); pointer-events: none; }
+#v-cams > * { pointer-events: auto; }
+#v-cams nav { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; background: color-mix(in srgb, var(--bg2) 84%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+#v-cams button { background: none; border: 0; color: var(--muted); padding: 5px 11px; border-radius: 7px; cursor: pointer; font-weight: 600; font-size: 12.5px; white-space: nowrap; }
+#v-cams button:hover { color: var(--text); background: var(--panel2); }
+#v-cams button[aria-pressed="true"] { background: var(--panel3); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+#v-camhint { font-size: 11.5px; color: var(--text); text-shadow: 0 1px 3px #000, 0 0 8px #000; max-width: 560px; text-align: center; opacity: .85; pointer-events: none; }
+/* a folded card shows its header only; the header says it can be clicked */
+.v-card > header { cursor: pointer; user-select: none; }
+.v-card > header h3::before { content: '▾'; display: inline-block; width: 1.1em; color: var(--faint); }
+.v-card.collapsed > header h3::before { content: '▸'; }
+.v-card.collapsed > .body { display: none; }
+.v-card > header:hover h3::before { color: var(--text); }
+.v-card > header:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .v-card { background: color-mix(in srgb, var(--panel) 80%, transparent); backdrop-filter: blur(9px); flex: none; }
 .v-card > header { min-height: 34px; padding: 6px 10px; }
 .v-card > .body { padding: 10px; }
@@ -78,7 +100,7 @@ canvas.chart { width: 100%; display: block; }
 #v-src { flex: 0 1 auto; min-width: 90px; }
 @media (max-width: 1500px) { #v-veh, .v-brand small { display: none; } #v-lenses button { padding: 6px 9px; } #v-lenses kbd { display: none; } #v-clock { min-width: 112px; font-size: 18px; } }
 @media (max-width: 1280px) { #v-src { max-width: 150px; } #v-lenses button { padding: 6px 7px; font-size: 12px; } #v-cam { display: none; } }
-@media (max-width: 1100px) { .v-dock { width: 290px; } }
+@media (max-width: 1100px) { .v-dock { width: 290px; } body:not(.no-left) #v-tg-left { left: 310px; } body:not(.no-right) #v-tg-right { right: 310px; } }
 @media (max-width: 800px) { #v-right { display: none; } .v-brand small { display: none; } }
 
 .v-profile, .v-map { width: 100%; display: block; margin-top: 6px; }
