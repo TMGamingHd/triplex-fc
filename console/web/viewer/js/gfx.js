@@ -122,23 +122,24 @@ export function setLine(l, points) {
   if (l.material.isLineDashedMaterial) l.computeLineDistances();
 }
 
-/** A colour map for scalar fields (a perceptual blue-white-red like the "coolwarm" of matplotlib, extended with yellow and dark red for the stagnation end): returns [r, g, b] 0..1 for t in 0..1. */
+/** A colour map for scalar fields: the full spectrum of "turbo" (Mikhailov's polynomial fit), dark blue for the lowest values through cyan, green and yellow to red for the highest: every value has its own colour, unlike a
+ *  blue-white-red ramp, whose middle is white. Used for the pressure on the skin, the streamlines' speed and the legends. Returns [r, g, b] 0..1 for t in 0..1. */
 export function colormap(t) {
-  const stops = [[0, [0.05, 0.12, 0.55]], [0.2, [0.15, 0.45, 0.85]], [0.4, [0.55, 0.8, 0.95]], [0.5, [0.92, 0.94, 0.95]], [0.62, [0.99, 0.85, 0.45]], [0.8, [0.95, 0.45, 0.15]], [1, [0.55, 0.05, 0.08]]];
-  t = Math.min(1, Math.max(0, t));
-  for (let i = 1; i < stops.length; i++) if (t <= stops[i][0]) { const [t0, c0] = stops[i - 1], [t1, c1] = stops[i], f = (t - t0) / (t1 - t0); return c0.map((x, k) => x + (c1[k] - x) * f); }
-  return stops[stops.length - 1][1];
+  const x = Math.min(1, Math.max(0, t)), x2 = x * x, x3 = x2 * x, x4 = x2 * x2, x5 = x4 * x;
+  const c = (v) => Math.min(1, Math.max(0, v));
+  return [
+    c(0.13572138 + 4.61539260 * x - 42.66032258 * x2 + 132.13108234 * x3 - 152.94239396 * x4 + 59.28637943 * x5),
+    c(0.09140261 + 2.19418839 * x + 4.84296658 * x2 - 14.18503333 * x3 + 4.27729857 * x4 + 2.82956604 * x5),
+    c(0.10667330 + 12.64194608 * x - 60.58204836 * x2 + 110.36276771 * x3 - 89.90310912 * x4 + 27.34824973 * x5),
+  ];
 }
 export const COLORMAP_GLSL = /* glsl */`
-vec3 cmap(float t) {
-  t = clamp(t, 0.0, 1.0);
-  vec3 c0 = vec3(0.05, 0.12, 0.55), c1 = vec3(0.15, 0.45, 0.85), c2 = vec3(0.55, 0.80, 0.95), c3 = vec3(0.92, 0.94, 0.95), c4 = vec3(0.99, 0.85, 0.45), c5 = vec3(0.95, 0.45, 0.15), c6 = vec3(0.55, 0.05, 0.08);
-  if (t < 0.2) return mix(c0, c1, t / 0.2);
-  if (t < 0.4) return mix(c1, c2, (t - 0.2) / 0.2);
-  if (t < 0.5) return mix(c2, c3, (t - 0.4) / 0.1);
-  if (t < 0.62) return mix(c3, c4, (t - 0.5) / 0.12);
-  if (t < 0.8) return mix(c4, c5, (t - 0.62) / 0.18);
-  return mix(c5, c6, (t - 0.8) / 0.2);
+vec3 cmap(float x) {
+  x = clamp(x, 0.0, 1.0);
+  const vec4 kR = vec4(0.13572138, 4.61539260, -42.66032258, 132.13108234), kG = vec4(0.09140261, 2.19418839, 4.84296658, -14.18503333), kB = vec4(0.10667330, 12.64194608, -60.58204836, 110.36276771);
+  const vec2 kR2 = vec2(-152.94239396, 59.28637943), kG2 = vec2(4.27729857, 2.82956604), kB2 = vec2(-89.90310912, 27.34824973);
+  vec4 v4 = vec4(1.0, x, x * x, x * x * x); vec2 v2 = v4.zw * v4.z;
+  return clamp(vec3(dot(v4, kR) + dot(v2, kR2), dot(v4, kG) + dot(v2, kG2), dot(v4, kB) + dot(v2, kB2)), 0.0, 1.0);
 }
 `;
 

@@ -10,7 +10,7 @@ export const CAMERAS = [
   { id: 'nose', label: 'Nose', hint: 'On the vehicle, looking where it points' },
   { id: 'earth', label: 'Earth', hint: 'From the vehicle, looking down at the planet it is leaving' },
   { id: 'ground', label: 'Ground', hint: 'A person standing near the pad, looking at the vehicle: drag to look around, wheel to zoom, double-click to look at it again' },
-  { id: 'wide', label: 'Wide', hint: 'A fixed point downrange of the pad, looking back at the whole flight' },
+  { id: 'wide', label: 'Wide', hint: 'From the side, far enough back to see the pad and the vehicle together, the whole flight so far' },
 ];
 
 const _m = new THREE.Matrix4();
@@ -97,12 +97,13 @@ export class CameraRig {
         if (Math.abs(dir.dot(up)) > 0.96) upv = h.clone();                                    // looking straight up: the top of the picture is downrange
         break;
       }
-      case 'wide': {
-        pos = ctx.padRel.clone().addScaledVector(h, 2600).addScaledVector(side, 900).addScaledVector(up, 160);
-        look = new THREE.Vector3(0, 0, 0);
-        const d = pos.distanceTo(look);
-        fov = THREE.MathUtils.clamp(2 * Math.atan(1.5 * Math.max(L, ctx.alt * 0.9 + L) / Math.max(d, 1)) * 180 / Math.PI, 5, 70); subject = d;
-        if (ctx.alt > 8000) { pos = ctx.padRel.clone().addScaledVector(h, 2600 + ctx.alt * 1.6).addScaledVector(side, 900 + ctx.alt).addScaledVector(up, 160); fov = 40; subject = pos.distanceTo(look); }
+      case 'wide': {                                // the whole flight so far: from the side, looking at the middle of the line from the pad to the vehicle, far enough back for both to be in the picture
+        const mid = ctx.padRel.clone().multiplyScalar(0.5);                     // the vehicle is at the origin
+        const span = Math.max(ctx.padRel.length(), L);
+        const D = Math.max(2500, 1.15 * span);
+        pos = mid.clone().addScaledVector(side, D).addScaledVector(up, 0.06 * D);
+        look = mid.clone();
+        fov = THREE.MathUtils.clamp(2 * Math.atan(0.7 * span / D) * 180 / Math.PI + 14, 24, 75); subject = D;
         break;
       }
       default: {                                   // orbit, about the vehicle, in the local horizon's frame

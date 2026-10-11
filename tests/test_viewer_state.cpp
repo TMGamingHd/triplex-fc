@@ -207,6 +207,37 @@ TFC_TEST(viewer_pose_marks_a_failed_engine) {
   CHECK(j.find("eng")->items[2].number > 0.9);
 }
 
+TFC_TEST(viewer_pose_carries_the_deflection_of_every_surface_and_the_starship_has_four_flaps_lying_flush) {
+  sim::VehicleFile vf = load("starship.json");
+  CHECK(vf.params.spec.surfaces.size() == 4U);
+  for (const sim::SurfaceSpec& f : vf.params.spec.surfaces) {
+    CHECK(f.kind == sim::SurfaceKind::Flap);
+    CHECK(f.stage == 1);                                                   // the ship's
+    CHECK(f.stow_deg == 0.0);                                              // flush with the skin in the climb
+    CHECK(f.channel < 0);
+    CHECK(f.area > 0.0 && f.chord > 0.0 && f.span > 0.0);
+  }
+  sim::Vehicle6 veh(vf.params, vf.scenario);
+  sim::Json spec;
+  std::string err;
+  CHECK(sim::parse_json(sim::viewer_spec_json(vf, veh), spec, err));
+  CHECK(get(get(spec, "vehicle"), "surfaces").items.size() == 4U);                         // the viewer is given the table it draws them from
+  sim::PoseExtra x;
+  sim::Json j;
+  CHECK(sim::parse_json(sim::viewer_pose_json(veh, 0.0, x), j, err));
+  CHECK(get(j, "surf").items.size() == 4U);
+  for (const sim::Json& d : get(j, "surf").items) {
+    CHECK(near_abs(d.number, 0.0, 1e-9));
+  }
+  CHECK(get(j, "sdep").type == sim::Json::Type::Number);
+  // a vehicle without surfaces says nothing of them
+  sim::VehicleFile ref = load("reference.json");
+  sim::Vehicle6 rv(ref.params, ref.scenario);
+  sim::Json rj;
+  CHECK(sim::parse_json(sim::viewer_pose_json(rv, 0.0, x), rj, err));
+  CHECK(rj.find("surf") == nullptr);
+}
+
 TFC_TEST(viewer_pose_reference_vehicle_and_every_example) {
   const char* files[] = {"reference.json", "sounding_rocket.json", "spacecraft.json", "launcher_dynamics.json"};
   for (const char* f : files) {

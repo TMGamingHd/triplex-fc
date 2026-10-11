@@ -44,7 +44,7 @@ export default {
     S.dress = h('div', { id: 'v-dress' },
       h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Version'), seg(Object.entries(DRESS).map(([k, v]) => [k, v.name]), Object.entries(DRESS).find(([, v]) => v.fins === dr.fins && v.finScale === dr.finScale && v.finDrop === dr.finDrop)?.[0] ?? '', (k) => { Object.assign(dr, DRESS[k]); redo(); }, 'Starship version')),
       slider('Grid fins', 0, 6, 1, dr.fins, (v) => { dr.fins = v; }, (v) => v + ''), slider('Fin size', 0.6, 2, 0.02, dr.finScale, (v) => { dr.finScale = v; }, (v) => '×' + v.toFixed(2)),
-      slider('Fins below the ring', 0, 14, 0.5, dr.finDrop, (v) => { dr.finDrop = v; }, (v) => v + ' m'), slider('Flap size', 0.6, 1.6, 0.05, dr.flapScale, (v) => { dr.flapScale = v; }, (v) => '×' + v.toFixed(2)), slider('Flap angle', 0, 90, 5, dr.flapAngle ?? 30, (v) => { dr.flapAngle = v; }, (v) => v + '°'),
+      slider('Fins below the ring', 0, 14, 0.5, dr.finDrop, (v) => { dr.finDrop = v; }, (v) => v + ' m'),
       slider('Hot-stage ring', 1, 6, 0.1, dr.ringHeight, (v) => { dr.ringHeight = v; }, (v) => v.toFixed(1) + ' m'), toggle('Catch pins', dr.pins, (v) => { dr.pins = v; }),
       h('button', { class: 'btn', type: 'button', id: 'v-dress-apply', onclick: redo }, 'Apply'),
       h('p', { class: 'note' }, 'Block 3 as reported: three grid fins, each 50 % larger in area than Block 2\'s (×1.22 in each direction here), set lower on the booster. These are a picture of public descriptions: the vehicle file, and so the physics, does not have them.'));

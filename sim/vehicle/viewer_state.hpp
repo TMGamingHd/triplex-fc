@@ -248,6 +248,20 @@ inline std::string viewer_pose_json(const Vehicle6& veh, double t_s, const PoseE
     }
     o.close(']');
   }
+  if (!g.surfaces.empty()) {
+    o.key("surf");                                  // the deflection of each articulated surface (flaps, grid fins) now, degrees, in the order of the vehicle file's "surfaces"
+    o.open('[');
+    for (std::size_t i = 0; i < g.surfaces.size(); ++i) {
+      o.num(veh.surface_deg(i), 2);
+    }
+    o.close(']');
+    o.key("sdep");                                  // which of them are deployed (bit i: surface i); a grid fin that is not is folded against the skin
+    std::uint32_t bits = 0;
+    for (std::size_t i = 0; i < g.surfaces.size() && i < 32U; ++i) {
+      bits |= (veh.surface_deployed(i) ? 1U : 0U) << i;
+    }
+    o.integer(bits);
+  }
   o.key("prop");
   o.open('[');
   for (std::size_t st = 0; st < g.stages.size(); ++st) {

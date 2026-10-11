@@ -118,13 +118,27 @@ TFC_TEST(plate_a_flap_broadside_to_the_stream_has_the_flat_plate_drag) {
   CHECK(close(l.q, q, 1e-12));
 }
 
-TFC_TEST(plate_a_stowed_flap_in_axial_flow_carries_only_its_friction) {
+TFC_TEST(plate_a_flush_flap_adds_nothing_and_a_standing_flap_carries_its_friction) {
   const sim::SurfaceSpec s = flap_at(90.0);
-  const sim::SurfaceLoad l = sim::surface_load(s, 0.0, sim::V3{200.0, 0.0, 0.0}, 1.2, 340.0, 1.0);
   const double q = 0.5 * 1.2 * 200.0 * 200.0;
-  CHECK(close(sim::norm(l.force), q * s.area * 0.02, 1e-9));
-  CHECK(l.force.x < 0.0);
-  CHECK(near_abs(l.alpha, 0.0, 1e-12));
+  const sim::SurfaceLoad flush = sim::surface_load(s, 0.0, sim::V3{200.0, 0.0, 0.0}, 1.2, 340.0, 1.0);
+  CHECK(sim::norm(flush.force) == 0.0);                                    // lying on the skin it is part of the skin: the body's own friction counts that area
+  CHECK(near_abs(flush.alpha, 0.0, 1e-12));
+  const sim::SurfaceLoad half = sim::surface_load(s, 5.0, sim::V3{200.0, 0.0, 0.0}, 1.2, 340.0, 1.0);
+  const sim::SurfaceLoad out = sim::surface_load(s, 10.0, sim::V3{200.0, 0.0, 0.0}, 1.2, 340.0, 1.0);
+  CHECK(sim::norm(half.force) > 0.0);
+  CHECK(sim::norm(out.force) > sim::norm(half.force));                     // the friction is exposed gradually, fully by 10 degrees
+  CHECK(out.force.x < 0.0);
+  CHECK(sim::norm(out.force) >= q * s.area * 0.02);                        // at 10 degrees: its friction, and the little normal force of the angle
+}
+
+TFC_TEST(plate_deploying_a_flap_changes_the_load_on_the_vehicle_and_where_it_acts) {
+  const sim::SurfaceSpec s = flap_at(90.0);
+  const sim::V3 wind{200.0, 20.0, 0.0};                                    // along the axis, with an angle of attack
+  const sim::SurfaceLoad flush = sim::surface_load(s, 0.0, wind, 1.2, 340.0, 1.0);
+  const sim::SurfaceLoad out = sim::surface_load(s, 40.0, wind, 1.2, 340.0, 1.0);
+  CHECK(sim::norm(out.force) > 50.0 * sim::norm(flush.force) + 1.0);       // a flap standing 40 degrees out is a plate in the stream; a flush one is nothing
+  CHECK(sim::norm(out.point - flush.point) > 0.1);                         // and its load acts at another place (the middle of its chord moves off the skin)
 }
 
 TFC_TEST(plate_a_grid_fin_turned_to_the_stream_makes_a_side_force_by_the_plate_law_and_it_stalls) {

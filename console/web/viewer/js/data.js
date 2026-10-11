@@ -31,6 +31,7 @@ export class Spec {
     this.engines = v.engines || [];
     this.payloads = v.payloads || [];
     this.fins = v.fins || [];
+    this.surfaces = v.surfaces || [];                 // articulated surfaces (flaps, grid fins); the pose's `surf` is the deflection of each, in this order
     this.planet = { radius: raw.radius_m || 6378137, rotation: raw.rotation_rad_s || 0, mu: raw.mu || 3.986004418e14, pole: raw.pole || [1, 0, 0] };
     this.air = raw.air || null;
     this.scenario = v.scenario || {};

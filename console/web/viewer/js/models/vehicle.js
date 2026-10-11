@@ -3,6 +3,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { lathe, outline, engineMesh, weldTextures, tileTextures, bar } from './common.js';
 import { decorateStarship } from './starship.js';
+import { buildFlaps, setFlap } from './flaps.js';
 import { fit, distribute } from './gltf.js';
 
 const Y = new THREE.Vector3(0, 1, 0);
@@ -82,6 +83,7 @@ export class VehicleModel {
       for (const f of st.stabilizers || []) this.stages[si].group.add(this.fins(f, st, (steelStyle ? mats.fin : paintMaterials().fin)));
     });
     this.engineParts();
+    this.flaps = buildFlaps(spec, this.stages.map((s) => s.group));      // the vehicle file's flaps, wherever they are (a Starship's four); they follow the simulator's deflection in apply()
     if (this.style === 'starship') decorateStarship(this);
   }
 
@@ -150,6 +152,7 @@ export class VehicleModel {
     const stg = pose.stg ?? 255, pay = pose.pay ?? 255;
     this.stages.forEach((s, i) => { s.group.visible = !!(stg & (1 << i)); });
     this.payloads.forEach((p) => { p.group.visible = !!(pay & (1 << p.index)); });
+    for (const f of this.flaps || []) setFlap(f, pose.surf && pose.surf[f.index] != null ? pose.surf[f.index] : (f.spec.stow_deg || 0));
     const gim = pose.gim || [];
     const q = new THREE.Quaternion(), d = new THREE.Vector3();
     for (const en of this.engines) {

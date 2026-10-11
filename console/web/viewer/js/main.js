@@ -81,6 +81,8 @@ const top = h('header', { id: 'v-top' },
   h('a', { class: 'v-iconbtn', href: '/', target: '_blank', rel: 'noopener', title: 'The flight console', onclick: (e) => { e.preventDefault(); window.open('/?token=' + encodeURIComponent(sessionStorage.getItem('tfc.token') || ''), '_blank'); } }, 'Console ↗'),
   h('button', { class: 'v-iconbtn', type: 'button', id: 'v-hide', title: 'Hide or show the panels (H)', onclick: () => toggleUI() }, 'Panels'));
 const bottom = h('div', { id: 'v-bottom' });
+// where the vehicle is when it is too small to see (the tracking, the wide, the ground and the earth views of a vehicle far away): a ring round it and what it is doing
+const locator = h('div', { id: 'v-locator', hidden: true }, h('i', {}), h('span', {}));
 // the cameras: always on the screen, whatever the lens, with what the current one does said under it (they were a card of the overview lens, which made them invisible in the other five)
 const camHint = h('div', { id: 'v-camhint' });
 const camBar = h('div', { id: 'v-cams' }, h('nav', { 'aria-label': 'Camera', role: 'group' }, CAMERAS.map((c) => h('button', { type: 'button', dataset: { id: c.id }, 'aria-pressed': 'false', title: c.hint, onclick: () => { world.rig.set(c.id); store.set('v.cam', c.id); syncCamSeg(); } }, c.label))), camHint);
@@ -97,7 +99,7 @@ const empty = h('div', { class: 'v-empty card v-card', hidden: true },
       h('button', { class: 'btn', type: 'button', onclick: () => fly('starship') }, 'Fly the Starship-class vehicle'),
       h('button', { class: 'btn', type: 'button', onclick: () => openMenu() }, 'More…')),
     h('p', { class: 'note' }, 'Flying a vehicle runs the real flight software on it (tfc_fly, a few seconds) and plays the result. The live rig is started from the console\'s Rig tab.')));
-ui.append(top, app.left, app.right, camBar, dockBtn('left', '‹'), dockBtn('right', '›'), bottom, empty);
+ui.append(top, app.left, app.right, locator, camBar, dockBtn('left', '‹'), dockBtn('right', '›'), bottom, empty);
 setDock('left', store.get('v.dock.left', true)); setDock('right', store.get('v.dock.right', window.innerWidth >= 1280));
 app.empty = empty;
 
@@ -295,16 +297,31 @@ function staticPose() {
   p.fae = [-qd * 70, qd * 70 * 2.5 * a * Math.PI / 180, 0]; p.fth = [p.thr, 0, 0]; p.m = 4e6;
   return p;
 }
+const _lv = new THREE.Vector3();
+function updateLocator(pose) {
+  const cam = world.camera, spec = data.spec;
+  if (!pose) { locator.hidden = true; return; }
+  const d = Math.max(cam.position.length(), 1);                                               // the vehicle is at the origin of the near scene
+  const px = (spec.length / d) * innerHeight / (2 * Math.tan(cam.fov * Math.PI / 360));        // how tall it is on the screen
+  _lv.set(0, 0, 0).project(cam);
+  if (px > 40 || _lv.z > 1 || _lv.z < -1 || Math.abs(_lv.x) > 1.05 || Math.abs(_lv.y) > 1.05) { locator.hidden = true; return; }
+  locator.hidden = false;
+  locator.style.transform = `translate(${((_lv.x * 0.5 + 0.5) * innerWidth).toFixed(1)}px, ${((1 - (_lv.y * 0.5 + 0.5)) * innerHeight).toFixed(1)}px)`;
+  const t = `${spec.name}  ${(pose.alt / 1000).toFixed(pose.alt < 1e5 ? 1 : 0)} km  ${pose.spd.toFixed(0)} m/s`;
+  const sp = locator.querySelector('span'); if (sp.textContent !== t) sp.textContent = t;
+}
 function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000); frameMs += ((now - last) - frameMs) * 0.05; last = now;
   app.wall = now / 1000; app.dt = dt;
   let pose = null;
   if (Q.get('static')) pose = staticPose();
   else { const t = data.clock.frame(data.buf, data.source, false); pose = t == null ? null : data.buf.at(t); }
+  if (pose && Q.get('flapdeg')) pose = { ...pose, surf: (data.spec.surfaces || []).map(() => +Q.get('flapdeg')) };      // ?flapdeg=40: every surface at that deflection, to look at a deployed flap without flying one
   if (pose) {
     app.pose = pose;
     try {
       world.frame(pose, dt, app.wall, {});
+      updateLocator(pose);
       const d = app.d = derive(pose, data.spec);
       if (app.lens) app.lens.update(app, pose, d, dt);
       world.render(); frames++;

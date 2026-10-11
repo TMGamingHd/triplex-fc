@@ -115,3 +115,10 @@ canvas.chart { width: 100%; display: block; }
 .v-empty[hidden] { display: none; }
 .v-empty p { margin: 6px 0; line-height: 1.4; }
 .btn.go { background: var(--accent); color: #04121a; border-color: var(--accent); }
+
+/* the locator: a ring on a vehicle too small to see */
+#v-locator { position: fixed; left: 0; top: 0; z-index: 9; pointer-events: none; }
+#v-locator[hidden] { display: none; }
+#v-locator i { position: absolute; left: -17px; top: -17px; width: 34px; height: 34px; border: 2px solid var(--accent); border-radius: 50%; box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent); }
+#v-locator span { position: absolute; left: 24px; top: -9px; white-space: nowrap; font: 600 12px var(--mono); color: var(--text); background: color-mix(in srgb, var(--bg2) 80%, transparent); padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line); }
+#v-camhint { background: color-mix(in srgb, var(--bg2) 70%, transparent); padding: 3px 10px; border-radius: 6px; backdrop-filter: blur(6px); }
