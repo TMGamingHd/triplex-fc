@@ -281,9 +281,11 @@ class Peg {
         }
       }
       if (piv != col) {
-        const std::array<double, kUnknowns + 1U> tmp = a[col];
-        a[col] = a[piv];
-        a[piv] = tmp;
+        for (unsigned k = 0; k <= kUnknowns; ++k) {
+          const double tmp = a[col][k];
+          a[col][k] = a[piv][k];
+          a[piv][k] = tmp;
+        }
       }
       const double d = a[col][col];
       if (!(dm::fabs_(d) > 1.0e-30)) {

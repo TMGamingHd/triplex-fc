@@ -65,13 +65,14 @@ constexpr std::array<double, 9> kSinC = sin_coefficients();
 constexpr std::array<double, 9> kCosC = cos_coefficients();
 constexpr std::array<double, 12> kAtanC = odd_reciprocals<true>();
 constexpr std::array<double, 12> kAtanhC = odd_reciprocals<false>();
-constexpr std::array<double, 17> kInvFactExp = [] {
+constexpr std::array<double, 17> inverse_factorials_for_exp() noexcept {
   std::array<double, 17> c{};
   for (std::size_t k = 0; k < c.size(); ++k) {
     c[k] = kInvFact[k];
   }
   return c;
-}();
+}
+constexpr std::array<double, 17> kInvFactExp = inverse_factorials_for_exp();
 
 // The polynomial c[0] + c[1] x + ... by Horner's rule.
 template <std::size_t N>
