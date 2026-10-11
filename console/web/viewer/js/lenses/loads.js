@@ -8,7 +8,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { Chart, legend } from '../../../js/charts.js';
 import { h, stat, statGrid, card, seg, toggle, provenance, fmt, store } from '../ui.js';
-import { Label } from '../gfx.js';
+import { Label, colormap } from '../gfx.js';
 import { G0 } from '../physics.js';
 
 const N = 160;
@@ -68,8 +68,8 @@ export default {
     let chN = 0; const ch = (t, c) => card(t, [c.c, legend(c.o.series)], null, { open: chN++ === 0 });
     // the diagram beside the vehicle in 3D: the chosen load plotted across the vehicle, in the plane of the lateral force
     const g = S.group = new THREE.Group(); world.modelHolder.add(g);
-    S.poly = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: 0xffb454, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthTest: false, depthWrite: false, toneMapped: false })); S.poly.renderOrder = 70; S.poly.frustumCulled = false;
-    S.edge = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffb454, depthTest: false, toneMapped: false })); S.edge.renderOrder = 71; S.edge.frustumCulled = false;
+    S.poly = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthTest: false, depthWrite: false, toneMapped: false })); S.poly.renderOrder = 70; S.poly.frustumCulled = false;
+    S.edge = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffffff, vertexColors: true, depthTest: false, toneMapped: false })); S.edge.renderOrder = 71; S.edge.frustumCulled = false;
     S.peakL = new Label({ text: '', color: '#ffb454', border: '#ffb454', size: 0.026 }); g.add(S.poly, S.edge, S.peakL.object);
     app.right.replaceChildren(card('Look', [toggle('The load beside the vehicle', true, (v) => { g.visible = v; }), h('p', { class: 'note' }, 'Drawn beside the vehicle, in the plane the lateral load acts in; the camera can go round it.')]), ch('q · α', S.charts.qa), ch('Acceleration', S.charts.gx), ch('Dynamic pressure', S.charts.q),
       card('Where the numbers come from', [provenance('measured', 'the dynamic pressure, the angle of attack, the force and the moment on the vehicle, the masses and where they are, the propellant in each tank.'),
@@ -88,10 +88,11 @@ export default {
     // 3D
     const arr = S.which === 'axial' ? L.axial : S.which === 'shear' ? L.shear : L.moment, peak = Math.max(...arr, 1), scale = (spec.diameter * 2.4) / peak;
     const R = spec.diameter / 2, pts = [], idx = [], pos = [];
-    for (let i = 0; i < N; i++) { const y = L.x[i] - L.dx / 2, off = R * 1.35 + arr[i] * scale; pos.push(0, y, R * 1.35, 0, y, off); pts.push(new THREE.Vector3(0, y, off)); }
+    const cols = [];                                                         // the colour of a station is its share of the peak, on the viewer's one colour scale: quiet blue, the peak red
+    for (let i = 0; i < N; i++) { const y = L.x[i] - L.dx / 2, off = R * 1.35 + arr[i] * scale; pos.push(0, y, R * 1.35, 0, y, off); pts.push(new THREE.Vector3(0, y, off)); const c = colormap(0.08 + 0.92 * Math.min(1, arr[i] / peak)); cols.push(...c, ...c); }
     for (let i = 0; i < N - 1; i++) { const a = 2 * i; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
-    S.poly.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); S.poly.geometry.setIndex(idx); S.poly.geometry.computeBoundingSphere();
-    S.edge.geometry.setFromPoints(pts);
+    S.poly.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); S.poly.geometry.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3)); S.poly.geometry.setIndex(idx); S.poly.geometry.computeBoundingSphere();
+    S.edge.geometry.setFromPoints(pts); S.edge.geometry.setAttribute('color', new THREE.Float32BufferAttribute(cols.filter((_, k) => Math.floor(k / 6) >= 0 && k % 6 >= 3), 3));
     const kk = argmax(arr);
     S.peakL.setText(`${S.which === 'axial' ? 'compression' : S.which === 'shear' ? 'shear' : 'bending'} peak ${S.which === 'moment' ? (peak / 1e6).toFixed(0) + ' MN·m' : (peak / 1e6).toFixed(1) + ' MN'} at ${L.x[kk].toFixed(0)} m`);
     S.peakL.object.position.set(0, L.x[kk], R * 1.35 + arr[kk] * scale + R * 0.2); S.peakL.setAnchor(0, 0.5);
