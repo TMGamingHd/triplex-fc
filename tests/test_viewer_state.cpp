@@ -238,6 +238,32 @@ TFC_TEST(viewer_pose_carries_the_deflection_of_every_surface_and_the_starship_ha
   CHECK(rj.find("surf") == nullptr);
 }
 
+TFC_TEST(a_vehicle_with_its_flaps_flush_flies_exactly_as_one_without_them_and_a_standing_flap_changes_the_load) {
+  sim::VehicleFile with = load("starship.json");
+  sim::VehicleFile without = load("starship.json");
+  without.params.spec.surfaces.clear();
+  sim::Vehicle6 a(with.params, with.scenario);
+  sim::Vehicle6 b(without.params, without.scenario);
+  for (int i = 0; i < 6000; ++i) {                                      // 60 s of the climb, through max-Q's approach
+    a.step(0.01, 0.0, 0.0);
+    b.step(0.01, 0.0, 0.0);
+  }
+  const sim::Loads la = a.current_loads();
+  const sim::Loads lb = b.current_loads();
+  CHECK(la.f_aero.x == lb.f_aero.x && la.f_aero.y == lb.f_aero.y && la.f_aero.z == lb.f_aero.z);    // flush: bit for bit the same
+  CHECK(la.m_aero.x == lb.m_aero.x && la.m_aero.y == lb.m_aero.y && la.m_aero.z == lb.m_aero.z);
+  CHECK(a.altitude() == b.altitude());
+  // the same flaps standing 40 degrees out are plates in the stream: the load is not the same
+  with.params.spec.surfaces[0].stow_deg = 40.0;
+  with.params.spec.surfaces[1].stow_deg = 40.0;
+  sim::Vehicle6 c(with.params, with.scenario);
+  for (int i = 0; i < 6000; ++i) {
+    c.step(0.01, 0.0, 0.0);
+  }
+  const sim::Loads lc = c.current_loads();
+  CHECK(!(lc.f_aero.x == lb.f_aero.x && lc.f_aero.y == lb.f_aero.y && lc.f_aero.z == lb.f_aero.z));
+}
+
 TFC_TEST(viewer_pose_reference_vehicle_and_every_example) {
   const char* files[] = {"reference.json", "sounding_rocket.json", "spacecraft.json", "launcher_dynamics.json"};
   for (const char* f : files) {
