@@ -353,6 +353,7 @@ function loop(now) {
   else { const t = data.clock.frame(data.buf, data.source, false); pose = t == null ? null : data.buf.at(t); }
   const raw = pose;                                                          // the pose as the simulator sent it, with the other bodies in it
   if (pose) { const v = data.view(pose); pose = v.pose; if (v.spec !== app.curSpec) { app.curSpec = v.spec; if (world.spec !== v.spec) rebuildVehicle(); } updateFollow(raw); }
+  if (pose && Q.get('finsout')) pose = { ...pose, sdep: 255 };                 // ?finsout=1: every surface deployed, to look at deployed grid fins without flying the return
   if (pose && Q.get('flapdeg')) pose = { ...pose, surf: (app.spec.surfaces || []).map(() => +Q.get('flapdeg')) };      // ?flapdeg=40: every surface at that deflection, to look at a deployed flap without flying one
   if (pose) {
     app.pose = pose;

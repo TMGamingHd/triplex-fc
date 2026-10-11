@@ -204,6 +204,11 @@ struct SurfaceSpec {
   double lag_s = 0.0;
   int channel = -1;           // the surface command channel (0 to 3) that moves it; < 0: it stays at its stowed angle
   bool deployed = true;       // false: stowed until the "deploy surfaces" event
+  // A flap's hinge. false: along the tangent at x_hinge, the free edge reaching forward or aft along the skin (`chord_dir`) and lifting off it with the deflection, 0 flush: a speed brake.
+  // true: along the body's axis, from x_hinge forward by `span` (the length of the flap), on the skin; the free edge of width `chord` swings about it from lying on the skin (0, pointing round the body
+  // toward `chord_dir`'s side) to standing straight out (90): the way Starship's flaps do. Standing out they are edge-on to a stream along the axis (the climb), and broadside to the one across it (the
+  // belly flop); the deflection is the angle of the plate to the stream across the vehicle.
+  bool axial_hinge = false;
 };
 
 // A parachute (a drogue or a main canopy): released by an event, inflates over `inflation_s`, and pulls on the vehicle at `x_attach` along the velocity through the air.

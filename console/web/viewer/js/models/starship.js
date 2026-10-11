@@ -61,20 +61,24 @@ export function decorateStarship(model) {
     ring.geometry.attributes.uv.array.forEach((v, i, a) => { if (i % 2 === 1) a[i] = (a[i] * 1.8 - (ringTop - ringH)) / ringH; });   // v from 0 at the bottom of the ring to 1 at the top
     ring.geometry.attributes.uv.needsUpdate = true;
     g.add(ring);
-    // the grid fins stowed against the skin, below the ring, round the vehicle at equal angles; two catch pins above them
-    const fw = 2.2 * dress.finScale, fh = 3.4 * dress.finScale, fy = ringTop - ringH - dress.finDrop - fh / 2;
-    for (let i = 0; i < dress.fins; i++) {
-      const a = Math.PI / dress.fins + (i * TAU) / dress.fins;
-      const holder = new THREE.Group(); holder.rotation.y = a;
-      const f = gridFin(m, fw, fh, 0.55 * dress.finScale); f.position.set(0, fy, R + 0.32);                   // the fin's face is tangent to the skin
-      holder.add(f); g.add(holder);
-      // a short fairing at the hinge
-      const fair = new THREE.Mesh(new THREE.BoxGeometry(1.1 * dress.finScale, 0.5, 0.45), m.steel); fair.position.set(0, fy - fh / 2 - 0.2, R + 0.2); holder.add(fair);
+    // the grid fins are the vehicle file's `surfaces` (models/flaps.js folds and deploys them as the simulator says). A file without any gets the viewer's stowed ones, so that a booster always has its fins.
+    if (!(spec.surfaces || []).some((x) => x.kind === 'grid_fin' && x.stage === 0)) {
+      const fw = 2.2 * dress.finScale, fh = 3.4 * dress.finScale, fy = ringTop - ringH - dress.finDrop - fh / 2;
+      for (let i = 0; i < dress.fins; i++) {
+        const a = Math.PI / dress.fins + (i * TAU) / dress.fins;
+        const holder = new THREE.Group(); holder.rotation.y = a;
+        const f = gridFin(m, fw, fh, 0.55 * dress.finScale); f.position.set(0, fy, R + 0.32);
+        holder.add(f); g.add(holder);
+      }
     }
-    if (dress.pins) for (const a of [0, Math.PI]) {
-      const holder = new THREE.Group(); holder.rotation.y = a + Math.PI / 2;
-      const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 1.5, 14), m.steel); pin.rotation.x = Math.PI / 2; pin.position.set(0, ringTop - ringH - 0.9, R + 0.55); holder.add(pin);
-      g.add(holder);
+    // the catch pins, where the file says the arms take the stage (`catch_pin_x_m` from its aft end), one each side across the line to the tower (the tower stands toward model +X, the pins are at +-Z)
+    if (dress.pins) {
+      const py = (booster.spec.x_start_m || 0) + (booster.spec.catch_pin_x_m || (booster.spec.length_m - 12));
+      for (const sgn of [1, -1]) {
+        const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 1.8, 14), m.steel); pin.rotation.x = Math.PI / 2; pin.position.set(0, py, sgn * (R + 0.7));
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 0.5, 16), m.dark); base.rotation.x = Math.PI / 2; base.position.set(0, py, sgn * (R + 0.15));
+        g.add(pin, base);
+      }
     }
   }
   // ---- the ship

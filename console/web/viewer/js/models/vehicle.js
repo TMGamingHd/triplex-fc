@@ -152,7 +152,8 @@ export class VehicleModel {
     const stg = pose.stg ?? 255, pay = pose.pay ?? 255;
     this.stages.forEach((s, i) => { s.group.visible = !!(stg & (1 << i)); });
     this.payloads.forEach((p) => { p.group.visible = !!(pay & (1 << p.index)); });
-    for (const f of this.flaps || []) setFlap(f, pose.surf && pose.surf[f.index] != null ? pose.surf[f.index] : (f.spec.stow_deg || 0));
+    const now = performance.now(), dtw = this._applied ? Math.min(0.1, (now - this._applied) / 1000) : 0.016; this._applied = now;
+    for (const f of this.flaps || []) setFlap(f, pose.surf && pose.surf[f.index] != null ? pose.surf[f.index] : (f.spec.stow_deg || 0), pose.sdep != null ? ((pose.sdep >> f.index) & 1) === 1 : f.spec.deployed !== false, dtw);
     const gim = pose.gim || [];
     const q = new THREE.Quaternion(), d = new THREE.Vector3();
     for (const en of this.engines) {

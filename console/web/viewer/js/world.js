@@ -145,6 +145,7 @@ export class World {
   /** One frame: place everything from the pose, light it, draw the sky and then the near scene. `ctx` carries what the page chose (camera, sun, lens). */
   frame(pose, dt, wall, ctx = {}) {
     this.resize();
+    this.dtLast = dt;
     const s = this.settings;
     this.time.wall = wall;
     const spec = this.spec;
@@ -261,6 +262,11 @@ export class World {
       b.plumes.update(p.cgt || p.lnd ? { ...p, eng: [] } : p, wall, { glow: 1 });         // a stage in the arms or on the ground has its engines off
     }
     for (const [name, b] of [...this.bodies]) if (!seen.has(name)) { b.plumes.dispose(); this.nearScene.remove(b.holder); this.bodies.delete(name); }
+    // the catch pad's arms close on a stage that is held and open again when it is not (the stage is the one that has the pins: a body with `cgt`, or the main one)
+    if (this.catchPad) {
+      const held = (pose.cgt === 1) || (pose.others || []).some((o) => o.pose && o.pose.cgt === 1);
+      this.catchPad.setArms(held ? 1 : 0, this.dtLast || 0.016);
+    }
   }
 
   stepDebris(pose, dt, rS, qs, axis) {

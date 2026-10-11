@@ -83,6 +83,13 @@ inline SurfaceFrame surface_frame(const SurfaceSpec& s, double deflection_deg) {
   const V3 t{0.0, -std::sin(phi), std::cos(phi)};
   SurfaceFrame f;
   f.radial = r;
+  if (s.kind == SurfaceKind::Flap && s.axial_hinge) {
+    const V3 e = (t * (s.chord_dir * std::cos(d))) + (r * std::sin(d));   // the free edge: from along the skin (0) to straight out (90)
+    f.chord = e;
+    f.normal = (r * std::cos(d)) - (t * (s.chord_dir * std::sin(d)));
+    f.span = x;
+    return f;
+  }
   if (s.kind == SurfaceKind::GridFin) {
     f.chord = (x * std::cos(d)) + (t * std::sin(d));     // the cells' axis
     f.normal = (x * -std::sin(d)) + (t * std::cos(d));   // the web's normal: the lift is sideways
@@ -104,6 +111,9 @@ inline V3 surface_point(const SurfaceSpec& s, double deflection_deg) {
   }
   const SurfaceFrame f = surface_frame(s, deflection_deg);
   const V3 hinge{s.x_hinge, s.radius * std::cos(phi), s.radius * std::sin(phi)};
+  if (s.axial_hinge) {
+    return hinge + (f.chord * (0.5 * s.chord)) + (f.span * (0.5 * s.span));   // the middle of the plate: half its width out from the hinge, half its length along it
+  }
   return hinge + (f.chord * (0.5 * s.chord));
 }
 
@@ -116,14 +126,38 @@ struct SurfaceLoad {
 
 // The force of a surface at `deflection_deg` in the air. `v_air` is the velocity of the surface's own point through the air, in the body frame (the vehicle's velocity through the air plus its turning
 // at that point), `rho` the density, `sound` the speed of sound, `shadow` the fraction of the dynamic pressure that reaches it (1 in the stream, less in the lee of the body).
-inline SurfaceLoad surface_load(const SurfaceSpec& s, double deflection_deg, const V3& v_air, double rho, double sound, double shadow) {
+inline SurfaceLoad surface_load_with(const SurfaceSpec& s, const SurfaceFrame& f, const V3& point, double deflection_deg, const V3& v_air, double rho, double sound, double shadow) {
   SurfaceLoad out;
-  out.point = surface_point(s, deflection_deg);
+  out.point = point;
   const double speed = norm(v_air);
   if (!(speed > 1.0) || !(rho > 0.0) || !(s.area > 0.0)) {
     return out;
   }
-  const SurfaceFrame f = surface_frame(s, deflection_deg);
+  if (s.kind == SurfaceKind::Flap && s.axial_hinge) {
+    // A plate hinged along the axis. The lift and the cross-flow drag come from the part of the stream across the plate's length, whose dynamic pressure is q (1 - (v along the length / v)^2): a stream along the
+    // axis is along the length (the climb), the plate is edge-on and carries only its friction, however small the angle between the stream and the plate's chord. The friction of the two faces acts along the
+    // stream's component in the plate's own plane, on the full dynamic pressure.
+    const double q_full = 0.5 * rho * speed * speed * shadow;
+    out.q = q_full;
+    const double vn = dot(v_air, f.normal);
+    const double vc = dot(v_air, f.chord);
+    const double cross2 = (vn * vn) + (vc * vc);
+    const double ca_f = 0.02;
+    V3 force = (v_air - (f.normal * vn)) * (-q_full * s.area * ca_f / speed);
+    if (cross2 > 1.0e-6 * speed * speed) {
+      const double mach = speed / std::max(sound, 1.0);
+      const double alpha = std::atan2(std::fabs(vn), std::fabs(vc));
+      out.alpha = alpha;
+      const double q_cross = q_full * (cross2 / (speed * speed));
+      const double ar = s.span * s.span / s.area;
+      const double cn_alpha = aero::wing_lift_slope(ar, s.sweep_deg * kDeg2Rad, mach);
+      const double sa = std::sin(alpha);
+      const double cn = (cn_alpha * sa * std::cos(alpha) * plate::stall(alpha)) + (plate::cd90(mach) * sa * sa);
+      force = force + (f.normal * (-(vn >= 0.0 ? 1.0 : -1.0) * q_cross * s.area * cn));
+    }
+    out.force = force;
+    return out;
+  }
   const double mach = speed / std::max(sound, 1.0);
   const double q = 0.5 * rho * speed * speed * shadow;
   out.q = q;
@@ -153,6 +187,24 @@ inline SurfaceLoad surface_load(const SurfaceSpec& s, double deflection_deg, con
   out.force = (f.normal * (-sgn_n * q * s.area * cn)) + (f.chord * (-sgn_c * q * s.area * ca * ca_ang));
   return out;
 }
+
+inline SurfaceLoad surface_load(const SurfaceSpec& s, double deflection_deg, const V3& v_air, double rho, double sound, double shadow) {
+  return surface_load_with(s, surface_frame(s, deflection_deg), surface_point(s, deflection_deg), deflection_deg, v_air, rho, sound, shadow);
+}
+
+// The frame and the point of a surface at the deflection it was last asked at: they change only when the deflection does, and a plant asks four times a step.
+struct SurfaceCache {
+  double deg = 1.0e300;
+  SurfaceFrame frame;
+  V3 point{};
+  void update(const SurfaceSpec& s, double deflection_deg) {
+    if (deflection_deg != deg) {
+      deg = deflection_deg;
+      frame = surface_frame(s, deflection_deg);
+      point = surface_point(s, deflection_deg);
+    }
+  }
+};
 
 // Is the surface in the stream or in the lee of the body? The velocity of the vehicle through the air, `v`, and the surface's outward radial direction decide: a surface on the side the vehicle moves
 // toward is in the stream; one on the far side is behind the body. A smooth change between 0.2 and 1 over a band of about 30 degrees around the side-on direction.

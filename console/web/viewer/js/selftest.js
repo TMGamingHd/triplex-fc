@@ -41,14 +41,25 @@ export async function run(app, lenses, setLens, world) {
   // a vehicle too small to see is circled, one that fills the picture is not
   world.rig.set('orbit'); await settle(300);
   check(document.getElementById('v-locator').hidden, 'the locator is hidden when the vehicle is big on the screen');
-  // the flaps of the vehicle file are in the model, and they follow the deflection in the pose
-  const flaps = (app.spec.surfaces || []).filter((x) => x.kind === 'flap');
-  check(world.vehicle.flaps.length === flaps.length, `the model has the vehicle file's ${flaps.length} flaps`);
-  if (flaps.length) {
-    const f = world.vehicle.flaps[0];
-    world.vehicle.apply({ ...app.pose, surf: flaps.map(() => 40) }); const out = f.pivot.rotation.x;
-    world.vehicle.apply({ ...app.pose, surf: flaps.map(() => 0) }); const flush = f.pivot.rotation.x;
-    check(Math.abs(out) > 0.5 && Math.abs(flush) < 1e-9, `a flap turns with the simulator's deflection (${(out * 180 / Math.PI).toFixed(0)} deg out, ${(flush * 180 / Math.PI).toFixed(0)} deg flush)`);
+  // the surfaces of the vehicle file are in the model (the flaps hinged on the axis, the grid fins), and they follow the deflection and the deployed bit in the pose
+  const drawn = (app.spec.surfaces || []).filter((x) => x.kind === 'grid_fin' || x.axial_hinge);
+  check(world.vehicle.flaps.length === drawn.length, `the model has the vehicle file's ${drawn.length} surfaces (flaps and grid fins)`);
+  const flap = world.vehicle.flaps.find((f) => f.pivot);
+  if (flap) {
+    const all = (v) => (app.spec.surfaces || []).map(() => v);
+    world.vehicle.apply({ ...app.pose, surf: all(40) }); const out = flap.pivot.rotation.y;
+    world.vehicle.apply({ ...app.pose, surf: all(90) }); const stood = flap.pivot.rotation.y;
+    check(Math.abs(Math.abs(out) - 40 * Math.PI / 180) < 1e-9 && Math.abs(Math.abs(stood) - Math.PI / 2) < 1e-9, `a flap turns about its hinge with the simulator's deflection (${(out * 180 / Math.PI).toFixed(0)} deg, then ${(stood * 180 / Math.PI).toFixed(0)} deg)`);
+  }
+  const fin = world.vehicle.flaps.find((f) => f.kind === 'grid_fin');
+  if (fin) {
+    const bits = (v) => (app.spec.surfaces || []).reduce((a, x, i) => a | ((v ? 1 : 0) << i), 0);
+    for (let k = 0; k < 90; k++) world.vehicle.apply({ ...app.pose, sdep: bits(true) });                 // 90 calls: the fold takes 1.5 s of wall time at 60 per second, so the call count and not the clock decide here
+    const folded0 = fin.fold;
+    for (let k = 0; k < 20; k++) fin.set(0, false, 0.1);                                                 // 2 s of folding, in steps of the 0.1 s a call may take at most
+    check(fin.fold > folded0 || fin.fold === 1, 'a grid fin folds when the pose says it is not deployed');
+    for (let k = 0; k < 20; k++) fin.set(0, true, 0.1);
+    check(fin.fold === 0, 'and deploys again when it is');
   }
   // a mission with another body (the stage that returns): it is drawn as a vehicle of its own, the viewer can follow it, the lenses then measure it and not the stack, and the pad it returns to is there
   const rawNow = app.data ? app.data.buf.latest : null;

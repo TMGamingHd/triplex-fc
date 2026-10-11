@@ -39,15 +39,12 @@ export default {
       h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Nose along'), select(AXES, gl.axis, (v) => { gl.axis = v; again(); }, 'the vehicle\'s axis in the file')),
       toggle('Scale to the vehicle file\'s length', gl.fitLength, (v) => { gl.fitLength = v; again(); }), slider('Roll', -180, 180, 5, gl.roll, (v) => { gl.roll = v; app.saveGltf(); }, (v) => v + '°'), slider('Move along', -20, 20, 0.5, gl.offset, (v) => { gl.offset = v; app.saveGltf(); }, (v) => v + ' m'),
       h('button', { class: 'btn', type: 'button', onclick: again }, 'Apply'), h('p', { class: 'note' }, 'Nodes named stage1, stage2… go with that stage and leave when it separates; the engines, plumes and every lens overlay come from the vehicle file, not from the picture.'));
-    // the Starship's details: a choice of the viewer (the vehicle file has no grid fins, the simulator's aerodynamics do not use them): Block 3 as reported by default, Block 2 one click away
+    // the Starship's details that are still a choice of the viewer: the ring's height and the pins
     const dr = app.dress, redo = () => { app.saveDress(); app.rebuild(); };
     S.dress = h('div', { id: 'v-dress' },
-      h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Version'), seg(Object.entries(DRESS).map(([k, v]) => [k, v.name]), Object.entries(DRESS).find(([, v]) => v.fins === dr.fins && v.finScale === dr.finScale && v.finDrop === dr.finDrop)?.[0] ?? '', (k) => { Object.assign(dr, DRESS[k]); redo(); }, 'Starship version')),
-      slider('Grid fins', 0, 6, 1, dr.fins, (v) => { dr.fins = v; }, (v) => v + ''), slider('Fin size', 0.6, 2, 0.02, dr.finScale, (v) => { dr.finScale = v; }, (v) => '×' + v.toFixed(2)),
-      slider('Fins below the ring', 0, 14, 0.5, dr.finDrop, (v) => { dr.finDrop = v; }, (v) => v + ' m'),
       slider('Hot-stage ring', 1, 6, 0.1, dr.ringHeight, (v) => { dr.ringHeight = v; }, (v) => v.toFixed(1) + ' m'), toggle('Catch pins', dr.pins, (v) => { dr.pins = v; }),
       h('button', { class: 'btn', type: 'button', id: 'v-dress-apply', onclick: redo }, 'Apply'),
-      h('p', { class: 'note' }, 'Block 3 as reported: three grid fins, each 50 % larger in area than Block 2\'s (×1.22 in each direction here), set lower on the booster. These are a picture of public descriptions: the vehicle file, and so the physics, does not have them.'));
+      h('p', { class: 'note' }, 'The grid fins and the flaps are the vehicle file\'s own surfaces, drawn at the deflection the simulator reports (they change the aerodynamics); the catch pins are where the file says the arms take the stage. What is left here is a picture of public descriptions: the hot-stage ring\'s height and whether the pins are drawn. It changes nothing about the flight.'));
     // the Earth: pictures of the real planet from NASA (a pack the user downloads), or the procedural planet
     const im = world.imagery;
     S.imgNote = h('p', { class: 'note', id: 'v-img-note' }, im.describe());

@@ -471,6 +471,7 @@ inline void read_surface(const Json& j, const std::string& path, SurfaceSpec& f,
   o.num("lag_s", f.lag_s);
   o.integer("channel", f.channel);
   o.flag("deployed", f.deployed);
+  o.flag("axial_hinge", f.axial_hinge);
   o.finish();
 }
 
@@ -1275,7 +1276,7 @@ inline std::string write_vehicle(const VehicleFile& v) {
            ", \"x_hinge_m\": " + num_text(f.x_hinge) + ", \"azimuth_deg\": " + num_text(f.azimuth_deg) + ", \"radius_m\": " + num_text(f.radius) + ", \"area_m2\": " + num_text(f.area) +
            ", \"chord_m\": " + num_text(f.chord) + ", \"span_m\": " + num_text(f.span) + ", \"sweep_deg\": " + num_text(f.sweep_deg) + ", \"chord_dir\": " + num_text(f.chord_dir) +
            ", \"stow_deg\": " + num_text(f.stow_deg) + ", \"min_deg\": " + num_text(f.min_deg) + ", \"max_deg\": " + num_text(f.max_deg) + ", \"rate_dps\": " + num_text(f.rate_dps) +
-           ", \"lag_s\": " + num_text(f.lag_s) + ", \"channel\": " + std::to_string(f.channel) + ", \"deployed\": " + (f.deployed ? "true" : "false") + "}";
+           ", \"lag_s\": " + num_text(f.lag_s) + ", \"channel\": " + std::to_string(f.channel) + ", \"deployed\": " + (f.deployed ? "true" : "false") + (f.axial_hinge ? ", \"axial_hinge\": true" : "") + "}";
     }
     o += "]";
   }

@@ -69,10 +69,10 @@ def plant():
             "guided": True, "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
     surfaces = [{"name": "grid fin %d" % (i + 1), "stage": 0, "kind": "grid_fin", "x_hinge_m": 61.8, "azimuth_deg": az, "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68,
                  "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": i, "deployed": False} for i, az in enumerate((0.0, 90.0, 180.0))]   # three, as on Flight 12
-    # the ship's four flaps, as in vehicles/starship.json: lying flush on the skin, no command (they only exist for the 3D viewer to draw until a mission deploys them)
-    for nm, x, az, area, chord, span, cdir in (("aft flap port", 82.7, 80, 37.0, 9.0, 4.6, -1), ("aft flap starboard", 82.7, 280, 37.0, 9.0, 4.6, -1), ("forward flap port", 102.1, 80, 16.0, 6.0, 3.0, 1), ("forward flap starboard", 102.1, 280, 16.0, 6.0, 3.0, 1)):
-        surfaces.append({"name": nm, "stage": 1, "kind": "flap", "x_hinge_m": x, "azimuth_deg": az, "radius_m": 4.5, "area_m2": area, "chord_m": chord, "span_m": span, "chord_dir": cdir,
-                         "stow_deg": 0, "min_deg": 0, "max_deg": 90, "rate_dps": 30, "lag_s": 0.05, "channel": -1})
+    # the ship's four flaps, as in vehicles/starship.json: hinged along the axis and standing straight out (90) for the climb, edge-on to the stream; no command yet (channel -1: the ship's entry commands them)
+    for nm, x, az, area, chord, span, cdir in (("aft flap port", 73.6, 80, 36.9, 4.1, 9.0, 1), ("aft flap starboard", 73.6, 280, 36.9, 4.1, 9.0, -1), ("forward flap port", 102.3, 80, 16.2, 2.7, 6.0, 1), ("forward flap starboard", 102.3, 280, 16.2, 2.7, 6.0, -1)):
+        surfaces.append({"name": nm, "stage": 1, "kind": "flap", "axial_hinge": True, "x_hinge_m": x, "azimuth_deg": az, "radius_m": 4.5, "area_m2": area, "chord_m": chord, "span_m": span, "chord_dir": cdir,
+                         "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": -1})
     return {"name": "starship-v3-class-return",
             "description": "Starship V3 class stack that flies its whole mission on the flight computers: ascent, hot staging, orbital insertion of the ship (PEG), and the booster's flip, boost-back, grid-fin entry, landing burn and catch.",
             "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "ideal_roll_control": False, "landing_model": True, "max_substep_s": 0.004},
@@ -105,7 +105,7 @@ def mission():
             {"name": "in orbit", "kind": "coast", "hold": "prograde", "end": {"time_s": 100000}, "groups": [], "mixer": 1, "slew_dps": 3}],
         "stage0": [
             {"name": "flip", "kind": "coast", "hold": "retro_horizontal", "end": {"aligned_deg": 8}, "groups": [], "mixer": 1, "slew_dps": 4.5},
-            {"name": "boostback", "kind": "boostback", "end": {"cutoff": True}, "groups": [0, 1, 2, 3], "mixer": 0, "throttle": 1.0, "bias_m": 1000, "reserve_mass_kg": 330000, "slew_dps": 8, "events": ["deploy_surfaces"]},
+            {"name": "boostback", "kind": "boostback", "end": {"cutoff": True}, "groups": [0, 1, 2, 3], "mixer": 0, "throttle": 1.0, "bias_m": 625, "reserve_mass_kg": 330000, "slew_dps": 8, "events": ["deploy_surfaces"]},
             {"name": "coast", "kind": "coast", "hold": "radial", "end": {"altitude_below_m": 70000}, "groups": [], "mixer": 3, "slew_dps": 8},
             {"name": "entry", "kind": "glide", "end": {"ignition_below_m": 6000}, "groups": [], "mixer": 3, "alpha_max_deg": 12, "gain_deg_per_km": 2.0, "slew_dps": 10, "alpha_brake_deg": 0, "brake_max_deg": 0, "lift_area_per_deg_m2": 3.5},
             {"name": "landing burn", "kind": "landing", "end": {"touchdown": True}, "groups": [0, 1, 2], "mixer": 3, "landing_groups": {"one": [0, 1, 2], "two": [0, 1, 2], "three": [0, 1, 2], "many": [0, 1, 2, 3]}, "slew_dps": 25, "wn_rad_s": 1.0},
