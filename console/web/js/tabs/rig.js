@@ -28,11 +28,12 @@ function profileCard(key, p, rig) {
 export default {
   id: 'rig', label: 'Rig', icon: 'rig',
   mount(root) {
-    R.source = h('div'); R.profiles = h('div', { class: 'grid cols2' }); R.hw = h('div'); R.msg = h('div', { class: 'note' });
+    R.source = h('div'); R.profiles = h('div', { class: 'grid cols2' }); R.hw = h('div'); R.msg = h('div', { class: 'note' }); R.iso = h('div');
     R.rigNote = h('div', { class: 'banner info' }, icon('info'), h('div', {}, 'Both profiles run on ', h('b', { class: 'mono' }, 'vcan0'), ' (create it once per boot with ', h('code', {}, 'sim/scripts/setup_vcan.sh'), '). The processes are children of this console and stop with it. Their consoles appear on the Events tab.'));
     root.append(h('div', { class: 'stack' }, R.rigNote,
       h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Data source'), h('div', { class: 'tools' }, h('button', { class: 'btn small', onclick: refreshSource }, '↻ refresh'))), h('div', { class: 'body' }, R.source)),
       R.profiles,
+      h('article', { class: 'card', id: 'rig-isolation' }, h('header', {}, h('h3', {}, 'Host load'), h('div', { class: 'tools' }, R.isoChip = h('span', { class: 'chip' }, ''))), h('div', { class: 'body' }, R.iso)),
       h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Serial hardware'), h('div', { class: 'tools' }, h('span', { class: 'chip warn' }, 'not run on a board'))), h('div', { class: 'body' }, R.hw))));
   },
   update(S) {
@@ -61,6 +62,25 @@ export default {
       R.pk = pk; clear(R.profiles);
       if (rg.disabled) R.profiles.append(h('div', { class: 'banner warn' }, 'The console was started with --no-rig: it can watch and command, not start processes.'));
       else for (const [k, p] of Object.entries(rg.profiles || {})) R.profiles.append(profileCard(k, p, rg));
+    }
+    // ---- the host: the rig has 10 ms frames and no real-time priority, so the rest of the desktop is kept off its CPUs
+    const is = rg.isolation;
+    const ik = JSON.stringify(is || null);
+    if (R.ik !== ik) {
+      R.ik = ik; clear(R.iso);
+      if (!is) { R.isoChip.className = 'chip'; setText(R.isoChip, 'not offered'); R.iso.append(h('p', { class: 'note', style: { margin: 0 } }, 'The console was started without a rig.')); }
+      else {
+        R.isoChip.className = 'chip ' + (is.engaged ? 'ok' : is.available ? '' : 'warn');
+        setText(R.isoChip, is.engaged ? 'isolating' : is.available ? (is.wanted ? 'on, waiting for a rig' : 'off') : 'unavailable');
+        const box = h('input', { type: 'checkbox', id: 'rig-isolate', checked: !!is.wanted, disabled: !is.available });
+        box.addEventListener('change', () => call(() => api('/api/rig/isolate', { on: box.checked }), box.checked ? 'Isolation on' : 'Isolation off'));
+        R.iso.append(
+          h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center', cursor: is.available ? 'pointer' : 'default' } }, box, h('b', {}, 'Keep my other programs off the rig’s CPUs while it runs')),
+          h('p', { class: 'note', style: { margin: '6px 0 0' } }, is.available
+            ? `The rig’s processes have 10 ms frames and no real-time priority, so a browser starting, a WebGL page or a compile can make a frame late, and the computers then latch each other out (measured: docs/design/CONSOLE.md section 8). With this on, the rig runs on CPUs ${is.rig_cpus} and your other processes (not other users’, not the kernel’s) run on ${is.other_cpus}; they get every CPU back when the rig stops.`
+            : `Not available here: ${is.reason}.`),
+          is.engaged ? h('p', { class: 'note', style: { margin: '6px 0 0' } }, `Now: ${is.moved} of your processes (${is.threads} threads) moved${is.left ? `, ${is.left} left where they are` : ''}.`) : '');
+      }
     }
     // ---- the hardware
     const hw = s.hardware || {};

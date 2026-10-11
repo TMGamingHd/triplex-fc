@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
 """The rig's processes, with stand-ins for the firmware (shell scripts that print what a node prints): start, watch, break, stop, and never leave one behind."""
+import os
 import signal
 import stat
 import subprocess
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from .console_support import ROOT  # first: puts console/ on the path
 from tfc_console.hub import Hub
+from tfc_console.isolate import Isolation
 from tfc_console.rig import Rig
 from tfc_console.server import wait_for
 
@@ -178,6 +180,57 @@ class Lifecycle(RigTest):
         self.up()
         with self.assertRaises(ValueError):
             self.rig.write_line("A", "list")
+
+
+@unittest.skipIf(len(os.sched_getaffinity(0)) < 2, "needs two CPUs")
+class Isolated(unittest.TestCase):
+    """The rig's processes run on the CPUs the isolation reserves, and it lets go when the rig stops (ADR-040). `processes` is empty so that nothing of the host's is moved by a test."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        fake_repo(self.repo)
+        self.hub = Hub()
+        cpus = sorted(os.sched_getaffinity(0))
+        self.rigcpus = frozenset(cpus[:1])
+        self.iso = Isolation(self.hub, enabled=True, processes=lambda: [], sweep_s=0.05, plan=(self.rigcpus, frozenset(cpus[1:])))
+        self.rig = Rig(self.hub, self.repo, lambda: "vcan0", lambda: 45679, lambda: [], isolation=self.iso)
+
+    def tearDown(self):
+        self.rig.shutdown()
+        self.tmp.cleanup()
+
+    def test_every_process_starts_on_the_rig_cpus_and_the_snapshot_says_so(self):
+        self.rig.start_profile("closed-loop")
+        self.assertTrue(wait_for(lambda: len(self.rig.pids()) == 5, 6.0), self.rig.snapshot())
+        for pid in self.rig.pids():
+            self.assertTrue(wait_for(lambda pid=pid: frozenset(os.sched_getaffinity(pid)) == self.rigcpus, 3.0), pid)
+        iso = self.rig.snapshot()["isolation"]
+        self.assertTrue(iso["engaged"] and iso["available"])
+        self.assertEqual(iso["rig_cpus"], str(sorted(self.rigcpus)[0]))
+        self.rig.stop()
+        self.assertFalse(self.rig.snapshot()["isolation"]["engaged"])
+        self.assertTrue(any("isolation released" in e.text for e in self.hub.model.events))
+
+    def test_it_can_be_switched_off_and_on_while_the_rig_runs(self):
+        self.rig.start_profile("closed-loop")
+        self.assertTrue(wait_for(lambda: len(self.rig.pids()) == 5, 6.0))
+        self.rig.isolate(False)
+        self.assertFalse(self.rig.snapshot()["isolation"]["engaged"])
+        self.rig.isolate(True)
+        self.assertTrue(self.rig.snapshot()["isolation"]["engaged"])
+        for pid in self.rig.pids():
+            self.assertTrue(wait_for(lambda pid=pid: frozenset(os.sched_getaffinity(pid)) == self.rigcpus, 3.0), pid)
+
+    def test_a_rig_without_it_or_a_host_that_cannot_refuses_to_switch_it_on(self):
+        bare = Rig(self.hub, self.repo, lambda: "vcan0", lambda: 45679, lambda: [])
+        self.assertIsNone(bare.snapshot()["isolation"])
+        with self.assertRaises(ValueError):
+            bare.isolate(True)
+        self.iso.plan = "only 4 logical CPUs"
+        with self.assertRaises(ValueError) as cm:
+            self.rig.isolate(True)
+        self.assertIn("only 4 logical CPUs", str(cm.exception))
 
 
 class NothingIsLeftBehind(unittest.TestCase):

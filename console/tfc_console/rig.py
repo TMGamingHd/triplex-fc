@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Callable
 
 from .hub import Hub
+from .isolate import Isolation
 
 
 def _die_with_parent() -> None:
@@ -59,10 +60,11 @@ class Proc:
 
 
 class Rig:
-    def __init__(self, hub: Hub, repo: Path, iface_of: Callable[[], str | None], telemetry_port: Callable[[], int], sim_args: Callable[[], list[str]], viewer_port: Callable[[], int] | None = None, images: Callable[[], tuple[list[Path] | None, str]] | None = None) -> None:
+    def __init__(self, hub: Hub, repo: Path, iface_of: Callable[[], str | None], telemetry_port: Callable[[], int], sim_args: Callable[[], list[str]], viewer_port: Callable[[], int] | None = None, images: Callable[[], tuple[list[Path] | None, str]] | None = None, isolation: Isolation | None = None) -> None:
         self.hub, self.repo = hub, repo
         self.iface_of, self.telemetry_port, self.sim_args = iface_of, telemetry_port, sim_args
         self.viewer_port = viewer_port
+        self.iso = isolation                                        # keeps the rest of the desktop off the rig's CPUs while it runs (isolate.py, ADR-040); None: the rig runs wherever the scheduler puts it
         self.images = images                                       # the three flight-computer images for the vehicle the rig is given, and its name (rigbuild.RigBuilder); None: the reference vehicle's, as always
         self.procs: dict[str, Proc] = {}
         self.profile: str | None = None
@@ -129,6 +131,8 @@ class Rig:
         self._starter.start()
 
     def _start_all(self, specs: list[ProcSpec]) -> None:
+        if self.iso is not None:
+            self.iso.engage(self.pids)                 # before the first process starts, so that the others are already out of the way
         for s in specs:
             if s.delay_s:
                 time.sleep(s.delay_s)
@@ -136,6 +140,24 @@ class Rig:
                 return                                 # stopped while starting
             self._spawn(self.procs[s.name])
         self.message = "running"
+
+    def _child_setup(self) -> None:
+        _die_with_parent()
+        if self.iso is not None:
+            self.iso.pin_self()
+
+    def pids(self) -> list[int]:
+        with self.lock:
+            return [p.popen.pid for p in self.procs.values() if p.popen is not None and p.popen.poll() is None]
+
+    def isolate(self, on: bool) -> None:
+        """Switch the isolation on or off; on a running rig it takes effect now."""
+        if self.iso is None:
+            raise ValueError("this rig was started without CPU isolation")
+        if on and not self.iso.available:
+            raise ValueError(f"no isolation here: {self.iso.plan}")
+        running = any(p.state in ("running", "frozen") for p in self.procs.values())
+        self.iso.set_wanted(on, running, self.pids)
 
     def _spawner(self) -> None:
         while True:
@@ -155,7 +177,7 @@ class Rig:
         master, slave = pty.openpty()
         stdin = subprocess.PIPE if spec.control else subprocess.DEVNULL
         try:
-            p.popen = subprocess.Popen(spec.argv, cwd=str(spec.cwd), stdin=stdin, stdout=slave, stderr=slave, start_new_session=True, close_fds=True, preexec_fn=_die_with_parent, env={**os.environ, "PYTHONUNBUFFERED": "1"})  # noqa: PLW1509
+            p.popen = subprocess.Popen(spec.argv, cwd=str(spec.cwd), stdin=stdin, stdout=slave, stderr=slave, start_new_session=True, close_fds=True, preexec_fn=self._child_setup, env={**os.environ, "PYTHONUNBUFFERED": "1"})  # noqa: PLW1509
         except OSError as e:
             os.close(master)
             os.close(slave)
@@ -225,6 +247,8 @@ class Rig:
             self.hub.note("info", "CON", "rig", "the rig was stopped")
             self.profile = None
             self.message = "stopped"
+            if self.iso is not None:
+                self.iso.release()
 
     def kill(self, name: str) -> None:
         p = self._proc(name)
@@ -292,4 +316,4 @@ class Rig:
                 procs.append({"name": p.spec.name, "title": p.spec.title, "state": p.state, "pid": p.popen.pid if p.popen else None, "uptime": round(time.monotonic() - p.started, 1) if p.state in ("running", "frozen") else None,
                               "exit_code": p.exit_code, "restarts": p.restarts, "lines": p.lines})
             profs = {k: {"title": v["title"], "doc": v["doc"], "ready": v["ready"], "missing": v["missing"], "procs": [s.name for s in v["procs"]]} for k, v in self.profiles().items()}
-            return {"profile": self.profile, "procs": procs, "profiles": profs, "message": self.message}
+            return {"profile": self.profile, "procs": procs, "profiles": profs, "message": self.message, "isolation": self.iso.status() if self.iso is not None else None}

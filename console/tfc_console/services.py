@@ -9,6 +9,7 @@ from .commands import CommandService, catalog
 from .faultlab import EXPECT, FaultLab
 from .hardware import Hardware
 from .hub import Hub
+from .isolate import Isolation
 from .rig import Rig
 from .rigbuild import RigBuilder
 from .server import ApiError, App, Raw, Request
@@ -29,13 +30,14 @@ def _bad(e: Exception) -> ApiError:
     return ApiError(504 if isinstance(e, TimeoutError) else 400, str(e))
 
 
-def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_dir: Path | None = None, pose=None) -> dict:
+def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_dir: Path | None = None, pose=None, isolate: bool = False) -> dict:
     vehicles = Vehicles(repo, state_dir or default_state_dir())
     commands = CommandService(hub, lambda: mgr.iface)
     hardware = Hardware(hub)
     builder = RigBuilder(hub, repo, vehicles)
     rig_svc = Rig(hub, repo, lambda: mgr.iface, lambda: truth.port, vehicles.sim_args, (lambda: pose.port) if pose is not None else None,
-                  lambda: (builder.images(vehicles.active["name"], vehicles.active["knobs"]) if _safe(builder, vehicles) else None, vehicles.active["name"])) if rig else None
+                  lambda: (builder.images(vehicles.active["name"], vehicles.active["knobs"]) if _safe(builder, vehicles) else None, vehicles.active["name"]),
+                  Isolation(hub, enabled=isolate, state_file=(state_dir or default_state_dir()) / "isolation.pid")) if rig else None
     viewer = ViewerService(hub, repo, (state_dir or default_state_dir()), vehicles)
     app.viewer = hub.viewer
     app.on_close.append(viewer.close)
@@ -77,6 +79,14 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
     def _rig_stop(req: Request):
         try:
             need_rig().stop(req.body.get("name") or None)
+        except ValueError as e:
+            raise _bad(e) from e
+        return 200, rig_svc.snapshot()
+
+    @app.route("POST", "/api/rig/isolate")
+    def _rig_isolate(req: Request):
+        try:
+            need_rig().isolate(bool(req.body.get("on")))
         except ValueError as e:
             raise _bad(e) from e
         return 200, rig_svc.snapshot()
