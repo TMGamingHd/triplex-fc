@@ -27,6 +27,7 @@ export class CameraRig {
     this.chaseDir = new THREE.Vector3(0, 0, -1);
     this.gpos = [150, 1.8, -350];                                // the observer, from the pad: metres to the left of downrange, up, and along downrange (negative: uprange of the pad)
     this.gaz = 0; this.gel = 0; this.gzoom = 1;                  // what the user added to the look at the vehicle: radians to the left and up, and the zoom
+    this.lastCg = null; this.settle = 0;
     this.focus = null;                                           // a lens can ask the camera to look at a point of the vehicle: {x: metres along the body, d: distance in m}
   }
   set(mode) { if (this.mode !== mode) { this.mode = mode; this.firstFrame = true; } }
@@ -44,9 +45,18 @@ export class CameraRig {
   /** ctx: { len, diameter, axis (unit, scene), up (unit, scene: the local vertical), down (unit: downrange, horizontal), padRel (the pad's place relative to the vehicle), cg (m from the tail), alt, quat (the vehicle's), dt, lookFocus } */
   update(ctx) {
     const { len, axis, up, dt } = ctx;
+    // The scene is centred on the vehicle's centre of mass, which jumps along the axis when a stage leaves (the stack's, then the ship's). The eye keeps the place it had in the world, and eases to where the rule puts it
+    // over a couple of seconds: it used to jump with the origin, and the separation looked like a cut.
+    if (this.lastCg != null && !this.firstFrame && Math.abs(ctx.cg - this.lastCg) > 2 && dt < 0.5) {
+      const dd = ctx.cg - this.lastCg;
+      this.pos.addScaledVector(axis, -dd); this.look.addScaledVector(axis, -dd);
+      this.settle = 2.5;
+    }
+    this.lastCg = ctx.cg;
+    if (this.settle > 0) this.settle = Math.max(0, this.settle - dt);
     const h = ctx.down.clone().sub(up.clone().multiplyScalar(ctx.down.dot(up))).normalize();   // horizontal downrange
     const side = new THREE.Vector3().crossVectors(up, h).normalize();                          // to the left of downrange
-    const tail = axis.clone().multiplyScalar(-ctx.cg);                                         // the vehicle's tail, from the CG
+    const tail = axis.clone().multiplyScalar((ctx.x0 || 0) - ctx.cg);                          // the tail of what is still there (the ship's, after the booster has gone), from the CG
     const at = (frac) => tail.clone().addScaledVector(axis, frac * len);
     let pos, look, upv = up.clone(), fov = 38, subject = 0;               // subject: the distance to what is being looked at, for the near plane
     const L = Math.max(len, 5);
@@ -116,8 +126,13 @@ export class CameraRig {
         pos = aim.clone().addScaledVector(dir, d); look = aim; fov = f && f.fov ? f.fov : 40;
       }
     }
-    const k = this.firstFrame || !this.smooth ? 1 : 1 - Math.exp(-dt * 12);
-    this.pos.lerp(pos, this.mode === 'orbit' && !this.firstFrame ? Math.max(k, .5) : k);
+    // the eye never goes under the ground: near the pad the ground is the plane through the pad, `padRel` from the vehicle (a chase camera behind a stage hanging in the catch arms was under it, looking up at the underside of the apron)
+    if (ctx.alt < 3000 && this.mode !== 'ground') {
+      const floor = ctx.padRel.dot(up) + 3, below = floor - pos.dot(up);
+      if (below > 0) pos = pos.clone().addScaledVector(up, below);
+    }
+    const k = this.firstFrame || !this.smooth ? 1 : 1 - Math.exp(-dt * (this.settle > 0 ? 2.4 : 12));
+    this.pos.lerp(pos, this.mode === 'orbit' && !this.firstFrame && !(this.settle > 0) ? Math.max(k, .5) : k);
     this.look.lerp(look, k); this.up.lerp(upv, k).normalize(); this.fov += (fov - this.fov) * (this.firstFrame ? 1 : 1 - Math.exp(-dt * 6));
     this.firstFrame = false;
     this.camera.position.copy(this.pos);

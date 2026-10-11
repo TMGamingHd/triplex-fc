@@ -122,3 +122,11 @@ canvas.chart { width: 100%; display: block; }
 #v-locator i { position: absolute; left: -17px; top: -17px; width: 34px; height: 34px; border: 2px solid var(--accent); border-radius: 50%; box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent); }
 #v-locator span { position: absolute; left: 24px; top: -9px; white-space: nowrap; font: 600 12px var(--mono); color: var(--text); background: color-mix(in srgb, var(--bg2) 80%, transparent); padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line); }
 #v-camhint { background: color-mix(in srgb, var(--bg2) 70%, transparent); padding: 3px 10px; border-radius: 6px; backdrop-filter: blur(6px); }
+
+/* which body to follow, above the cameras, when the flight has more than one */
+#v-follow { display: flex; align-items: center; gap: 2px; background: color-mix(in srgb, var(--bg2) 84%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+#v-follow[hidden] { display: none; }
+#v-follow .v-follow-lbl { font-size: 11px; color: var(--muted); padding: 0 8px 0 6px; text-transform: uppercase; letter-spacing: .05em; }
+#v-follow button { background: none; border: 0; color: var(--muted); padding: 5px 12px; border-radius: 7px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
+#v-follow button:hover { color: var(--text); background: var(--panel2); }
+#v-follow button[aria-pressed="true"] { background: var(--panel3); color: var(--text); box-shadow: inset 0 -2px 0 var(--ok); }

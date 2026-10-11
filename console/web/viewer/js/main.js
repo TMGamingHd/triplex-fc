@@ -48,7 +48,8 @@ st.plumes = store.get('v.plumes', true); st.trail = store.get('v.trail', true); 
 
 const app = {
   world, data, events: [], wall: 0, dt: 0.016, pose: null, d: null, lens: null, styleName: Q.get('style') || store.get('v.style', 'auto'),
-  get spec() { return data.spec; }, get vehicle() { return world.vehicle; },
+  curSpec: null,                                               // the spec of the body that is followed (the main body's, or the spec of one stage of it)
+  get spec() { return this.curSpec || data.spec; }, get vehicle() { return world.vehicle; },
   left: h('aside', { id: 'v-left', class: 'v-dock', 'aria-label': 'Left panels' }), right: h('aside', { id: 'v-right', class: 'v-dock', 'aria-label': 'Right panels' }),
   models: [], gltf: Object.assign({ axis: '+y', fitLength: true, roll: 0, offset: 0, scale: 1, scene: null, name: null }, store.get('v.gltf', {}), { scene: null, name: null }),
   /** The model files in console/models/, as the server lists them. */
@@ -85,7 +86,24 @@ const bottom = h('div', { id: 'v-bottom' });
 const locator = h('div', { id: 'v-locator', hidden: true }, h('i', {}), h('span', {}));
 // the cameras: always on the screen, whatever the lens, with what the current one does said under it (they were a card of the overview lens, which made them invisible in the other five)
 const camHint = h('div', { id: 'v-camhint' });
-const camBar = h('div', { id: 'v-cams' }, h('nav', { 'aria-label': 'Camera', role: 'group' }, CAMERAS.map((c) => h('button', { type: 'button', dataset: { id: c.id }, 'aria-pressed': 'false', title: c.hint, onclick: () => { world.rig.set(c.id); store.set('v.cam', c.id); syncCamSeg(); } }, c.label))), camHint);
+// which body to follow, when the flight has more than one (a stage that returns to a pad of its own): the simulator flies each, and the viewer follows the one chosen
+const followBar = h('nav', { id: 'v-follow', 'aria-label': 'Follow', role: 'group', hidden: true });
+let followKey = '';
+function updateFollow(raw) {
+  const names = data.bodies(raw), key = names.join('|') + '|' + data.focus;
+  if (key === followKey) return;
+  followKey = key;
+  followBar.hidden = names.length < 2;
+  const label = (n) => n === 'main' ? (data.spec.stages.length > 1 ? 'Ship' : 'Vehicle') : n.charAt(0).toUpperCase() + n.slice(1);
+  followBar.replaceChildren(h('span', { class: 'v-follow-lbl' }, 'Follow'), ...names.map((n) => h('button', { type: 'button', dataset: { id: n }, 'aria-pressed': String(n === data.focus), title: n === 'main' ? 'The main vehicle (the ship, after the stages have left)' : 'The ' + n + ', flown by its own computers', onclick: () => setFocus(n) }, label(n))));
+}
+function setFocus(n) {
+  if (data.focus === n) return;
+  data.focus = n; data.hist = { t: [], s: {} }; tracker.prev = null; app.events.length = 0; followKey = '';
+  world.rig.firstFrame = true;
+  toast('Following ' + (n === 'main' ? 'the main vehicle' : 'the ' + n), 'info', 2500);
+}
+const camBar = h('div', { id: 'v-cams' }, h('nav', { 'aria-label': 'Camera', role: 'group' }, CAMERAS.map((c) => h('button', { type: 'button', dataset: { id: c.id }, 'aria-pressed': 'false', title: c.hint, onclick: () => { world.rig.set(c.id); store.set('v.cam', c.id); syncCamSeg(); } }, c.label))), camHint, followBar);
 // the docks can be folded away one at a time (H hides everything); a narrow window starts with the right one folded
 const dockBtn = (side, glyph) => h('button', { type: 'button', class: 'v-dockbtn', id: 'v-tg-' + side, 'aria-label': `Hide or show the ${side} panels`, title: `Hide or show the ${side} panels`, onclick: () => setDock(side, document.body.classList.contains('no-' + side)) }, glyph);
 function setDock(side, show) { document.body.classList.toggle('no-' + side, !show); store.set('v.dock.' + side, show); const b = document.getElementById('v-tg-' + side); if (b) b.textContent = side === 'left' ? (show ? '‹' : '›') : (show ? '›' : '‹'); }
@@ -124,10 +142,10 @@ function setLens(id) {
 function rebuildVehicle() {
   const keep = app.lens;
   if (keep) { try { keep.unmount(app); } catch (e) { console.error(e); } app.lens = null; }
-  world.setVehicle(data.spec, app.styleName, { gltf: app.styleName.startsWith('gltf:') ? app.gltf : null, dress: app.dress });
+  world.setVehicle(app.spec, app.styleName, { gltf: app.styleName.startsWith('gltf:') ? app.gltf : null, dress: app.dress, padSpec: data.spec });
   if (keep) setLens(keep.id);
 }
-data.onSpec.push(() => rebuildVehicle());
+data.onSpec.push(() => { data.focus = Q.get('follow') || 'main'; app.curSpec = null; rebuildVehicle(); });
 data.onReset.push(() => { world.trail.clear(); world.smoke.clear(); app.events.length = 0; tracker.prev = null; tracker.liftoff = false; tracker.space = false; tracker.qpeak = 0; });
 
 // ---- the events: what happened, from the poses
@@ -170,6 +188,10 @@ async function openMenu() {
     for (const v of state.vehicles) m.append(h('button', { class: 'item', type: 'button', onclick: () => { close(); fly(v.name); } }, v.name, h('small', {}, (v.description || '').slice(0, 110))));
     m.append(h('p', { class: 'note' }, 'This runs tfc_fly (a few seconds, up to a minute for a long flight), then plays the result: every vehicle in vehicles/ can be seen this way, whatever the rig itself flies.'));
   }
+  if ((state.missions || []).length) {
+    m.append(h('h4', {}, 'Fly a whole mission (the flight computers fly it)'));
+    for (const n of state.missions) m.append(h('button', { class: 'item', type: 'button', onclick: () => { close(); flyMission(n); } }, n, h('small', {}, n.includes('starship') ? 'Ascent, hot staging, the ship to orbit, the booster back to a second pad and caught. About 10 s; then Follow the ship or the booster.' : 'A plan with phases, flown on the same tables.')));
+  }
   m.append(h('h4', {}, 'Live'), h('p', { class: 'note' }, `Poses from a running tfc_simd arrive on UDP port ${state.pose_port} (the rig the console starts is told it). They are shown as soon as they come.`));
   document.body.append(m);
   setTimeout(() => document.addEventListener('pointerdown', function away(e) { if (menu && !menu.contains(e.target) && !srcChip.contains(e.target)) close(); if (!menu) document.removeEventListener('pointerdown', away); }), 0);
@@ -183,6 +205,19 @@ function describeSource(state) {
   if (data.live) return `Live: ${data.rateEst.toFixed(0)} poses a second from the simulator.`;
   if (data.truthSeen) return 'Only the console\'s 10 Hz telemetry is arriving (no poses: an older simulator): the vehicle is placed and turned, but there are no forces, no air and no per-engine state.';
   return 'No data yet. Start the rig from the console, or open a recorded flight, or fly a vehicle from this menu.';
+}
+
+async function flyMission(name) {
+  toast(`Flying the mission ${name} on the flight computers' tables...`, 'info', 20000);
+  try {
+    const { job } = await api('/api/viewer/fly', { mission: name });
+    for (let i = 0; i < 1200; i++) {
+      await new Promise((r) => setTimeout(r, 800));
+      const j = await api('/api/job?id=' + job);
+      if (j.state === 'done') { toast(`${name}: flown, playing it. Follow: Ship or Booster, under the cameras.`, 'ok', 6000); return; }
+      if (j.state === 'failed') { toast(`${name}: ${j.error}`, 'crit', 12000); return; }
+    }
+  } catch (e) { toast(e.message, 'crit', 9000); }
 }
 
 async function fly(name) {
@@ -240,7 +275,7 @@ function updateBottom() {
   }
   const bits = [`${(1000 / Math.max(1, frameMs)).toFixed(0)} fps`];
   if (data.live) bits.push(`${data.rateEst.toFixed(0)} poses/s`); else if (data.truthSeen) bits.push('10 Hz truth only');
-  bits.push(data.spec.name);
+  bits.push(app.spec.name);
   tb.info.textContent = bits.join('   ');
 }
 
@@ -257,7 +292,7 @@ function updateHeader(pose) {
   if (srcChip.className !== wanted) srcChip.className = wanted;
   const span = srcChip.querySelector('span'); if (span.textContent !== text) span.textContent = text;
   srcChip.querySelector('.dot').className = 'dot ' + cls.replace('muted', '') + (kind === 'live' ? ' live' : '');
-  if (vehChip.textContent !== data.spec.name) vehChip.textContent = data.spec.name;
+  if (vehChip.textContent !== app.spec.name) vehChip.textContent = app.spec.name;
   if (pose) {
     const t = fmt.t(pose.t); if (clockEl.textContent !== t) clockEl.textContent = t;
     clockEl.className = pose.t >= 0 && !pose.clamp ? 'fl' : 'cd';
@@ -299,10 +334,10 @@ function staticPose() {
 }
 const _lv = new THREE.Vector3();
 function updateLocator(pose) {
-  const cam = world.camera, spec = data.spec;
+  const cam = world.camera, spec = app.spec;
   if (!pose) { locator.hidden = true; return; }
   const d = Math.max(cam.position.length(), 1);                                               // the vehicle is at the origin of the near scene
-  const px = (spec.length / d) * innerHeight / (2 * Math.tan(cam.fov * Math.PI / 360));        // how tall it is on the screen
+  const px = (spec.extent(pose.stg, pose.pay).length / d) * innerHeight / (2 * Math.tan(cam.fov * Math.PI / 360));        // how tall it is on the screen
   _lv.set(0, 0, 0).project(cam);
   if (px > 40 || _lv.z > 1 || _lv.z < -1 || Math.abs(_lv.x) > 1.05 || Math.abs(_lv.y) > 1.05) { locator.hidden = true; return; }
   locator.hidden = false;
@@ -316,13 +351,15 @@ function loop(now) {
   let pose = null;
   if (Q.get('static')) pose = staticPose();
   else { const t = data.clock.frame(data.buf, data.source, false); pose = t == null ? null : data.buf.at(t); }
-  if (pose && Q.get('flapdeg')) pose = { ...pose, surf: (data.spec.surfaces || []).map(() => +Q.get('flapdeg')) };      // ?flapdeg=40: every surface at that deflection, to look at a deployed flap without flying one
+  const raw = pose;                                                          // the pose as the simulator sent it, with the other bodies in it
+  if (pose) { const v = data.view(pose); pose = v.pose; if (v.spec !== app.curSpec) { app.curSpec = v.spec; if (world.spec !== v.spec) rebuildVehicle(); } updateFollow(raw); }
+  if (pose && Q.get('flapdeg')) pose = { ...pose, surf: (app.spec.surfaces || []).map(() => +Q.get('flapdeg')) };      // ?flapdeg=40: every surface at that deflection, to look at a deployed flap without flying one
   if (pose) {
     app.pose = pose;
     try {
-      world.frame(pose, dt, app.wall, {});
+      world.frame(pose, dt, app.wall, { specFor: (o) => data.specFor(o) });
       updateLocator(pose);
-      const d = app.d = derive(pose, data.spec);
+      const d = app.d = derive(pose, app.spec);
       if (app.lens) app.lens.update(app, pose, d, dt);
       world.render(); frames++;
     } catch (e) { console.error('frame', e); }
@@ -342,7 +379,8 @@ function loop(now) {
 
 // ---- go
 buildBottom();
-world.setVehicle(data.spec, app.styleName.startsWith('gltf:') ? 'auto' : app.styleName, { dress: app.dress });
+world.setVehicle(data.spec, app.styleName.startsWith('gltf:') ? 'auto' : app.styleName, { dress: app.dress, padSpec: data.spec });
+if (Q.get('follow')) data.focus = Q.get('follow');                       // ?follow=booster: start by following a body other than the main one
 if (Q.get('cam') || store.get('v.cam', null)) world.rig.set(Q.get('cam') || store.get('v.cam', 'orbit'));
 syncCamSeg();
 if (Q.get('gaz')) world.rig.gaz = +Q.get('gaz'); if (Q.get('gel')) world.rig.gel = +Q.get('gel'); if (Q.get('gzoom')) world.rig.gzoom = +Q.get('gzoom'); if (Q.get('gpos')) world.rig.gpos = Q.get('gpos').split(',').map(Number);

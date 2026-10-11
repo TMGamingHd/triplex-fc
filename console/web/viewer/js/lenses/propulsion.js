@@ -103,7 +103,7 @@ export default {
     });
     const th = new THREE.Vector3(pose.fth[2], pose.fth[0], pose.fth[1]);
     S.thrust.object.visible = S.thrustL.object.visible = th.length() > 1;
-    if (th.length() > 1) { const Ln = spec.length * 0.28; S.thrust.set(new THREE.Vector3(0, 1, 0), th, Ln, Math.max(0.2, spec.diameter * 0.04)); S.thrustL.setText(`THRUST ${(th.length() / 1e6).toFixed(2)} MN`); S.thrustL.object.position.set(0, Ln * 1.05 + 1, 0); }
+    if (th.length() > 1) { const Ln = spec.extent(pose.stg, pose.pay).length * 0.28; S.thrust.set(new THREE.Vector3(0, 1, 0), th, Ln, Math.max(0.2, spec.diameter * 0.04)); S.thrustL.setText(`THRUST ${(th.length() / 1e6).toFixed(2)} MN`); S.thrustL.object.position.set(0, Ln * 1.05 + 1, 0); }
     this.drawMap(app, pose, leadStage); this.drawCurve(app, pose, leadStage);
     for (const c of Object.values(S.charts)) c.draw(app.data.hist);
   },

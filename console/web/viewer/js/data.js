@@ -54,6 +54,32 @@ export class Spec {
     for (const p of this.payloads) for (const s of p.sections || []) top = Math.max(top, s.x_start_m + s.length_m);
     return top || 20;
   }
+  /** The part of the vehicle that is still there: the stages whose bits are set in `stg` (and the payloads in `pay`), from their lowest x to their highest, and the widest section among them. After a separation
+   *  this is the ship and not the stack: a lens that measured the whole spec went on drawing, scaling and loading a stage that had left (the thrust was applied where the booster's engines had been). Cached by the bits. */
+  extent(stg = 255, pay = 255) {
+    const key = stg * 256 + pay;
+    if (this._ext && this._ext.key === key) return this._ext;
+    let x0 = Infinity, x1 = -Infinity, d = 0;
+    this.stages.forEach((st, i) => {
+      if (!((stg >> i) & 1)) return;
+      const a = st.x_start_m || 0;
+      x0 = Math.min(x0, a); x1 = Math.max(x1, a + (st.length_m || 0));
+      for (const sec of st.sections || []) { x1 = Math.max(x1, sec.x_start_m + sec.length_m); d = Math.max(d, sec.d_aft_m || 0, sec.d_fore_m || 0); }
+    });
+    this.payloads.forEach((pl, i) => { if (!((pay >> i) & 1)) return; for (const sec of pl.sections || []) { x1 = Math.max(x1, sec.x_start_m + sec.length_m); d = Math.max(d, sec.d_aft_m || 0); } });
+    if (!(x1 > x0)) { x0 = 0; x1 = this.length; }
+    this._ext = { key, x0, x1, length: x1 - x0, diameter: d || this.diameter };
+    return this._ext;
+  }
+  /** The spec of one stage on its own, as a vehicle that was let go flies: that stage, its engines and surfaces (the stage renumbered 0), no payload. The pose of that body (`others[].pose`) is in this indexing. */
+  sub(si) {
+    this._subs = this._subs || {};
+    if (this._subs[si]) return this._subs[si];
+    const v = this.vehicle, st = this.stages[si];
+    const re = (a) => (a || []).filter((x) => x.stage === si).map((x) => ({ ...x, stage: 0 }));
+    const sub = new Spec({ ...this.raw, name: `${this.name}: ${st.name || 'stage ' + (si + 1)}`, vehicle: { ...v, stages: [st], engines: re(v.engines), surfaces: re(v.surfaces), fins: re(v.fins), payloads: [] } });
+    return (this._subs[si] = sub);
+  }
   /** The air at an altitude from the profile the simulator sampled (T K, p Pa, rho, a m/s, mean wind m/s). */
   airAt(alt) {
     const a = this.air;
@@ -97,6 +123,10 @@ export function between(p0, p1, f) {
   const out = {};
   for (const k of Object.keys(p1)) {
     const a = p0[k], b = p1[k];
+    if (k === 'others') {                                  // the other bodies of a mission: each between its own two poses (matched by name), one that is new takes the later
+      out.others = (b || []).map((ob) => { const oa = (a || []).find((x) => x.name === ob.name); return oa && oa.pose && ob.pose ? { ...ob, pose: between(oa.pose, ob.pose, f) } : ob; });
+      continue;
+    }
     if (typeof b === 'number') out[k] = (typeof a === 'number') ? lerp(a, b, f) : b;
     else if (Array.isArray(b) && Array.isArray(a) && a.length === b.length && typeof b[0] === 'number') out[k] = lerpArr(a, b, f);
     else out[k] = b;
@@ -185,6 +215,7 @@ export class ViewerData {
     this.source = { kind: 'none' };
     this.snapshot = null;                           // the console's own state (the nodes, ACT, the mission clock), for the attitude lens and the header
     this.hist = { t: [], s: {} };                   // the charts' history, 10 per second of vehicle time
+    this.focus = 'main';                            // which body the viewer follows: 'main', or the name of another body of a mission (the stage that returns)
     this.onSpec = []; this.onReset = []; this.status = 'connecting';
     this.poseCount = 0; this.lastPoseWall = 0; this.rateEst = 0; this._rt = performance.now(); this._rn = 0;
     this.truthSeen = 0; this.consoleSource = null;
@@ -232,12 +263,25 @@ export class ViewerData {
     const now = performance.now(); if (now - this._rt > 1000) { this.rateEst = this._rn * 1000 / (now - this._rt); this._rt = now; this._rn = 0; }
     this._add(p);
   }
+  /** What to show of a pose that may carry other bodies: {pose, spec, name} for the body that is followed (the main body, or another one that exists now), with the rest in `pose.others`; `specFor` gives any body's spec. */
+  view(p) {
+    if (!p || !this.spec) return { pose: p, spec: this.spec, name: 'main' };
+    const others = p.others || [];
+    const o = this.focus !== 'main' ? others.find((x) => x.name === this.focus) : null;
+    if (!o) return { pose: p, spec: this.spec, name: 'main' };
+    const { others: _drop, ...mainPose } = p;
+    return { pose: { ...o.pose, others: [{ name: 'main', stage: -1, pose: mainPose }, ...others.filter((x) => x !== o)] }, spec: this.specFor(o), name: o.name };
+  }
+  specFor(o) { return o.name === 'main' || o.stage < 0 ? this.spec : this.spec.sub(o.stage); }
+  /** The names of the bodies there are to follow now. */
+  bodies(p) { return ['main', ...((p && p.others) || []).map((x) => x.name)]; }
   _add(p) {
     this.buf.push(p);
-    const H = this.hist, t = p.tt;
+    const fp = this.view(p).pose;
+    const H = this.hist, t = fp.tt;
     if (H.t.length && t < H.t[H.t.length - 1] - 1e-6) { this.hist = { t: [], s: {} }; return this._add(p); }
     if (!H.t.length || t - H.t[H.t.length - 1] >= 0.1) {
-      const m = metrics(p);
+      const m = metrics(fp);
       const n = H.t.length; H.t.push(t);
       for (const k of new Set([...Object.keys(H.s), ...Object.keys(m)])) { if (!H.s[k]) H.s[k] = new Array(n).fill(null); H.s[k].push(m[k] ?? null); }
       if (H.t.length > 9000) { H.t.splice(0, 1000); for (const k of Object.keys(H.s)) H.s[k].splice(0, 1000); }

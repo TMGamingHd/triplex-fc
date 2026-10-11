@@ -3,6 +3,7 @@
 player and its transport, the routes, and the page's own files (every import resolves, the vendored library is the one the README says)."""
 import hashlib
 import json
+import os
 import queue
 import re
 import socket
@@ -617,6 +618,87 @@ class FlyingAVehicle(unittest.TestCase):
             self.assertIn("dry_mass", str(e.exception))                                    # the reader's own message, with the nearest name it suggests
             self.assertIsNone(svc.player)
             self.assertEqual(hub.viewer.source["kind"], "none")
+
+
+class FlyingAMission(unittest.TestCase):
+    """The viewer's "fly a whole mission": `tfc_mission` on a mission file, every body's poses written (a stage that returns is a body of its own), and the file played."""
+
+    def service(self, d):
+        hub = Hub()
+        vehicles = Vehicles(ROOT, Path(d) / "state")
+        return hub, ViewerService(hub, ROOT, Path(d) / "state", vehicles)
+
+    def test_the_missions_there_are_are_the_files_of_vehicles_missions(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, svc = self.service(d)
+            self.assertIn("starship_return", svc.missions())
+            self.assertIn("rocket_recovery", svc.missions())
+            self.assertEqual(svc.missions(), sorted(svc.missions()))
+
+    def test_an_unknown_mission_or_a_path_is_refused_and_a_missing_tool_says_what_to_build(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, svc = self.service(d)
+            for bad in ("nope", "../reference", "starship_return/../../x", ""):
+                with self.assertRaises(ValueError) as e:
+                    svc.fly_mission(bad)
+                self.assertIn("no mission named", str(e.exception))
+            old = os.environ.get("TFC_MISSION_BIN")
+            os.environ["TFC_MISSION_BIN"] = str(Path(d) / "missing_tfc_mission")
+            try:
+                with self.assertRaises(ValueError) as e:
+                    svc.fly_mission("starship_return")
+                self.assertIn("is not built", str(e.exception))
+                with self.assertRaises(ValueError):
+                    svc.fly_mission("starship_return", hz=0)
+            finally:
+                if old is None:
+                    os.environ.pop("TFC_MISSION_BIN", None)
+                else:
+                    os.environ["TFC_MISSION_BIN"] = old
+
+    def test_a_mission_is_run_with_the_pose_of_every_body_asked_for_and_the_result_is_played(self):
+        with tempfile.TemporaryDirectory() as d:
+            tool = Path(d) / "tfc_mission"
+            tool.write_text("#!/bin/sh\n# a stand-in: writes a spec and one pose with another body in it, and says what it was asked\nout=\"\"\nwhile [ $# -gt 0 ]; do case \"$1\" in --pose) out=\"$2\"; shift;; esac; echo \"arg:$1\"; shift; done\n"
+                            "printf '{\"k\":\"spec\",\"v\":1,\"name\":\"m\",\"vehicle\":{\"stages\":[],\"engines\":[]}}\\n{\"k\":\"pose\",\"t\":1.0,\"tt\":1.0,\"others\":[{\"name\":\"booster\",\"stage\":0,\"pose\":{\"t\":1.0}}]}\\n' > \"$out\"\n")
+            tool.chmod(0o755)
+            old = os.environ.get("TFC_MISSION_BIN")
+            os.environ["TFC_MISSION_BIN"] = str(tool)
+            hub, svc = self.service(d)
+            try:
+                res = svc.fly_mission("starship_return", hz=10)
+                self.assertTrue(res["ok"], res["output"])
+                self.assertIn("arg:--pose-others", res["output"])                                  # the poses of the other bodies are asked for
+                self.assertIn("arg:--pose-hz", res["output"])
+                out = Path(d) / "state" / "viewer" / res["file"]
+                self.assertEqual(res["file"], "starship_return.pose.jsonl")
+                self.assertEqual(len(out.read_text().splitlines()), 2)
+                self.assertTrue(any(f["name"] == res["file"] and f["where"] == "flown" for f in svc.pose_files()))
+            finally:
+                svc.close()
+                if old is None:
+                    os.environ.pop("TFC_MISSION_BIN", None)
+                else:
+                    os.environ["TFC_MISSION_BIN"] = old
+
+    MISSION = ROOT / "build" / "host" / "tfc_mission"
+
+    @unittest.skipUnless(MISSION.exists(), "build/host/tfc_mission is not built")
+    def test_the_real_tool_flies_a_single_stage_mission_and_writes_poses_the_viewer_reads(self):
+        with tempfile.TemporaryDirectory() as d:
+            hub, svc = self.service(d)
+            try:
+                res = svc.fly_mission("rocket_recovery", hz=5)
+                self.assertTrue(res["ok"], res["output"])
+                lines = (Path(d) / "state" / "viewer" / res["file"]).read_text().splitlines()
+                spec = json.loads(lines[0])
+                self.assertEqual(spec["k"], "spec")
+                self.assertIn("mission", spec["vehicle"])                                           # the plan, with the place of the pad
+                poses = [json.loads(x) for x in lines[1:]]
+                self.assertGreater(len(poses), 20)
+                self.assertIn("surf", poses[0]) if spec["vehicle"].get("surfaces") else None
+            finally:
+                svc.close()
 
 
 class ThePageFiles(unittest.TestCase):

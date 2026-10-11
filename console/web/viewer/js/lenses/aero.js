@@ -104,7 +104,7 @@ export default {
 
   update(app, pose, d, dt) {
     const S = this.s, o = S.opts, { world, vehicle, spec } = app, g = S.group;
-    const Lv = spec.length, R = spec.diameter / 2;
+    const ext = spec.extent(pose.stg, pose.pay), Lv = ext.length, R = ext.diameter / 2;      // what is still there: the ship, after the booster has left
     const view = o.view;
     const cgY = pose.cg, cpY = pose.cp, stab = view === 'stability';
     // markers and their dimension line
@@ -154,7 +154,7 @@ export default {
       const a = A.wind, f = new THREE.Vector3(d.fhat[2], d.fhat[0], d.fhat[1]);
       const show = S.showWind && d.V > 5;
       a.a.object.visible = a.l.object.visible = show;
-      if (show) { const Ln = Lv * 0.3, start = new THREE.Vector3(0, Lv, 0).addScaledVector(f, -Ln * 1.15 - R * 1.5); a.a.set(start, f, Ln, Math.max(0.2, R * 0.08)); a.l.setText(`WIND ${d.V.toFixed(0)} m/s`); a.l.object.position.copy(start); }
+      if (show) { const Ln = Lv * 0.3, start = new THREE.Vector3(0, ext.x1, 0).addScaledVector(f, -Ln * 1.15 - R * 1.5); a.a.set(start, f, Ln, Math.max(0.2, R * 0.08)); a.l.setText(`WIND ${d.V.toFixed(0)} m/s`); a.l.object.position.copy(start); }
     }
     // the angle of attack: an arc at the CG between the axis and the velocity through the air
     {
@@ -173,8 +173,8 @@ export default {
     S.cpSurf.update(d, mode === 2 ? 2 : 0, o.opacity);
     S.streams.update(d, pose.stg ?? 255, spec, app.wall, dt);
     const segs = S.streams.profile(pose.stg ?? 255);
-    if (segs.length && S.shock.visible) { const tip = segs[segs.length - 1][2]; S.shock.update(d, tip, S.streams.noseAngle(segs), Math.min(spec.length * 0.45, 55), app.wall); }
-    S.cond.update({ ...d, alt: pose.alt }, (spec.length) * 0.86, R, world.camera, [1, 1, 1].map((x, i) => (world.sunT ? world.sunT[i] : 1)), S.showCond, app.wall);
+    if (segs.length && S.shock.visible) { const tip = segs[segs.length - 1][2]; S.shock.update(d, tip, S.streams.noseAngle(segs), Math.min(Lv * 0.45, 55), app.wall); }
+    S.cond.update({ ...d, alt: pose.alt }, ext.x0 + ext.length * 0.86, R, world.camera, [1, 1, 1].map((x, i) => (world.sunT ? world.sunT[i] : 1)), S.showCond, app.wall);
 
     // the readouts
     const st = S.stats;
@@ -198,8 +198,8 @@ export default {
     if (c.width !== Math.round(W * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
     const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-    const L = spec.length, pad = 16, scale = (H - 2 * pad) / L, cx = W * 0.42;
-    const Y = (x) => H - pad - x * scale;
+    const ext = spec.extent(pose.stg, pose.pay), L = ext.length, pad = 16, scale = (H - 2 * pad) / L, cx = W * 0.42;
+    const Y = (x) => H - pad - (x - ext.x0) * scale;
     // the outline of the stages still on the vehicle
     ctx.fillStyle = css('--panel3'); ctx.strokeStyle = css('--line2'); ctx.lineWidth = 1.5;
     app.vehicle.stages.forEach((s, i) => {

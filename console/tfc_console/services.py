@@ -249,7 +249,7 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
     # ---------------------------------------------------------------- the 3D viewer
     @app.route("GET", "/api/viewer/state")
     def _viewer_state(req: Request):
-        return 200, {**hub.viewer.status(), "pose_files": viewer.pose_files(), "models": viewer.model_files(), "vehicles": vehicles.listing(), "pose_port": pose.port if pose is not None else None,
+        return 200, {**hub.viewer.status(), "pose_files": viewer.pose_files(), "models": viewer.model_files(), "vehicles": vehicles.listing(), "missions": viewer.missions(), "pose_port": pose.port if pose is not None else None,
                      "flying": viewer.flying, "fly_available": vehicles.fly.exists()}
 
     @app.route("POST", "/api/viewer/open")
@@ -274,6 +274,20 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
 
     @app.route("POST", "/api/viewer/fly")
     def _viewer_fly(req: Request):
+        if req.body.get("mission"):
+            if viewer.flying is not None:
+                raise ApiError(409, "a flight is being flown already")
+            mission = str(req.body["mission"])
+
+            def mjob():
+                res = viewer.fly_mission(mission)
+                if mgr.source is not None and getattr(mgr.source, "playing", False) is True and hub.replay:
+                    mgr.disconnect()
+                viewer.open(res["file"], 1.0, False, True)
+                return res
+            if mission not in viewer.missions():
+                raise ApiError(400, f"no mission named {mission!r}")
+            return 202, {"job": vehicles.jobs.start("fly", mjob)}
         try:
             text = _text_of(req.body)
         except (ValueError, OSError) as e:

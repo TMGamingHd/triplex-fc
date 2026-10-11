@@ -101,7 +101,7 @@ export function derive(pose, spec) {
   const T0 = T * (1 + 0.2 * M * M);
   const nose = (spec.noseRadius ?? 0.5);
   const heat = 1.7415e-4 * Math.sqrt(rho / nose) * V * V * V;                // Sutton-Graves: stagnation-point convective heat flux, W/m^2, for an assumed nose radius
-  const Re = rho * V * (spec.length || 1) / viscosity(T);
+  const Re = rho * V * ((spec.extent ? spec.extent(pose.stg, pose.pay).length : spec.length) || 1) / viscosity(T);
   const dc = pose.dref || spec.diameter;
   return {
     T, p, rho, a, V, q, M, S, D, L, alpha, phi, N, T0, heat, Re,

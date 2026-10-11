@@ -50,6 +50,28 @@ export async function run(app, lenses, setLens, world) {
     world.vehicle.apply({ ...app.pose, surf: flaps.map(() => 0) }); const flush = f.pivot.rotation.x;
     check(Math.abs(out) > 0.5 && Math.abs(flush) < 1e-9, `a flap turns with the simulator's deflection (${(out * 180 / Math.PI).toFixed(0)} deg out, ${(flush * 180 / Math.PI).toFixed(0)} deg flush)`);
   }
+  // a mission with another body (the stage that returns): it is drawn as a vehicle of its own, the viewer can follow it, the lenses then measure it and not the stack, and the pad it returns to is there
+  const rawNow = app.data ? app.data.buf.latest : null;
+  if (rawNow && rawNow.others && rawNow.others.length) {
+    const names = rawNow.others.map((o) => o.name);
+    check(names.every((n) => world.bodies.has(n)), `the other bodies (${names.join(', ')}) are in the scene`);
+    const ext = app.spec.extent(app.pose.stg, app.pose.pay);
+    check(ext.length < app.spec.length - 1, `after the separation the lenses measure what is left (${ext.length.toFixed(1)} m of ${app.spec.length.toFixed(1)} m)`);
+    check(!!world.catchPad, 'the mission has a pad of its own for the stage that returns');
+    const btn = document.querySelector(`#v-follow button[data-id="${names[0]}"]`);
+    check(!!btn, 'the follow bar offers the other body');
+    if (btn) {
+      btn.click(); await settle(900);
+      check(app.spec.stages.length === 1 && /booster|stage/i.test(app.spec.name), `following ${names[0]}: the spec is that stage's alone (${app.spec.name})`);
+      const v = new THREE.Vector3(0, 0, 0).project(world.camera);
+      check(Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1, `following ${names[0]}: it is inside the picture`);
+      check(world.vehicle.engines.length === app.spec.engines.length, `following ${names[0]}: the model has its ${app.spec.engines.length} engines`);
+      const own = app.d && Number.isFinite(app.d.q);
+      check(own, 'the lenses work on the followed body');
+      document.querySelector('#v-follow button[data-id="main"]').click(); await settle(700);
+      check(app.spec === app.data.spec, 'following the main vehicle again');
+    }
+  }
   // a card folds when its header is clicked, and unfolds again
   setLens('aero'); await settle(300);
   const cardEl = app.right.querySelector('.v-card'); const was = cardEl.classList.contains('collapsed');

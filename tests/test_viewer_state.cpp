@@ -264,6 +264,25 @@ TFC_TEST(a_vehicle_with_its_flaps_flush_flies_exactly_as_one_without_them_and_a_
   CHECK(!(lc.f_aero.x == lb.f_aero.x && lc.f_aero.y == lb.f_aero.y && lc.f_aero.z == lb.f_aero.z));
 }
 
+TFC_TEST(viewer_pose_carries_the_poses_of_other_bodies_and_says_when_a_stage_is_caught_or_landed) {
+  sim::VehicleFile vf = load("two_stage_launcher.json");
+  sim::Vehicle6 veh(vf.params, vf.scenario);
+  sim::Vehicle6 other(vf.params, vf.scenario);
+  sim::PoseExtra x;
+  sim::Json j;
+  std::string err;
+  CHECK(sim::parse_json(sim::viewer_pose_json(veh, 0.0, x), j, err));
+  CHECK(j.find("others") == nullptr);                                         // none: nothing is said of them
+  CHECK(get(j, "cgt").number == 0.0 && get(j, "lnd").number == 0.0 && get(j, "crash").number == 0.0);
+  x.others = "[{\"name\":\"booster\",\"stage\":0,\"pose\":" + sim::viewer_pose_json(other, 0.0, sim::PoseExtra{}) + "}]";
+  CHECK(sim::parse_json(sim::viewer_pose_json(veh, 0.0, x), j, err));
+  CHECK(get(j, "others").items.size() == 1U);
+  const sim::Json& o = get(j, "others").items[0];
+  CHECK(get(o, "name").text == "booster" && get(o, "stage").number == 0.0);
+  CHECK(get(get(o, "pose"), "eng").items.size() == get(j, "eng").items.size());   // a whole pose of its own, in the same layout
+  CHECK(get(get(o, "pose"), "r").items.size() == 3U);
+}
+
 TFC_TEST(viewer_pose_reference_vehicle_and_every_example) {
   const char* files[] = {"reference.json", "sounding_rocket.json", "spacecraft.json", "launcher_dynamics.json"};
   for (const char* f : files) {

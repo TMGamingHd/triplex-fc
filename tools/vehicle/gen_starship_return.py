@@ -69,6 +69,10 @@ def plant():
             "guided": True, "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
     surfaces = [{"name": "grid fin %d" % (i + 1), "stage": 0, "kind": "grid_fin", "x_hinge_m": 61.8, "azimuth_deg": az, "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68,
                  "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": i, "deployed": False} for i, az in enumerate((0.0, 90.0, 180.0))]   # three, as on Flight 12
+    # the ship's four flaps, as in vehicles/starship.json: lying flush on the skin, no command (they only exist for the 3D viewer to draw until a mission deploys them)
+    for nm, x, az, area, chord, span, cdir in (("aft flap port", 82.7, 80, 37.0, 9.0, 4.6, -1), ("aft flap starboard", 82.7, 280, 37.0, 9.0, 4.6, -1), ("forward flap port", 102.1, 80, 16.0, 6.0, 3.0, 1), ("forward flap starboard", 102.1, 280, 16.0, 6.0, 3.0, 1)):
+        surfaces.append({"name": nm, "stage": 1, "kind": "flap", "x_hinge_m": x, "azimuth_deg": az, "radius_m": 4.5, "area_m2": area, "chord_m": chord, "span_m": span, "chord_dir": cdir,
+                         "stow_deg": 0, "min_deg": 0, "max_deg": 90, "rate_dps": 30, "lag_s": 0.05, "channel": -1})
     return {"name": "starship-v3-class-return",
             "description": "Starship V3 class stack that flies its whole mission on the flight computers: ascent, hot staging, orbital insertion of the ship (PEG), and the booster's flip, boost-back, grid-fin entry, landing burn and catch.",
             "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "ideal_roll_control": False, "landing_model": True, "max_substep_s": 0.004},
@@ -81,7 +85,7 @@ def mission():
     ship_wet = 100000 + 1600000 + 37500   # ship dry + propellant + payload
     booster_dry = 275000
     return {
-        "site": {"offset_z_m": 45, "arm_height_m": 70, "capture_radius_m": 1.5},
+        "site": {"offset_y_m": 0, "offset_z_m": 400, "arm_height_m": 70, "capture_radius_m": 1.5},
         "ignition_margin": 1.2,
         "landing": {"sink_ms": 0.5, "tilt_max_deg": 40, "tilt_final_deg": 2.5, "final_height_m": 25, "engine_thrust_n": 2449000, "engine_min_throttle": 0.4, "propellant_kg": 25000, "decel_plan_ms2": 50},
         "air": {"ballistic_coefficient_kg_m2": 7000, "scale_height_m": 7200},

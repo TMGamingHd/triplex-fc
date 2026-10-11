@@ -39,7 +39,7 @@ export default {
   update(app, pose, d, dt) {
     const S = this.s, s = S.st, { spec, world } = app, air = pose.air || us1976(pose.alt), [T, p, rho, a] = air;
     const wind = spec.airAt(pose.alt)[4], std = us1976(pose.alt);
-    const mu = viscosity(T), lam = mu / p * Math.sqrt(Math.PI * 287.053 * T / 2), kn = lam / spec.diameter, H = 287.053 * T / 9.80665;
+    const mu = viscosity(T), lam = mu / p * Math.sqrt(Math.PI * 287.053 * T / 2), kn = lam / spec.extent(pose.stg, pose.pay).diameter, H = 287.053 * T / 9.80665;
     s.p.set(p >= 100 ? p.toFixed(0) : p >= 1 ? p.toFixed(1) : p.toExponential(1)); s.rho.set(rho >= 0.01 ? rho.toFixed(4) : rho.toExponential(2)); s.T.set(T.toFixed(1)); s.a.set(a.toFixed(0)); s.wind.set(wind.toFixed(1)); s.mu.set((mu * 1e6).toFixed(2));
     s.lam.set(lam < 0.01 ? lam.toExponential(1) : lam.toFixed(lam < 1 ? 3 : 1)); s.kn.set(kn < 0.001 ? kn.toExponential(1) : kn.toFixed(kn < 1 ? 3 : 1)); s.H.set((H / 1000).toFixed(1)); s.pr.set((100 * p / 101325).toFixed(p / 101325 < 0.01 ? 4 : 2));
     const drho = 100 * (rho / std[2] - 1), dT = T - std[0];
