@@ -35,6 +35,7 @@ Standard library only (written and tested on Python 3.14; `pyserial` only if you
 | `--viewer FILE` | Open the 3D viewer on a pose file (`tfc_fly VEHICLE --pose FILE`, `.pose.jsonl` or `.gz`): no bus and no rig needed; the URL printed is the viewer's |
 | `--truth-port N` | The UDP port the simulator's telemetry arrives on (default 45679; the rig the console starts is told it; give an externally started `tfc_simd --telemetry` the same) |
 | `--no-open` | Do not open the page in the browser |
+| `--no-isolate` | Do not keep your other programs off the rig's CPUs while it runs. By default, while a rig runs, the rig is pinned to the first half of the physical cores and your other processes are moved to the rest, then put back (ADR-040; the Rig tab's *Host load* card switches it too) |
 | `--no-rig` | Do not offer to start and stop the rig's processes: watch and command only |
 | `--repo DIR` | The repository the binaries, vehicle files and logs are in (default: this one) |
 
@@ -61,7 +62,7 @@ The **REC** button in the header records the bus (and the nodes' consoles and th
 * **A profile says "not built"**: the Rig tab names the missing binary. The launch images are `tools/bench/sil_triplex.sh --build --launch` (needs Zephyr: `firmware/README.md`); `tfc_simd` and `tfc_fly` are `cmake --build build/host`.
 * **The page says "No session token"**: open the address the console printed (it ends in `?token=...`). The console keeps the token for the tab; a new tab needs the full address.
 * **Commands say "no answer"**: no node console is attached, so the console cannot see the answer. Start the rig from the Rig tab (its processes' consoles are attached automatically), or attach the Nucleos' serial consoles there.
-* **A node latched out on its own**: the virtual rig is five real-time processes with 10 ms deadlines; a compile, a browser start-up or a video call can cost a frame. The Voting tab shows it and the Events tab has the reasons. See `docs/design/CONSOLE.md` section 8.
+* **A node latched out on its own**: the virtual rig is five real-time processes with 10 ms deadlines and no real-time priority; a compile, a browser start-up, a WebGL page or a video call can cost a frame, and the computers then latch one another out (measured, and the reason for the isolation in ADR-040, which keeps your other programs off the rig's CPUs while it runs, unless `--no-isolate`; the Rig tab's *Host load* card says whether it is on). The Voting tab shows it and the Events tab has the reasons. See `docs/design/CONSOLE.md` section 8.
 * **Commands are refused for a counter**: the console shares `~/.cache/tfc_peers/ground_counter` with `tfc_peers command`. A flight computer accepts a counter 1 to 32 ahead of the last it accepted; after restarting the rig the first command is accepted whatever it is.
 
 ## Layout
@@ -76,6 +77,7 @@ console/
     recorder.py            a session as the bus plus a sidecar
     commands.py            the operator's signed ground frames
     rig.py                 start, watch and break the rig's processes
+    isolate.py             keeps your other programs off the rig's CPUs while it runs (ADR-040)
     faultlab.py            faults through tfc_peers run --control
     vehicles.py            vehicle files, knobs, validate, preview
     hardware.py            serial: the consoles, the supervisor, the Pico

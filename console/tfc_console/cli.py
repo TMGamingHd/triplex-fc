@@ -35,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pose-port", type=int, default=PoseSource.DEFAULT_PORT, help=f"UDP port the 3D viewer's poses are received on (default {PoseSource.DEFAULT_PORT}; give `tfc_simd --viewer` the same). The rig the console starts is told it")
     p.add_argument("--viewer", metavar="FILE", help="open the 3D viewer on a pose file (tfc_fly VEHICLE --pose FILE; .pose.jsonl or .pose.jsonl.gz): no bus, no rig needed")
     p.add_argument("--no-open", action="store_true", help="do not open the page in the browser")
+    p.add_argument("--no-isolate", action="store_true", help="do not keep your other programs off the CPUs the rig runs on while it runs (the Rig tab can still switch it on; docs/design/CONSOLE.md section 8)")
     p.add_argument("--no-rig", action="store_true", help="do not offer to start and stop the rig's processes (the page can only watch and command)")
     p.add_argument("--repo", default=str(ROOT), help="the repository the binaries, vehicle files and logs are in (default: this one)")
     return p
@@ -64,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     app = App(hub, WEB, args.host, args.port, args.token)
     register_core(app, mgr)
     from . import services                       # the parts that act on the rig; imported here so a read-only console (`--replay`) does not need them
-    svc = services.install(app, hub, mgr, truth, repo, rig=not args.no_rig, pose=pose)
+    svc = services.install(app, hub, mgr, truth, repo, rig=not args.no_rig, pose=pose, isolate=not args.no_isolate)
     yield_cpu()
     hub.start()
     app.on_close.append(lambda: (mgr.disconnect(), truth.stop(), pose.stop(), hub.stop()))

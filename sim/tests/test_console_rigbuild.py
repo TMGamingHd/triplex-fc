@@ -230,6 +230,17 @@ class TheRoutes(Fixture):
             finally:
                 e.close()
 
+    def test_the_isolation_is_offered_on_the_rig_tab_and_can_be_switched(self):
+        status, body = self.call("/api/rig/isolate", {"on": True})
+        snap = self.hub.extra["rig"]()["isolation"]
+        if snap["available"]:
+            self.assertEqual((status, body["isolation"]["wanted"]), (200, True))       # no rig is running, so nothing has been moved yet
+            self.assertFalse(body["isolation"]["engaged"])
+            self.assertFalse(self.call("/api/rig/isolate", {"on": False})[1]["isolation"]["wanted"])
+        else:
+            self.assertEqual(status, 400)
+            self.assertIn("share", body["error"])
+
     def test_choosing_a_vehicle_builds_it_and_the_snapshot_and_the_listing_follow(self):
         status, body = self.call("/api/rig/vehicle")
         self.assertEqual((status, body["active"]["name"]), (200, "reference"))
