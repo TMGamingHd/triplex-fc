@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Aerodynamic control surfaces and parachutes (host only). See docs/design/AERODYNAMICS.md section 9.
 //
-// A surface is a flat plate (a flap) or a lattice that acts as one (a grid fin) on a hinge. A grid fin is a plate in the plane of the axis and the radius (chord along the axis, span along the radius), hinged on a shaft along the radius, whose
-// webs are turned toward the stream by the deflection. Deflected, it turns the air that meets it and the force it feels, at its own place on the vehicle, is the
+// A surface is a flat plate (a flap) or a lattice that acts as one (a grid fin) on a hinge. A grid fin is a lattice whose face is across the axis (`chord` along the tangent, `span` along the radius: the frame area the coefficients are on), with its cells
+// opening along the axis, hinged on a shaft along the radius, whose cells are turned toward the tangent by the deflection. Deflected, it turns the air that meets it and the force it feels, at its own place on the vehicle, is the
 // vehicle's control: the ship of a Starship-class stack steers through the atmosphere on its four flaps, the booster on its grid fins, a rocket with canards on those. The force is that of a plate in
 // a stream:
 //   * a normal force on the face that meets the air: the linear lift of the planform at small angles and the cross-flow of a flat plate at large ones, C_n(alpha) = CNalpha sin(alpha) cos(alpha) + Cd90 sin^2(alpha),
