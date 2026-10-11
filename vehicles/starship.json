@@ -1,46 +1,48 @@
-// A two-stage fully reusable super-heavy launcher of the Starship class, built from PUBLICLY REPORTED round numbers (a 9 m stainless-steel stack about 123 m tall, a 33-engine booster, a six-engine
-// ship, methane and liquid oxygen, hot staging). It is NOT SpaceX data and not a model of any flight article: the masses, thrusts and tank sizes are estimates chosen to be of the right order, so that the
-// simulator and the 3D viewer (docs/design/VIEWER.md) have a vehicle of that class to fly. Nothing in the project's claims depends on its numbers. docs/design/VEHICLE_SPEC.md says what every field means.
-// Booster: 33 engines of 2.26 MN at sea level (thrust_vac = sea-level thrust + 101325 Pa x exit area), 13 of them on the gimbal (the inner three and the ring of ten), the outer 20 fixed. Ship: three
+// A two-stage fully reusable super-heavy launcher of the Starship V3 (Block 3) class, built from PUBLICLY REPORTED numbers (9 Oct 2026: Super Heavy 72.3 m with 33 Raptor 3 of 280 tf; ship about 52 m with six
+// Raptor 3, three sea-level and three vacuum; stack 124.4 m; about 3,400 t of propellant in the booster and 1,600 t in the ship; hot staging at T+144 s on Flight 12, 22 May 2026). It is NOT SpaceX data and not a
+// model of any flight article: every dry mass, the vacuum engine's thrust, the tank split and the pitch program are my estimates (docs/design/VIEWER.md section 7 lists each number and where it comes from), so that
+// the simulator and the 3D viewer have a vehicle of that class to fly. Nothing in the project's claims depends on its numbers. docs/design/VEHICLE_SPEC.md says what every field means.
+// Booster: 33 engines of 2.746 MN at sea level (280 tf; thrust_vac = sea-level thrust + 101325 Pa x exit area), 13 of them on the gimbal (the inner three and the ring of ten), the outer 20 fixed. Ship: three
 // sea-level engines that gimbal and three vacuum engines (larger nozzle, higher Isp) that gimbal too. Fly it with the vehicle's own sensors, as the other large vehicles.
-// The ascent follows a pitch program (design.program: the angle of the long axis from the vertical against time) shaped like a heavy launcher's: nearly vertical for 14 s, then tipping over to 55 degrees at hot staging and
-// 72 degrees by shut-down (the tilts the flight computers steer are about two pad axes and lose their meaning close to the horizontal, so the program stops short of it). Fly it:
-//   build/host/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 300 --pose starship.pose.jsonl
+// The ascent follows a pitch program (design.program: the angle of the long axis from the vertical against time) shaped like a heavy launcher's: vertical for 10 s, then tipping over to 64 degrees at staging and
+// 85 degrees (nearly horizontal) at the ship's cut-off at 491 s, the suborbital trajectory of Flight 12 and not an orbit. Fly it with a pad phase long enough for the flight computers to calibrate their gyros
+// (10 s of rest; the project's examples use 1500 frames, 15 s): with 300 frames the gyro bias is not removed and the yaw drifts to about 10 degrees by the end, which is the sensor's bias and not the vehicle's.
+//   build/host/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 1500 --pose starship.pose.jsonl
 {
-  "name": "starship-class",
-  "description": "Two stages, 9 m diameter, 123 m, about 4.9 kt at lift-off, 33 + 6 engines, methane and liquid oxygen, hot staging. Public round numbers, not SpaceX data.",
+  "name": "starship-v3-class",
+  "description": "Starship V3 (Block 3) class: two stages, 9 m diameter, 124 m, about 5.4 kt at lift-off, 33 Raptor 3 + 6 Raptor 3, methane and liquid oxygen, hot staging. Public numbers and my estimates, not SpaceX data.",
   "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08},
   "aero": {"diameter_m": 9.0, "roughness": 1.2},
   "stages": [
-    {"name": "booster", "dry_mass_kg": 275000, "x_start_m": 0, "length_m": 71, "radius_m": 4.5, "inertia_factor": 0.55, "x_cg_dry_m": 24,
+    {"name": "booster", "dry_mass_kg": 220000, "x_start_m": 0, "length_m": 72.3, "radius_m": 4.5, "inertia_factor": 0.55, "x_cg_dry_m": 25,
      "tanks": [
-       {"propellant_kg": 750000, "x_bottom_m": 3.0, "radius_m": 4.4, "density_kg_m3": 424},       // methane, low
-       {"propellant_kg": 2450000, "x_bottom_m": 32.5, "radius_m": 4.4, "density_kg_m3": 1141}     // liquid oxygen, above it
+       {"propellant_kg": 748000, "x_bottom_m": 3.0, "radius_m": 4.4, "density_kg_m3": 424},       // methane, low (22 % of the propellant: oxidiser to fuel 3.55)
+       {"propellant_kg": 2652000, "x_bottom_m": 32.5, "radius_m": 4.4, "density_kg_m3": 1141}     // liquid oxygen, above it
      ],
-     "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 71, "d_aft_m": 9.0, "d_fore_m": 9.0}],
-     "separate_on_burnout": true, "separate_delay_s": 3.0, "separation_dv_ms": 1.5,
-     "throttle": [[0, 0.92], [45, 0.92], [60, 0.72], [95, 0.72], [110, 0.92]]},   // down through max-Q
-    {"name": "ship", "dry_mass_kg": 130000, "x_start_m": 71, "length_m": 52, "radius_m": 4.5, "inertia_factor": 0.55, "x_cg_dry_m": 92,
+     "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 72.3, "d_aft_m": 9.0, "d_fore_m": 9.0}],
+     "separate_on_burnout": true, "separate_delay_s": 2.0, "separation_dv_ms": 1.5,
+     "throttle": [[0, 0.98], [38, 0.98], [52, 0.78], [85, 0.78], [100, 0.98]]},   // down through max-Q (45 s on Flight 12)
+    {"name": "ship", "dry_mass_kg": 200000, "x_start_m": 72.3, "length_m": 52.1, "radius_m": 4.5, "inertia_factor": 0.55, "x_cg_dry_m": 93.5,
      "tanks": [
-       {"propellant_kg": 280000, "x_bottom_m": 76.0, "radius_m": 4.4, "density_kg_m3": 424},
-       {"propellant_kg": 920000, "x_bottom_m": 87.5, "radius_m": 4.4, "density_kg_m3": 1141}
+       {"propellant_kg": 352000, "x_bottom_m": 76.3, "radius_m": 4.4, "density_kg_m3": 424},
+       {"propellant_kg": 1248000, "x_bottom_m": 90.4, "radius_m": 4.4, "density_kg_m3": 1141}
      ],
-     "sections": [{"kind": "tube", "x_start_m": 71, "length_m": 34, "d_aft_m": 9.0, "d_fore_m": 9.0},
-                  {"kind": "nose", "x_start_m": 105, "length_m": 18, "d_aft_m": 9.0, "d_fore_m": 0, "shape": "ogive"}],
-     "ignite_time_s": 160.5, "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
+     "sections": [{"kind": "tube", "x_start_m": 72.3, "length_m": 36.0, "d_aft_m": 9.0, "d_fore_m": 9.0},
+                  {"kind": "nose", "x_start_m": 108.3, "length_m": 16.1, "d_aft_m": 9.0, "d_fore_m": 0, "shape": "ogive"}],
+     "ignite_time_s": 142.4, "throttle": [[0, 0.85]], "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
   ],
   "engines": [
-    // booster: the inner three and the ring of ten on the gimbal, the outer twenty fixed; 2.26 MN at sea level, 1.33 m^2 exit area, Isp 347 s in vacuum
-    {"stage": 0, "count": 3,  "position_m": [0, 0, 0], "ring_radius_m": 0.95, "ring_start_deg": 90, "thrust_vac_n": 2395000, "exit_area_m2": 1.33, "isp_vac_s": 347, "rise_s": 0.8, "tail_s": 0.8},
-    {"stage": 0, "count": 10, "position_m": [0, 0, 0], "ring_radius_m": 2.25, "ring_start_deg": 0,  "thrust_vac_n": 2395000, "exit_area_m2": 1.33, "isp_vac_s": 347, "rise_s": 0.8, "tail_s": 0.8},
-    {"stage": 0, "count": 20, "position_m": [0, 0, 0], "ring_radius_m": 3.85, "ring_start_deg": 0,  "thrust_vac_n": 2395000, "exit_area_m2": 1.33, "isp_vac_s": 347, "rise_s": 0.8, "tail_s": 0.8, "gimbal": false},
-    // ship: three sea-level engines in the middle, three vacuum engines on a ring around them
-    {"stage": 1, "count": 3, "position_m": [71, 0, 0], "ring_radius_m": 0.95, "ring_start_deg": 90,  "thrust_vac_n": 2395000, "exit_area_m2": 1.33, "isp_vac_s": 347, "rise_s": 0.8, "tail_s": 0.8},
-    {"stage": 1, "count": 3, "position_m": [71, 0, 0], "ring_radius_m": 2.55, "ring_start_deg": 30,  "thrust_vac_n": 2550000, "exit_area_m2": 4.5,  "isp_vac_s": 380, "rise_s": 0.8, "tail_s": 0.8}
+    // Raptor 3: 280 tf = 2.746 MN at sea level; thrust_vac = that + 101325 Pa x 1.33 m^2 exit area; Isp 366 s in vacuum gives the 349 s at sea level that is reported (350 s)
+    {"stage": 0, "count": 3,  "position_m": [0, 0, 0], "ring_radius_m": 0.95, "ring_start_deg": 90, "thrust_vac_n": 2881000, "exit_area_m2": 1.33, "isp_vac_s": 366, "rise_s": 0.8, "tail_s": 0.8},
+    {"stage": 0, "count": 10, "position_m": [0, 0, 0], "ring_radius_m": 2.25, "ring_start_deg": 0,  "thrust_vac_n": 2881000, "exit_area_m2": 1.33, "isp_vac_s": 366, "rise_s": 0.8, "tail_s": 0.8},
+    {"stage": 0, "count": 20, "position_m": [0, 0, 0], "ring_radius_m": 3.85, "ring_start_deg": 0,  "thrust_vac_n": 2881000, "exit_area_m2": 1.33, "isp_vac_s": 366, "rise_s": 0.8, "tail_s": 0.8, "gimbal": false},
+    // ship: three sea-level Raptor 3 in the middle, three vacuum Raptor 3 (larger nozzle: the thrust is Raptor 2 vacuum's 2.55 MN scaled by 280/230, an estimate) on a ring around them
+    {"stage": 1, "count": 3, "position_m": [72.3, 0, 0], "ring_radius_m": 0.95, "ring_start_deg": 90,  "thrust_vac_n": 2881000, "exit_area_m2": 1.33, "isp_vac_s": 366, "rise_s": 0.8, "tail_s": 0.8, "cutoff_time_s": 491},
+    {"stage": 1, "count": 3, "position_m": [72.3, 0, 0], "ring_radius_m": 2.55, "ring_start_deg": 30,  "thrust_vac_n": 3100000, "exit_area_m2": 4.5,  "isp_vac_s": 380, "rise_s": 0.8, "tail_s": 0.8, "cutoff_time_s": 491}
   ],
   "payloads": [
-    {"name": "payload", "mass_kg": 100000, "x_m": 108}
+    {"name": "payload", "mass_kg": 37500, "x_m": 112}       // Flight 12's twenty Starlink V3 mass simulators and two modified Starlink V2, about 37.5 t
   ],
-  "design": {"t_end_s": 450, "program": [[0,0],[14,0],[40,9],[80,28],[120,45],[160,55],[200,60],[260,64],[330,68],[400,71],[450,72]],
+  "design": {"t_end_s": 491, "program": [[0,0],[10,0],[30,14],[60,32],[100,52],[144,64],[200,72],[280,79],[380,83],[491,85]],
              "gains": {"every_s": 0, "wn": 0.5, "zeta": 0.8, "ki_over_kp": 0.15, "b_min": 0.02}}
 }

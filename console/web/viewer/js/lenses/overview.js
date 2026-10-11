@@ -4,6 +4,7 @@ import { Chart, legend } from '../../../js/charts.js';
 import { h, stat, statGrid, card, seg, toggle, slider, select, fmt, store, provenance } from '../ui.js';
 import { CAMERAS } from '../cam.js';
 import { STYLES } from '../models/vehicle.js';
+import { DRESS } from '../models/starship.js';
 import { AXES } from '../models/gltf.js';
 
 export default {
@@ -40,10 +41,19 @@ export default {
       h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Nose along'), select(AXES, gl.axis, (v) => { gl.axis = v; again(); }, 'the vehicle\'s axis in the file')),
       toggle('Scale to the vehicle file\'s length', gl.fitLength, (v) => { gl.fitLength = v; again(); }), slider('Roll', -180, 180, 5, gl.roll, (v) => { gl.roll = v; app.saveGltf(); }, (v) => v + '°'), slider('Move along', -20, 20, 0.5, gl.offset, (v) => { gl.offset = v; app.saveGltf(); }, (v) => v + ' m'),
       h('button', { class: 'btn', type: 'button', onclick: again }, 'Apply'), h('p', { class: 'note' }, 'Nodes named stage1, stage2… go with that stage and leave when it separates; the engines, plumes and every lens overlay come from the vehicle file, not from the picture.'));
+    // the Starship's details: a choice of the viewer (the vehicle file has no grid fins, the simulator's aerodynamics do not use them): Block 3 as reported by default, Block 2 one click away
+    const dr = app.dress, redo = () => { app.saveDress(); app.rebuild(); };
+    S.dress = h('div', { id: 'v-dress' },
+      h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Version'), seg(Object.entries(DRESS).map(([k, v]) => [k, v.name]), Object.entries(DRESS).find(([, v]) => v.fins === dr.fins && v.finScale === dr.finScale && v.finDrop === dr.finDrop)?.[0] ?? '', (k) => { Object.assign(dr, DRESS[k]); redo(); }, 'Starship version')),
+      slider('Grid fins', 0, 6, 1, dr.fins, (v) => { dr.fins = v; }, (v) => v + ''), slider('Fin size', 0.6, 2, 0.02, dr.finScale, (v) => { dr.finScale = v; }, (v) => '×' + v.toFixed(2)),
+      slider('Fins below the ring', 0, 14, 0.5, dr.finDrop, (v) => { dr.finDrop = v; }, (v) => v + ' m'), slider('Flap size', 0.6, 1.6, 0.05, dr.flapScale, (v) => { dr.flapScale = v; }, (v) => '×' + v.toFixed(2)),
+      slider('Hot-stage ring', 1, 6, 0.1, dr.ringHeight, (v) => { dr.ringHeight = v; }, (v) => v.toFixed(1) + ' m'), toggle('Catch pins', dr.pins, (v) => { dr.pins = v; }),
+      h('button', { class: 'btn', type: 'button', id: 'v-dress-apply', onclick: redo }, 'Apply'),
+      h('p', { class: 'note' }, 'Block 3 as reported: three grid fins, each 50 % larger in area than Block 2\'s (×1.22 in each direction here), set lower on the booster. These are a picture of public descriptions: the vehicle file, and so the physics, does not have them.'));
     const look = [
       h('div', { class: 'v-row' }, camSeg),
       h('p', { class: 'note v-camhint' }, 'Drag to turn, wheel to zoom, right-drag to slide along the vehicle. Keys: 1–6 lenses, C next camera, Space pause, H hide the panels.'),
-      h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Model'), styles), S.import,
+      h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Model'), styles), S.import, (app.styleName === 'starship' || (app.styleName === 'auto' && /starship/i.test(app.spec.name || ''))) ? S.dress : null,
       slider('Sun elevation', -10, 90, 1, st.sunElev, (v) => { st.sunElev = v; store.set('v.sunEl', v); }, (v) => v + '°'),
       slider('Sun bearing', 0, 359, 1, st.sunBear, (v) => { st.sunBear = v; store.set('v.sunBear', v); }, (v) => v + '°'),
       slider('Cloud cover', 0, 1, 0.05, st.cloud, (v) => { st.cloud = v; store.set('v.cloud', v); }, (v) => Math.round(v * 100) + ' %'),

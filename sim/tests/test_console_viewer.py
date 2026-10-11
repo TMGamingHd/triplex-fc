@@ -559,7 +559,7 @@ class TheRealSimulator(unittest.TestCase):
             self.assertIn("wrote the poses", r.stdout, r.stdout + r.stderr)
             lines = out.read_text().splitlines()
             spec = json.loads(lines[0])
-            self.assertEqual((spec["k"], spec["name"]), ("spec", "starship-class"))
+            self.assertEqual((spec["k"], spec["name"]), ("spec", "starship-v3-class"))
             self.assertEqual(len(spec["vehicle"]["engines"]), 39)                  # 33 + 6: the rings are expanded, an index in a pose is an index in this list
             self.assertEqual(len(spec["vehicle"]["stages"]), 2)
             self.assertGreater(len(spec["air"]["density"]), 100)
