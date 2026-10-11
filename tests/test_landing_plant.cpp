@@ -686,7 +686,8 @@ TFC_TEST(aero_the_blend_between_the_models_is_continuous_in_mach) {
   const sim::Params p = shaped_body(true);
   for (const double alpha_deg : {5.0, 40.0, 90.0}) {
     double last_y = load_at(p, 2.0, alpha_deg).f_aero.y / load_at(p, 2.0, alpha_deg).dynamic_pressure;
-    for (double m = 2.1; m <= 7.0; m += 0.1) {
+    for (int step = 1; step <= 49; ++step) {   // (Mach 2.1 to 6.9 in tenths)
+      const double m = 2.0 + (0.1 * step);
       const sim::Loads l = load_at(p, m, alpha_deg);
       const double y = l.f_aero.y / l.dynamic_pressure;
       CHECK(std::fabs(y - last_y) < 0.12 * (std::fabs(last_y) + 1.0));   // no jump larger than a few percent per tenth of a Mach number

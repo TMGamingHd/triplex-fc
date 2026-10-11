@@ -642,11 +642,11 @@ TFC_TEST(missionfile_a_plant_that_cannot_be_built_is_refused_for_each_reason) {
   CHECK(f != nullptr);
   if (f != nullptr) {
     const std::string bad = with(R"("parachutes": [{"drag_area_m2": 0}])");
-    std::fwrite(bad.data(), 1U, bad.size(), f);
-    std::fclose(f);
+    const std::size_t wrote = std::fwrite(bad.data(), 1U, bad.size(), f);
+    CHECK(std::fclose(f) == 0 && wrote == bad.size());
     errors.clear();
     CHECK(!sim::load_vehicle_file(path, v, errors) && !errors.empty() && errors[0].find(path) == 0U);
-    std::remove(path.c_str());
+    CHECK(std::remove(path.c_str()) == 0);
   }
 }
 
