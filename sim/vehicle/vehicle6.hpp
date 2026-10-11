@@ -1264,14 +1264,15 @@ class Vehicle6 {
       if (!active_[static_cast<std::size_t>(sf.stage)] || (!surf_deployed_[i] && sf.kind == SurfaceKind::GridFin)) {
         continue;   // (a grid fin folded against the skin does nothing)
       }
-      if (sf.kind == SurfaceKind::Flap && std::fabs(surf_pos_[i]) < 0.05) {
+      if (sf.kind == SurfaceKind::Flap && !sf.axial_hinge && std::fabs(surf_pos_[i]) < 0.05) {
         continue;   // (a flap lying flush is part of the skin: the body's loads already count that area, and four of them cost a Starship's every step 40 % more for nothing)
       }
-      const V3 pt = surface_point(sf, surf_pos_[i]);
+      SurfaceCache& sc = surf_cache_[i];
+      sc.update(sf, surf_pos_[i]);
+      const V3 pt = sc.point;
       const V3 rc{pt.x - mp.x_cg, pt.y, pt.z};
       const V3 v_air = vrel + cross(s.w, rc);   // the velocity of the surface's own point through the air
-      const SurfaceFrame fr = surface_frame(sf, surf_pos_[i]);
-      const SurfaceLoad sl = surface_load(sf, surf_pos_[i], v_air, air.density, air.sound, stream_fraction(vrel, fr.radial));
+      const SurfaceLoad sl = surface_load_with(sf, sc.frame, pt, surf_pos_[i], v_air, air.density, air.sound, stream_fraction(vrel, sc.frame.radial));
       l.f_aero = l.f_aero + sl.force;
       l.m_aero = l.m_aero + cross(rc, sl.force);
     }
@@ -2122,6 +2123,7 @@ class Vehicle6 {
   uint64_t start_rng_ = 1U;
   std::array<double, kMaxSurfaces> surf_pos_{};
   std::array<bool, kMaxSurfaces> surf_deployed_{};
+  mutable std::array<SurfaceCache, kMaxSurfaces> surf_cache_{};   // the frame and the point of each surface at the deflection it was last asked at
   std::array<double, kMaxParachutes> chute_open_{};   // the time it was released (< 0: not yet)
   bool legs_out_ = false;
   bool launched_ = false;

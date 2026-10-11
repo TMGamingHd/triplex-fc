@@ -12,7 +12,7 @@ namespace sim {
 
 struct PhaseSpec {
   std::string name;
-  std::string kind = "hold";        // hold, program, peg, coast, boostback, glide, landing, chute, done
+  std::string kind = "hold";        // hold, program, peg, coast, boostback, glide, belly, landing, chute, done
   std::string hold = "inertial";    // for a coast: inertial, prograde, retrograde, radial, fixed, retro_horizontal, pro_horizontal
   std::string end_kind = "never";   // never, time_s, speed_ms, apoapsis_after_s, altitude_below_m, altitude_above_m, cutoff, mass_below_kg, aligned_deg, touchdown
   double end_value = 0.0;
@@ -47,6 +47,12 @@ struct PhaseSpec {
   double gate_height_m = 3600.0;
   double brake_max_deg = 25.0;      // the most the tilt adds when the fall is too fast by its own speed or more
   double alpha_brake_deg = 0.0;     // a steady angle of attack toward the site while gliding: extra drag, and the lift that goes with it
+  // belly (an entry belly first, steered by the angle of attack: alpha_max_deg and gain_deg_per_km above are its largest angle and its gain)
+  double alpha_deg = 70.0;          // the nominal angle between the body axis and the velocity, nose raised
+  double alpha_min_deg = 50.0;      // the smallest the steering lets it be (the most lift)
+  double bank_gain_deg_per_km = 0.0;  // the bank that steers across the ground track: degrees of roll about the velocity per kilometre of predicted miss across it
+  double bank_max_deg = 0.0;        // the most it banks (0: it does not)
+  double beta_kg_m2 = 0.0;          // the ballistic coefficient the prediction uses in this phase (0: the tables'): a belly entry's drag is 30 times a tail-first fall's
   // landing: the groups that run for each of the numbers of engines the burn may use, fewest first ("one", "two", "three", "many": the first three engines, then all thirteen of the inner ring)
   std::array<std::vector<int>, 4> landing_groups;
   // chute
@@ -59,6 +65,7 @@ struct MixerSpec {
   bool gimbal = true;               // the gimbal pitch and yaw commands carry the pitch and yaw demands (they also drive the thrusters that fire in proportion to them)
   bool roll_thrusters = true;       // the roll demand goes to the roll thrusters
   std::vector<int> surfaces;        // surface channels used: the demands are shared among them by a minimum-effort allocation, designed from the vehicle
+  std::array<double, 4> trim_deg{};  // the deflection of each channel at zero demand (a flap held at 60 degrees in a belly flop steers about that, not about 0): the demands are deflections about it
 };
 
 struct MissionSpec {
@@ -80,6 +87,7 @@ struct MissionSpec {
   double engine_thrust_n = 2.45e6;  // one landing engine at full throttle
   double engine_min_throttle = 0.4;
   double decel_plan_ms2 = 15.0;     // the net deceleration (beyond holding up the weight) the burn is planned on: it is lit when the stopping distance at this deceleration reaches the height
+  double main_landing_propellant_kg = 0.0;  // the same for the main body when it is the one that lands (a ship coming home): its top stage's catch height is built from it (0: the main body does not land)
   double landing_propellant_kg = 25000.0;   // what is left in the stage at the catch, for where its centre of gravity is then
   // the air for the glide's predictor
   double ballistic_coefficient = 7000.0;   // kg/m^2, vehicle in the attitude it descends in

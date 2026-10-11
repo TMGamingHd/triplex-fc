@@ -80,6 +80,16 @@ TFC_TEST(viewer_spec_is_json_and_matches_the_vehicle) {
   CHECK(near_abs(j.find("radius_m")->number, veh.planet().radius, 1.0));
 }
 
+TFC_TEST(viewer_spec_carries_the_centre_of_mass_the_vehicle_has_at_t_zero) {
+  sim::VehicleFile vf = load("two_stage_launcher.json");
+  sim::Vehicle6 veh(vf.params, vf.scenario);
+  sim::Json spec;
+  std::string err;
+  CHECK(sim::parse_json(sim::viewer_spec_json(vf, veh), spec, err));
+  CHECK(near_abs(get(spec, "cg0_m").number, veh.mass_props().x_cg, 1e-3));
+  CHECK(get(spec, "cg0_m").number > 1.0);
+}
+
 TFC_TEST(viewer_pose_is_consistent_with_the_vehicle) {
   sim::VehicleFile vf = load("two_stage_launcher.json");
   vf.scenario.wind_scale = 0.0;                        // no wind: the velocity through the air is the velocity
@@ -207,29 +217,47 @@ TFC_TEST(viewer_pose_marks_a_failed_engine) {
   CHECK(j.find("eng")->items[2].number > 0.9);
 }
 
-TFC_TEST(viewer_pose_carries_the_deflection_of_every_surface_and_the_starship_has_four_flaps_lying_flush) {
+TFC_TEST(viewer_pose_carries_the_deflection_of_every_surface_and_the_starship_has_three_folded_grid_fins_and_four_flaps_standing_out) {
   sim::VehicleFile vf = load("starship.json");
-  CHECK(vf.params.spec.surfaces.size() == 4U);
+  CHECK(vf.params.spec.surfaces.size() == 7U);
+  int aft = 0;
+  int fwd = 0;
+  int fins = 0;
   for (const sim::SurfaceSpec& f : vf.params.spec.surfaces) {
+    CHECK(f.channel < 0);                                                  // none is commanded by this file
+    if (f.kind == sim::SurfaceKind::GridFin) {
+      CHECK(f.stage == 0);                                                 // the booster's
+      CHECK(!f.deployed);                                                  // folded against the skin for the climb
+      ++fins;
+      continue;
+    }
     CHECK(f.kind == sim::SurfaceKind::Flap);
+    CHECK(f.axial_hinge);                                                  // hinged along the body's axis
     CHECK(f.stage == 1);                                                   // the ship's
-    CHECK(f.stow_deg == 0.0);                                              // flush with the skin in the climb
-    CHECK(f.channel < 0);
+    CHECK(f.stow_deg == 90.0);                                             // standing straight out in the climb, edge-on to the stream
     CHECK(f.area > 0.0 && f.chord > 0.0 && f.span > 0.0);
+    CHECK(std::fabs((f.chord * f.span) - f.area) < 0.05 * f.area);         // the plate is chord x span
+    (f.x_hinge < 90.0 ? aft : fwd) += 1;
   }
+  CHECK(fins == 3);
+  CHECK(aft == 2 && fwd == 2);                                             // two large flaps at the tail, two small ones near the nose
+  CHECK(vf.params.spec.stages[0].catch_pin_x > 0.0);                       // where the arms take the booster
   sim::Vehicle6 veh(vf.params, vf.scenario);
   sim::Json spec;
   std::string err;
   CHECK(sim::parse_json(sim::viewer_spec_json(vf, veh), spec, err));
-  CHECK(get(get(spec, "vehicle"), "surfaces").items.size() == 4U);                         // the viewer is given the table it draws them from
+  const sim::Json& surf = get(get(spec, "vehicle"), "surfaces");
+  CHECK(surf.items.size() == 7U);                                          // the viewer is given the table it draws them from
+  CHECK(get(surf.items[3], "axial_hinge").boolean);                        // and how the flaps hinge
   sim::PoseExtra x;
   sim::Json j;
   CHECK(sim::parse_json(sim::viewer_pose_json(veh, 0.0, x), j, err));
-  CHECK(get(j, "surf").items.size() == 4U);
-  for (const sim::Json& d : get(j, "surf").items) {
-    CHECK(near_abs(d.number, 0.0, 1e-9));
+  CHECK(get(j, "surf").items.size() == 7U);
+  for (std::size_t i = 3U; i < 7U; ++i) {
+    CHECK(near_abs(get(j, "surf").items[i].number, 90.0, 1e-9));
   }
   CHECK(get(j, "sdep").type == sim::Json::Type::Number);
+  CHECK(static_cast<unsigned>(get(j, "sdep").number) == 0x78U);            // the four flaps (surfaces 3 to 6) are in the stream, the three folded fins (0 to 2) are not
   // a vehicle without surfaces says nothing of them
   sim::VehicleFile ref = load("reference.json");
   sim::Vehicle6 rv(ref.params, ref.scenario);
@@ -238,30 +266,31 @@ TFC_TEST(viewer_pose_carries_the_deflection_of_every_surface_and_the_starship_ha
   CHECK(rj.find("surf") == nullptr);
 }
 
-TFC_TEST(a_vehicle_with_its_flaps_flush_flies_exactly_as_one_without_them_and_a_standing_flap_changes_the_load) {
+TFC_TEST(a_flap_standing_edge_on_changes_the_climb_only_by_its_friction_and_one_laid_across_the_stream_is_a_brake) {
   sim::VehicleFile with = load("starship.json");
   sim::VehicleFile without = load("starship.json");
   without.params.spec.surfaces.clear();
   sim::Vehicle6 a(with.params, with.scenario);
   sim::Vehicle6 b(without.params, without.scenario);
-  for (int i = 0; i < 6000; ++i) {                                      // 60 s of the climb, through max-Q's approach
+  for (int i = 0; i < 2500; ++i) {                                         // 25 s of the climb: the two are still the same flight to within the flaps' own effect
     a.step(0.01, 0.0, 0.0);
     b.step(0.01, 0.0, 0.0);
   }
   const sim::Loads la = a.current_loads();
   const sim::Loads lb = b.current_loads();
-  CHECK(la.f_aero.x == lb.f_aero.x && la.f_aero.y == lb.f_aero.y && la.f_aero.z == lb.f_aero.z);    // flush: bit for bit the same
-  CHECK(la.m_aero.x == lb.m_aero.x && la.m_aero.y == lb.m_aero.y && la.m_aero.z == lb.m_aero.z);
-  CHECK(a.altitude() == b.altitude());
-  // the same flaps standing 40 degrees out are plates in the stream: the load is not the same
-  with.params.spec.surfaces[0].stow_deg = 40.0;
-  with.params.spec.surfaces[1].stow_deg = 40.0;
+  const double extra = std::fabs(la.f_aero.x) - std::fabs(lb.f_aero.x);
+  CHECK(extra > 0.0);                                                      // the friction of two faces of 4 flaps is real
+  CHECK(extra < 0.15 * std::fabs(lb.f_aero.x));                            // and small: edge-on plates are not a brake
+  CHECK(std::fabs(la.f_aero.y - lb.f_aero.y) < 0.05 * std::fabs(lb.f_aero.x) + 1.0);   // and make no lateral force to speak of
+  // the same flaps turned to 20 degrees (nearly flat on the skin, the free edge round the body) are another thing: the load is not the same
+  with.params.spec.surfaces[3].stow_deg = 20.0;
+  with.params.spec.surfaces[4].stow_deg = 20.0;
   sim::Vehicle6 c(with.params, with.scenario);
-  for (int i = 0; i < 6000; ++i) {
+  for (int i = 0; i < 2500; ++i) {
     c.step(0.01, 0.0, 0.0);
   }
   const sim::Loads lc = c.current_loads();
-  CHECK(!(lc.f_aero.x == lb.f_aero.x && lc.f_aero.y == lb.f_aero.y && lc.f_aero.z == lb.f_aero.z));
+  CHECK(!(lc.f_aero.x == la.f_aero.x && lc.f_aero.y == la.f_aero.y && lc.f_aero.z == la.f_aero.z));
 }
 
 TFC_TEST(viewer_pose_carries_the_poses_of_other_bodies_and_says_when_a_stage_is_caught_or_landed) {

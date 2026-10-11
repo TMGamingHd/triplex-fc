@@ -45,6 +45,7 @@ constexpr uint8_t kGlide = 5U;      // fall engines first, steering by the angle
 constexpr uint8_t kLanding = 6U;    // the landing burn
 constexpr uint8_t kChute = 7U;      // a parachute descent: the events at their altitudes, no attitude control
 constexpr uint8_t kDone = 8U;
+constexpr uint8_t kBelly = 9U;      // an entry belly first, the nose raised to an angle of attack the guidance changes to steer the point where it would come down toward the site (flaps are the control)
 }  // namespace kind
 
 // What ends a phase.
@@ -331,6 +332,8 @@ class Mission {
   void step_coast(const Inputs& in, Output& out) noexcept;
   void step_boostback(const Inputs& in, Output& out) noexcept;
   void step_glide(const Inputs& in, Output& out) noexcept;
+  void step_belly(const Inputs& in, Output& out) noexcept;
+  void reference_toward(Vec3 axis, Vec3 roll_hint) noexcept;
   void step_landing(const Inputs& in, Output& out) noexcept;
   void step_chute(const Inputs& in, Output& out) noexcept;
   [[nodiscard]] double altitude(const Inputs& in) const noexcept { return dm::norm(in.r) - tab_->nav.gravity.radius; }
@@ -432,7 +435,8 @@ inline bool Mission::ended(const Inputs& in) const noexcept {
     const Vec3 upt = dm::unit(pt, Vec3{1.0, 0.0, 0.0});
     const double h = dm::dot(in.r - pt, upt);
     const double v_down = dm::max_(-dm::dot(in.v, upt), 0.0);
-    return h <= ev && h <= descent::PoweredDescent::stopping_height(v_down, tab_->landing.decel_plan, tab_->landing.sink_ms) * tab_->ignition_margin + 1.0;
+    // (the altitude guard: a vehicle on the far side of the planet is "below" the point along its up, and must not light up there)
+    return h <= ev && alt <= ev + catch_height() && h <= descent::PoweredDescent::stopping_height(v_down, tab_->landing.decel_plan, tab_->landing.sink_ms) * tab_->ignition_margin + 1.0;
   }
   if (p.end == end::kTouchdown) {
     // (the burn aims `aim_below_m` under the catch point, so that the pins come down through the arms with the engines still holding the vehicle: the phase ends there, not at the catch point)
@@ -468,6 +472,8 @@ inline Vec3 Mission::hold_direction(const Phase& p, const Inputs& in) const noex
 }
 
 inline void Mission::reference_toward(Vec3 axis) noexcept { q_target_ = att::attitude_from_axes(axis, tab_->plane_normal); }
+
+inline void Mission::reference_toward(Vec3 axis, Vec3 roll_hint) noexcept { q_target_ = att::attitude_from_axes(axis, roll_hint); }
 
 inline void Mission::step_program(const Inputs& in, Output& out) noexcept {
   (void)in;
@@ -612,6 +618,44 @@ inline void Mission::step_glide(const Inputs& in, Output& out) noexcept {
   out.throttle = 0.0F;
 }
 
+// A belly entry. The body axis is held `alpha` degrees from the velocity, raised toward the local vertical, and the belly (the body's +y, the roll the tables' plane normal gives) faces the stream: from orbit that is a nose-up
+// attitude of 60 to 70 degrees, which turns to nearly horizontal as the fall steepens. The angle is the steering: the point where the vehicle would come down (the same predictor the glide and the boost-back use, with the
+// ballistic coefficient of this phase in p[4], 0 for the tables') is compared with the site along the ground track, and a miss short of the site lowers the angle (less drag, more lift: farther) by p[3] degrees per metre,
+// a miss beyond it raises it, between p[1] and p[2] degrees about the nominal p[0]. The surfaces do the turning; there is no thrust.
+inline void Mission::step_belly(const Inputs& in, Output& out) noexcept {
+  const Phase& p = ph();
+  const Vec3 up = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0});
+  const Vec3 vel = dm::unit(in.v, -up);
+  const Vec3 catch_pt = up * (dm::norm(tab_->site) + catch_height());
+  if ((in_phase_ % kGlidePeriod) == 0U) {
+    descent::DragModel drag = tab_->drag;
+    if (p.p[4] > 0.0F) {
+      drag.beta = static_cast<double>(p.p[4]);
+    }
+    const descent::Impact pred = descent::descent_predict(in.r, in.v, tab_->nav.gravity, drag, dm::norm(catch_pt), 1.0, 900U);
+    if (pred.valid) {
+      miss_ = dm::perp(catch_pt - pred.point, up);
+      tof_ = pred.tof;
+    }
+  }
+  const Vec3 horiz = dm::unit(dm::perp(in.v, up), vel);
+  const double along = dm::dot(miss_, horiz);   // positive: the site is beyond where it would come down
+  const double alpha_deg = dm::clamp_(static_cast<double>(p.p[0]) - (static_cast<double>(p.p[3]) * along), static_cast<double>(p.p[1]), static_cast<double>(p.p[2]));
+  aoa_deg_ = alpha_deg;
+  const double alpha = alpha_deg * dm::kDegToRad;
+  const Vec3 lift0 = dm::unit(up - (vel * dm::dot(up, vel)), Vec3{1.0, 0.0, 0.0});   // the way the nose is raised: toward the vertical, across the velocity
+  // the bank: the whole attitude rolled about the velocity, so that the lift (which acts out of the belly) has a side component toward the ground track that reaches the site; p[5] degrees per metre of the
+  // predicted miss across the track, at most p[6] degrees
+  const Vec3 side = dm::cross(lift0, vel);
+  const double across = dm::dot(miss_, side);
+  const double bank = dm::clamp_(-static_cast<double>(p.p[5]) * across, -static_cast<double>(p.p[6]), static_cast<double>(p.p[6])) * dm::kDegToRad;
+  const Vec3 lift = (lift0 * dm::cos_(bank)) + (dm::cross(vel, lift0) * dm::sin_(bank));
+  const Vec3 hint = (tab_->plane_normal * dm::cos_(bank)) + (dm::cross(vel, tab_->plane_normal) * dm::sin_(bank));
+  reference_toward((vel * dm::cos_(alpha)) + (lift * dm::sin_(alpha)), hint);
+  out.groups = 0U;
+  out.throttle = 0.0F;
+}
+
 inline void Mission::step_landing(const Inputs& in, Output& out) noexcept {
   const Phase& p = ph();
   const Vec3 up = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0});
@@ -673,6 +717,8 @@ inline Output Mission::step(const Inputs& in) noexcept {
     step_boostback(in, out);
   } else if (p.kind == kind::kGlide) {
     step_glide(in, out);
+  } else if (p.kind == kind::kBelly) {
+    step_belly(in, out);
   } else if (p.kind == kind::kLanding) {
     step_landing(in, out);
   } else if (p.kind == kind::kChute) {

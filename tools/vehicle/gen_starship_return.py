@@ -16,6 +16,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
+# ---- the ship's return: the numbers a scan chose (each is a flag too: --set KEY=VALUE, for scanning) ----
+SHIP = {
+    "with_return": 0,           # 0: the mission ends in orbit (starship_return.json); 1: the ship also deorbits and enters on its flaps (starship_ship_return.json)
+    "orbit_s": 3640.0,          # the coast in orbit before the deorbit burn
+    "burn_s": 6.0,              # the deorbit burn, on the three vacuum Raptor
+    "burn_throttle": 0.4,
+    "alpha_deg": 68.0,          # the belly entry's nominal angle between the body axis and the velocity
+    "alpha_min_deg": 40.0,
+    "alpha_max_deg": 89.0,
+    "gain_deg_per_km": 0.1,
+    "bank_gain_deg_per_km": 12.0,  # the bank that steers across the ground track
+    "bank_max_deg": 45.0,
+    "beta_kg_m2": 2000.0,       # the ballistic coefficient the entry's prediction uses
+    "trim_deg": 60.0,           # the flaps' deflection at zero demand
+    "ignition_below_m": 6000.0,
+    "main_propellant_kg": 40000.0,
+    "pin_x_m": 40.0,            # the ship's catch pins, from its aft end
+    "max_time_s": 7200.0,
+}
+
 # ---- the vehicle ----
 # Sources (read 9-10 Oct 2026): the SpaceX Starship page and Wikipedia (Super Heavy, Raptor, Starship flight 12); Flight 12 (22 May 2026): max-Q 0:45, MECO 2:22, hot staging 2:24, boost-back 2:30, ship cut-off
 # 8:11 (planned), apogee about 195 km. Super Heavy: 72.3 m, 9 m, 33 Raptor 3 of 2.449 MN at sea level (80.8 MN), 3,650 t of propellant. The ship: three sea-level and three vacuum Raptor, 1,600 t.
@@ -48,8 +68,8 @@ def plant():
         engines.append(engine(0, yz, SEA_LEVEL, 3))
     for yz in ring(20, 3.85, 0):                 # the outer twenty are fixed: group 4
         engines.append(engine(0, yz, SEA_LEVEL, 4, gimbal=False))
-    for yz in ring(3, 0.95, 90):                 # the ship: three sea-level (group 5) and three vacuum (group 6)
-        engines.append(engine(1, yz, SEA_LEVEL, 5, x=72.3))
+    for k, yz in enumerate(ring(3, 0.95, 90)):   # the ship: three sea-level (one alone in group 5, the other two in group 7: a landing may light one or three) and three vacuum (group 6)
+        engines.append(engine(1, yz, SEA_LEVEL, 5 if k == 0 else 7, x=72.3))
     for yz in ring(3, 2.55, 30):
         engines.append(engine(1, yz, VACUUM, 6, x=72.3))
     # attitude thrusters of the booster (cold-gas class, my sizes): pitch and yaw at the top, roll at the rim
@@ -62,17 +82,18 @@ def plant():
     booster = {"name": "booster", "dry_mass_kg": 275000, "x_start_m": 0, "length_m": 72.3, "radius_m": 4.5, "inertia_factor": 0.55, "x_cg_dry_m": 28,
                "tanks": [{"propellant_kg": 802000, "x_bottom_m": 2.0, "radius_m": 4.5, "density_kg_m3": 424}, {"propellant_kg": 2848000, "x_bottom_m": 32.0, "radius_m": 4.5, "density_kg_m3": 1141}],
                "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 72.3, "d_aft_m": 9.0, "d_fore_m": 9.0}],
-               "guided": True, "separation_dv_ms": 1.5, "catch_pin_x_m": 60.0, "gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
+               "guided": True, "separation_dv_ms": 1.5, "catch_pin_x_m": 61.0, "gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
     ship = {"name": "ship", "dry_mass_kg": 100000, "x_start_m": 72.3, "length_m": 52.1, "radius_m": 4.5, "inertia_factor": 0.55, "x_cg_dry_m": 94,
             "tanks": [{"propellant_kg": 1252000, "x_bottom_m": 76.3, "radius_m": 4.5, "density_kg_m3": 1141}, {"propellant_kg": 348000, "x_bottom_m": 94.0, "radius_m": 4.5, "density_kg_m3": 424}],
             "sections": [{"kind": "tube", "x_start_m": 72.3, "length_m": 36.0, "d_aft_m": 9.0, "d_fore_m": 9.0}, {"kind": "nose", "x_start_m": 108.3, "length_m": 16.1, "d_aft_m": 9.0, "d_fore_m": 0, "shape": "ogive"}],
-            "guided": True, "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
-    surfaces = [{"name": "grid fin %d" % (i + 1), "stage": 0, "kind": "grid_fin", "x_hinge_m": 61.8, "azimuth_deg": az, "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68,
-                 "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": i, "deployed": False} for i, az in enumerate((0.0, 90.0, 180.0))]   # three, as on Flight 12
-    # the ship's four flaps, as in vehicles/starship.json: lying flush on the skin, no command (they only exist for the 3D viewer to draw until a mission deploys them)
-    for nm, x, az, area, chord, span, cdir in (("aft flap port", 82.7, 80, 37.0, 9.0, 4.6, -1), ("aft flap starboard", 82.7, 280, 37.0, 9.0, 4.6, -1), ("forward flap port", 102.1, 80, 16.0, 6.0, 3.0, 1), ("forward flap starboard", 102.1, 280, 16.0, 6.0, 3.0, 1)):
-        surfaces.append({"name": nm, "stage": 1, "kind": "flap", "x_hinge_m": x, "azimuth_deg": az, "radius_m": 4.5, "area_m2": area, "chord_m": chord, "span_m": span, "chord_dir": cdir,
-                         "stow_deg": 0, "min_deg": 0, "max_deg": 90, "rate_dps": 30, "lag_s": 0.05, "channel": -1})
+            "guided": True, "catch_pin_x_m": SHIP["pin_x_m"], "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
+    surfaces = [{"name": "grid fin %d" % (i + 1), "stage": 0, "kind": "grid_fin", "x_hinge_m": 61.0, "azimuth_deg": az, "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68,
+                 "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": i, "deployed": False} for i, az in enumerate((0.0, 96.0, 264.0))]   # three in a T (11 Oct 2026, the owner's description of the V3 booster): one on the spine, one on each flank about 96 degrees round, the leeward side open
+    # the ship's four flaps, as in vehicles/starship.json: hinged along the axis and standing straight out (90) for the climb, edge-on to the stream. They take no command until the entry deploys them (deployed false:
+    # stowed at 90); then channels 0 to 3 move them about the mixer's trim (the ship's own mixers; the booster's grid fins use channels 0 to 2 of their own body)
+    for ch, (nm, x, az, area, chord, span, cdir) in enumerate((("aft flap port", 73.6, 80, 36.9, 4.1, 9.0, 1), ("aft flap starboard", 73.6, 280, 36.9, 4.1, 9.0, -1), ("forward flap port", 102.3, 112, 16.2, 2.7, 6.0, 1), ("forward flap starboard", 102.3, 248, 16.2, 2.7, 6.0, -1))):
+        surfaces.append({"name": nm, "stage": 1, "kind": "flap", "axial_hinge": True, "x_hinge_m": x, "azimuth_deg": az, "radius_m": 4.5, "area_m2": area, "chord_m": chord, "span_m": span, "chord_dir": cdir,
+                         "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": ch, "deployed": False})
     return {"name": "starship-v3-class-return",
             "description": "Starship V3 class stack that flies its whole mission on the flight computers: ascent, hot staging, orbital insertion of the ship (PEG), and the booster's flip, boost-back, grid-fin entry, landing burn and catch.",
             "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "ideal_roll_control": False, "landing_model": True, "max_substep_s": 0.004},
@@ -81,31 +102,46 @@ def plant():
 
 
 # ---- the mission ----
+def ship_return():
+    """The ship's way home: a coast in orbit to the right place, a short burn against its motion, a belly entry on the flaps, the flip and the landing burn on the engines, and the arms."""
+    if not SHIP["with_return"]:
+        return [{"name": "in orbit", "kind": "coast", "hold": "prograde", "end": {"time_s": 100000}, "groups": [], "mixer": 1, "slew_dps": 3}]
+    return [
+        {"name": "orbit", "kind": "coast", "hold": "prograde", "end": {"time_s": SHIP["orbit_s"]}, "groups": [], "mixer": 1, "slew_dps": 3},
+        {"name": "turn to retrograde", "kind": "coast", "hold": "retrograde", "end": {"aligned_deg": 5}, "groups": [], "mixer": 1, "slew_dps": 4},
+        {"name": "deorbit burn", "kind": "coast", "hold": "retrograde", "end": {"time_s": SHIP["burn_s"]}, "groups": [6], "mixer": 1, "throttle": SHIP["burn_throttle"], "slew_dps": 3},
+        {"name": "belly entry", "kind": "belly", "end": {"ignition_below_m": SHIP["ignition_below_m"]}, "groups": [], "mixer": 4, "events": ["deploy_surfaces"], "alpha_deg": SHIP["alpha_deg"],
+         "alpha_min_deg": SHIP["alpha_min_deg"], "alpha_max_deg": SHIP["alpha_max_deg"], "gain_deg_per_km": SHIP["gain_deg_per_km"], "beta_kg_m2": SHIP["beta_kg_m2"], "bank_gain_deg_per_km": SHIP["bank_gain_deg_per_km"], "bank_max_deg": SHIP["bank_max_deg"], "slew_dps": 4},
+        {"name": "landing burn", "kind": "landing", "end": {"touchdown": True}, "groups": [5], "mixer": 4, "landing_groups": {"one": [5], "three": [5, 7]}, "slew_dps": 25, "wn_rad_s": 1.0},
+        {"name": "caught", "kind": "done", "end": {"time_s": 100000}, "groups": [], "mixer": 4}]
+
+
 def mission():
     ship_wet = 100000 + 1600000 + 37500   # ship dry + propellant + payload
     booster_dry = 275000
     return {
         "site": {"offset_y_m": 0, "offset_z_m": 400, "arm_height_m": 70, "capture_radius_m": 1.5},
         "ignition_margin": 1.2,
-        "landing": {"sink_ms": 0.5, "tilt_max_deg": 40, "tilt_final_deg": 2.5, "final_height_m": 25, "engine_thrust_n": 2449000, "engine_min_throttle": 0.4, "propellant_kg": 25000, "decel_plan_ms2": 50},
+        "landing": {"main_propellant_kg": SHIP["main_propellant_kg"] if SHIP["with_return"] else 0, "sink_ms": 0.5, "aim_below_m": 1.8, "tilt_max_deg": 40, "tilt_final_deg": 2.5, "final_height_m": 25, "engine_thrust_n": 2449000, "engine_min_throttle": 0.4, "propellant_kg": 25000, "decel_plan_ms2": 50},
         "air": {"ballistic_coefficient_kg_m2": 7000, "scale_height_m": 7200},
         "limits": {"command_deg": 8, "integrator_deg": 6, "slew_deg_per_frame": 0.6},
-        "design": {"wn": 0.5, "zeta": 0.8, "ki_over_kp": 0.1, "kp_max": 80, "sample_s": 1, "max_time_s": 900, "tail_s": 30},
+        "design": {"wn": 0.5, "zeta": 0.8, "ki_over_kp": 0.1, "kp_max": 80, "sample_s": 1, "max_time_s": SHIP["max_time_s"] if SHIP["with_return"] else 900, "tail_s": 30},
         "mixers": [{"name": "tvc", "gimbal": True, "roll_thrusters": True}, {"name": "rcs", "gimbal": True, "roll_thrusters": True},
-                   {"name": "fins", "gimbal": False, "roll_thrusters": False, "surfaces": [0, 1, 2]}, {"name": "fins+rcs", "gimbal": True, "roll_thrusters": True, "surfaces": [0, 1, 2]}],
+                   {"name": "fins", "gimbal": False, "roll_thrusters": False, "surfaces": [0, 1, 2]}, {"name": "fins+rcs", "gimbal": True, "roll_thrusters": True, "surfaces": [0, 1, 2]},
+                   ] + ([{"name": "flaps+rcs", "gimbal": True, "roll_thrusters": True, "surfaces": [0, 1, 2, 3], "trim_deg": [SHIP["trim_deg"]] * 4}] if SHIP["with_return"] else []),
         "main": [
             {"name": "booster burn", "kind": "program", "end": {"mass_below_kg": ship_wet + booster_dry + 650000}, "groups": [0, 1, 2, 3, 4], "mixer": 0, "throttle": 1.0,
              "throttle_track": [[0, 1.0], [35, 1.0], [48, 0.78], [85, 0.78], [100, 1.0]], "slew_dps": 5, "program": [[0, 0], [10, 0], [30, 15], [60, 30], [100, 45], [130, 56]]},
             {"name": "MECO", "kind": "coast", "hold": "inertial", "end": {"time_s": 0.6}, "groups": [], "mixer": 0, "slew_dps": 5},
-            {"name": "hot staging", "kind": "coast", "hold": "inertial", "end": {"time_s": 1.4}, "groups": [5, 6], "mixer": 0, "throttle": 1.0, "slew_dps": 5},
-            {"name": "separation", "kind": "coast", "hold": "inertial", "end": {"time_s": 1.0}, "groups": [5, 6], "events": ["separate"], "mixer": 0, "throttle": 1.0, "mass_set_kg": ship_wet - 6000, "slew_dps": 5},
-            {"name": "ship ascent", "kind": "peg", "end": {"cutoff": True}, "groups": [5, 6], "mixer": 0, "throttle": 1.0, "target": {"circular_km": 250}, "burnout_mass_kg": 137500, "slew_dps": 6},
+            {"name": "hot staging", "kind": "coast", "hold": "inertial", "end": {"time_s": 1.4}, "groups": [5, 6, 7], "mixer": 0, "throttle": 1.0, "slew_dps": 5},
+            {"name": "separation", "kind": "coast", "hold": "inertial", "end": {"time_s": 1.0}, "groups": [5, 6, 7], "events": ["separate"], "mixer": 0, "throttle": 1.0, "mass_set_kg": ship_wet - 6000, "slew_dps": 5},
+            {"name": "ship ascent", "kind": "peg", "end": {"cutoff": True}, "groups": [5, 6, 7], "mixer": 0, "throttle": 1.0, "target": {"circular_km": 250}, "burnout_mass_kg": 137500, "slew_dps": 6},
             {"name": "coast", "kind": "coast", "hold": "prograde", "end": {"time_s": 40}, "groups": [], "mixer": 1, "slew_dps": 3},
             {"name": "payload release", "kind": "coast", "hold": "prograde", "end": {"time_s": 5}, "groups": [], "events": ["jettison"], "mixer": 1, "slew_dps": 3},
-            {"name": "in orbit", "kind": "coast", "hold": "prograde", "end": {"time_s": 100000}, "groups": [], "mixer": 1, "slew_dps": 3}],
+            ] + ship_return(),
         "stage0": [
             {"name": "flip", "kind": "coast", "hold": "retro_horizontal", "end": {"aligned_deg": 8}, "groups": [], "mixer": 1, "slew_dps": 4.5},
-            {"name": "boostback", "kind": "boostback", "end": {"cutoff": True}, "groups": [0, 1, 2, 3], "mixer": 0, "throttle": 1.0, "bias_m": 1000, "reserve_mass_kg": 330000, "slew_dps": 8, "events": ["deploy_surfaces"]},
+            {"name": "boostback", "kind": "boostback", "end": {"cutoff": True}, "groups": [0, 1, 2, 3], "mixer": 0, "throttle": 1.0, "bias_m": 625, "reserve_mass_kg": 330000, "slew_dps": 8, "events": ["deploy_surfaces"]},
             {"name": "coast", "kind": "coast", "hold": "radial", "end": {"altitude_below_m": 70000}, "groups": [], "mixer": 3, "slew_dps": 8},
             {"name": "entry", "kind": "glide", "end": {"ignition_below_m": 6000}, "groups": [], "mixer": 3, "alpha_max_deg": 12, "gain_deg_per_km": 2.0, "slew_dps": 10, "alpha_brake_deg": 0, "brake_max_deg": 0, "lift_area_per_deg_m2": 3.5},
             {"name": "landing burn", "kind": "landing", "end": {"touchdown": True}, "groups": [0, 1, 2], "mixer": 3, "landing_groups": {"one": [0, 1, 2], "two": [0, 1, 2], "three": [0, 1, 2], "many": [0, 1, 2, 3]}, "slew_dps": 25, "wn_rad_s": 1.0},
@@ -134,16 +170,35 @@ HEADER = """// The Starship V3 class stack WITH A MISSION IN THE FILE: the fligh
 // grid fins' size, the pitch program and every number of the mission below are my estimates or my tuning. Generated by tools/vehicle/gen_starship_return.py; edit the script, not this file.
 //   build/rel/tfc_mission vehicles/missions/starship_return.json            # design the mission, fly it on the three flight computers, print what happened
 """
+HEADER_SHIP = """// The Starship V3 class stack WITH A MISSION IN THE FILE: the flight computers fly all of it (docs/design/GNC.md, docs/design/RECOVERY.md). The ascent follows a pitch program; the booster is let go at hot staging, flips,
+// burns back, falls under three grid fins, lights for the landing and is caught by the tower's arms; the ship's computers steer it to a 250 km circular orbit with PEG (a predictor-corrector burn guidance), then, in THIS file, bring it home: a coast to the right place, a short deorbit burn, a belly entry on the four flaps
+// (held at their trim and steered about it, the angle of attack and a bank steering the point where it would come down) and, at 6 km, the landing burn. EXPERIMENTAL: the entry guidance predicts without lift, so the ship comes down
+// tens of kilometres from the tower (docs/design/GNC.md section 11 says how far and why); the flip and the ship's catch are NOT finished. starship_return.json is the mission that is.
+// Built from PUBLICLY REPORTED numbers (9-10 Oct 2026: Super Heavy 72.3 m, 9 m, 33 Raptor 3, 80.8 MN at sea level, 3,650 t of propellant; the ship's six Raptor, three sea-level and three vacuum, 1,600 t; Flight 12 of
+// 22 May 2026: max-Q 0:45, MECO 2:22, hot staging 2:24, boost-back 2:30). NOT SpaceX data and not a model of any flight article: the dry masses (275 t, 100 t), the vacuum Raptor's thrust, the tank split, the
+// grid fins' size, the pitch program and every number of the mission below are my estimates or my tuning. Generated by tools/vehicle/gen_starship_return.py; edit the script, not this file.
+//   build/rel/tfc_mission vehicles/missions/starship_ship_return.json       # design the mission, fly it on the three flight computers, print what happened
+"""
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=str(ROOT / "vehicles" / "missions" / "starship_return.json"))
+    ap.add_argument("--ship-out", default=str(ROOT / "vehicles" / "missions" / "starship_ship_return.json"), help="the experimental mission in which the ship also deorbits and enters (empty: not written)")
+    ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="override a number of the ship's return (SHIP in this script), for scanning")
     args = ap.parse_args()
-    v = plant()
-    v["mission"] = mission()
-    text = HEADER + dump(v) + "\n"
-    Path(args.out).write_text(text)
+    for kv in args.set:
+        k, _, val = kv.partition("=")
+        if k not in SHIP:
+            ap.error(f"unknown key {k!r}: {', '.join(SHIP)}")
+        SHIP[k] = float(val)
+    for path, with_return in ((args.out, 0), (args.ship_out, 1)):
+        if not path:
+            continue
+        SHIP["with_return"] = with_return or SHIP["with_return"]
+        v = plant()
+        v["mission"] = mission()
+        Path(path).write_text((HEADER_SHIP if with_return else HEADER) + dump(v) + "\n")
     return 0
 
 

@@ -25,6 +25,7 @@ export class Spec {
   constructor(raw) {
     this.raw = raw;
     this.name = raw.name || 'vehicle';
+    this.cg0 = typeof raw.cg0_m === 'number' ? raw.cg0_m : null;       // the centre of mass at T-zero, from the aft end: where the ground is, whichever pose is seen first
     const v = raw.vehicle || {};
     this.vehicle = v;
     this.stages = v.stages || [];

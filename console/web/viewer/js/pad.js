@@ -103,18 +103,23 @@ export class Pad {
     const white = new THREE.MeshStandardMaterial({ color: 0xdcdedf, metalness: 0.2, roughness: 0.55 });
     const orange = new THREE.MeshStandardMaterial({ color: 0xc3541b, metalness: 0.3, roughness: 0.55 });
     const beacon = new THREE.MeshBasicMaterial({ color: 0xff3b30 });
-    // the launch mount: a ring table on legs over a flame trench
-    const ro = D * 1.3, ri = D * 0.68;
-    const tableProfile = [new THREE.Vector2(ri, 0), new THREE.Vector2(ro, 0), new THREE.Vector2(ro, D * 0.22), new THREE.Vector2(ri, D * 0.22), new THREE.Vector2(ri, 0)];
-    const table = new THREE.Mesh(new THREE.LatheGeometry(tableProfile, 48), steel); table.position.y = H - D * 0.22 - 0.4; S.add(table);
-    const legR = ro * 0.84, legW = Math.max(0.5, D * 0.14);
-    for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + 0.3; const leg = new THREE.Mesh(new THREE.BoxGeometry(legW, H - D * 0.22 - 0.4, legW), steel); leg.position.set(Math.cos(a) * legR, (H - D * 0.22 - 0.4) / 2, Math.sin(a) * legR); S.add(leg); }
-    for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2; const clamp = new THREE.Mesh(new THREE.BoxGeometry(D * 0.12, D * 0.14, D * 0.12), orange); clamp.position.set(Math.cos(a) * (D * 0.5 + D * 0.12), H - 0.2, Math.sin(a) * (D * 0.5 + D * 0.12)); S.add(clamp); }
-    const trench = new THREE.Mesh(new THREE.CylinderGeometry(D * 0.9, D * 1.3, 0.6, 40, 1, true), new THREE.MeshStandardMaterial({ color: 0x1d1c1b, roughness: 0.9, side: THREE.DoubleSide })); trench.position.y = 0.3; S.add(trench);
-    const deflector = new THREE.Mesh(new THREE.ConeGeometry(D * 1.0, D * 0.45, 32), new THREE.MeshStandardMaterial({ color: 0x3b3a39, roughness: 0.8 })); deflector.position.y = D * 0.22; S.add(deflector);
+    if (!this.opts.second) {                                  // a catch pad has no launch mount: the stage hangs in the arms over bare apron
+      if (!this.opts.second) {                                  // a catch pad has no launch mount: the stage hangs in the arms over bare apron
+      // the launch mount: a ring table on legs over a flame trench
+        const ro = D * 1.3, ri = D * 0.68;
+        const tableProfile = [new THREE.Vector2(ri, 0), new THREE.Vector2(ro, 0), new THREE.Vector2(ro, D * 0.22), new THREE.Vector2(ri, D * 0.22), new THREE.Vector2(ri, 0)];
+        const table = new THREE.Mesh(new THREE.LatheGeometry(tableProfile, 48), steel); table.position.y = H - D * 0.22 - 0.4; S.add(table);
+        const legR = ro * 0.84, legW = Math.max(0.5, D * 0.14);
+        for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + 0.3; const leg = new THREE.Mesh(new THREE.BoxGeometry(legW, H - D * 0.22 - 0.4, legW), steel); leg.position.set(Math.cos(a) * legR, (H - D * 0.22 - 0.4) / 2, Math.sin(a) * legR); S.add(leg); }
+        for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2; const clamp = new THREE.Mesh(new THREE.BoxGeometry(D * 0.12, D * 0.14, D * 0.12), orange); clamp.position.set(Math.cos(a) * (D * 0.5 + D * 0.12), H - 0.2, Math.sin(a) * (D * 0.5 + D * 0.12)); S.add(clamp); }
+        const trench = new THREE.Mesh(new THREE.CylinderGeometry(D * 0.9, D * 1.3, 0.6, 40, 1, true), new THREE.MeshStandardMaterial({ color: 0x1d1c1b, roughness: 0.9, side: THREE.DoubleSide })); trench.position.y = 0.3; S.add(trench);
+        const deflector = new THREE.Mesh(new THREE.ConeGeometry(D * 1.0, D * 0.45, 32), new THREE.MeshStandardMaterial({ color: 0x3b3a39, roughness: 0.8 })); deflector.position.y = D * 0.22; S.add(deflector);
+      }
+    }
     // the tower: four legs, bracing every few metres, two arms where the vehicle's top stage is, a lightning rod
     const TH = L * 1.19, tw = Math.max(3, L * 0.075), tx = Math.max(24, D * 3.4 + tw), tz = 0;
-    const tower = new THREE.Group(); tower.position.set(tx, 0, tz); S.add(tower);
+    const tower = new THREE.Group(); tower.position.set(this.opts.second ? 0 : tx, 0, this.opts.second ? tx : tz); S.add(tower);
+    if (this.opts.second) tower.rotation.y = -Math.PI / 2;                      // a catch pad's tower is downrange of the stage, its arms either side of it: they take the two flank fins' pins (the stage's spine fin faces downrange)
     const col = Math.max(0.5, tw * 0.09), step = Math.max(2.5, tw * 0.8);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) tower.add(bar(new THREE.Vector3(sx * tw / 2, 0, sz * tw / 2), new THREE.Vector3(sx * tw / 2, TH, sz * tw / 2), col, steel));
     for (let y = 0; y < TH; y += step) {
@@ -126,32 +131,52 @@ export class Pad {
     }
     const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.4, TH * 0.07, 8), steel); rod.position.y = TH + TH * 0.035; tower.add(rod);
     const cap = new THREE.Mesh(new THREE.BoxGeometry(tw * 1.2, tw * 0.5, tw * 1.2), white); cap.position.y = TH + tw * 0.15; tower.add(cap);
-    // the arms (the catch arms of a tower that catches the booster): two beams that reach in to the vehicle at the height of its upper tank, on a carriage that rides up and down the tower
-    const armLen = tx - D * 0.5 - tw * 0.5 - 0.6, armH = Math.max(1.2, D * 0.38), armW = Math.max(1.4, D * 0.3);
+    // the arms (the catch arms of a tower that catches the booster): two beams that reach in to the vehicle at the height the file gives (`armY`, the pins' height at the catch) on a carriage that rides up and down the tower.
+    // They reach to the vehicle's axis and pass either side of it, a pin's width outside the hull, with their top at the pins' height, and close on the pins when `setArms(1)` is asked (open, they are 5 m further apart:
+    // a stage comes down between them).
+    const R = D / 2, armLen = tx - tw * 0.5, armH = Math.max(1.2, D * 0.3), armW = Math.max(1.3, D * 0.28);
+    const top = (this.opts.armY ?? L * 0.74) - 0.3;
     const dark = new THREE.MeshStandardMaterial({ color: 0x4a4f56, metalness: 0.7, roughness: 0.5 });
+    this.arms = [];
     for (const side of [-1, 1]) {
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(armLen, armH, armW), dark);
-      arm.position.set(-(armLen / 2) - tw * 0.5, (this.opts.armY ?? L * 0.74) + side * D * 0.2, side * D * 0.62); tower.add(arm);
-      const pad2 = new THREE.Mesh(new THREE.BoxGeometry(armW * 1.4, armH * 1.5, armW * 1.4), steel); pad2.position.set(-armLen - tw * 0.5, (this.opts.armY ?? L * 0.74) + side * D * 0.2, side * D * 0.62); tower.add(pad2);
-      for (let i = 1; i < 6; i++) { const rib = new THREE.Mesh(new THREE.BoxGeometry(armH * 0.25, armH * 1.25, armW * 1.12), steel); rib.position.set(-(armLen * i / 6) - tw * 0.5, (this.opts.armY ?? L * 0.74) + side * D * 0.2, side * D * 0.62); tower.add(rib); }
+      const arm = new THREE.Group(); arm.position.set(0, top - armH / 2, side * (R + 1.2 + 5)); tower.add(arm);
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(armLen, armH, armW), dark); beam.position.set(-armLen / 2 - tw * 0.5, 0, 0); arm.add(beam);
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(armW * 1.4, armH * 1.5, armW * 1.3), steel); tip.position.set(-armLen - tw * 0.5, 0.1, 0); arm.add(tip);
+      const cup = new THREE.Mesh(new THREE.BoxGeometry(armW * 1.0, armH * 0.35, armW * 1.0), orange); cup.position.set(-armLen - tw * 0.5, armH * 0.9, 0); arm.add(cup);     // where the pin rests
+      for (let i = 1; i < 6; i++) { const rib = new THREE.Mesh(new THREE.BoxGeometry(armH * 0.25, armH * 1.25, armW * 1.12), steel); rib.position.set(-(armLen * i / 6) - tw * 0.5, 0, 0); arm.add(rib); }
+      this.arms.push({ g: arm, side });
     }
-    const car = new THREE.Mesh(new THREE.BoxGeometry(tw * 0.6, D * 1.6, tw * 1.05), orange); car.position.set(-tw * 0.1, (this.opts.armY ?? L * 0.74), 0); tower.add(car);
-    // lightning masts and a tank farm
-    for (const [mx, mz] of [[-170, -150], [170, -150], [-170, 170], [170, 170]].map(([a, b]) => [a * Math.max(.4, s * 1.1), b * Math.max(.4, s * 1.1)])) {
-      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.7, L * 1.0, 8), steel); mast.position.set(mx, L * 0.5, mz); S.add(mast);
-      const b = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6), beacon); b.position.set(mx, L * 1.0, mz); S.add(b);
+    this.armClose = 0; this.armR = R;
+    const car = new THREE.Mesh(new THREE.BoxGeometry(tw * 0.6, D * 1.6, tw * 1.05), orange); car.position.set(-tw * 0.1, (this.opts.armY ?? L * 0.74) - armH / 2, 0); tower.add(car);
+    if (!this.opts.second) {                                  // (the first pad has the masts and the tank farm; a second one shares them)
+      if (!this.opts.second) {                                  // (the first pad has the masts and the tank farm; a second one shares them)
+      // lightning masts and a tank farm
+        for (const [mx, mz] of [[-170, -150], [170, -150], [-170, 170], [170, 170]].map(([a, b]) => [a * Math.max(.4, s * 1.1), b * Math.max(.4, s * 1.1)])) {
+          const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.7, L * 1.0, 8), steel); mast.position.set(mx, L * 0.5, mz); S.add(mast);
+          const b = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6), beacon); b.position.set(mx, L * 1.0, mz); S.add(b);
+        }
+        for (let i = 0; i < 5; i++) {
+          const r = Math.max(2.2, D * 0.55), h = r * 5;
+          const tank = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 24), white); tank.position.set(-D * 14 - i * r * 2.6, h / 2, -D * 9); S.add(tank);
+          const dome = new THREE.Mesh(new THREE.SphereGeometry(r, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), white); dome.position.set(tank.position.x, h, tank.position.z); S.add(dome);
+        }
+        const bld = new THREE.Mesh(new THREE.BoxGeometry(D * 4, D * 0.9, D * 2), concrete); bld.position.set(-D * 12, D * 0.45, D * 7); S.add(bld);
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(D * 4.1, D * 0.08, D * 2.1), dark); roof.position.set(-D * 12, D * 0.94, D * 7); S.add(roof);
+      }
     }
-    for (let i = 0; i < 5; i++) {
-      const r = Math.max(2.2, D * 0.55), h = r * 5;
-      const tank = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 24), white); tank.position.set(-D * 14 - i * r * 2.6, h / 2, -D * 9); S.add(tank);
-      const dome = new THREE.Mesh(new THREE.SphereGeometry(r, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), white); dome.position.set(tank.position.x, h, tank.position.z); S.add(dome);
-    }
-    const bld = new THREE.Mesh(new THREE.BoxGeometry(D * 4, D * 0.9, D * 2), concrete); bld.position.set(-D * 12, D * 0.45, D * 7); S.add(bld);
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(D * 4.1, D * 0.08, D * 2.1), dark); roof.position.set(-D * 12, D * 0.94, D * 7); S.add(roof);
     if (this.opts.second) {                                  // the first pad's ground draws its apron and its scorch; a second pad has to bring its own
       const apronR = Math.max(2.5, D * 1.1) * 8;
       const apron = new THREE.Mesh(new THREE.CylinderGeometry(apronR, apronR, 0.12, 64), new THREE.MeshStandardMaterial({ color: 0x57554f, roughness: 0.95 })); apron.position.y = 0.06; S.add(apron);
       const scorch = new THREE.Mesh(new THREE.CylinderGeometry(D * 3.6, D * 3.6, 0.14, 48), new THREE.MeshStandardMaterial({ color: 0x1d1c1b, roughness: 1 })); scorch.position.y = 0.07; S.add(scorch);
     }
+  }
+
+  /** The arms toward the vehicle (1: closed on the pins) or away (0: open), moved `dt` seconds' worth at about 0.4 per second. */
+  setArms(target, dt = 0.016) {
+    if (!this.arms) return;
+    const step = Math.min(dt, 0.1) * 0.4;
+    this.armClose += Math.max(-step, Math.min(step, target - this.armClose));
+    const e = this.armClose * this.armClose * (3 - 2 * this.armClose);
+    for (const a of this.arms) a.g.position.z = a.side * (this.armR + 1.2 + (1 - e) * 5);
   }
 }

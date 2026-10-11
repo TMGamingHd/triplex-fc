@@ -132,6 +132,58 @@ TFC_TEST(plate_a_flush_flap_adds_nothing_and_a_standing_flap_carries_its_frictio
   CHECK(sim::norm(out.force) >= q * s.area * 0.02);                        // at 10 degrees: its friction, and the little normal force of the angle
 }
 
+sim::SurfaceSpec axial_flap(double azimuth_deg, double dir) {
+  sim::SurfaceSpec f;
+  f.kind = sim::SurfaceKind::Flap;
+  f.axial_hinge = true;
+  f.x_hinge = 73.6;
+  f.azimuth_deg = azimuth_deg;
+  f.radius = 4.5;
+  f.span = 9.0;       // along the axis
+  f.chord = 4.0;      // out from the hinge
+  f.area = 36.0;
+  f.chord_dir = dir;
+  f.channel = 0;
+  return f;
+}
+
+TFC_TEST(plate_an_axial_flap_standing_out_is_edge_on_to_a_stream_along_the_axis_and_broadside_to_one_across_it) {
+  const sim::SurfaceSpec s = axial_flap(90.0, 1.0);                        // at +Z, the free edge turning round toward +azimuth when flat
+  const double rho = 1.0;
+  const double q200 = 0.5 * rho * 200.0 * 200.0;
+  // standing straight out (90): the plate's plane holds the axis and the radius (+Z here); a stream along the axis is along its length
+  const sim::SurfaceLoad along = sim::surface_load(s, 90.0, sim::V3{200.0, 0.0, 0.0}, rho, 340.0, 1.0);
+  CHECK(close(sim::norm(along.force), q200 * s.area * 0.02, 1e-9));        // only the friction of its faces, on the whole area
+  CHECK(along.force.x < 0.0 && near_abs(along.force.y, 0.0, 1e-9) && near_abs(along.force.z, 0.0, 1e-9));
+  // the same plate with a stream across it, along the tangent (its normal): broadside, the flat-plate drag
+  const sim::SurfaceFrame fr = sim::surface_frame(s, 90.0);
+  CHECK(near_abs(sim::norm(fr.normal), 1.0, 1e-12) && near_abs(sim::dot(fr.normal, fr.chord), 0.0, 1e-12) && near_abs(sim::dot(fr.normal, fr.span), 0.0, 1e-12));
+  const sim::V3 across = fr.normal * 200.0;
+  const sim::SurfaceLoad broad = sim::surface_load(s, 90.0, across, rho, 340.0, 1.0);
+  CHECK(close(sim::norm(broad.force), q200 * s.area * sim::plate::cd90(200.0 / 340.0) + 0.0, 1e-9));
+  CHECK(sim::dot(broad.force, across) < 0.0);                              // against the stream
+  // a small angle of the stream in the chordwise plane does not make an edge-on plate a wing: the force stays near the friction
+  const sim::SurfaceLoad slip = sim::surface_load(s, 90.0, sim::V3{200.0, 0.0, 0.0} + (fr.normal * 4.0), rho, 340.0, 1.0);
+  CHECK(sim::norm(slip.force) < 3.0 * q200 * s.area * 0.02);
+}
+
+TFC_TEST(plate_an_axial_flap_turns_about_its_hinge_from_the_skin_to_standing_out_and_its_load_acts_at_its_middle) {
+  const sim::SurfaceSpec s = axial_flap(0.0, 1.0);                         // at +Y (the belly)
+  const sim::SurfaceFrame flat = sim::surface_frame(s, 0.0);
+  const sim::SurfaceFrame out = sim::surface_frame(s, 90.0);
+  CHECK(near_abs(flat.normal.y, 1.0, 1e-12));                              // lying on the skin its normal is the radius
+  CHECK(near_abs(flat.chord.z, 1.0, 1e-12));                               // its free edge along the tangent
+  CHECK(near_abs(out.chord.y, 1.0, 1e-12));                                // standing out, along the radius
+  CHECK(near_abs(out.normal.z, -1.0, 1e-12));
+  CHECK(near_abs(out.span.x, 1.0, 1e-12));                                 // always along the axis
+  const sim::V3 p0 = sim::surface_point(s, 0.0);
+  const sim::V3 p90 = sim::surface_point(s, 90.0);
+  CHECK(near_abs(p0.x, 73.6 + 4.5, 1e-12) && near_abs(p90.x, p0.x, 1e-12));     // half its length forward of the hinge's aft end, whatever the angle
+  CHECK(near_abs(p0.y, 4.5, 1e-12) && near_abs(p90.y, 4.5 + 2.0, 1e-12));      // half its width out of the skin when standing out
+  const sim::SurfaceSpec back = axial_flap(0.0, -1.0);
+  CHECK(sim::surface_frame(back, 0.0).chord.z < 0.0);                      // the other side's flap lies round the other way
+}
+
 TFC_TEST(plate_deploying_a_flap_changes_the_load_on_the_vehicle_and_where_it_acts) {
   const sim::SurfaceSpec s = flap_at(90.0);
   const sim::V3 wind{200.0, 20.0, 0.0};                                    // along the axis, with an angle of attack

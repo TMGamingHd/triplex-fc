@@ -66,7 +66,7 @@ const sim::AxisProbe* first_probe(const std::vector<sim::AxisProbe>& all, int ow
 }  // namespace
 
 TFC_TEST(missionfile_the_committed_missions_load_and_their_text_reads_back_the_same) {
-  for (const char* name : {"missions/starship_return.json", "missions/rocket_recovery.json"}) {
+  for (const char* name : {"missions/starship_return.json", "missions/starship_ship_return.json", "missions/rocket_recovery.json"}) {
     sim::VehicleFile v;
     std::vector<std::string> errors;
     CHECK(sim::load_vehicle_file(repo_root() + "vehicles/" + name, v, errors) && errors.empty());
@@ -87,6 +87,7 @@ TFC_TEST(missionfile_the_committed_missions_load_and_their_text_reads_back_the_s
   CHECK(s.mission.main.size() == 8U && s.mission.stage[0].size() == 6U && s.mission.mixers.size() == 4U);
   CHECK(s.mission.stage[0][1].kind == "boostback" && s.mission.stage[0][4].kind == "landing" && s.mission.stage[0][4].landing_groups[3].size() == 4U);
   CHECK(s.mission.main[4].kind == "peg" && near_abs(s.mission.main[4].circular_km, 250.0, 1e-9));
+  CHECK(near_abs(s.mission.main_landing_propellant_kg, 0.0, 1e-12));      // the ship of this mission stays in orbit
   sim::VehicleFile none;
   CHECK(reads(R"({"name": "x", "stages": [{"dry_mass_kg": 1, "length_m": 1, "radius_m": 0.1, "tanks": [{"propellant_kg": 1, "x_bottom_m": 0, "radius_m": 0.1, "density_kg_m3": 1000}]}], "engines": [{"stage": 0, "thrust_vac_n": 1000, "exit_area_m2": 0.01, "isp_vac_s": 300}]})", none, errors));
   CHECK(!none.mission.present);
@@ -173,18 +174,44 @@ TFC_TEST(missionfile_the_tables_carry_what_each_kind_of_phase_needs) {
   CHECK(s.engines.options == 3U && s.engines.counts[0] == 1U && s.engines.counts[2] == 2U);      // the options given, fewest first; the one not given is not an option
   CHECK(s.phase[2].p[0] == 1.0F && s.phase[2].p[2] == 3.0F && s.phase[2].groups == 3U);
   CHECK(s.arm_height == 50.0 && s.landing_height > 40.0 && s.landing_height < 50.0 && std::isfinite(s.landing_height_slope) && s.landing_mass_ref > 0.0);
-  // the Starship-class booster: the pins 32 m above the centre of gravity at the arms' 70 m, and a heavier stage has its centre of gravity lower, so its catch height is lower
+  // the Starship-class booster: the pins 33 m above the centre of gravity at the arms' 70 m, and a heavier stage has its centre of gravity lower, so its catch height is lower
   sim::VehicleFile big;
   CHECK(sim::load_vehicle_file(repo_root() + "vehicles/missions/starship_return.json", big, errors));
   sim::BuiltMission bb;
   CHECK(sim::build_mission(big, bb, errors));
   const tfc::gnc::Tables& booster = bb.stage[0];
-  CHECK(near_abs(booster.landing_height, 37.79, 0.05) && booster.landing_height_slope < 0.0 && near_abs(booster.arm_height, 70.0, 1e-9));
+  CHECK(near_abs(booster.landing_height, 36.79, 0.05) && booster.landing_height_slope < 0.0 && near_abs(booster.arm_height, 70.0, 1e-9));
   tfc::gnc::Mission mis;
   mis.configure(&booster);
   mis.set_mass(booster.landing_mass_ref + 100000.0);
   CHECK(mis.catch_height() < booster.landing_height);
   CHECK(bb.main.phase[4].p[9] > 0.5F && bb.main.phase[4].p[9] < 1.0F);   // the ship's PEG leads its cut-off by the engines' tail (0.8 s)
+}
+
+TFC_TEST(missionfile_the_ships_way_home_is_a_belly_entry_on_flaps_held_at_a_trim_and_a_catch_height_of_its_own) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(sim::load_vehicle_file(repo_root() + "vehicles/missions/starship_ship_return.json", v, errors) && errors.empty());
+  CHECK(v.mission.main.size() == 13U && v.mission.mixers.size() == 5U);
+  CHECK(near_abs(v.mission.mixers[4].trim_deg[0], 60.0, 1e-9) && near_abs(v.mission.mixers[4].trim_deg[3], 60.0, 1e-9) && v.mission.mixers[4].surfaces.size() == 4U);
+  CHECK(v.mission.main_landing_propellant_kg > 0.0);
+  sim::BuiltMission bm;
+  CHECK(sim::build_mission(v, bm, errors));
+  const tfc::gnc::Tables& t = bm.main;
+  const tfc::gnc::Phase* belly = nullptr;
+  for (unsigned i = 0; i < t.n_phases; ++i) {
+    if (t.phase[i].kind == tfc::gnc::kind::kBelly) {
+      belly = &t.phase[i];
+    }
+  }
+  CHECK(belly != nullptr);
+  if (belly != nullptr) {
+    CHECK(belly->p[0] > belly->p[1] && belly->p[0] < belly->p[2] && belly->p[3] > 0.0F && belly->p[4] > 0.0F && belly->p[5] > 0.0F && belly->p[6] > 0.0F);   // nominal between the limits, a gain, a ballistic coefficient and a bank
+    CHECK(belly->mixer == 4U && belly->end == tfc::gnc::end::kIgnition);
+  }
+  CHECK(near_abs(static_cast<double>(t.mixer[4].trim[2]), 60.0, 1e-6) && t.mixer[0].trim[0] == 0.0F);
+  // the ship's catch height: the pins 40 m up the hull at the arms' 70 m, less with more propellant in it
+  CHECK(t.landing_height > 40.0 && t.landing_height < 70.0 && t.landing_height_slope < 0.0 && t.arm_height == 70.0 && t.landing_mass_ref > 100000.0);
 }
 
 TFC_TEST(missiondesign_the_allocation_to_the_surfaces_has_the_effect_asked_for_within_the_travel) {

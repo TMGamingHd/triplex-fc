@@ -136,6 +136,7 @@ inline std::string viewer_spec_json(const VehicleFile& vf, const Vehicle6& veh, 
   o.kv("radius_m", veh.planet().radius, 1);
   o.kv("rotation_rad_s", veh.planet().rotation_rate, 13);
   o.kv("mu", veh.planet().mu, 1);
+  o.kv("cg0_m", veh.mass_props().x_cg, 4);   // the vehicle's centre of mass from its aft end as the spec is written (T-zero): the ground the viewer draws is placed from it, whichever pose a viewer sees first
   o.key("air");  // the profile: arrays by altitude
   o.open('{');
   o.kv("step_m", step_m, 1);
