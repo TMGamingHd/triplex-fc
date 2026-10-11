@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import queue
 import secrets
+import sys
 import threading
 import time
 import traceback
@@ -41,6 +43,13 @@ class Request:
             return default
 
 
+class Raw:
+    """A route's answer that is not JSON (a model file for the viewer): the bytes and their media type."""
+
+    def __init__(self, body: bytes, ctype: str) -> None:
+        self.body, self.ctype = body, ctype
+
+
 class ApiError(Exception):
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -57,6 +66,7 @@ class App:
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
         self.hello_extra: Callable[[], dict] = lambda: {}
+        self.viewer = None                          # the viewer's hub (viewer.ViewerHub), whose poses go out on /api/pose-stream
         self.on_close: list[Callable[[], None]] = []
 
     def route(self, method: str, path: str) -> Callable[[Route], Route]:
@@ -65,9 +75,9 @@ class App:
             return fn
         return deco
 
-    def url(self) -> str:
+    def url(self, path: str = "/") -> str:
         shown = "127.0.0.1" if self.host in ("0.0.0.0", "") else self.host
-        return f"http://{shown}:{self.port}/?token={self.token}"
+        return f"http://{shown}:{self.port}{path}?token={self.token}"
 
     def serve_forever(self) -> None:
         self.httpd.serve_forever(poll_interval=0.2)
@@ -96,8 +106,9 @@ class App:
             protocol_version = "HTTP/1.1"
             server_version = "tfc-console"
 
-            def log_message(self, fmt, *args):       # the console prints its own lines; a line per request would bury them
-                pass
+            def log_message(self, fmt, *args):       # the console prints its own lines; a line per request would bury them (TFC_HTTP_LOG=1 turns them on, for finding what a browser asked for)
+                if os.environ.get("TFC_HTTP_LOG"):
+                    print("http:", fmt % args, file=sys.stderr, flush=True)
 
             # ---- plumbing
             def _send(self, status: int, body: bytes, ctype: str, extra: dict[str, str] | None = None) -> None:
@@ -130,7 +141,7 @@ class App:
                 if not self._host_ok():
                     return self._json(HTTPStatus.FORBIDDEN, {"error": "bad Host header"})
                 if not url.path.startswith("/api/"):
-                    return self._static(url.path) if method == "GET" else self._json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "GET only"})
+                    return self._static(url.path, url.query) if method == "GET" else self._json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "GET only"})
                 if not self._token_ok(query):
                     return self._json(HTTPStatus.UNAUTHORIZED, {"error": "missing or wrong session token (open the URL the console printed)"})
                 body: dict | None = None
@@ -150,6 +161,8 @@ class App:
                         return self._json(HTTPStatus.BAD_REQUEST, {"error": "the body must be a JSON object"})
                 if url.path == "/api/stream" and method == "GET":
                     return self._stream()
+                if url.path == "/api/pose-stream" and method == "GET" and app.viewer is not None:
+                    return self._pose_stream()
                 fn = app.routes.get((method, url.path))
                 if fn is None:
                     return self._json(HTTPStatus.NOT_FOUND, {"error": f"no such endpoint: {method} {url.path}"})
@@ -160,6 +173,8 @@ class App:
                 except Exception as e:  # noqa: BLE001 - a bug in one endpoint answers 500 with its message; it must not take the server with it
                     traceback.print_exc()
                     return self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"{type(e).__name__}: {e}"})
+                if isinstance(payload, Raw):
+                    return self._send(status, payload.body, payload.ctype)
                 self._json(status, payload)
 
             def do_GET(self) -> None:
@@ -169,18 +184,26 @@ class App:
                 self._dispatch("POST")
 
             # ---- static files
-            def _static(self, path: str) -> None:
+            def _static(self, path: str, query: str = "") -> None:
                 path = unquote(path)                    # %2e%2e is `..` too: the containment check below is on the decoded path
                 rel = "index.html" if path in ("/", "") else path.lstrip("/")
                 target = (app.web_dir / rel).resolve()
                 if app.web_dir.resolve() not in target.parents and target != app.web_dir.resolve():
                     return self._json(HTTPStatus.FORBIDDEN, {"error": "outside the web directory"})
+                if target.is_dir():                     # /viewer/ is viewer/index.html; /viewer is sent to /viewer/ (the page's relative links are from there), with its query
+                    if not path.endswith("/"):
+                        return self._send(HTTPStatus.MOVED_PERMANENTLY, b"", "text/plain", {"Location": path + "/" + ("?" + query if query else "")})
+                    target = target / "index.html"
                 if not target.is_file():
                     return self._json(HTTPStatus.NOT_FOUND, {"error": f"{rel} not found"})
                 ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
                 if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
                     ctype += "; charset=utf-8"
-                self._send(HTTPStatus.OK, target.read_bytes(), ctype, {"Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"})
+                # The viewer is a page that draws with WebGL and loads a model file the user chose (a blob: URL), so it may also read blob: and data: images and fetch blob:. Nothing else changes: no inline script, no other origin.
+                viewer = rel.startswith("viewer/")
+                csp = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-ancestors 'none'" if viewer
+                       else "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
+                self._send(HTTPStatus.OK, target.read_bytes(), ctype, {"Content-Security-Policy": csp})
 
             # ---- the event stream
             def _stream(self) -> None:
@@ -207,6 +230,31 @@ class App:
                     pass
                 finally:
                     hub.unsubscribe(q)
+
+            def _pose_stream(self) -> None:
+                """The viewer's stream: the spec and the latest pose, then every pose as it arrives (fifty a second from the live simulator)."""
+                vh = app.viewer
+                q = vh.subscribe()
+                try:
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Connection", "keep-alive")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.end_headers()
+                    self.wfile.write(f"event: hello\ndata: {vh.hello()}\n\n".encode())
+                    self.wfile.flush()
+                    while True:
+                        try:
+                            msg = q.get(timeout=10.0)
+                        except queue.Empty:
+                            msg = ": keepalive\n\n"
+                        self.wfile.write(msg.encode())
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                finally:
+                    vh.unsubscribe(q)
 
         return Handler
 

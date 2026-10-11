@@ -59,9 +59,10 @@ class Proc:
 
 
 class Rig:
-    def __init__(self, hub: Hub, repo: Path, iface_of: Callable[[], str | None], telemetry_port: Callable[[], int], sim_args: Callable[[], list[str]]) -> None:
+    def __init__(self, hub: Hub, repo: Path, iface_of: Callable[[], str | None], telemetry_port: Callable[[], int], sim_args: Callable[[], list[str]], viewer_port: Callable[[], int] | None = None) -> None:
         self.hub, self.repo = hub, repo
         self.iface_of, self.telemetry_port, self.sim_args = iface_of, telemetry_port, sim_args
+        self.viewer_port = viewer_port
         self.procs: dict[str, Proc] = {}
         self.profile: str | None = None
         self.lock = threading.RLock()
@@ -88,7 +89,7 @@ class Rig:
         out: dict[str, dict] = {}
         # ---- the closed loop with the launch sequence: three real flight computers, ACT, the simulator clamped on the pad
         fcs = [self._exe(f"build/launch_{n}") for n in "abc"]
-        procs = [ProcSpec("SIM", [str(simd), "--iface", iface, "--hold", "--quiet", "--telemetry", str(self.telemetry_port()), *self.sim_args()], self.repo, simd if simd.exists() else None, 0.0, title="vehicle simulator (tfc_simd --hold)")]
+        procs = [ProcSpec("SIM", [str(simd), "--iface", iface, "--hold", "--quiet", "--telemetry", str(self.telemetry_port()), *(["--viewer", str(self.viewer_port())] if self.viewer_port else []), *self.sim_args()], self.repo, simd if simd.exists() else None, 0.0, title="vehicle simulator (tfc_simd --hold)")]
         procs += [ProcSpec(n, [str(p) if p else ""], self.repo, p, 0.4 if i == 0 else 0.0, title=f"flight computer {n} (launch image)") for i, (n, p) in enumerate(zip("ABC", fcs))]
         procs.append(ProcSpec("ACT", [str(act) if act else ""], self.repo, act, 0.0, title="actuator node"))
         out["closed-loop"] = {"title": "Closed loop with the launch sequence", "doc": "Three real flight-computer processes (nodes A, B and C, each calibrating its own IMU on the pad), the actuator node and the vehicle simulator clamped on the pad. "

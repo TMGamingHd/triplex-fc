@@ -73,6 +73,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; }
 .spacer { flex: 1; }
 .iconbtn { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
 .iconbtn:hover { border-color: var(--line2); background: var(--panel3); }
+a.iconbtn { text-decoration: none; color: inherit; }
 .iconbtn.rec.on { color: #fff; background: var(--crit); border-color: var(--crit); }
 
 /* ---------- panels and grids ---------- */

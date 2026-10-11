@@ -348,6 +348,21 @@ class Vehicle6 {
   [[nodiscard]] bool stage_active(std::size_t s) const { return s < g_.stages.size() && active_[s]; }
   [[nodiscard]] bool stage_ignited(std::size_t s) const { return s < g_.stages.size() && t_ign_[s] >= 0.0; }
   [[nodiscard]] double propellant(std::size_t s) const { return s < kMaxStages ? s_.prop[s] : 0.0; }
+  // Read-only views of what the model holds, for the 3D viewer (viewer_state.hpp, docs/design/VIEWER.md): they change nothing and nothing in the flight depends on them.
+  [[nodiscard]] double engine_fraction(std::size_t e) const { return e < g_.engines.size() ? frac_[e] : 0.0; }   // the thrust fraction now, after the rise and the tail (0..1, times the stage's throttle)
+  [[nodiscard]] bool engine_failed(std::size_t e) const { return e < g_.engines.size() && failed_[e]; }
+  [[nodiscard]] double stage_gimbal_pitch_deg(std::size_t s) const { return s < kMaxStages ? gimbal_p_[s] : 0.0; }
+  [[nodiscard]] double stage_gimbal_yaw_deg(std::size_t s) const { return s < kMaxStages ? gimbal_y_[s] : 0.0; }
+  [[nodiscard]] double fin_pitch_deg(std::size_t f) const { return f < kMaxFins ? fin_p_[f] : 0.0; }
+  [[nodiscard]] double fin_yaw_deg(std::size_t f) const { return f < kMaxFins ? fin_y_[f] : 0.0; }
+  [[nodiscard]] bool payload_active(std::size_t i) const { return i < kMaxPayloads && payload_active_[i]; }
+  [[nodiscard]] std::size_t slosh_count() const { return pods_.size(); }
+  [[nodiscard]] double tank_liquid_kg(std::size_t stage, std::size_t tank) const {   // the propellant in one tank now
+    if (stage >= g_.stages.size() || tank >= g_.stages[stage].tanks.size() || !active_[stage]) {
+      return 0.0;
+    }
+    return tank_liquid(stage, tank, prop_of(s_, stage));
+  }
 
   // The mass properties of a vehicle of total mass m with the propellant of its stages in the proportion they have now: exact for a vehicle of one stage (the reference vehicle),
   // an interpolation for a stack.
@@ -626,6 +641,9 @@ class Vehicle6 {
     }
     return w;
   }
+
+  // The speed of the mean wind (the profile times the scenario's scale) at an altitude, m/s: for the viewer's picture of the atmosphere.
+  [[nodiscard]] double mean_wind_ms(double altitude) const { return sc_.wind_scale * mean_wind_speed(altitude); }
 
   // The air at an altitude: the planet's atmosphere (the 1976 standard, an exponential one, or none) with the scenario's dispersions of density and temperature.
   [[nodiscard]] Air atmosphere(double alt) const {

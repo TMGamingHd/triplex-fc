@@ -13,6 +13,8 @@ console/tfc-console                  # opens the page; the URL carries this sess
 ```
 In the page: **Rig** tab, *Start* on "Closed loop with the launch sequence" (needs the launch images: `tools/bench/sil_triplex.sh --build --launch`, and `cmake --build build/host` for `tfc_simd` and `tfc_fly`). About 10 s later the **Launch** tab says GO; *ARM and LAUNCH…* asks you to type `LAUNCH`. Then watch **Flight** and **Voting**; on the **Faults** tab, start the *Fault lab* profile instead and inject a fault on B or C.
 
+**The 3D viewer** is a second page of the same server, for a window of its own (a second monitor): the **3D** button in the console's header, or the `3D viewer:` address printed at start (`/viewer/` with the same token). It draws the vehicle (a Starship-class stack, any vehicle file, or a CAD model you put in `console/models/`) in a physically drawn sky, in six lenses, from the live simulator or a recorded flight: [`docs/design/VIEWER.md`](../docs/design/VIEWER.md). `console/tfc-console --viewer console/demo/starship-ascent.pose.jsonl.gz` needs no bus; the page's source menu flies any vehicle in `vehicles/` with the real flight software and plays it.
+
 No bus yet? `console/tfc-console --replay console/demo/launch-and-node-loss.log.gz`: a real run (a launch, then node B killed at T+23 s), with the nodes' consoles and the simulator's telemetry; play, pause, seek and speed are in the bar at the top of the page.
 
 Standard library only (written and tested on Python 3.14; `pyserial` only if you attach serial devices): nothing to install, nothing fetched from the network.
@@ -25,6 +27,8 @@ Standard library only (written and tested on Python 3.14; `pyserial` only if you
 | `--speed X` | Replay speed (default 1) |
 | `--host ADDR`, `--port N` | Where to listen (default `127.0.0.1:8765`). `--host 0.0.0.0` puts the console, and its commands, on the network: the session token is then the only protection, and the console says so |
 | `--token T` | A session token of your own (default: random, printed in the URL) |
+| `--pose-port N` | The UDP port the 3D viewer's poses arrive on (default 45680; the rig the console starts is told it; give an externally started `tfc_simd --viewer` the same) |
+| `--viewer FILE` | Open the 3D viewer on a pose file (`tfc_fly VEHICLE --pose FILE`, `.pose.jsonl` or `.gz`): no bus and no rig needed; the URL printed is the viewer's |
 | `--truth-port N` | The UDP port the simulator's telemetry arrives on (default 45679; the rig the console starts is told it; give an externally started `tfc_simd --telemetry` the same) |
 | `--no-open` | Do not open the page in the browser |
 | `--no-rig` | Do not offer to start and stop the rig's processes: watch and command only |
@@ -71,8 +75,11 @@ console/
     faultlab.py            faults through tfc_peers run --control
     vehicles.py            vehicle files, knobs, validate, preview
     hardware.py            serial: the consoles, the supervisor, the Pico
+    viewer.py              the 3D viewer's data: poses and spec, the pose-file player, the models
     server.py, app.py, services.py, cli.py
   web/                     the page: index.html, style.css, js/ (ES modules), js/tabs/ (one per tab)
-  demo/                    one recorded run (a launch and a node loss), gzip
+  web/viewer/              the 3D viewer: index.html, js/ (world, sky, models, effects, six lenses), vendor/ (three.js, MIT)
+  models/                  your own glTF models for the viewer (not committed)
+  demo/                    one recorded run (a launch and a node loss) and one flight of the Starship-class vehicle for the viewer, gzip
 ```
-Tests are `sim/tests/test_console_*.py`, `test_peers_control.py` and `test_live_console.py` (they run with the rest: `cd sim && python3 -m unittest discover -s tests -t .`). A smoke test that clicks the real buttons in a headless Firefox against a live rig: open the page with `?selftest=base` (any rig) or `?selftest=faults` (the fault lab running).
+Tests are `sim/tests/test_console_*.py` (the viewer's: `test_console_viewer.py`), `test_peers_control.py` and `test_live_console.py` (they run with the rest: `cd sim && python3 -m unittest discover -s tests -t .`). A smoke test that clicks the real buttons in a headless Firefox against a live rig: open the page with `?selftest=base` (any rig) or `?selftest=faults` (the fault lab running).

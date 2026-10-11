@@ -72,6 +72,7 @@ addEventListener('hashchange', () => { const id = location.hash.slice(1); if (id
 
 /* ---------- theme ---------- */
 function setTheme(t) { document.documentElement.dataset.theme = t; store.set('theme', t); resetColorCache(); dirty = true; }
+$('#viewer-btn').addEventListener('click', (e) => { e.preventDefault(); window.open('/viewer/?token=' + encodeURIComponent(sessionStorage.getItem('tfc.token') || ''), '_blank'); });      // the token is kept for this tab only: the viewer's window needs it in its address
 $('#theme-btn').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 setTheme(store.get('theme', 'dark'));
 

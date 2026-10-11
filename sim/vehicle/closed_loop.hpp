@@ -6,11 +6,13 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "design.hpp"
 #include "imu_model.hpp"
 #include "runner.hpp"
+#include "viewer_state.hpp"
 #include "tfc/act.hpp"
 #include "tfc/redundancy.hpp"
 #include "tfc/flight.hpp"
@@ -101,6 +103,9 @@ struct Loop {
   uint32_t corrupt_b_at = 0xFFFFFFFFU;       // at this frame (after its step) node B's attitude state is corrupted by about 2 degrees: a real estimator fault
   std::vector<TraceRow>* trace = nullptr;    // if set, a row is appended every `trace_every` frames after T-zero (a record of the flight for tools and plots)
   uint32_t trace_every = 10U;
+  // If set, called every `pose_every` frames (including the frames on the pad, with a negative time) with the vehicle's whole state, for the 3D viewer (viewer_state.hpp). It only reads.
+  std::function<void(const Vehicle6&, double, const PoseExtra&)> on_pose;
+  uint32_t pose_every = 2U;
 };
 
 inline Result run(const Loop& lp) {
@@ -267,6 +272,18 @@ inline Result run(const Loop& lp) {
     r.held_frames += lost ? 1U : 0U;
     pending = runner.end_of_frame(k, lost ? nullptr : &wire.act);
     const Tilts t = runner.vehicle().tilts();
+    if (lp.on_pose && lp.pose_every != 0U && k % lp.pose_every == 0U) {
+      PoseExtra px;
+      const tfc::Reference rf = tables.guidance.at(pad_now ? 1U : fk + 1U);
+      px.ref_pitch_deg = static_cast<double>(rf.tilt_y_deg);
+      px.ref_yaw_deg = static_cast<double>(rf.tilt_x_deg);
+      px.cmd_pitch_deg = static_cast<double>(out.pitch_deg);
+      px.cmd_yaw_deg = static_cast<double>(out.yaw_deg);
+      px.act_mode = static_cast<int>(out.mode);
+      px.clamped = runner.clamped();
+      px.frame = k;
+      lp.on_pose(runner.vehicle(), (static_cast<double>(k) - static_cast<double>(lp.pad_frames)) * 0.01, px);
+    }
     if (pad_now) {
       continue;  // nothing flies on the pad
     }

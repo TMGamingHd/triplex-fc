@@ -531,6 +531,23 @@ m("range_by_acos_loses_the_small_angles", V, "pl_.radius * std::atan2(std::hypot
 m("range_ignores_the_crossrange", V, "std::atan2(std::hypot(s_.r.y, s_.r.z), s_.r.x)", "std::atan2(std::fabs(s_.r.y), s_.r.x)")
 m("range_is_an_angle_not_an_arc", V, "pl_.radius * std::atan2(std::hypot(s_.r.y, s_.r.z), s_.r.x)", "std::atan2(std::hypot(s_.r.y, s_.r.z), s_.r.x)")
 
+# ---- what the 3D viewer is given (added with it, 9 Oct 2026: viewer_state.hpp and the read-only accessors of Vehicle6) ----
+VS = "viewer_state.hpp"
+m("viewer_air_velocity_ignores_the_wind", VS, "const V3 v_air_i = rot != 0.0 ? s.v - wind - cross(omega, s.r) : s.v - wind;", "const V3 v_air_i = rot != 0.0 ? s.v - cross(omega, s.r) : s.v;")
+m("viewer_quaternion_scalar_second", VS, "  o.num(s.q.w, 7);\n  o.num(s.q.x, 7);", "  o.num(s.q.x, 7);\n  o.num(s.q.w, 7);")
+m("viewer_gimbal_yaw_before_pitch", VS, "    o.num(veh.stage_gimbal_pitch_deg(st), 3);\n    o.num(veh.stage_gimbal_yaw_deg(st), 3);", "    o.num(veh.stage_gimbal_yaw_deg(st), 3);\n    o.num(veh.stage_gimbal_pitch_deg(st), 3);")
+m("viewer_failed_engine_not_marked", VS, "o.num(veh.engine_failed(e) ? -1.0 : veh.engine_fraction(e), 3);", "o.num(veh.engine_fraction(e), 3);")
+m("viewer_cg_is_the_tail", VS, 'o.kv("cg", mp.x_cg, 4);', 'o.kv("cg", 0.0, 4);')
+m("viewer_cp_is_the_cg", VS, 'o.kv("cp", x_cp, 4);', 'o.kv("cp", mp.x_cg, 4);')
+m("viewer_thrust_is_the_dynamic_pressure", VS, 'o.kv("thr", l.thrust, 0);', 'o.kv("thr", l.dynamic_pressure, 0);')
+m("viewer_tank_is_the_stage_total", VS, "o.num(veh.tank_liquid_kg(st, k), 1);", "o.num(veh.propellant(st), 1);")
+m("viewer_program_pitch_yaw_swapped", VS, "  o.num(x.ref_pitch_deg, 4);\n  o.num(x.ref_yaw_deg, 4);", "  o.num(x.ref_yaw_deg, 4);\n  o.num(x.ref_pitch_deg, 4);")
+m("viewer_tilt_pitch_yaw_swapped", VS, "  o.num(tl.y_deg, 4);\n  o.num(tl.x_deg, 4);", "  o.num(tl.x_deg, 4);\n  o.num(tl.y_deg, 4);")
+m("viewer_angle_of_attack_in_radians", VS, 'o.kv("alpha", l.alpha * kRad2Deg, 4);', 'o.kv("alpha", l.alpha, 4);')
+m("viewer_wind_profile_without_the_scale", V, "return sc_.wind_scale * mean_wind_speed(altitude); }", "return mean_wind_speed(altitude); }")
+m("viewer_engine_fraction_is_zero", V, "return e < g_.engines.size() ? frac_[e] : 0.0; }", "return 0.0; }")
+m("viewer_pose_hook_counts_pad_time_as_flight_time", "closed_loop.hpp", "(static_cast<double>(k) - static_cast<double>(lp.pad_frames)) * 0.01, px);", "static_cast<double>(k) * 0.01, px);")
+
 
 def build_vehicle(name: str, tmp: Path) -> Path:
     """Copy sim/vehicle into tmp, apply the mutant `name` (a key of MUTATIONS, or an EQUIVALENT one, or "BASELINE" for none), and return the directory."""

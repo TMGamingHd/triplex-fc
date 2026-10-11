@@ -19,6 +19,8 @@ console/tfc-console --replay console/demo/launch-and-node-loss.log.gz    # no bu
 
 Then **Rig** tab, **Start** on "Closed loop with the launch sequence": five processes start (the simulator, three flight computers, ACT), the pad calibration takes about 10 s, the **Launch** tab shows GO, and **ARM and LAUNCH** (a typed confirmation) sends the countdown. `console/README.md` has the flags and the troubleshooting.
 
+> **The 3D viewer** (ADR-035) is a page of the same server and has its own document: [`VIEWER.md`](VIEWER.md). It reads the same simulator and is held to the same principles (it decides nothing, every number says where it came from).
+
 ## 3. The principles the code keeps
 
 1. **The console decides nothing about the flight.** A node's health (healthy, latched, probation, disabled) is what the flight computers *say* (their heartbeats); the vote status is what ACT says. The console's own arithmetic is labelled as the console's: the deviation of each node from the median, and the go/no-go (which uses the rule of the launch checklist, `tfc_peers/launch.py`, and a test holds the two to the same answer over 400 random states).

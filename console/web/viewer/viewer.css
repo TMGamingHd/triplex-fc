@@ -1,0 +1,95 @@
+/* The 3D viewer: a canvas with panels over it. The tokens, the cards, the stats and the segmented controls are the console's (../style.css). */
+html, body.viewer { height: 100%; overflow: hidden; background: #000; }
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; cursor: grab; }
+#scene.dragging { cursor: grabbing; }
+#ui { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+#ui > * { pointer-events: auto; }
+body.hideui #ui > :not(#v-top) , body.hideui #v-top > :not(.v-brand):not(.v-spacer):not(#v-hide) { display: none !important; }
+body.hideui #v-top { background: transparent; border-color: transparent; }
+
+/* ---- the top bar */
+#v-top { position: fixed; top: 0; left: 0; right: 0; height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: color-mix(in srgb, var(--bg2) 82%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); z-index: 20; }
+.v-brand { display: flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+.v-brand small { color: var(--muted); font-weight: 500; }
+.v-brand svg { width: 24px; height: 24px; }
+.v-spacer { flex: 1; }
+#v-lenses { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+#v-lenses button { background: none; border: 0; color: var(--muted); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; white-space: nowrap; }
+#v-lenses button:hover { color: var(--text); background: var(--panel2); }
+#v-lenses button[aria-selected="true"] { background: var(--panel3); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+#v-lenses kbd { font: 600 10px var(--mono); color: var(--faint); margin-left: 6px; }
+#v-clock { font: 700 20px var(--mono); letter-spacing: .02em; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); line-height: 34px; min-width: 128px; text-align: center; }
+#v-clock.fl { color: var(--ok); } #v-clock.cd { color: var(--warn); }
+.v-chip { cursor: pointer; }
+.v-iconbtn { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; cursor: pointer; color: var(--text); font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.v-iconbtn:hover { border-color: var(--line2); background: var(--panel3); }
+
+/* ---- the docks */
+.v-dock { position: fixed; top: 60px; bottom: 56px; width: 344px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 10px; padding: 2px 4px 10px 2px; z-index: 10; scrollbar-width: thin; }
+#v-left { left: 10px; } #v-right { right: 10px; }
+.v-card { background: color-mix(in srgb, var(--panel) 80%, transparent); backdrop-filter: blur(9px); flex: none; }
+.v-card > header { min-height: 34px; padding: 6px 10px; }
+.v-card > .body { padding: 10px; }
+.v-card .stats { gap: 6px; }
+.v-card .stat { padding: 5px 7px; }
+.v-card .stat .v { font-size: 15px; }
+.v-card .stat .k { font-size: 10px; }
+.v-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; flex-wrap: wrap; }
+.v-lbl { color: var(--muted); font-size: 12px; min-width: 70px; }
+.v-toggle { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: 13px; cursor: pointer; }
+.v-slider { display: grid; grid-template-columns: 96px 1fr 44px; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin: 5px 0; }
+.v-slider input { width: 100%; }
+.v-slider output { font: 12px var(--mono); color: var(--text); text-align: right; }
+.v-card select { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; max-width: 100%; }
+.v-camhint, .v-card .note { margin: 6px 0; line-height: 1.35; }
+.v-prov { margin: 6px 0; font-size: 12px; color: var(--muted); line-height: 1.35; }
+.v-prov b { color: var(--text); }
+.v-prov.measured b { color: var(--ok); } .v-prov.derived b { color: var(--info); } .v-prov.illustrative b { color: var(--warn); }
+.v-regime { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.v-verdict { margin-top: 8px; padding: 7px 9px; border-radius: 6px; font-size: 12.5px; background: var(--panel2); }
+.v-verdict.ok { background: var(--ok-bg); } .v-verdict.warn { background: var(--warn-bg); }
+.v-diagram { width: 100%; height: 330px; display: block; margin-top: 8px; }
+.v-legend { margin-top: 8px; } .v-legend-ends { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 2px; }
+.v-stage { margin-bottom: 9px; } .v-stage.gone { opacity: .45; }
+.v-stage-h { display: flex; justify-content: space-between; font-size: 13px; } .v-stage-state { color: var(--muted); font-size: 12px; }
+.v-bar { height: 7px; border-radius: 4px; background: var(--panel3); overflow: hidden; margin: 4px 0; } .v-bar i { display: block; height: 100%; background: var(--info); width: 0; transition: width .15s linear; }
+.v-stage-n { font-size: 11.5px; color: var(--muted); }
+.v-events { list-style: none; margin: 0; padding: 0; font-size: 12.5px; max-height: 190px; overflow: auto; }
+.v-events li { padding: 3px 0; border-bottom: 1px solid var(--line); } .v-events li:last-child { border: 0; } .v-events li.warn { color: var(--warn); } .v-events li.crit { color: var(--crit); } .v-events li.ok { color: var(--ok); }
+.v-events .mono { color: var(--muted); }
+canvas.chart { width: 100%; display: block; }
+
+/* ---- the bottom bar */
+#v-bottom { position: fixed; left: 10px; right: 10px; bottom: 8px; height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: color-mix(in srgb, var(--bg2) 82%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line); border-radius: 10px; z-index: 20; }
+#v-bottom input[type=range] { flex: 1; min-width: 120px; }
+#v-bottom .v-info { font: 12px var(--mono); color: var(--muted); white-space: nowrap; }
+#v-bottom .hide { display: none; }
+.v-banner { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); z-index: 15; max-width: 560px; }
+
+/* ---- the source menu */
+.v-menu { position: fixed; top: 54px; left: 150px; width: 380px; max-height: calc(100vh - 120px); overflow: auto; z-index: 40; background: var(--panel); border: 1px solid var(--line2); border-radius: 10px; padding: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.v-menu h4 { margin: 10px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.v-menu button.item { display: block; width: 100%; text-align: left; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; margin: 3px 0; cursor: pointer; color: var(--text); }
+.v-menu button.item:hover { border-color: var(--accent); }
+.v-menu button.item small { color: var(--muted); display: block; }
+.v-menu .note { margin: 6px 0; }
+
+#v-top .v-iconbtn, #v-bottom .btn, #v-lenses button, .v-chip, .chip { white-space: nowrap; flex: none; }
+#v-src { flex: 0 1 auto; min-width: 90px; }
+@media (max-width: 1500px) { #v-veh, .v-brand small { display: none; } #v-lenses button { padding: 6px 9px; } #v-lenses kbd { display: none; } #v-clock { min-width: 112px; font-size: 18px; } }
+@media (max-width: 1280px) { #v-src { max-width: 150px; } #v-lenses button { padding: 6px 7px; font-size: 12px; } #v-cam { display: none; } }
+@media (max-width: 1100px) { .v-dock { width: 290px; } }
+@media (max-width: 800px) { #v-right { display: none; } .v-brand small { display: none; } }
+
+.v-profile, .v-map { width: 100%; display: block; margin-top: 6px; }
+.v-nodes { display: flex; flex-direction: column; gap: 5px; }
+.v-node { font: 12px var(--mono); padding: 6px 8px; border-radius: 6px; background: var(--panel2); border-left: 3px solid var(--faint); white-space: pre-wrap; }
+.v-node.ok { border-left-color: var(--ok); } .v-node.warn { border-left-color: var(--warn); background: var(--warn-bg); } .v-node.crit { border-left-color: var(--crit); background: var(--crit-bg); } .v-node.act { background: var(--panel3); }
+
+#v-src { max-width: 270px; overflow: hidden; text-overflow: ellipsis; } #v-src span { overflow: hidden; text-overflow: ellipsis; }
+#v-veh { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+
+.v-empty { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(520px, calc(100vw - 32px)); z-index: 30; }
+.v-empty[hidden] { display: none; }
+.v-empty p { margin: 6px 0; line-height: 1.4; }
+.btn.go { background: var(--accent); color: #04121a; border-color: var(--accent); }
