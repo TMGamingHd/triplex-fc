@@ -133,6 +133,8 @@ class Vehicles:
         for d, tag in ((self.dir, "vehicles/"), (self.scratch, "console")):
             if d.is_dir():
                 for p in sorted(d.glob("*.json")):
+                    if p.stem.startswith("_"):             # the console's own working files (_tmp-*, _rig, _reference): not vehicles to choose
+                        continue
                     if d == self.dir and p.stem == "reference":      # the built-in vehicle above is this file (`tfc_fly reference --dump`): one entry, not two
                         continue
                     desc = ""
@@ -271,7 +273,9 @@ class Vehicles:
         return self.active
 
     def sim_args(self) -> list[str]:
-        """The `tfc_simd` arguments for the active vehicle: nothing for the untouched reference; otherwise a file written with the knobs applied (never one of the committed examples)."""
+        """The `tfc_simd` arguments for the active vehicle: nothing for the untouched reference; for it with plant departures, a file written with the knobs applied (never one of the committed examples, and
+        the platform's sensors as always); for any other vehicle that file and `--vehicle-true`: the sensors are the vehicle's own, because a platform that tilts a few degrees cannot follow a launcher that
+        pitches past 45."""
         name, knobs = self.active["name"], self.active["knobs"]
         if name == "reference" and not knobs:
             return []
@@ -281,7 +285,7 @@ class Vehicles:
         p = self.scratch / "_rig.json"
         self.scratch.mkdir(parents=True, exist_ok=True)
         p.write_text(text)
-        return ["--vehicle", str(p)]
+        return ["--vehicle", str(p)] + ([] if name == "reference" else ["--vehicle-true"])
 
     def snapshot(self) -> dict:
         return {"active": self.active, "tables_note": "reference" if self.active["name"] == "reference" else "other"}

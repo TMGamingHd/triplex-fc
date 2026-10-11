@@ -34,6 +34,15 @@ config TFC_FLIGHT_FUNCTION
 	  using the pitch program and gains in flight_tables.hpp. Off (default): a scripted function of the frame number, which the Python virtual
 	  peers reproduce bit for bit, so they can stand in for the other two nodes.
 
+config TFC_ESTIMATOR_NO_ACCEL
+	bool "The attitude estimator ignores the accelerometer"
+	depends on TFC_FLIGHT_FUNCTION
+	default n
+	help
+	  On: the attitude is the gyro's integral (EstimatorConfig::use_accel false), as for a vehicle that flies under thrust, where the accelerometer reads the thrust and not gravity.
+	  Off (default): the accelerometer corrects the tilt while the specific force is within 0.3 g of 1 g, as on the platform on the bench. The rig builds a vehicle other than the
+	  reference one with this on (tools/bench/build_vehicle_rig.py).
+
 config TFC_LAUNCH_SEQUENCE
 	bool "The launch sequence: pad calibration, mission frame, launch and scrub, go/no-go"
 	depends on TFC_FLIGHT_FUNCTION

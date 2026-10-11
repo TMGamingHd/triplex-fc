@@ -2,6 +2,7 @@
 import { h, setText, clock, num, store, modal, toast, icon, NODES } from '../util.js';
 import { sequence } from '../derive.js';
 import { sendCommand } from '../ops.js';
+import { api } from '../net.js';
 
 let R = {};
 const MANUAL = [
@@ -10,6 +11,58 @@ const MANUAL = [
   ['disarm', 'The INJECTOR-DISARM switch is in the disarmed position, if fitted (real rig)'],
   ['consoles', 'The consoles have been read: no LATCHED OUT, no SAFE REQUESTED (Events tab)'],
 ];
+
+const callApi = async (fn, ok) => { try { const r = await fn(); if (ok) toast(ok, 'ok', 3500); return r; } catch (e) { toast(e.message, 'warn', 9000); } };
+const STATE = { ready: ['ok', 'flight computers ready'], 'needs-build': ['warn', 'flight computers to be built'], building: ['warn', 'building…'], failed: ['crit', 'build failed'], 'cannot-build': ['crit', 'cannot build here'], idle: ['muted', '…'] };
+
+// The vehicle the rig flies. Choosing one builds the three flight computers with that vehicle's own pitch program and gains (console/tfc_console/rigbuild.py); the rig then starts them with the simulator flying the same vehicle.
+function vehicleCard() {
+  R.vsel = h('select', { id: 'rig-vehicle', 'aria-label': 'the vehicle the rig flies', onchange: () => { choose(R.vsel.value); } });
+  R.vchip = h('span', { id: 'rv-state', class: 'chip muted' }, '—');
+  R.vsteps = h('ol', { class: 'timeline', id: 'rv-steps' });
+  R.vlog = h('pre', { class: 'mono note', id: 'rv-log', style: { maxHeight: '140px', overflow: 'auto', whiteSpace: 'pre-wrap', margin: '8px 0 0' } });
+  R.vnote = h('p', { class: 'note', id: 'rv-note', style: { margin: '8px 0 0' } });
+  R.vgo = h('button', { class: 'btn go', id: 'rv-start', onclick: () => callApi(() => api('/api/rig/start', { profile: 'closed-loop' }), 'Rig started: the flight computers are calibrating') }, icon('play'), h('span', { style: { whiteSpace: 'nowrap' } }, 'Start the rig'));
+  R.vstop = h('button', { class: 'btn danger', id: 'rv-stop', onclick: () => callApi(() => api('/api/rig/stop', {}), 'Rig stopped') }, 'Stop the rig');
+  R.vbuild = h('button', { class: 'btn primary', id: 'rv-build', onclick: () => choose(R.vsel.value) }, 'Build the flight computers');
+  return h('article', { class: 'card', id: 'rig-vehicle-card' },
+    h('header', {}, h('h3', {}, 'Vehicle on the rig'), h('div', { class: 'tools' }, R.vchip)),
+    h('div', { class: 'body' },
+      h('div', { class: 'btns', style: { alignItems: 'center', marginBottom: '8px' } }, R.vsel, R.vbuild),
+      h('div', { class: 'btns', style: { flexWrap: 'wrap' } }, R.vgo, R.vstop, h('button', { class: 'btn', type: 'button', id: 'rv-3d', onclick: () => { window.open('/viewer/?token=' + encodeURIComponent(sessionStorage.getItem('tfc.token') || ''), '_blank'); } }, 'Open the 3D view')),
+      R.vnote, R.vsteps, R.vlog));
+}
+
+async function choose(name) {
+  const S = R.S, knobs = S.snap.vehicle && S.snap.vehicle.active.name === name ? S.snap.vehicle.active.knobs : {};
+  await callApi(() => api('/api/rig/vehicle', { name, knobs }), `Vehicle: ${name}`);
+}
+
+function vehicleUpdate(S) {
+  const s = S.snap, b = s.rigbuild || {}, act = (s.vehicle && s.vehicle.active) || { name: 'reference' }, rg = s.rig || {};
+  const running = (rg.procs || []).some((p) => p.state === 'running' || p.state === 'frozen');
+  const names = (S.vehicles || []).map((v) => v.name);
+  const key = JSON.stringify([names, act.name]);
+  if (R.vkey !== key) { R.vkey = key; R.vsel.replaceChildren(...names.map((n) => h('option', { value: n, selected: n === act.name }, n))); }
+  if (document.activeElement !== R.vsel) R.vsel.value = act.name;
+  const [cls, txt] = STATE[b.state] || STATE.idle;
+  R.vchip.className = `chip ${cls}`; setText(R.vchip, txt + (b.state === 'building' ? ` ${b.seconds} s` : ''));
+  R.vsel.disabled = running || b.state === 'building';
+  R.vbuild.disabled = running || b.state === 'building' || b.state === 'ready' || b.state === 'cannot-build';
+  R.vgo.disabled = !(b.state === 'ready') || running || !!rg.disabled;
+  R.vstop.disabled = !running;
+  setText(R.vnote, running ? `The rig is running with ${rg.profile === 'closed-loop' ? act.name : 'its own'} vehicle. Stop it to choose another.`
+    : b.state === 'ready' ? (b.reference ? 'The reference vehicle: its flight computers are the committed build.' : `The flight computers for ${act.name} are built: their pitch program and gains were designed on this vehicle. Start the rig, wait for the three computers to calibrate, and launch.`)
+    : b.state === 'needs-build' ? `${act.name}'s flight computers are not built yet. Building takes about half a minute and uses the real flight code.`
+    : b.state === 'failed' ? (b.error || 'the build failed') : b.state === 'cannot-build' ? (b.error || '') : '');
+  const sk = JSON.stringify([b.steps, (b.log || []).length]);
+  if (R.vsk !== sk) {
+    R.vsk = sk;
+    R.vsteps.replaceChildren(...(b.state === 'building' || b.state === 'failed' ? (b.steps || []) : []).map((x) => h('li', { class: x.state }, h('span', { class: 'mark' }, x.state === 'done' ? '✓' : x.state === 'failed' ? '✗' : ''), h('div', {}, h('div', {}, x.name), h('div', { class: 'sub' }, x.detail || '')))));
+    setText(R.vlog, b.state === 'failed' || b.state === 'building' ? (b.log || []).slice(-12).join('\n') : '');
+    R.vlog.style.display = R.vlog.textContent ? '' : 'none';
+  }
+}
 
 function checks() { return store.get('launch.checks', {}); }
 
@@ -59,11 +112,12 @@ export default {
     const gngCard = h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Go / no-go'), h('div', { class: 'tools' }, h('span', { class: 'note' }, 'the checklist’s rule, evaluated by the console'))), h('div', { class: 'body flush' }, gngTable));
     const calCard = h('article', { class: 'card' }, h('header', {}, h('h3', {}, 'Pad calibration')),
       h('div', { class: 'body' }, R.cal, h('p', { class: 'note', style: { marginBottom: 0 } }, 'Each computer averages its own IMU for 10 s of rest, subtracts the bias, and reports ready. A platform that is moved on the pad restarts the calibration: that is the check.')));
-    root.append(h('div', { class: 'grid c-1-2' }, h('div', { class: 'stack' }, countdownCard, sequenceCard), h('div', { class: 'stack' }, controlCard, gngCard, calCard)));
+    root.append(h('div', { class: 'grid c-1-2' }, h('div', { class: 'stack' }, vehicleCard(), countdownCard, sequenceCard), h('div', { class: 'stack' }, controlCard, gngCard, calCard)));
   },
   update(S) {
     R.S = S;
     const s = S.snap; if (!s) return;
+    vehicleUpdate(S);
     const ph = s.phase;
     setText(R.clock, ph.name === 'countdown' ? `T-${clock(ph.t_minus_s)}` : ph.name === 'flight' ? `T+${clock(ph.flight_s)}` : ph.name === 'pad' ? 'PAD' : '--:--.-');
     R.clock.style.color = ph.name === 'countdown' ? 'var(--warn)' : ph.name === 'flight' ? 'var(--ok)' : 'var(--text)';

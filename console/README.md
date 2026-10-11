@@ -13,6 +13,8 @@ console/tfc-console                  # opens the page; the URL carries this sess
 ```
 In the page: **Rig** tab, *Start* on "Closed loop with the launch sequence" (needs the launch images: `tools/bench/sil_triplex.sh --build --launch`, and `cmake --build build/host` for `tfc_simd` and `tfc_fly`). About 10 s later the **Launch** tab says GO; *ARM and LAUNCH…* asks you to type `LAUNCH`. Then watch **Flight** and **Voting**; on the **Faults** tab, start the *Fault lab* profile instead and inject a fault on B or C.
 
+**Which vehicle the rig flies** is chosen on the Launch tab (*Vehicle on the rig*): pick it, and the console builds the three flight computers with that vehicle's own pitch program and gains (about half a minute, the real firmware; `docs/design/CONSOLE.md` section 8, ADR-036), then start the rig and launch: the 3D viewer shows what those computers do with it.
+
 **The 3D viewer** is a second page of the same server, for a window of its own (a second monitor): the **3D** button in the console's header, or the `3D viewer:` address printed at start (`/viewer/` with the same token). It draws the vehicle (a Starship-class stack, any vehicle file, or a CAD model you put in `console/models/`) in a physically drawn sky, in six lenses, from the live simulator or a recorded flight: [`docs/design/VIEWER.md`](../docs/design/VIEWER.md). `console/tfc-console --viewer console/demo/starship-ascent.pose.jsonl.gz` needs no bus; the page's source menu flies any vehicle in `vehicles/` with the real flight software and plays it.
 
 No bus yet? `console/tfc-console --replay console/demo/launch-and-node-loss.log.gz`: a real run (a launch, then node B killed at T+23 s), with the nodes' consoles and the simulator's telemetry; play, pause, seek and speed are in the bar at the top of the page.
@@ -45,7 +47,7 @@ Standard library only (written and tested on Python 3.14; `pyserial` only if you
 | Flight | 4 | Trajectory against the nominal flight, the vehicle and its stages, the numbers and eight charts |
 | Commands | 5 | Every ground command, with its ARM rule; what to do now; the log with the nodes' answers |
 | Faults | 6 | Any of the 32 fault kinds on the virtual B and C while they run, with the detection **measured**; kill, freeze, restart a node; the injector's relays |
-| Vehicle | 7 | Choose a vehicle, change its parameters, validate it with the simulator's own reader, fly a preview, give it to the rig |
+| Vehicle | 7 | Choose a vehicle, change its parameters, validate it with the simulator's own reader, fly a preview, give it to the rig (which builds its flight computers) |
 | Rig | 8 | The data source and the replay, the rig's processes, the serial hardware |
 | Bus | 9 | Every id with its rate and failures, and a live decoded monitor |
 | Events | 0 | Every event, filterable and searchable, and the raw console of each node |
