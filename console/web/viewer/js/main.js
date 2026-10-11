@@ -37,6 +37,8 @@ const canvas = document.getElementById('scene');
 const ui = document.getElementById('ui');
 const world = new World(canvas, { preserve: !!Q.get('shot') });
 const data = new ViewerData();
+world.imagery.refresh();
+if (Q.get('img')) world.imagery.setMode(Q.get('img')); if (Q.get('night') === '0') world.imagery.setNight(false);
 world.skip = { sky: Q.get('nosky'), near: Q.get('nonear'), env: Q.get('noenv') };
 
 // remembered choices
@@ -326,3 +328,25 @@ app.refreshModels().then(() => { if (app.styleName.startsWith('gltf:')) app.setS
 data.start();
 requestAnimationFrame(loop);
 if (Q.get('selftest')) import('./selftest.js').then((m) => m.run(app, LENSES, setLens, world));
+
+// ---- ?bench=1: what each choice of Earth imagery costs to draw. Each mode in turn: wait for its pictures, then draw the same frame again and again, forcing the GPU to finish each (a one-pixel read), and
+// report the median and the 95th percentile of the time per frame. In a headless browser that is software rendering (a CPU doing a GPU's work): the *ratios* mean something, the milliseconds do not.
+async function bench() {
+  const say = (...a) => window.__dbg ? window.__dbg('bench', ...a) : console.log('bench', ...a);
+  const gl = world.renderer.getContext(), px = new Uint8Array(4), next = () => new Promise((r) => setTimeout(r, 0));
+  const modes = (Q.get('bench') === '1' ? 'procedural,earth-4k,earth-8k,site-4k,site-8k' : Q.get('bench')).split(',');
+  await new Promise((r) => setTimeout(r, 3000));
+  for (const m of modes) {
+    const tLoad = performance.now();
+    world.imagery.setMode(m);
+    for (let i = 0; i < 400 && (world.imagery.applied === '' || world.imagery.busy); i++) await new Promise((r) => setTimeout(r, 50));
+    const loadMs = Math.round(performance.now() - tLoad);
+    const tFirst = performance.now(); world.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); const firstMs = Math.round(performance.now() - tFirst);      // the first frame with the new pictures: this is where they are uploaded to the GPU and their mip maps made               // from the choice to the pictures being on the planet: the fetch, the decode and the upload of what had not been loaded yet (pictures are kept: a later mode that reuses one pays nothing for it)
+    const t = [];
+    for (let i = 0; i < 100; i++) { const a = performance.now(); world.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); const b = performance.now(); if (i >= 10) t.push(b - a); await next(); }
+    t.sort((x, y) => x - y);
+    say(JSON.stringify({ mode: m, state: world.imagery.state, load_ms: loadMs, first_frame_ms: firstMs, median_ms: +t[t.length >> 1].toFixed(1), p95_ms: +t[Math.floor(t.length * 0.95)].toFixed(1), size: [world.renderer.domElement.width, world.renderer.domElement.height] }));
+  }
+  say('done');
+}
+if (Q.get('bench')) bench();

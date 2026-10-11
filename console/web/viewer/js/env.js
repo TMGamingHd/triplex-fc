@@ -42,6 +42,16 @@ uniform vec3 uDown0;           // downrange there
 uniform float uQuality;        // 0 low .. 1 high: the number of samples
 uniform float uCoastKm;        // where the shore is, km downrange of the pad
 uniform vec3 uDebug;
+uniform vec4 uImg;             // x: the day picture is on, y: the night picture, z: the number of patches (0 to 2), w: how big the finest texel is, km
+uniform sampler2D uTexDay;
+uniform sampler2D uTexNight;
+uniform sampler2D uTexReg;     // the regional patch, the local one
+uniform sampler2D uTexLoc;
+uniform vec4 uBoxReg;          // lon min, lat min, lon max, lat max: radians
+uniform vec4 uBoxLoc;
+uniform vec3 uEqX;             // in the planet's frame: the equatorial direction of the launch longitude, and east of it
+uniform vec3 uEqY;
+uniform vec2 uLonLat0;         // the launch site's longitude and its latitude shift, radians (the picture is moved so that the pad is where the site is)
 uniform vec4 uShell[8];       // xyz: the colour of a shell of the atmosphere; w: its radius in km (0: none)
 uniform float uShellAlpha;
 
@@ -149,6 +159,54 @@ float landMask(vec3 pp, out float shore) {
   return m;
 }
 
+// ---- the pictures. Longitude and latitude from the planet-fixed direction; the sampling gradients are taken from the same coordinates, with the jump of the date line taken out, so that the mip level is right
+// at the seam and the poles. (They are computed in main(), outside the branch for the ground, where the derivatives are defined.)
+vec2 lonLat(vec3 pp) {
+  float lat = asin(clamp(dot(pp, uPole), -1.0, 1.0)) + uLonLat0.y;
+  float lon = atan(dot(pp, uEqY), dot(pp, uEqX)) + uLonLat0.x;
+  lon -= 6.2831853 * floor((lon + PI) / 6.2831853);
+  return vec2(lon, lat);
+}
+vec2 unwrapD(vec2 d) { d.x -= 6.2831853 * floor(d.x / 6.2831853 + .5); return d; }
+float feather(vec2 p) { vec2 e = min(p, 1.0 - p); return smoothstep(0.0, .07, min(e.x, e.y)); }
+vec3 pictureColour(vec2 ll, vec2 dx, vec2 dy, out float night, out float lum) {
+  vec3 c = textureGrad(uTexDay, vec2(ll.x / 6.2831853 + .5, ll.y / PI + .5), dx / vec2(6.2831853, PI), dy / vec2(6.2831853, PI)).rgb;
+  if (uImg.z > 0.5) {
+    vec2 sz = uBoxReg.zw - uBoxReg.xy, p = (ll - uBoxReg.xy) / sz;
+    float w = feather(p);
+    if (w > 0.0) c = mix(c, textureGrad(uTexReg, p, dx / sz, dy / sz).rgb, w);
+  }
+  if (uImg.z > 1.5) {
+    vec2 sz = uBoxLoc.zw - uBoxLoc.xy, p = (ll - uBoxLoc.xy) / sz;
+    float w = feather(p);
+    if (w > 0.0) c = mix(c, textureGrad(uTexLoc, p, dx / sz, dy / sz).rgb, w);
+  }
+  night = uImg.y > .5 ? textureGrad(uTexNight, vec2(ll.x / 6.2831853 + .5, ll.y / PI + .5), dx / vec2(6.2831853, PI), dy / vec2(6.2831853, PI)).r : 0.0;
+  lum = dot(c, vec3(.2126, .7152, .0722));
+  return c;
+}
+
+vec3 pictureSurface(vec3 pp, vec3 N, vec3 V, vec3 sunT, float ndl, vec2 ll, vec2 dx, vec2 dy, out float isLand) {
+  float nightPic, lum;
+  vec3 pic = pictureColour(ll, dx, dy, nightPic, lum);
+  // water: bluer than it is red, and dark. The picture's own colour is kept (it is the satellite's: shoals, turbidity), and the sun's glint is added on it
+  float water = smoothstep(.01, .06, pic.b - pic.r) * (1.0 - smoothstep(.12, .3, lum));
+  isLand = 1.0 - water;
+  float lat = abs(dot(pp, uPole));
+  // a picture magnified past its texels is given fine grain, so that the ground is not a smear: the grain is the viewer's, and is not in the picture
+  float foot = length(dx) * uRp, mag = clamp(log2(max(uImg.w, 1e-4) / max(foot, 1e-5)) / 5.0, 0.0, 1.0);
+  float grain = vnoise(pp * 6000.0) * .6 + vnoise(pp * 17000.0) * .4;
+  vec3 alb = pic * (1.0 + mag * .5 * (grain - .5));
+  vec3 H = normalize(uSun + V);
+  vec3 nrm = normalize(N + water * .02 * (vec3(vnoise(pp * 1400.0), vnoise(pp * 1500.0 + 3.0), vnoise(pp * 1300.0 + 7.0)) - .5));
+  float spec = pow(max(dot(nrm, H), 0.0), 600.0) * water * 6.0;
+  vec3 skyAmb = vec3(.05, .07, .11) * (.25 + .75 * max(dot(N, uSun) * .5 + .5, 0.0));
+  vec3 col = alb * (uSunI * sunT * ndl / PI + skyAmb * uSunI * .35 * length(sunT)) + spec * uSunI * sunT * .25;
+  float night = 1.0 - smoothstep(-.12, .05, ndl);
+  col += vec3(1.0, .72, .4) * pow(nightPic, 1.2) * night * 2.6 * (1.0 - water);
+  return col;
+}
+
 vec3 surface(vec3 pp, vec3 N, vec3 V, vec3 sunT, float ndl, out float isLand) {
   float shore;
   float land = landMask(pp, shore);
@@ -223,6 +281,9 @@ void main() {
   vec2 ha = raySphere(ro, rd, Ra);
   bool hitGround = hs.x < hs.y && hs.x > 0.0;
   float tg = hs.x > 0.0 ? hs.x : 0.0;
+  vec3 ppHit = uPlanetRot * normalize(ro + rd * tg);
+  vec2 llHit = lonLat(ppHit), llDx = vec2(0.0), llDy = vec2(0.0);
+  if (uImg.x > .5) { vec2 a = dFdx(llHit), b = dFdy(llHit); llDx = unwrapD(a); llDy = unwrapD(b); }
   float tEnd = hitGround ? tg : ha.y;
   float t0 = max(ha.x, 0.0);
   vec3 T;
@@ -236,7 +297,7 @@ void main() {
     float ndl = max(dot(N, uSun), 0.0);
     vec3 sunT = sunTransmittance(p + N * .001);
     float land;
-    vec3 gcol = surface(pp, N, -rd, sunT, ndl, land);
+    vec3 gcol = uImg.x > .5 ? pictureSurface(pp, N, -rd, sunT, ndl, llHit, llDx, llDy, land) : surface(pp, N, -rd, sunT, ndl, land);
     // clouds between the ground and the eye
     float cloudA = 0.0; vec3 ccol = vec3(0.0);
     float Rc = uRp + 3.0;
@@ -319,7 +380,8 @@ export class Sky {
         uCamPos: { value: new THREE.Vector3(0, 6.371, 0) }, uCamRot: { value: new THREE.Matrix3() }, uTan: { value: new THREE.Vector2(1, 1) }, uSun: { value: new THREE.Vector3(0, 1, 0) },
         uRp: { value: 6371.0 }, uHa: { value: 100.0 }, uPlanetRot: { value: new THREE.Matrix3() }, uTime: { value: 0 }, uCloud: { value: 0.35 }, uSunI: { value: 20.0 }, uStars: { value: 1.0 },
         uExposure: { value: 1.0 }, uRayleighScale: { value: 1.0 }, uPole: { value: new THREE.Vector3(0, 1, 0) }, uUp0: { value: new THREE.Vector3(0, 1, 0) }, uDown0: { value: new THREE.Vector3(0, 0, 1) }, uQuality: { value: 0.6 },
-        uCoastKm: { value: 1.6 }, uDebug: { value: new THREE.Vector3() }, uShell: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, 0, 0, 0)) }, uShellAlpha: { value: 0 },
+        uCoastKm: { value: 1.6 }, uImg: { value: new THREE.Vector4(0, 0, 0, 10) }, uTexDay: { value: null }, uTexNight: { value: null }, uTexReg: { value: null }, uTexLoc: { value: null },
+        uBoxReg: { value: new THREE.Vector4() }, uBoxLoc: { value: new THREE.Vector4() }, uEqX: { value: new THREE.Vector3(1, 0, 0) }, uEqY: { value: new THREE.Vector3(0, 0, 1) }, uLonLat0: { value: new THREE.Vector2() }, uDebug: { value: new THREE.Vector3() }, uShell: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, 0, 0, 0)) }, uShellAlpha: { value: 0 },
       },
     });
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.mat);

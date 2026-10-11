@@ -3,6 +3,7 @@
 // Two scenes, because the numbers do not fit in one. The planet is 6371 km across and the vehicle is 9 m: in one scene with one depth buffer, 32-bit floats cannot put a bolt and a horizon in the same frame. So the sky,
 // the atmosphere and the planet are one fragment shader that works from the camera's place above the planet's centre (env.js); and everything near is drawn in a scene whose origin is the vehicle's centre of gravity, in
 // metres, so that what is within a kilometre of the camera has precision to a millimetre (the transforms are done in JavaScript's doubles and only the small offsets go to the GPU).
+import { Imagery } from './imagery.js';
 import * as THREE from '../vendor/three.module.js';
 import { Sky, sunFromLocal } from './env.js';
 import { CameraRig } from './cam.js';
@@ -36,6 +37,7 @@ export class World {
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.3, 4.0e6);
     this.rig = new CameraRig(this.camera);
     this.sky = new Sky();
+    this.imagery = new Imagery(this.sky, this.renderer);
     this.sun = new THREE.DirectionalLight(0xffffff, 1);
     this.nearScene.add(this.sun, this.sun.target);
     this.fill = new THREE.AmbientLight(0xffffff, 0.0);
@@ -181,6 +183,7 @@ export class World {
       g.uCam.value.copy(camPos).sub(this.pad.group.position);
       g.uCamAlt.value = Math.max(0, pose.alt - 20);
       g.uCoast.value = 1600;
+      g.uImgOn.value = this.imagery.state && this.imagery.state !== 'procedural' ? 1 : 0;
     }
 
     // the sky
@@ -192,6 +195,7 @@ export class World {
     u.uSun.value.copy(sun); u.uRp.value = Rp; u.uHa.value = Ha; u.uTime.value = wall; u.uCloud.value = s.cloud; u.uStars.value = s.stars; u.uQuality.value = s.atmosphereQuality * this.quality;
     const rot = new THREE.Quaternion().setFromAxisAngle(pole, -earthAngle); _m3.setFromMatrix4(_m4.makeRotationFromQuaternion(rot)); u.uPlanetRot.value.copy(_m3);
     u.uPole.value.copy(pole); u.uUp0.value.copy(up0); u.uDown0.value.copy(down0); u.uCoastKm.value = 1.6;
+    this.imagery.sync(pole, up0).catch((e) => console.warn('imagery', e && e.message));
 
     // the exhaust trail, the pad's smoke, the stages let go
     const thrustFrac = pose.thr > 0 ? Math.min(1, pose.thr / (pose.m * 9.80665 * 1.6)) : 0;     // about 1 at the thrust-to-weight of a launcher on the pad

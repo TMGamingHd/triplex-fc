@@ -221,6 +221,8 @@ These are requirements on a bench tool: the viewer must show what the simulator 
 | TFC-VIEW-006 | The viewer shall serve a model file only by name from `console/models/` to a page with the session token, and its page shall run under a content-security policy with no inline script. | T | Verified (SIL) |
 | TFC-VIEW-007 | With the live rig running, the viewer shall show the launch at the simulator's rate. | T, D | Verified (live, 50 poses a second, 59 frames a second); on a board: not run |
 | TFC-VIEW-008 | The viewer shall still show a flight that has only the console's 10 Hz telemetry, and say what is missing. | T, I | Verified (the 8 Oct recording) |
+| TFC-VIEW-009 | The Earth imagery pack shall be fetched only from the named public service, shall keep nothing the service did not answer with an image, shall be described by a manifest with the source and the place of every picture, and the console shall serve only the files that manifest names. | T | Verified (SIL): `test_console_imagery.py` |
+| TFC-VIEW-010 | With no pack, or with *Procedural* chosen, the viewer shall draw the procedural planet and say how to get a pack; with one, the pictures shall be placed by the pad's longitude and latitude at the nearest known launch site, and the page shall say what they are (year, source, no terrain). | D, I | Verified by eye (9 Oct 2026, Overview lens, six views); on another GPU: not run |
 
 ## Software quality
 | ID | Requirement | Verif. | Status |

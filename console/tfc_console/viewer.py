@@ -22,6 +22,7 @@ import threading
 import time
 from pathlib import Path
 
+from .imagery import ImageryPack
 from .recorder import open_text
 
 
@@ -282,6 +283,7 @@ class ViewerService:
         self.vehicles = vehicles
         self.scratch = state_dir / "viewer"
         self.models = models_dir or repo / "console" / "models"
+        self.imagery = ImageryPack(repo / "console" / "imagery")        # the Earth pictures tfc-imagery downloaded, if it did (imagery.py)
         self.player: PoseReplay | None = None
         self.lock = threading.RLock()
         self.flying: dict | None = None
