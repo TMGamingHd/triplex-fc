@@ -109,6 +109,19 @@ inline void group_totals(const VehicleSpec& g, uint8_t mask, double& thrust, dou
   }
 }
 
+// The mean time constant (s) with which the main engines of the given groups die away after a shutdown command: the guidance ends a burn early by the impulse they still give.
+inline double mean_tail_s(const VehicleSpec& g, uint8_t mask) {
+  double tail = 0.0;
+  unsigned n = 0U;
+  for (const EngineSpec& e : g.engines) {
+    if (e.control == Control::None && e.group >= 0 && ((mask >> e.group) & 1U) != 0U) {
+      tail += e.tail_s;
+      ++n;
+    }
+  }
+  return n > 0U ? tail / static_cast<double>(n) : 0.0;
+}
+
 }  // namespace detail
 
 // Build the tables of one plan. `v` is the vehicle at T-zero (for the planet, the ground, the masses).
@@ -137,6 +150,7 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
   t.landing.sink_ms = m.sink_ms;
   t.landing.aim_below_m = m.aim_below_m;
   t.landing.approach_s = m.approach_s;
+  t.landing.horizon_min_s = m.horizon_min_s;
   t.landing.tilt_max_deg = m.tilt_max_deg;
   t.landing.tilt_final_deg = m.tilt_final_deg;
   t.landing.final_height_m = m.final_height_m;
@@ -150,6 +164,7 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
   t.n_phases = static_cast<uint8_t>(plan.size());
   std::size_t track = 0;
   bool have_program = false;
+  bool good = true;
   for (std::size_t i = 0; i < plan.size(); ++i) {
     const PhaseSpec& ps = plan[i];
     const std::string at = "mission." + who + "[" + std::to_string(i) + "]";
@@ -158,11 +173,13 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
     ph.kind = detail::kind_of(ps.kind, ok);
     if (!ok) {
       errors.push_back(at + ".kind: unknown \"" + ps.kind + "\"");
+      good = false;
     }
     ph.end = detail::end_of(ps.end_kind, ok);
     ph.hold = detail::hold_of(ps.hold, ok);
     if (!ok) {
       errors.push_back(at + ".hold: unknown \"" + ps.hold + "\"");
+      good = false;
     }
     ph.end_value = static_cast<float>(ps.end_value);
     ph.groups = detail::mask_of(ps.groups);
@@ -171,6 +188,7 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
       ph.events = static_cast<uint8_t>(ph.events | detail::event_of(e, eok));
       if (!eok) {
         errors.push_back(at + ".events: unknown event \"" + e + "\"");
+      good = false;
       }
     }
     ph.mixer = static_cast<uint8_t>(ps.mixer);
@@ -225,19 +243,12 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
       ph.p[1] = static_cast<float>(vs);
       ph.p[2] = static_cast<float>(gamma);
       ph.p[8] = static_cast<float>(ps.burnout_mass_kg);
+      ph.p[9] = static_cast<float>(detail::mean_tail_s(g, ph.groups));   // (the engines go on pushing for their decay time after the cutoff: the burn is ended that much speed early)
     } else if (ph.kind == kind::kBoostback) {
       ph.p[0] = static_cast<float>(ps.bias_m);
       ph.p[1] = static_cast<float>(ps.reserve_mass_kg);
       ph.p[2] = static_cast<float>(ps.pitch_up_deg);
-      double tail = 0.0;   // how long the engines go on pushing after the command to shut down (their first-order decay time): the burn is ended early by that much impulse
-      unsigned n_eng = 0U;
-      for (const EngineSpec& e : g.engines) {
-        if (e.control == Control::None && e.group >= 0 && ((ph.groups >> e.group) & 1U) != 0U) {
-          tail += e.tail_s;
-          ++n_eng;
-        }
-      }
-      ph.p[3] = static_cast<float>(n_eng > 0U ? tail / static_cast<double>(n_eng) : 0.0);
+      ph.p[3] = static_cast<float>(detail::mean_tail_s(g, ph.groups));   // (the impulse the engines still give while they die away is taken off the burn)
     } else if (ph.kind == kind::kGlide) {
       ph.p[0] = static_cast<float>(ps.alpha_max_deg);
       ph.p[1] = static_cast<float>(ps.gain_deg_per_km / 1000.0);
@@ -273,7 +284,7 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
       ph.p[1] = static_cast<float>(ps.main_altitude_m);
     }
   }
-  return true;
+  return good;
 }
 
 // Build the tables of every plan in the file (the surfaces' allocation, the gains and the seeds come from the design run).
@@ -305,9 +316,17 @@ inline bool build_mission(const VehicleFile& f, BuiltMission& out, std::vector<s
     const StageSpec& st = f.params.spec.stages[s];
     const double cg = v.stage_cg_from_aft(s, m.landing_propellant_kg);
     out.stage[s].landing_height = m.arm_height_m - (st.catch_pin_x - cg);
-    constexpr double kMoreProp = 100000.0;   // the slope: the same at a hundred tonnes more propellant
-    const double cg_more = v.stage_cg_from_aft(s, m.landing_propellant_kg + kMoreProp);
-    out.stage[s].landing_height_slope = ((m.arm_height_m - (st.catch_pin_x - cg_more)) - out.stage[s].landing_height) / kMoreProp;
+    // the slope: the same at another amount of propellant, up to a hundred tonnes more (or less, if the stage is already as full as it goes)
+    double capacity = 0.0;
+    for (const TankSpec& tk : st.tanks) {
+      capacity += tk.propellant;
+    }
+    const double room = capacity - m.landing_propellant_kg;
+    const double step = room > 1.0 ? std::min(100000.0, room) : -std::min(100000.0, std::max(m.landing_propellant_kg, 0.0));
+    if (std::fabs(step) > 1.0) {
+      const double cg_more = v.stage_cg_from_aft(s, m.landing_propellant_kg + step);
+      out.stage[s].landing_height_slope = ((m.arm_height_m - (st.catch_pin_x - cg_more)) - out.stage[s].landing_height) / step;
+    }
     out.stage[s].landing_mass_ref = st.dry_mass + m.landing_propellant_kg;
     out.stage[s].arm_height = m.arm_height_m;
   }

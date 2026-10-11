@@ -98,10 +98,10 @@ inline void allocate(const std::array<std::array<double, 3>, 4>& cols, const std
     }
     // the demand of the loop is limited to `command_deg`: scale so that the full demand takes the most loaded surface to 80% of its travel (a unit of demand is then a fraction of a degree of the surface, not a
     // radian per second squared, and the effectiveness the gains are designed from is measured with this allocation)
-    const double scale = worst > 0.0 ? 0.8 / (command_deg * worst) : 0.0;
+    const double share = worst > 0.0 ? 0.8 / (command_deg * worst) : 0.0;
     for (std::size_t k = 0; k < m; ++k) {
       const std::size_t ch = static_cast<std::size_t>(used[k]);
-      (axis == 0 ? mx.from_roll : (axis == 1 ? mx.from_yaw : mx.from_pitch))[ch] = static_cast<float>(u[k] * scale);
+      (axis == 0 ? mx.from_roll : (axis == 1 ? mx.from_yaw : mx.from_pitch))[ch] = static_cast<float>(u[k] * share);
     }
   }
 }

@@ -193,6 +193,9 @@ constexpr double pow2_(int k) noexcept {
 // exp(x): x = k ln2 + r with |r| <= ln2 / 2, the series to degree 16, scaled by 2^k. Arguments beyond +-700 are clamped there.
 constexpr double exp_(double x) noexcept {
   const double xc = clamp_(x, -700.0, 700.0);
+  if (!(xc >= -700.0)) {
+    return xc;   // not a number: it stays one (a conversion of it to an integer below would be undefined)
+  }
   const double k = floor_((xc / kLn2) + 0.5);
   const double r = (xc - (k * kLn2Hi)) - (k * kLn2Lo);
   const double s = detail::horner(detail::kInvFactExp, r);

@@ -2,9 +2,10 @@
 // Guidance for a vehicle that comes back (docs/design/GNC.md section 6): where a burn leaves it falling (the impact point), how to steer it through the air on the way down, and how to land it.
 //
 //  * ballistic_impact: the point where the coasting vehicle (no air, point-mass gravity) would meet a sphere of a given radius, found in closed form from the conic its position and velocity define, with the
-//    time of flight. The boost-back burn thrusts against the horizontal velocity until this point reaches the landing site; the glide is then steered to what the air takes away from it.
-//  * descent_predict: the same with the air: a numerical integration (fixed step, point mass, exponential atmosphere, drag from a ballistic coefficient) down to the landing altitude. The glide's steering reads the
-//    miss from it.
+//    time of flight. (The sequencer no longer steers by it: the air shortens the way back by kilometres, so the boost-back and the glide both use the predictor below. It stays as the closed form the predictor is
+//    checked against.)
+//  * descent_predict: the same with the air: a numerical integration (fixed step, point mass, exponential atmosphere, drag from a ballistic coefficient) down to the landing altitude. The boost-back ends when the
+//    point it gives has come back to the catch point, and the glide's steering reads the miss from it. The design run measures the ballistic coefficient on the plant (docs/design/GNC.md section 6).
 //  * PoweredDescent: the landing burn. The thrust acceleration is the one that stops the vehicle at the catch point: vertically, the constant deceleration that brings the speed to the arms' sink speed at the arms'
 //    height (the "suicide burn": ignite as late as the engines can still stop it), horizontally the zero-effort-miss / zero-effort-velocity law (a quadratic in the time to go) that brings the position and the
 //    velocity over the point to nothing together; the tilt of the thrust is limited, and the number of engines is chosen so that the thrust asked for lies between what the engines running can hold at their
@@ -33,8 +34,11 @@ inline Impact ballistic_impact(Vec3 r, Vec3 v, double mu, double radius) noexcep
   Impact out;
   const double rn = dm::norm(r);
   const double v2 = dm::dot(v, v);
+  if (!(rn > 0.0)) {
+    return out;   // no position
+  }
   const double energy = (0.5 * v2) - (mu / rn);
-  if (!(energy < 0.0) || !(rn > 0.0)) {
+  if (!(energy < 0.0)) {
     return out;   // a hyperbolic path: no landing to speak of
   }
   const Vec3 h = dm::cross(r, v);
@@ -215,7 +219,7 @@ class PoweredDescent {
     const double tilt_max = (tgt.tilt_final_deg + (blend * (tgt.tilt_max_deg - tgt.tilt_final_deg))) * dm::kDegToRad;
     const double a_h_max = a_up * dm::sin_(tilt_max) / dm::cos_(tilt_max);
     const double a_h_mag = dm::norm(a_h);
-    if (a_h_mag > a_h_max && a_h_mag > 0.0) {
+    if (a_h_mag > a_h_max) {
       a_h = a_h * (a_h_max / a_h_mag);
     }
     const Vec3 a_vec = (up * a_up) + a_h;
@@ -224,8 +228,9 @@ class PoweredDescent {
     out.direction = a_vec / a_mag;
     // engines: the fewest that can deliver the thrust asked for at their highest throttle, held while the thrust asked for is not well under what the next fewer could give
     const double thrust = mass * a_mag;
-    unsigned opt = eng.options > 0U ? eng.options - 1U : 0U;
-    for (unsigned k = 0; k < eng.options; ++k) {
+    const unsigned n_opt = eng.options < kEngineOptions ? eng.options : kEngineOptions;   // (a table that names more options than there are is read as the ones there are)
+    unsigned opt = n_opt > 0U ? n_opt - 1U : 0U;
+    for (unsigned k = 0; k < n_opt; ++k) {
       if (thrust <= eng.thrust_each * static_cast<double>(eng.counts[k])) {
         opt = k;
         break;
@@ -233,9 +238,6 @@ class PoweredDescent {
     }
     if (have_option_ && opt < option_ && thrust > 0.9 * eng.thrust_each * static_cast<double>(eng.counts[opt])) {
       opt = option_;   // do not drop an engine until the thrust asked for is well under what the smaller number can hold
-    }
-    if (have_option_ && opt > option_ && thrust < eng.thrust_each * static_cast<double>(eng.counts[option_])) {
-      opt = option_;   // and do not add one while the running ones can still give it
     }
     option_ = opt;
     have_option_ = true;

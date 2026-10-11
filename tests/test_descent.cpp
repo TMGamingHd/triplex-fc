@@ -211,3 +211,19 @@ TFC_TEST(descent_the_burn_waits_for_the_stopping_height_and_the_engine_count_fol
   CHECK(off.direction.y < 0.0 && std::acos(off.direction.x) * tfc::dm::kRadToDeg <= tgt.tilt_max_deg + 1e-6);
   CHECK(near_abs(off.miss.y, 500.0, 1e-6));
 }
+
+TFC_TEST(descent_the_impact_point_is_refused_for_no_position_and_for_an_orbit_that_stays_under_the_sphere) {
+  const tfc::nav::Gravity g;
+  CHECK(!tfc::descent::ballistic_impact(Vec3{}, Vec3{0.0, 100.0, 0.0}, g.mu, g.radius).valid);
+  // a circular orbit 100 km above the ground never comes down to a sphere 200 km above it
+  const double r = g.radius + 100000.0;
+  CHECK(!tfc::descent::ballistic_impact(Vec3{r, 0.0, 0.0}, Vec3{0.0, 0.9 * std::sqrt(g.mu / r), 0.0}, g.mu, g.radius + 200000.0).valid);
+  // and more landing options than there are read as the four there are (no reading beyond the table)
+  tfc::descent::LandingTarget tgt;
+  tgt.point = Vec3{g.radius + 40.0, 0.0, 0.0};
+  tfc::descent::Engines eng;
+  eng.options = 9U;
+  tfc::descent::PoweredDescent pd;
+  const tfc::descent::DescentOut o = pd.update(tgt.point + Vec3{500.0, 0.0, 0.0}, Vec3{-100.0, 0.0, 0.0}, 3.0e5, tgt, eng, g, 1.2, true);
+  CHECK(o.option < tfc::descent::kEngineOptions && o.engines >= 1U);
+}

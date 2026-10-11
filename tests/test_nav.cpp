@@ -218,3 +218,79 @@ TFC_TEST(nav_propulsion_and_surface_commands_survive_the_frames_and_are_voted_by
   CHECK(tfc::mid3(1.0F, 9.0F, 3.0F) == 3.0F && tfc::mid3(5.0F, 2.0F, 1.0F) == 2.0F && tfc::mid3(0.0F, 4.0F, 9.0F) == 4.0F);
   CHECK(tfc::majority3(0x0FU, 0x33U, 0x55U) == 0x17U);
 }
+
+TFC_TEST(nav_under_thrust_the_velocity_innovation_across_the_specific_force_is_the_attitude_error_and_is_taken_back_in_the_right_direction) {
+  tfc::nav::NavConfig cfg;
+  cfg.k_att = 0.02;
+  cfg.f_att_min = 8.0;
+  tfc::nav::Navigator n(cfg);
+  tfc::nav::GnssFix fix;
+  fix.r = cfg.r0;
+  fix.v = Vec3{};
+  n.apply_fix(fix);   // the first fix starts the solution
+  // thrust of 2 g along the navigation +X (the sensor frame's Z) for a tenth of a second
+  for (int k = 0; k < 10; ++k) {
+    n.propagate(kIdentity, Vec3{0.0, 0.0, 2.0}, true, 0.01);
+  }
+  const Vec3 f = n.specific_force();
+  CHECK(near_abs(f.x, 2.0 * tfc::dm::kG0, 1e-9));
+  // the receiver says the vehicle is moving 0.5 m/s more downrange (+Y) than the inertial solution: the thrust was pointed too little downrange
+  fix.r = n.position();
+  fix.v = n.velocity() + Vec3{0.0, 0.5, 0.0};
+  n.apply_fix(fix);
+  const Vec3 turn = n.take_attitude_correction();
+  const double f_mag = tfc::dm::norm(f);
+  const double expect = cfg.k_att * cfg.k_vel * (f.x * 0.5) / (f_mag * f_mag * 0.1);   // (f x dv).z = f.x dv.y
+  CHECK(near_abs(turn.z, expect, 1e-12) && near_abs(turn.x, 0.0, 1e-12) && near_abs(turn.y, 0.0, 1e-12));
+  const Vec3 again = n.take_attitude_correction();   // taken: gone
+  CHECK(tfc::dm::norm(again) == 0.0);
+  // too little thrust to see the attitude by: nothing
+  tfc::nav::Navigator weak(cfg);
+  weak.apply_fix(fix);
+  for (int k = 0; k < 10; ++k) {
+    weak.propagate(kIdentity, Vec3{0.0, 0.0, 0.5}, true, 0.01);
+  }
+  fix.v = weak.velocity() + Vec3{0.0, 0.5, 0.0};
+  fix.r = weak.position();
+  weak.apply_fix(fix);
+  CHECK(tfc::dm::norm(weak.take_attitude_correction()) == 0.0);
+  // a fix outside the gate is not used for it either
+  tfc::nav::Navigator gated(cfg);
+  gated.apply_fix(fix);
+  for (int k = 0; k < 10; ++k) {
+    gated.propagate(kIdentity, Vec3{0.0, 0.0, 2.0}, true, 0.01);
+  }
+  fix.r = gated.position();
+  fix.v = gated.velocity() + Vec3{0.0, 500.0, 0.0};
+  gated.apply_fix(fix);
+  CHECK(tfc::dm::norm(gated.take_attitude_correction()) == 0.0 && gated.rejected_fixes() == 1U);
+  // and the aiding can be turned off
+  cfg.k_att = 0.0;
+  tfc::nav::Navigator off(cfg);
+  off.apply_fix(fix);
+  for (int k = 0; k < 10; ++k) {
+    off.propagate(kIdentity, Vec3{0.0, 0.0, 2.0}, true, 0.01);
+  }
+  fix.r = off.position();
+  fix.v = off.velocity() + Vec3{0.0, 0.5, 0.0};
+  off.apply_fix(fix);
+  CHECK(tfc::dm::norm(off.take_attitude_correction()) == 0.0);
+}
+
+TFC_TEST(nav_two_fixes_with_no_frame_between_them_give_no_attitude_correction) {
+  tfc::nav::NavConfig cfg;
+  tfc::nav::Navigator n(cfg);
+  tfc::nav::GnssFix fix;
+  fix.r = cfg.r0;
+  n.apply_fix(fix);
+  for (int k = 0; k < 10; ++k) {
+    n.propagate(kIdentity, Vec3{0.0, 0.0, 2.0}, true, 0.01);
+  }
+  fix.r = n.position();
+  fix.v = n.velocity();
+  n.apply_fix(fix);
+  (void)n.take_attitude_correction();
+  fix.v = n.velocity() + Vec3{0.0, 0.5, 0.0};
+  n.apply_fix(fix);   // no time since the last: nothing to divide by
+  CHECK(tfc::dm::norm(n.take_attitude_correction()) == 0.0);
+}

@@ -2,7 +2,7 @@
 """Structural coverage of the flight core (core/include) and the supervisor logic (supervisor/include), and of the vehicle simulator (sim/vehicle), by the C++ unit,
 fuzz and recovery tests, with gcov.
 
-    python3 tools/coverage/core_coverage.py [--min-line PCT] [--min-branch PCT] [--sim-min-line PCT] [--sim-min-branch PCT] [--list]
+    python3 tools/coverage/core_coverage.py [--min-line PCT] [--min-branch PCT] [--sim-min-line PCT] [--sim-min-branch PCT] [--list] [--tests NAME...]
 
 The two groups are measured in one build and gated apart: --min-line/--min-branch for the flight code, --sim-min-line/--sim-min-branch for the simulator (which is
 host-only and holds a model, so its gate is lower: a numerical model has guards that no test can reach, such as a non-finite state).
@@ -33,10 +33,14 @@ def main(argv=None) -> int:
     ap.add_argument("--sim-min-line", type=float, default=0.0)
     ap.add_argument("--sim-min-branch", type=float, default=0.0)
     ap.add_argument("--list", action="store_true", help="print the uncovered lines and branches")
+    ap.add_argument("--tests", nargs="*", default=None, metavar="NAME", help="build and run only these test files (test_NAME.cpp, plus test_main.cpp): a quick look while writing tests; the gates need the whole suite")
     args = ap.parse_args(argv)
     with tempfile.TemporaryDirectory(prefix="tfc-cov-") as d:
         tmp = Path(d)
         sources = sorted(str(p) for p in (ROOT / "tests").glob("*.cpp"))
+        if args.tests:
+            keep = {f"test_{n}.cpp" for n in args.tests} | {"test_main.cpp"}
+            sources = [p for p in sources if Path(p).name in keep]
         subprocess.run(["g++", "-std=c++17", "-O0", "-g", "--coverage", "-fprofile-update=atomic", "-pthread", "-fno-exceptions", "-fno-rtti", f"-I{ROOT / 'core/include'}",
                         f"-I{ROOT / 'tests'}", f"-I{ROOT / 'tools' / 'vehicle'}", f"-I{ROOT / 'sim' / 'vehicle'}", f"-I{ROOT / 'firmware' / 'app' / 'src'}", f"-I{ROOT / 'supervisor/include'}", *sources, "-o", str(tmp / "tests_cov")], check=True, cwd=tmp)
         r = subprocess.run([str(tmp / "tests_cov")], capture_output=True, text=True, cwd=tmp)

@@ -161,3 +161,32 @@ TFC_TEST(attitude_a_rigid_body_is_turned_through_a_half_circle_and_held_without_
   CHECK(worst_after < 0.2);
   CHECK(std::fabs(deg(w.z)) < 0.05);
 }
+
+TFC_TEST(attitude_the_command_saturates_the_other_way_too_and_the_digest_takes_negative_numbers) {
+  tfc::att::Controller3 c;
+  tfc::att::Gains3 g;
+  g.pitch = {10.0F, 0.0F, 5.0F};
+  tfc::att::Limits tight;
+  tight.command_deg = 4.0F;
+  tight.integrator_deg = 3.0F;
+  tight.slew_deg_per_frame = 100.0F;
+  const Quat q;
+  const Quat behind = about(Vec3{0.0, 0.0, 1.0}, -0.5);
+  for (int k = 0; k < 500; ++k) {
+    (void)c.step(q, Vec3{}, behind, Vec3{}, g, tight, 0.01, true);
+  }
+  CHECK(near_abs(c.output().pitch, -4.0, 1e-12) && c.saturated_frames() > 0U && std::fabs(c.state().integ[2]) < 1e-9);
+  // beyond the limit with the error pointing the other way (a rate term holds the sum out of range): the integrator is still allowed to move back
+  tfc::att::Controller3 d;
+  tfc::att::Gains3 gd;
+  gd.pitch = {0.0F, 100.0F, 5.0F};
+  const Quat ahead = about(Vec3{0.0, 0.0, 1.0}, 0.01);
+  (void)d.step(q, Vec3{0.0, 0.0, 1.0}, ahead, Vec3{}, gd, tight, 0.01, true);   // the sum is far below the lower limit, the error is positive: not pushing further
+  CHECK(std::fabs(d.state().integ[2]) > 0.0);
+  // and above the upper limit with the error the other way
+  tfc::att::Controller3 e;
+  const Quat later = about(Vec3{0.0, 0.0, 1.0}, -0.01);
+  (void)e.step(q, Vec3{0.0, 0.0, -1.0}, later, Vec3{}, gd, tight, 0.01, true);
+  CHECK(std::fabs(e.state().integ[2]) > 0.0);
+  CHECK(c.digest() != d.digest());
+}

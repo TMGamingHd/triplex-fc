@@ -117,3 +117,8 @@ TFC_TEST(dmath_a_quaternion_round_trips_through_its_matrix_in_every_branch_of_th
     CHECK(near_abs(same, 1.0, 1e-12));
   }
 }
+
+TFC_TEST(dmath_the_exponential_of_a_number_that_is_not_one_is_not_one) {
+  CHECK(!(tfc::dm::exp_(std::nan("")) == tfc::dm::exp_(std::nan(""))));   // NaN in, NaN out, and no undefined conversion on the way
+  CHECK(tfc::dm::exp_(-1.0e300) < 1e-300 && tfc::dm::exp_(1.0e300) > 1e300);
+}

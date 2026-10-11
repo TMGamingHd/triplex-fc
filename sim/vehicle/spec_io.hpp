@@ -643,6 +643,7 @@ inline void read_mission(const Json& j, MissionSpec& m, std::vector<std::string>
     lr.num("sink_ms", m.sink_ms);
     lr.num("aim_below_m", m.aim_below_m);
     lr.num("approach_s", m.approach_s);
+    lr.num("horizon_min_s", m.horizon_min_s);
     lr.num("tilt_max_deg", m.tilt_max_deg);
     lr.num("tilt_final_deg", m.tilt_final_deg);
     lr.num("final_height_m", m.final_height_m);
@@ -1070,6 +1071,79 @@ inline std::string pairs_text(const std::vector<std::array<double, 2>>& t) {
   return s + "]";
 }
 
+inline std::string ints_text(const std::vector<int>& v) {
+  std::string s = "[";
+  for (std::size_t i = 0; i < v.size(); ++i) {
+    s += (i == 0U ? "" : ", ") + std::to_string(v[i]);
+  }
+  return s + "]";
+}
+
+inline std::string strings_text(const std::vector<std::string>& v) {
+  std::string s = "[";
+  for (std::size_t i = 0; i < v.size(); ++i) {
+    s += (i == 0U ? "" : ", ") + quoted(v[i]);
+  }
+  return s + "]";
+}
+
+// One phase, every field, in the order the format documents (a field at its default is written too: the file is the whole truth about the phase).
+inline std::string phase_text(const PhaseSpec& p) {
+  std::string o = "{\"name\": " + quoted(p.name) + ", \"kind\": " + quoted(p.kind) + ", \"hold\": " + quoted(p.hold) + ", \"end\": {";
+  if (p.end_kind == "cutoff" || p.end_kind == "touchdown") {
+    o += quoted(p.end_kind) + ": true";
+  } else if (p.end_kind == "ignition") {
+    o += "\"ignition_below_m\": " + num_text(p.end_value);
+  } else if (p.end_kind != "never") {
+    o += quoted(p.end_kind) + ": " + num_text(p.end_value);
+  }
+  o += "}, \"groups\": " + ints_text(p.groups) + ", \"events\": " + strings_text(p.events) + ", \"mixer\": " + std::to_string(p.mixer) + ", \"throttle\": " + num_text(p.throttle) +
+       ", \"throttle_track\": " + pairs_text(p.throttle_track) + ", \"slew_dps\": " + num_text(p.slew_dps) + ", \"wn_rad_s\": " + num_text(p.wn_rad_s) + ", \"program\": " + pairs_text(p.program) +
+       ", \"mass_set_kg\": " + num_text(p.mass_set_kg) + ", \"fixed\": " + vec_text(p.fixed) + ", \"target\": {\"radius_m\": " + num_text(p.target_radius_m) + ", \"speed_ms\": " + num_text(p.target_speed_ms) +
+       ", \"gamma_deg\": " + num_text(p.target_gamma_deg) + ", \"circular_km\": " + num_text(p.circular_km) + ", \"apogee_km\": " + num_text(p.apogee_km) + ", \"perigee_km\": " + num_text(p.perigee_km) +
+       ", \"cutoff_km\": " + num_text(p.cutoff_km) + "}, \"burnout_mass_kg\": " + num_text(p.burnout_mass_kg) + ", \"bias_m\": " + num_text(p.bias_m) + ", \"reserve_mass_kg\": " + num_text(p.reserve_mass_kg) +
+       ", \"pitch_up_deg\": " + num_text(p.pitch_up_deg) + ", \"alpha_max_deg\": " + num_text(p.alpha_max_deg) + ", \"gain_deg_per_km\": " + num_text(p.gain_deg_per_km) + ", \"alpha_brake_deg\": " +
+       num_text(p.alpha_brake_deg) + ", \"gate_speed_ms\": " + num_text(p.gate_speed_ms) + ", \"gate_height_m\": " + num_text(p.gate_height_m) + ", \"brake_max_deg\": " + num_text(p.brake_max_deg) +
+       ", \"lift_area_per_deg_m2\": " + num_text(p.lift_area_per_deg_m2) + ", \"landing_groups\": {\"one\": " + ints_text(p.landing_groups[0]) + ", \"two\": " + ints_text(p.landing_groups[1]) + ", \"three\": " +
+       ints_text(p.landing_groups[2]) + ", \"many\": " + ints_text(p.landing_groups[3]) + "}, \"drogue_altitude_m\": " + num_text(p.drogue_altitude_m) + ", \"main_altitude_m\": " + num_text(p.main_altitude_m) + "}";
+  return o;
+}
+
+// The mission block.
+inline std::string mission_text(const MissionSpec& m) {
+  std::string o = "{\n    \"site\": {\"offset_y_m\": " + num_text(m.site_offset_y_m) + ", \"offset_z_m\": " + num_text(m.site_offset_z_m) + ", \"arm_height_m\": " + num_text(m.arm_height_m) +
+                  ", \"capture_radius_m\": " + num_text(m.capture_radius_m) + "},\n    \"ignition_margin\": " + num_text(m.ignition_margin) + ",\n    \"landing\": {\"sink_ms\": " + num_text(m.sink_ms) +
+                  ", \"aim_below_m\": " + num_text(m.aim_below_m) + ", \"approach_s\": " + num_text(m.approach_s) + ", \"horizon_min_s\": " + num_text(m.horizon_min_s) + ", \"tilt_max_deg\": " +
+                  num_text(m.tilt_max_deg) + ", \"tilt_final_deg\": " + num_text(m.tilt_final_deg) + ", \"final_height_m\": " + num_text(m.final_height_m) + ", \"engine_thrust_n\": " +
+                  num_text(m.engine_thrust_n) + ", \"engine_min_throttle\": " + num_text(m.engine_min_throttle) + ", \"decel_plan_ms2\": " + num_text(m.decel_plan_ms2) + ", \"propellant_kg\": " +
+                  num_text(m.landing_propellant_kg) + "},\n    \"air\": {\"ballistic_coefficient_kg_m2\": " + num_text(m.ballistic_coefficient) + ", \"scale_height_m\": " + num_text(m.scale_height_m) +
+                  "},\n    \"limits\": {\"command_deg\": " + num_text(m.command_limit_deg) + ", \"integrator_deg\": " + num_text(m.integrator_limit_deg) + ", \"slew_deg_per_frame\": " +
+                  num_text(m.slew_deg_per_frame) + "},\n    \"design\": {\"wn\": " + num_text(m.wn) + ", \"zeta\": " + num_text(m.zeta) + ", \"ki_over_kp\": " + num_text(m.ki_over_kp) +
+                  ", \"kp_max\": " + num_text(m.kp_max) + ", \"b_min\": " + num_text(m.b_min) + ", \"sample_s\": " + num_text(m.sample_s) + ", \"max_time_s\": " + num_text(m.max_time_s) +
+                  ", \"tail_s\": " + num_text(m.tail_s) + "},\n    \"mixers\": [";
+  for (std::size_t i = 0; i < m.mixers.size(); ++i) {
+    o += std::string(i == 0U ? "" : ", ") + "{\"name\": " + quoted(m.mixers[i].name) + ", \"gimbal\": " + (m.mixers[i].gimbal ? "true" : "false") + ", \"roll_thrusters\": " +
+         (m.mixers[i].roll_thrusters ? "true" : "false") + ", \"surfaces\": " + ints_text(m.mixers[i].surfaces) + "}";
+  }
+  o += "]";
+  const auto plan = [&o](const char* key, const std::vector<PhaseSpec>& v) {
+    if (v.empty()) {
+      return;
+    }
+    o += std::string(",\n    \"") + key + "\": [";
+    for (std::size_t i = 0; i < v.size(); ++i) {
+      o += std::string(i == 0U ? "\n      " : ",\n      ") + phase_text(v[i]);
+    }
+    o += "\n    ]";
+  };
+  plan("main", m.main);
+  static const char* const kStageKeys[] = {"stage0", "stage1", "stage2", "stage3", "stage4", "stage5"};
+  for (std::size_t s = 0; s < kMaxStages; ++s) {
+    plan(kStageKeys[s], m.stage[s]);
+  }
+  return o + "\n  }";
+}
+
 }  // namespace detail
 
 // A vehicle as the text of a file that read_vehicle reads back as the same vehicle. A `Params` without a spec is written out as the stage, tank and engines it stands for.
@@ -1272,7 +1346,7 @@ inline std::string write_vehicle(const VehicleFile& v) {
     o += ", \"program\": " + pairs_text(d.table);
   }
   o += ", \"gains\": {\"every_s\": " + num_text(pl.gains.every_s) + ", \"wn\": " + num_text(pl.gains.wn) + ", \"zeta\": " + num_text(pl.gains.zeta) + ", \"ki_over_kp\": " + num_text(pl.gains.ki_over_kp) +
-       ", \"kp_max\": " + num_text(pl.gains.kp_max) + ", \"b_min\": " + num_text(pl.gains.b_min) + ", \"tolerance\": " + num_text(pl.gains.tolerance) + "}}\n}\n";
+       ", \"kp_max\": " + num_text(pl.gains.kp_max) + ", \"b_min\": " + num_text(pl.gains.b_min) + ", \"tolerance\": " + num_text(pl.gains.tolerance) + "}}" + (v.mission.present ? ",\n  \"mission\": " + mission_text(v.mission) : std::string()) + "\n}\n";
   return o;
 }
 

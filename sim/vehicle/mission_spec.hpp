@@ -73,6 +73,7 @@ struct MissionSpec {
   double sink_ms = 0.5;
   double aim_below_m = 1.5;         // the burn aims this far below the arms' height
   double approach_s = 8.0;
+  double horizon_min_s = 8.0;       // the horizontal correction takes at least this long: a position loop faster than the attitude loop that tilts the vehicle for it would oscillate
   double tilt_max_deg = 12.0;
   double tilt_final_deg = 2.5;
   double final_height_m = 25.0;

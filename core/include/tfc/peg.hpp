@@ -8,12 +8,12 @@
 // It cuts the engines after T seconds. The five numbers (theta0, theta1, psi0, psi1, T), the angles at the start and at the end of the burn, are the unknowns. The predictor integrates the burn from the present state under real gravity (steps of velocity Verlet,
 // 12 of them, the thrust and the steering taken at the middle of each) to the state at the end of it; the corrector asks five things of that state, which are the five equations: the target radius, the target speed,
 // the target flight-path angle, and the plane (zero position and zero velocity out of it). The solution is found by Newton's method (Levenberg-Marquardt damping, a Jacobian from finite differences of the predictor), warm-started
-// from the last solution shifted forward in time, so one cycle of eight predictions a few tenths of a second apart is enough to track it. The position along the track is free: where the burn ends is whatever the other
+// from the last solution shifted forward in time, so one cycle of seven predictions a few tenths of a second apart is enough to track it. The position along the track is free: where the burn ends is whatever the other
 // five say.
 //
 // Why not the closed-form integrals of the classical PEG. They are exact for a small steering angle and a short burn; an upper stage that burns most of its propellant while its thrust direction turns through
-// 60 degrees leaves their linearisation, and the iteration on them diverged on exactly that case (the tests keep it). The numerical form has no such limit and costs more: a cycle is eight predictors of twelve steps, which
-// the caller spreads over eight frames (`work` does one predictor per call), so the cost in any one frame is bounded.
+// 60 degrees leaves their linearisation, and the iteration on them diverged on exactly that case (the tests keep it). The numerical form has no such limit and costs more: a cycle is seven predictors of twelve steps, which
+// the caller spreads over seven frames (`work` does one predictor per call), so the cost in any one frame is bounded.
 //
 // What it is not: the Shuttle's or Centaur's flight software (the stage-by-stage burn sequence, the many error terms of a real vehicle); a staging or a thrust that varies by more than the measured acceleration can see is handled
 // by restarting at the new stage (`reset`). All arithmetic is + - * / and sqrt on doubles through dmath.hpp, with fixed-length loops. No heap, no exceptions, no RTTI.

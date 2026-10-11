@@ -12,6 +12,8 @@
 | `0x100+n` | GYRO | node n | three axes, **1/32 dps per count** (range +-1024 dps; it was 0.125 and +-4096 until 7 Oct 2026, ADR-032) | 1, scale changed |
 | `0x110+n` | ACCEL | node n | three axes, 1/2048 g per count | 1 |
 | `0x200+n` | CMD | node n | pitch and yaw gimbal command, 0.001 degree; a 16-bit state digest | 1 |
+| `0x210+n` | Propulsion command | node n | throttle (0.5 % per count), the engine-group mask, the event bits, the mission phase, a roll command (0.25 degree per count); sent after CMD by a flight computer that flies a mission (`GNC.md` section 8) | 2, **host only so far** |
+| `0x220+n` | Surface command | node n | four control-surface deflections, 12 bits each, 0.05 degree per count, signed | 2, **host only so far** |
 | `0x300` | ACT out | ACT | the voted gimbal command and the vote status | **2** |
 | `0x400+n` | Heartbeat | node n | protocol version, mode, role, view of the nodes, reset count, release hash | **2** |
 | `0x410+n` | State share | node n | strike counts and the last accepted command counter | **2** |
@@ -21,6 +23,7 @@
 | `0x503` | Sim state | the simulator | altitude, speed, mass | **2** |
 | `0x504` | Sim telemetry | the simulator | dynamic pressure, attitude error in the two planes | **2** |
 | `0x505` | Sim flags | the simulator | flags, engines on, time | **2** |
+| `0x506`-`0x508` | Sim GNSS | the simulator | the GNSS fix in three frames (position, then velocity), each component a signed 24-bit number (metres; 0.01 m/s), in the launch-centred inertial frame (`GNC.md` section 3) | 2, **host only so far** |
 | `0x510` | Ground command | the operator | authenticated opcode, node, tag, counter (ADR-019) | 1 |
 
 **The simulator's range is `0x500` to `0x50F`** (`id::kSim` to `id::kSimLast`); the ground command is `0x510`. The fault manager treats the simulator's range, the state share
@@ -72,3 +75,7 @@ The answers (`accepted`, `already done`, `refused: <reason>`, with `RefusedPhase
 
 ## Not defined
 Telemetry and event records in a fixed format and a machine-readable command dictionary (IF-004 to IF-006): today the report struct, the counters and the console lines carry the information (`docs/design/FUTURE_WORK.md` section 2.2). The supervisor's USB commands are a separate, human-typed interface (`docs/design/SUPERVISOR.md` section 6).
+
+## Frames of a flight computer that flies a mission (host only so far)
+
+`0x210+n` and `0x220+n` carry what the guidance asks for beyond the gimbal; a consumer (the vehicle) takes the **middle value of the three nodes'** throttle, roll and deflections and **two of three for each bit** of the group mask and the events (`mid3`, `majority3` in `protocol.hpp`), as ACT votes the gimbal. A frame whose CRC or sequence is wrong, or whose node is not 0 to 2, is refused (`unpack_prop`, `unpack_surf`). `0x506` to `0x508` are the receiver's three frames of one fix (they carry the same sequence byte), assembled by `nav::GnssCollector`. The ids are in `redundancy.hpp`'s list of the traffic that belongs to the schedule. **The firmware does not send or receive them yet**; the host loop (`avionics.hpp`) passes the commands in memory, so their quantisation is not in the results of `GNC.md` section 10. The Python mirror (`sim/tfc_peers/protocol.py`) does not know these ids.

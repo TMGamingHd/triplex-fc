@@ -1,0 +1,41 @@
+// A small single-stage rocket that flies its whole mission on the flight computers and comes back down under parachutes (docs/design/GNC.md, docs/design/RECOVERY.md): a vehicle with ONE stage has nothing to land with
+// but a canopy, so its mission ends in a drogue and a main parachute and not in a burn and a catch. Invented for the simulator, not any vehicle: a 1,400 kg rocket with a gimballed 60 kN engine for about 30 s,
+// cold-gas thrusters for the attitude when the engine is off, a drogue at 6 km and a 250 m^2 main at 1.5 km.
+//   build/rel/tfc_mission vehicles/missions/rocket_recovery.json --expect-landing
+{
+  "name": "rocket-with-recovery",
+  "description": "1,400 kg, one gimballed 60 kN engine for 30 s, a pitch program, a coast to apogee and a descent under a drogue and a main parachute.",
+  "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 30, "gimbal_lag_s": 0.05, "ideal_roll_control": false, "landing_model": true, "crash_speed_ms": 9, "landing_tilt_deg": 40, "landing_lateral_ms": 8},
+  "aero": {"diameter_m": 0.8, "roughness": 1.2},
+  "stages": [
+    {"name": "rocket", "dry_mass_kg": 800, "x_start_m": 0, "length_m": 7.0, "radius_m": 0.4, "inertia_factor": 0.6, "x_cg_dry_m": 3.5,
+     "tanks": [{"propellant_kg": 600, "x_bottom_m": 0.8, "radius_m": 0.38, "density_kg_m3": 1000}],
+     "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 5.6, "d_aft_m": 0.8, "d_fore_m": 0.8}, {"kind": "nose", "x_start_m": 5.6, "length_m": 1.4, "d_aft_m": 0.8, "d_fore_m": 0, "shape": "ogive"}],
+     "stabilizers": [{"count": 4, "x_le_root_m": 0.4, "root_chord_m": 1.2, "tip_chord_m": 0.5, "span_m": 0.7, "sweep_m": 0.7, "thickness_m": 0.015}],   // four tail fins: it is stable by itself, as the sounding rocket is
+     "guided": true, "gimbal_limit_deg": 8, "gimbal_rate_dps": 30, "gimbal_lag_s": 0.05}
+  ],
+  "engines": [
+    {"stage": 0, "position_m": [0, 0, 0], "thrust_vac_n": 62000, "exit_area_m2": 0.12, "isp_vac_s": 300, "group": 0, "min_throttle": 0.5, "rise_s": 0.2, "tail_s": 0.2},
+    {"stage": 0, "position_m": [6.0, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 1, 0], "control": "pitch+", "full_cmd_deg": 2.0},
+    {"stage": 0, "position_m": [6.0, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, -1, 0], "control": "pitch-", "full_cmd_deg": 2.0},
+    {"stage": 0, "position_m": [6.0, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, -1], "control": "yaw+", "full_cmd_deg": 2.0},
+    {"stage": 0, "position_m": [6.0, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, 1], "control": "yaw-", "full_cmd_deg": 2.0},
+    {"stage": 0, "position_m": [6.0, 0.4, 0], "thrust_vac_n": 150, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, 1], "control": "roll+", "full_cmd_deg": 2.0},
+    {"stage": 0, "position_m": [6.0, 0.4, 0], "thrust_vac_n": 150, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, -1], "control": "roll-", "full_cmd_deg": 2.0}
+  ],
+  "payloads": [{"name": "payload", "mass_kg": 100, "x_m": 5.0}],
+  "parachutes": [
+    {"name": "drogue", "stage": 0, "drag_area_m2": 6.0, "inflation_s": 2.0, "x_attach_m": 6.5, "max_speed_ms": 400},
+    {"name": "main", "stage": 0, "drag_area_m2": 250.0, "inflation_s": 4.0, "x_attach_m": 6.5, "max_speed_ms": 120}
+  ],
+  "mission": {
+    "site": {"arm_height_m": 0},
+    "design": {"wn": 1.5, "zeta": 0.8, "ki_over_kp": 0.1, "kp_max": 80, "sample_s": 1, "max_time_s": 600, "tail_s": 5},
+    "mixers": [{"name": "tvc", "gimbal": true, "roll_thrusters": true}, {"name": "rcs", "gimbal": false, "roll_thrusters": true}],
+    "main": [
+      {"name": "burn", "kind": "program", "end": {"mass_below_kg": 1000}, "groups": [0], "mixer": 0, "throttle": 1.0, "slew_dps": 5, "program": [[0, 0], [4, 0], [12, 8], [30, 12]]},
+      {"name": "coast to apogee", "kind": "coast", "hold": "prograde", "end": {"apoapsis_after_s": 2}, "groups": [], "mixer": 1, "slew_dps": 5},
+      {"name": "descent", "kind": "chute", "groups": [], "mixer": 1, "drogue_altitude_m": 6000, "main_altitude_m": 1500}
+    ]
+  }
+}

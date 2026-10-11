@@ -209,7 +209,7 @@ class FlightFunction {
   }
 
   // Frames into the current phase, for the gain schedule.
-  [[nodiscard]] uint32_t phase_frames(uint8_t phase) const noexcept { return phase == mission_.phase() ? static_cast<uint32_t>(mission_.phase_time_s() * 100.0 + 0.5) : 0U; }
+  [[nodiscard]] uint32_t phase_frames(uint8_t phase) const noexcept { return phase == mission_.phase() ? mission_.phase_frames() : 0U; }
 
   static constexpr double kThrustFloorN = 1.0e4;   // below this the thrust is nothing to scale by
   GainSchedule gains_{};

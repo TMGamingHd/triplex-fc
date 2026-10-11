@@ -14,6 +14,10 @@
 // model, with the fractions chosen for a fix every tenth of a second. A fix far from the inertial solution is not believed (a gate); a long run of such fixes means the inertial solution is the one that is wrong, and
 // the navigator starts again from the fix. With no fix the inertial solution coasts, and the time since the last fix is reported so that the guidance can know how far to trust it.
 //
+// Attitude aiding. Under thrust the inertial solution turns the specific force by the attitude estimate's error and the error integrates into velocity, so the part of a fix's velocity innovation that is across the
+// specific force is that error: at each fix the navigator forms the turn to take out of the attitude estimate (`take_attitude_correction`), a small share of what the innovation says (`k_att`), and only when the specific
+// force is large enough to show it (`f_att_min`). The flight function applies it to the estimator. Without it the gyros alone left a booster's return a degree or more off by the landing (docs/design/GNC.md section 3).
+//
 // What it is not: a Kalman filter with a covariance, an estimator of the accelerometers' biases and scale errors, or a model of the earth's rotation inside the navigator (the frame does not rotate).
 // All arithmetic is + - * / and sqrt on doubles (dmath.hpp), so three replicas given the same frames compute the same bits.
 // No heap, no exceptions, no RTTI.
@@ -111,12 +115,6 @@ class Navigator {
     const Vec3 dv = fix.v - v_;
     last_dr_ = dr;
     last_dv_ = dv;
-    const double f_mag = dm::norm(f_nav_);
-    const double span = static_cast<double>(since_fix_) * dt_;
-    if (have_fix_ && cfg_.k_att > 0.0 && f_mag > cfg_.f_att_min && span > 0.0 && dm::norm(dr) <= cfg_.gate_pos_m && dm::norm(dv) <= cfg_.gate_vel_ms) {
-      // (in steady state the innovation is -(error x f) T / k_vel, so the error across f is -k_vel (f x dv) / (f^2 T); the estimate is turned back by a share of it)
-      att_corr_ = att_corr_ + (dm::cross(f_nav_, dv) * (cfg_.k_att * cfg_.k_vel / (f_mag * f_mag * span)));
-    }
     if (!have_fix_) {
       r_ = fix.r;
       v_ = fix.v;
@@ -137,6 +135,12 @@ class Navigator {
         ++restarts_;
       }
       return;
+    }
+    const double f_mag = dm::norm(f_nav_);
+    const double span = static_cast<double>(since_fix_) * dt_;
+    if (cfg_.k_att > 0.0 && f_mag > cfg_.f_att_min && span > 0.0) {
+      // (in steady state the innovation is -(error x f) T / k_vel, so the error across f is -k_vel (f x dv) / (f^2 T); the estimate is turned back by a share of it)
+      att_corr_ = att_corr_ + (dm::cross(f_nav_, dv) * (cfg_.k_att * cfg_.k_vel / (f_mag * f_mag * span)));
     }
     r_ = r_ + (dr * cfg_.k_pos);
     v_ = v_ + (dv * cfg_.k_vel);

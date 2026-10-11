@@ -166,7 +166,8 @@ struct GainTrack {
     if (f <= frame[0]) {
       return;
     }
-    for (unsigned i = 1; i < n && i < kGainPoints; ++i) {
+    const unsigned cnt = n < kGainPoints ? n : kGainPoints;   // (a table that claims more points than it has is read as full)
+    for (unsigned i = 1; i < cnt; ++i) {
       if (f <= frame[i]) {
         a = i - 1U;
         b = i;
@@ -174,7 +175,7 @@ struct GainTrack {
         return;
       }
     }
-    a = static_cast<unsigned>(n - 1U);
+    a = cnt - 1U;
     b = a;
   }
   static att::AxisGains lerp(const att::AxisGains& a, const att::AxisGains& b, float k) noexcept {
@@ -193,13 +194,14 @@ struct ThrottleTrack {
     if (f <= frame[0]) {
       return value[0];
     }
-    for (unsigned i = 1; i < n && i < kThrottlePoints; ++i) {
+    const unsigned cnt = n < kThrottlePoints ? n : kThrottlePoints;
+    for (unsigned i = 1; i < cnt; ++i) {
       if (f <= frame[i]) {
         const float k = static_cast<float>(f - frame[i - 1U]) / static_cast<float>(frame[i] - frame[i - 1U]);
         return value[i - 1U] + (k * (value[i] - value[i - 1U]));
       }
     }
-    return value[n - 1U];
+    return value[cnt - 1U];
   }
 };
 
@@ -285,6 +287,7 @@ class Mission {
   [[nodiscard]] double catch_height() const noexcept { return tab_->landing_height + (tab_->landing_height_slope * (mass_ - tab_->landing_mass_ref)); }
   [[nodiscard]] uint8_t phase() const noexcept { return phase_; }
   [[nodiscard]] double phase_time_s() const noexcept { return static_cast<double>(in_phase_) * kDt; }
+  [[nodiscard]] uint32_t phase_frames() const noexcept { return in_phase_; }   // frames since the phase began
   [[nodiscard]] double mass() const noexcept { return mass_; }
   [[nodiscard]] const peg::Output& peg_out() const noexcept { return peg_out_; }
   [[nodiscard]] const descent::DescentOut& landing_out() const noexcept { return land_out_; }
@@ -314,7 +317,6 @@ class Mission {
   }
 
  private:
-  static constexpr unsigned kPegPeriod = 5U;        // frames between PEG cycles
   static constexpr unsigned kBoostPeriod = 10U;
   static constexpr unsigned kGlidePeriod = 50U;
 
@@ -487,7 +489,7 @@ inline void Mission::step_peg(const Inputs& in, Output& out) noexcept {
     if (!peg_busy_) {   // a cycle of the guidance begins from the present state; the cycle is spread over the frames, a prediction each
       peg::Target tgt;
       tgt.radius = static_cast<double>(p.p[0]);
-      tgt.speed = static_cast<double>(p.p[1]);
+      tgt.speed = static_cast<double>(p.p[1]) - (thrust_model * static_cast<double>(p.p[9]));   // (less what the engines still give while they die away, p[9] s of the acceleration at the end)
       tgt.gamma_rad = static_cast<double>(p.p[2]) * dm::kDegToRad;
       tgt.plane_normal = tab_->plane_normal;
       peg::Burn burn;
@@ -624,8 +626,7 @@ inline void Mission::step_landing(const Inputs& in, Output& out) noexcept {
     out.throttle = 0.0F;
     return;
   }
-  const unsigned opt = land_out_.option < descent::kEngineOptions ? land_out_.option : 0U;
-  out.groups = static_cast<uint8_t>(p.p[opt]);
+  out.groups = static_cast<uint8_t>(p.p[land_out_.option]);   // (the option is one of the four there are: descent.hpp reads no more)
   out.throttle = static_cast<float>(land_out_.throttle);
   out.thrust = static_cast<float>(tab_->engines.thrust_each * static_cast<double>(land_out_.engines) * land_out_.throttle);
   flow_ = static_cast<double>(p.mdot) * static_cast<double>(land_out_.engines) * land_out_.throttle;

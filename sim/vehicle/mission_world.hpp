@@ -230,7 +230,9 @@ class MissionWorld {
       c.surface_deg[k] = static_cast<double>(mx.trim[k]);
     }
     b.ctl = c;
-    b.veh.set_attitude(Q4{mo.q_ref.w, mo.q_ref.x, mo.q_ref.y, mo.q_ref.z}, V3{mo.w_ref.x, mo.w_ref.y, mo.w_ref.z});
+    if (mo.control) {   // (under a parachute nothing holds the attitude: the canopy does)
+      b.veh.set_attitude(Q4{mo.q_ref.w, mo.q_ref.x, mo.q_ref.y, mo.q_ref.z}, V3{mo.w_ref.x, mo.w_ref.y, mo.w_ref.z});
+    }
     if (probe_ && cfg_.probe_every != 0U && frame_ % cfg_.probe_every == 0U) {
       emit_probe(b, mo, ff);
     }

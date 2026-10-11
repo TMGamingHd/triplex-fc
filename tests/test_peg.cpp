@@ -202,3 +202,28 @@ TFC_TEST(peg_the_propellant_limits_the_burn_and_a_seeded_solution_is_the_start) 
   (void)done.solve(earth(), 0.05, 30);
   CHECK(done.output().cutoff || done.time_to_go() < 5.0);
 }
+
+TFC_TEST(peg_a_prediction_that_is_not_a_number_leaves_the_cycle_finishing_and_the_solution_as_it_was) {
+  // a corrupted state makes every prediction a NaN, so the Jacobian is: the step is refused (the elimination meets a pivot that is not a number) and the cycle still completes
+  const tfc::nav::Gravity g = earth();
+  tfc::peg::Target tgt;
+  tgt.radius = 6378137.0 + 200000.0;
+  tgt.speed = 7784.0;
+  tgt.gamma_rad = 0.0;
+  tfc::peg::Burn b;
+  b.accel = 15.0;
+  b.exhaust_speed = 3000.0;
+  b.burn_time_max = 100.0;
+  tfc::peg::Peg peg;
+  peg.begin(Vec3{6378137.0 + 150000.0, 0.0, 0.0}, Vec3{0.0, std::nan(""), 0.0}, tgt, b);
+  bool done = false;
+  for (int k = 0; k < 40 && !done; ++k) {
+    done = peg.work(g);
+  }
+  CHECK(done);
+  const auto before = peg.solution();
+  for (int k = 0; k < 10; ++k) {
+    peg.advance(0.01);
+  }
+  CHECK(std::isfinite(peg.time_to_go()) || !std::isfinite(before[4]));
+}

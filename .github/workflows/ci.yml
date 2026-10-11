@@ -85,6 +85,13 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then sample="--every 8"; else sample=""; fi
           echo "campaign sample option: '${sample}'"
           TFC_REPLAY_BIN="$GITHUB_WORKSPACE/build/rel/tfc_replay" python3 -m campaign.run --workers 4 --quiet --strict $sample --out "$RUNNER_TEMP/campaign.jsonl"
+      - name: Missions (guidance, navigation and a stage's return, docs/design/GNC.md; release build, about 15 s)
+        run: |
+          cmake --build build/rel --target tfc_mission
+          # the Starship V3 class stack designed and flown on the three flight computers: the ship in an orbit above 100 km and the booster caught by the tower (exits 3 if not)
+          build/rel/tfc_mission vehicles/missions/starship_return.json --expect-orbit --expect-catch
+          # a single-stage rocket comes back under its parachutes
+          build/rel/tfc_mission vehicles/missions/rocket_recovery.json --expect-landing
       - name: Campaign tables (for the job summary)
         if: always()
         run: |
