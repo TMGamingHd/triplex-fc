@@ -108,6 +108,31 @@ class AttitudeEstimator {
     rates_valid_ = gyro_good;
   }
 
+  // Turn the attitude estimate by the rotation vector `rv` (rad) in the level frame, as when something other than the accelerometer (the GNSS velocity, under thrust) says it is off by that much.
+  void rotate_level(const std::array<float, 3>& rv) noexcept {
+    const float angle = std::sqrt((rv[0] * rv[0]) + (rv[1] * rv[1]) + (rv[2] * rv[2]));
+    if (!(angle > 0.0F) || !std::isfinite(angle)) {
+      return;
+    }
+    const float half = 0.5F * angle;
+    const float s = std::sin(half) / angle;
+    const float dw = std::cos(half);
+    const float dx = rv[0] * s;
+    const float dy = rv[1] * s;
+    const float dz = rv[2] * s;
+    const std::array<float, 4> q = q_;   // (the turn is applied in the level frame: left-multiplied)
+    q_ = {(dw * q[0]) - (dx * q[1]) - (dy * q[2]) - (dz * q[3]), (dw * q[1]) + (dx * q[0]) + (dy * q[3]) - (dz * q[2]),
+          (dw * q[2]) - (dx * q[3]) + (dy * q[0]) + (dz * q[1]), (dw * q[3]) + (dx * q[2]) - (dy * q[1]) + (dz * q[0])};
+    const float n2 = (q_[0] * q_[0]) + (q_[1] * q_[1]) + (q_[2] * q_[2]) + (q_[3] * q_[3]);
+    const float inv = 1.0F / std::sqrt(n2);
+    for (float& c : q_) {
+      c *= inv;
+    }
+  }
+
+  // Use the accelerometer to correct the tilt or not (on the pad, where it measures gravity, yes; in powered flight, where it measures thrust, no: see EstimatorConfig::use_accel).
+  void set_use_accel(bool on) noexcept { cfg_.use_accel = on; }
+
   [[nodiscard]] Attitude attitude() const noexcept {
     Attitude a;
     const std::array<float, 3> v = gravity();
@@ -159,6 +184,12 @@ class AttitudeEstimator {
     steps_ = s.steps;
     aligned_ = s.aligned;
     rates_valid_ = s.rates_valid;
+  }
+
+  // The attitude as the estimator holds it: the quaternion (w, x, y, z) of the sensor frame relative to its level reference, and the body rates in the sensor frame with the gyro bias taken out (degrees per second).
+  [[nodiscard]] std::array<float, 4> quaternion() const noexcept { return q_; }
+  [[nodiscard]] std::array<float, 3> body_rates_dps() const noexcept {
+    return {(w_[0] + bias_[0]) * kRadToDeg, (w_[1] + bias_[1]) * kRadToDeg, (w_[2] + bias_[2]) * kRadToDeg};
   }
 
   [[nodiscard]] uint32_t steps() const noexcept { return steps_; }

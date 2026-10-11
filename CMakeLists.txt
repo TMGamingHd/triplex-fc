@@ -45,6 +45,15 @@ add_executable(tfc_tests
   tests/test_vehicle_general.cpp
   tests/test_vehicle_files.cpp
   tests/test_aero.cpp
+  tests/test_newtonian.cpp
+  tests/test_landing_plant.cpp
+  tests/test_dmath.cpp
+  tests/test_nav.cpp
+  tests/test_peg.cpp
+  tests/test_attitude.cpp
+  tests/test_descent.cpp
+  tests/test_mission.cpp
+  tests/test_mission_sim.cpp
   tests/test_vehicle_refusals.cpp
   tests/test_environment.cpp
   tests/test_dynamics.cpp
@@ -114,6 +123,12 @@ add_executable(tfc_fly tools/sim/tfc_fly.cpp)
 target_link_libraries(tfc_fly PRIVATE tfc_core)
 target_include_directories(tfc_fly PRIVATE sim/vehicle)
 target_compile_options(tfc_fly PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
+
+# Fly a vehicle's mission (guidance and navigation, orbital insertion, a stage's return; tools/sim/tfc_mission.cpp, docs/design/GNC.md).
+add_executable(tfc_mission tools/sim/tfc_mission.cpp)
+target_link_libraries(tfc_mission PRIVATE tfc_core)
+target_include_directories(tfc_mission PRIVATE sim/vehicle)
+target_compile_options(tfc_mission PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
 
 # How often should the replicas resynchronise? (tools/sim/tfc_resync.cpp, TS-23)
 add_executable(tfc_resync tools/sim/tfc_resync.cpp)

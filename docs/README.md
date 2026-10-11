@@ -34,7 +34,9 @@
 | [IMU_MODEL.md](design/IMU_MODEL.md) | The IMU as the ISM330DHCX datasheet describes it: noise, wandering bias, drift with temperature, cross-axis, jitter; the presets, the checks |
 | [MONTE_CARLO.md](design/MONTE_CARLO.md) | Many flights, each with a random draw of everything that can differ: the tool, the statistics, what it found |
 | [DYNAMICS.md](design/DYNAMICS.md) | The servo (second order, backlash), jet damping, the push and tip-off of a separation, the roll controller: the formulas and their checks |
-| [AERODYNAMICS.md](design/AERODYNAMICS.md) | The aerodynamics that follow a vehicle's shape: the formulas, their limits, how they are checked |
+| [AERODYNAMICS.md](design/AERODYNAMICS.md) | The aerodynamics that follow a vehicle's shape: the formulas, their limits, how they are checked; the whole speed range, Newtonian impact theory, control surfaces and parachutes (sections 7 to 9) |
+| [GNC.md](design/GNC.md) | Guidance, navigation and control of a whole mission: navigation with GNSS aiding, PEG to orbit, the attitude loop through any angle, a stage's return (boost-back, entry, landing burn), the mission sequencer, the closed loop of three computers, the mission in the vehicle file and its design, what was measured and what is not done |
+| [RECOVERY.md](design/RECOVERY.md) | Bringing a stage back: the plant (engines the computers drive, surfaces, parachutes, separation, ground and tower), the Starship V3 class vehicle with its numbers and where each comes from, the mission phase by phase, a single stage under parachutes, what the tuning taught |
 | [VEHICLE_SPEC.md](design/VEHICLE_SPEC.md) | Describing any vehicle (stages, tanks, engines, effectors) as a file; the tools; the examples; what the flight computers can do with it |
 | [SIM_FIDELITY.md](design/SIM_FIDELITY.md) | How close the simulator is to real life, measured |
 | [FUTURE_WORK.md](design/FUTURE_WORK.md) | Designs written down and not built, with their triggers |

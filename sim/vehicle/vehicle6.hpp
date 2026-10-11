@@ -24,8 +24,10 @@
 #include "aero.hpp"
 #include "atmosphere.hpp"
 #include "math3.hpp"
+#include "newtonian.hpp"
 #include "slosh.hpp"
 #include "spec.hpp"
+#include "surfaces.hpp"
 
 namespace sim {
 
@@ -61,6 +63,11 @@ struct Params {
   // is not touched by it. `false` is for tests that want the bare equations.
   bool ground_contact = true;
   double crash_speed_ms = 5.0;  // a vehicle that reaches the ground faster than this is destroyed: the run stops there (`crashed()`)
+  // The landing model (docs/design/RECOVERY.md): once the vehicle has left the pad, the ground is met by the lowest point of the vehicle (its base, or the foot of its legs, or the ends of a body lying
+  // down), not by its centre of gravity; a tower with arms can catch it by its pins; a touchdown is judged on its speed and attitude. Off: the pad model above, exactly as it was.
+  bool landing_model = false;
+  double landing_tilt_deg = 12.0;   // a touchdown more than this far from upright is a crash
+  double landing_lateral_ms = 3.0;  // and more than this sideways speed
   // tests only: 0 switches gravity off, so that the rocket equation can be checked exactly
   double gravity_scale = 1.0;
   // the largest integration substep, s (tests lower it to check that the answer has converged)
@@ -112,6 +119,19 @@ struct Turbulence {  // a random wind on top of the mean wind and the gusts: a f
   uint32_t seed = 1U;
 };
 
+// The catch tower: two arms at `height` above the ground, at the place `offset` from the launch point (y downrange, z crossrange of the launch frame), that close on a stage's grapple pins.
+// A catch is made when the pins come down through the arms' height inside the capture radius, slowly enough, upright enough. (Starship's tower arms catch the booster at about 70 m.)
+struct Tower {
+  bool enabled = false;
+  double height_m = 70.0;
+  double offset_y_m = 0.0;
+  double offset_z_m = 0.0;
+  double capture_radius_m = 1.5;
+  double max_sink_ms = 2.0;       // the vertical speed the arms can take up
+  double max_lateral_ms = 1.5;
+  double max_tilt_deg = 3.0;
+};
+
 struct Scenario {
   Site site;
   Turbulence turbulence;
@@ -125,6 +145,11 @@ struct Scenario {
   double dry_cg_shift = 0.0;      // m, a mass offset: moves every stage's dry centre of gravity forward (+) or aft (-)
   bool has_initial = false;       // start from `initial` (a state in flight, an orbit) instead of standing on the pad
   State initial;
+  Tower tower;                    // the catch tower at the launch site
+  // Dispersion of the engines' starts: the chance that an engine does not light when it is commanded on (Flight 12's boostback relit 20 of 28 engines), drawn from the scenario's own generator
+  double start_failure_prob = 0.0;
+  uint32_t start_seed = 7U;
+  double ground_radius_override = 0.0;   // a spawned body is told where the ground is (the sphere the launch pad stands on, below the planet's reference radius by the height of the launch vehicle's centre of gravity); 0: derived
 };
 
 struct MassProps {
@@ -133,6 +158,27 @@ struct MassProps {
   double i_t = 0.0;   // transverse inertia about the CG
   double i_x = 0.0;   // roll inertia
   double slosh_mass = 0.0;  // the part of the liquid that sloshes, which the rest (mass, x_cg, inertias) leaves out: mass + slosh_mass is the vehicle's
+};
+
+// Everything the vehicle is told each step. The flight computers' voted gimbal command (degrees, the two planes) and, for a stage they drive (`StageSpec::guided`), the propulsion command (which engine
+// groups run, at what throttle), the surface command (a deflection in degrees for each channel) and the events (level bits: the model acts once, on the rising edge of a bit).
+namespace ev {
+constexpr uint32_t kSeparate = 1U << 0;        // let go the lowest stage that is still on the vehicle
+constexpr uint32_t kDeploySurfaces = 1U << 1;  // free the grid fins and flaps from their stowed position
+constexpr uint32_t kExtendLegs = 1U << 2;
+constexpr uint32_t kChute0 = 1U << 3;          // release parachute 0 (the drogue)
+constexpr uint32_t kChute1 = 1U << 4;          // and parachute 1 (the main)
+constexpr uint32_t kJettison = 1U << 5;        // jettison the first payload that is on the vehicle (a fairing, a satellite)
+}  // namespace ev
+
+struct Controls {
+  double pitch_deg = 0.0;
+  double yaw_deg = 0.0;
+  double throttle = 0.0;                              // fraction of rated thrust of the engines that run, guided stages (engines run only when told to: the default is none)
+  uint32_t group_mask = 0U;                           // guided stages: bit g set: the engines of group g are commanded on
+  std::array<double, kSurfaceChannels> surface_deg{};  // the surface command
+  double roll_deg = 0.0;                              // the roll command: what the roll thrusters fire in proportion to
+  uint32_t events = 0U;
 };
 
 struct Tilts {  // the vehicle's long axis relative to the pad vertical, as the platform shows it
@@ -195,6 +241,20 @@ inline VehicleSpec legacy_spec(const Params& p) {
   }
   return g;
 }
+
+// A stage (or the part of the vehicle left of it) that has been let go, for the simulation that keeps flying it: its description re-based so that its own aft end is x = 0, its state at the instant of
+// separation (the position and velocity are those of the parent vehicle's centre of gravity; `Vehicle6::spawn` puts them at the stage's own), and where it came from.
+struct Detached {
+  int stage = 0;              // its index in the parent vehicle
+  double t = 0.0;             // the parent's time at the separation
+  VehicleSpec spec;           // the stage alone
+  State state;                // attitude, rates, propellant; r and v are the parent's centre of gravity before the separation
+  double x_off = 0.0;         // the stage's aft end in the parent's coordinates
+  double x_cg_parent = 0.0;   // the parent's whole-vehicle centre of gravity just before (parent coordinates)
+  double recoil_ms = 0.0;     // the speed the push of the separation gives it, backward along the axis
+  double ground_radius = 0.0; // the sphere the ground is on
+  bool launched = false;
+};
 
 class Vehicle6 {
  public:
@@ -261,16 +321,40 @@ class Vehicle6 {
       }
       set_state(init);
     }
+    for (std::size_t i = 0; i < g_.surfaces.size() && i < kMaxSurfaces; ++i) {
+      surf_deployed_[i] = g_.surfaces[i].deployed;
+      surf_pos_[i] = g_.surfaces[i].stow_deg;
+    }
+    chute_open_.fill(-1.0);
+    start_rng_ = 0x2545F4914F6CDD1DULL ^ (static_cast<uint64_t>(sc_.start_seed) * 0x9E3779B97F4A7C15ULL);
+    ground_radius_ = sc_.ground_radius_override > 0.0 ? sc_.ground_radius_override : (sc_.has_initial ? pl_.radius : pl_.radius - ground_offset());
+    launched_ = sc_.has_initial && altitude() > 1.0;
     process_events();
     update_engines(0.0, 0.0, 0.0);
   }
 
   // Advance by dt seconds with the commanded gimbal angles (degrees). Substeps of at most `max_substep` (2 ms).
   void step(double dt, double cmd_pitch_deg, double cmd_yaw_deg) {
+    Controls c = ctrl_;
+    c.pitch_deg = cmd_pitch_deg;
+    c.yaw_deg = cmd_yaw_deg;
+    step(dt, c);
+  }
+
+  // Advance by dt seconds with the whole of the commands (the gimbal, the propulsion and the surfaces of the stages the flight computers drive, the events).
+  void step(double dt, const Controls& c) {
+    const double cmd_pitch_deg = c.pitch_deg;
+    const double cmd_yaw_deg = c.yaw_deg;
+    apply_events(c.events);
+    ctrl_ = c;
+    if (!launched_ && altitude() > 1.0) {
+      launched_ = true;
+    }
     const int n = std::max(1, static_cast<int>(std::ceil((dt / p_.max_substep) - 1e-9)));
     const double h = dt / n;
     for (int i = 0; i < n; ++i) {
       process_events();
+      drive_surfaces(h);
       if (g_.flex.enabled && !active_[static_cast<std::size_t>(g_.flex.stage)]) {
         s_.flex = {};  // the stage the mode belongs to has gone: so has the mode
       }
@@ -355,6 +439,47 @@ class Vehicle6 {
   [[nodiscard]] double stage_gimbal_yaw_deg(std::size_t s) const { return s < kMaxStages ? gimbal_y_[s] : 0.0; }
   [[nodiscard]] double fin_pitch_deg(std::size_t f) const { return f < kMaxFins ? fin_p_[f] : 0.0; }
   [[nodiscard]] double fin_yaw_deg(std::size_t f) const { return f < kMaxFins ? fin_y_[f] : 0.0; }
+  [[nodiscard]] double surface_deg(std::size_t i) const { return i < kMaxSurfaces ? surf_pos_[i] : 0.0; }   // the deflection of an articulated surface now
+  [[nodiscard]] bool surface_deployed(std::size_t i) const { return i < kMaxSurfaces && surf_deployed_[i]; }
+  [[nodiscard]] bool chute_open(std::size_t i) const { return i < kMaxParachutes && chute_open_[i] >= 0.0; }
+  [[nodiscard]] double chute_fill(std::size_t i) const {   // how full the canopy is, 0 to 1
+    return (i < g_.parachutes.size() && chute_open_[i] >= 0.0 && g_.parachutes[i].drag_area > 0.0) ? parachute_drag_area(chute_of(i), t_) / g_.parachutes[i].drag_area : 0.0;
+  }
+  [[nodiscard]] bool legs_out() const { return legs_out_; }
+  [[nodiscard]] bool landed() const { return landed_; }   // touched down upright and slowly: held on the ground
+  [[nodiscard]] bool caught() const { return caught_; }   // held in the tower's arms
+  [[nodiscard]] bool catch_missed() const { return catch_missed_; }   // the pins came down through the arms' height outside what the arms can take
+  [[nodiscard]] bool launched() const { return launched_; }
+  [[nodiscard]] bool engine_on_command(std::size_t e) const { return e < g_.engines.size() && eng_on_[e]; }
+  [[nodiscard]] int engine_starts(std::size_t e) const { return e < g_.engines.size() ? starts_[e] : 0; }
+  [[nodiscard]] double ground_radius() const { return ground_radius_; }
+  [[nodiscard]] const Controls& controls() const { return ctrl_; }
+  // The height of the lowest point of the vehicle above the ground, m (the base, or the foot of the legs, or an end of a body lying down); the pins' height above the ground for a catch.
+  [[nodiscard]] double base_height() const { return lowest_point_height(); }
+  [[nodiscard]] double pin_height() const { return pin_height_now(); }
+  // The stage let go since the last call, ready to be flown on its own (see `spawn`).
+  [[nodiscard]] std::vector<Detached> take_detached() {
+    std::vector<Detached> out;
+    out.swap(detached_);
+    return out;
+  }
+  // The heating of the skin now: the stagnation-point flux on the nose (Sutton-Graves), the flux over the belly, and the temperature the skin comes to when it radiates the belly flux away.
+  struct Heating {
+    double stagnation_w_m2 = 0.0;
+    double belly_w_m2 = 0.0;
+    double wall_k = 0.0;
+  };
+  [[nodiscard]] Heating heating() const {
+    Heating h;
+    const double alt = altitude();
+    const Air air = atmosphere(alt);
+    const double speed = norm(rotating_ ? s_.v - cross(omega_, s_.r) : s_.v);
+    const double rn = g_.aero.nose_radius_m > 0.0 ? g_.aero.nose_radius_m : 0.5;
+    h.stagnation_w_m2 = stagnation_heat_flux(air.density, speed, rn);
+    h.belly_w_m2 = h.stagnation_w_m2 * g_.aero.belly_heat_factor;
+    h.wall_k = radiative_equilibrium_k(h.belly_w_m2, g_.aero.emissivity);
+    return h;
+  }
   [[nodiscard]] bool payload_active(std::size_t i) const { return i < kMaxPayloads && payload_active_[i]; }
   [[nodiscard]] std::size_t slosh_count() const { return pods_.size(); }
   [[nodiscard]] double tank_liquid_kg(std::size_t stage, std::size_t tank) const {   // the propellant in one tank now
@@ -401,7 +526,11 @@ class Vehicle6 {
     const double area = kPi * 0.25 * p_.diameter * p_.diameter;
     if (shaped_) {
       if (v_abs > 1.0) {
-        shape_forces(l, air, vrel, v_abs, mp);
+        if (g_.aero.full_regime && geo_.ready()) {
+          shape_forces_full(l, air, vrel, v_abs, mp, s.w);
+        } else {
+          shape_forces(l, air, vrel, v_abs, mp);
+        }
       }
     } else if (v_abs > 1.0 && vrel.x > 0.0) {
       const double lat = std::hypot(vrel.y, vrel.z);
@@ -481,6 +610,12 @@ class Vehicle6 {
       l.f_aero.z += fz;
       l.m_aero = l.m_aero + cross(V3{fin.x_hinge - mp.x_cg, 0.0, 0.0}, V3{0.0, fy, fz});
     }
+    if (!g_.surfaces.empty()) {
+      add_surface_loads(l, s, air, vrel, mp);
+    }
+    if (!g_.parachutes.empty()) {
+      add_chute_loads(l, s, air, vrel, mp, t);
+    }
     if (g_.wheels.enabled) {
       l.m_thrust = l.m_thrust + wheel_m_;  // the wheels' torque on the vehicle (an internal torque: the wheel takes the opposite momentum)
     }
@@ -536,6 +671,10 @@ class Vehicle6 {
     }
     V3 w = s_.w;
     V3 a = f;
+    if (p_.landing_model && (grounded_ || landed_ || caught_)) {   // held by the ground or the arms: the reaction makes the specific force the local gravity along the vertical, whatever the engines do
+      a = rotate_inv(s_.q, s_.r / norm(s_.r)) * (norm(gravity(s_.r)) / kG0);
+      f = a;
+    }
     if (g_.flex.enabled && active_[static_cast<std::size_t>(g_.flex.stage)]) {  // the structure bends where the IMUs are: its slope turns at eta' and its displacement accelerates at eta''
       const FlexSpec& fx = g_.flex;
       const double wf = 2.0 * kPi * fx.frequency_hz;
@@ -549,6 +688,55 @@ class Vehicle6 {
   }
 
   [[nodiscard]] Loads current_loads() const { return loads(s_, t_); }
+
+  // For the design of the attitude loop: the angular acceleration (rad/s^2, body axes) the vehicle would have, in the state it is in now, with every actuator at once at the angle `c` commands (the gimbal of the
+  // stage that flies, the surfaces that are deployed, the roll thrusters): the answer to "what does one more degree of this command do". A copy is made and nothing in this vehicle changes.
+  [[nodiscard]] V3 angular_accel_with(const Controls& c) const {
+    Vehicle6 tmp = *this;
+    tmp.ctrl_.roll_deg = c.roll_deg;
+    tmp.ctrl_.pitch_deg = c.pitch_deg;
+    tmp.ctrl_.yaw_deg = c.yaw_deg;
+    for (std::size_t st = 0; st < tmp.g_.stages.size(); ++st) {
+      tmp.gimbal_p_[st] = c.pitch_deg;
+      tmp.gimbal_y_[st] = c.yaw_deg;
+    }
+    for (std::size_t i = 0; i < tmp.g_.surfaces.size(); ++i) {
+      const SurfaceSpec& sf = tmp.g_.surfaces[i];
+      if (tmp.surf_deployed_[i] && sf.channel >= 0 && sf.channel < static_cast<int>(kSurfaceChannels)) {
+        tmp.surf_pos_[i] = std::clamp(c.surface_deg[static_cast<std::size_t>(sf.channel)], sf.min_deg, sf.max_deg);
+      }
+    }
+    tmp.update_engines(0.0, c.pitch_deg, c.yaw_deg);   // (the thrusters that fire in proportion to a command take it; the main engines keep their thrust)
+    return tmp.deriv(tmp.s_, tmp.t_).w;
+  }
+
+  // The same with the attitude turned by `angle_rad` about the body axis `axis` (0 roll, 1 yaw, 2 pitch: x, y, z) and the velocity unchanged: the change in angular acceleration per radian is the aerodynamic stiffness
+  // of that axis (positive: it makes the vehicle diverge).
+  [[nodiscard]] V3 angular_accel_turned(const Controls& c, int axis, double angle_rad) const {
+    Vehicle6 tmp = *this;
+    const V3 ax = axis == 0 ? V3{1.0, 0.0, 0.0} : (axis == 1 ? V3{0.0, 1.0, 0.0} : V3{0.0, 0.0, 1.0});
+    tmp.s_.q = normalized(tmp.s_.q * from_axis_angle(ax, angle_rad));
+    return tmp.angular_accel_with(c);
+  }
+
+  // The centre of gravity of stage `s` alone with `prop_kg` of propellant, from its own aft end (for the design of the landing: where the pins are against where the centre of gravity is).
+  [[nodiscard]] double stage_cg_from_aft(std::size_t s, double prop_kg) const {
+    Vehicle6 tmp = *this;
+    for (std::size_t k = 0; k < tmp.g_.stages.size(); ++k) {
+      tmp.active_[k] = k == s;
+    }
+    tmp.payload_active_.fill(false);
+    tmp.s_.prop = std::array<double, kMaxStages>{};
+    tmp.s_.prop[s] = std::clamp(prop_kg, 0.0, tmp.capacity(s));
+    tmp.refresh_fixed();
+    return tmp.mass_props_state(tmp.s_, -1).x_cg - tmp.g_.stages[s].x_start;
+  }
+
+  // Put the vehicle at an attitude and rate (for the design run that forces the attitude to the guidance's, and for tests).
+  void set_attitude(const Q4& q, const V3& w) {
+    s_.q = normalized(q);
+    s_.w = w;
+  }
 
   // How strongly a small gimbal angle turns the vehicle: the sum over the engines that gimbal of thrust times the arm from the centre of gravity, divided by the transverse inertia
   // (rad/s^2 per rad), at the state it is in now. It is what the gains of the flight computers are designed from (design.hpp).
@@ -714,6 +902,33 @@ class Vehicle6 {
       s_.m = fixed_ + std::clamp(s.prop[0], 0.0, capacity(0U));  // the caller gave a propellant that is not what the mass says: the propellant is what they meant
     }
     sync_propellant();
+  }
+
+  // Fly a stage that has been let go: a vehicle of that stage alone, at its own centre of gravity, with the attitude, rates and velocity the separation left it (the parent's, and the push of the springs
+  // backward), and its engines commanded off until the computers that fly it say otherwise. Every stage of the description it takes is driven by its controls (the schedule it had on the parent is gone).
+  [[nodiscard]] static Vehicle6 spawn(const Detached& d, const Params& parent, const Scenario& sc) {
+    Params cp = parent;
+    cp.spec = d.spec;
+    Scenario cs = sc;
+    cs.has_initial = false;
+    cs.ground_radius_override = d.ground_radius;
+    cs.engine_out_time = -1.0;
+    cs.engine_failures.clear();
+    Vehicle6 v(cp, cs);
+    State st = d.state;
+    v.set_state(st);
+    const double x_cg_child = v.mass_props().x_cg;
+    const V3 dx{d.x_off + x_cg_child - d.x_cg_parent, 0.0, 0.0};
+    st.r = d.state.r + rotate(d.state.q, dx);
+    st.v = d.state.v + rotate(d.state.q, cross(d.state.w, dx)) + rotate(d.state.q, V3{-d.recoil_ms, 0.0, 0.0});
+    v.set_state(st);
+    v.t_ = d.t;
+    v.launched_ = d.launched;
+    v.grounded_ = false;
+    v.ctrl_ = Controls{};
+    v.ctrl_.group_mask = 0U;
+    v.ctrl_.throttle = 0.0;
+    return v;
   }
 
  private:
@@ -974,19 +1189,7 @@ class Vehicle6 {
       const bool by_time = st.separate_time_s >= 0.0 && t_ >= st.separate_time_s;
       const bool by_burnout = st.separate_on_burnout && t_burnout_[s] >= 0.0 && t_ >= t_burnout_[s] + st.separate_delay_s;
       if (by_time || by_burnout) {
-        active_[s] = false;
-        t_sep_[s] = t_;
-        refresh_fixed();
-        s_.m = total_mass(s_.prop);
-        if (st.separation_dv_ms != 0.0) {  // the springs push the rest of the vehicle forward
-          s_.v = s_.v + rotate(s_.q, V3{st.separation_dv_ms, 0.0, 0.0});
-        }
-        if (st.tipoff_pitch_dps != 0.0 || st.tipoff_yaw_dps != 0.0 || st.tipoff_roll_dps != 0.0) {  // and the release leaves it turning (roll about X, yaw about Y, pitch about Z)
-          s_.w = s_.w + (V3{st.tipoff_roll_dps, st.tipoff_yaw_dps, st.tipoff_pitch_dps} * kDeg2Rad);
-          if (ideal_roll_) {
-            s_.w.x = 0.0;  // a roll that is held ideally has no roll rate to hand on
-          }
-        }
+        separate_stage(s);
       }
     }
     for (std::size_t i = 0; i < g_.payloads.size(); ++i) {
@@ -996,6 +1199,382 @@ class Vehicle6 {
         s_.m = total_mass(s_.prop);
       }
     }
+  }
+
+  // ---- events, surfaces, parachutes ----
+
+  // The rising edges of the event bits: each acts once.
+  void apply_events(uint32_t events) {
+    const uint32_t rising = events & ~ev_prev_;
+    ev_prev_ = events;
+    if ((rising & ev::kSeparate) != 0U) {
+      std::size_t active = 0;
+      for (std::size_t k = 0; k < g_.stages.size(); ++k) {
+        active += active_[k] ? 1U : 0U;
+      }
+      if (active > 1U) {
+        separate_stage(lead_stage());
+      }
+    }
+    if ((rising & ev::kDeploySurfaces) != 0U) {
+      surf_deployed_.fill(true);
+    }
+    if ((rising & ev::kExtendLegs) != 0U) {
+      legs_out_ = true;
+    }
+    const std::array<uint32_t, 2> chute_bit{ev::kChute0, ev::kChute1};
+    for (std::size_t k = 0; k < chute_bit.size(); ++k) {
+      if ((rising & chute_bit[k]) != 0U && k < g_.parachutes.size() && active_[static_cast<std::size_t>(g_.parachutes[k].stage)] && chute_open_[k] < 0.0) {
+        chute_open_[k] = t_;
+      }
+    }
+    if ((rising & ev::kJettison) != 0U) {
+      for (std::size_t i = 0; i < g_.payloads.size(); ++i) {
+        if (payload_active_[i]) {
+          payload_active_[i] = false;
+          refresh_fixed();
+          s_.m = total_mass(s_.prop);
+          break;
+        }
+      }
+    }
+  }
+
+  [[nodiscard]] Parachute chute_of(std::size_t i) const { return Parachute{g_.parachutes[i].drag_area, g_.parachutes[i].inflation_s, chute_open_[i]}; }
+
+  // Each surface moves toward its commanded angle (or its stowed angle until it is deployed) at its rate limit, through its lag.
+  void drive_surfaces(double h) {
+    for (std::size_t i = 0; i < g_.surfaces.size(); ++i) {
+      const SurfaceSpec& sf = g_.surfaces[i];
+      if (!active_[static_cast<std::size_t>(sf.stage)]) {
+        continue;
+      }
+      double target = sf.stow_deg;
+      if (surf_deployed_[i] && sf.channel >= 0 && sf.channel < static_cast<int>(kSurfaceChannels)) {
+        target = std::clamp(ctrl_.surface_deg[static_cast<std::size_t>(sf.channel)], sf.min_deg, sf.max_deg);
+      }
+      const double want = sf.lag_s > 0.0 ? (target - surf_pos_[i]) * (h / (sf.lag_s + h)) : (target - surf_pos_[i]);
+      surf_pos_[i] += std::clamp(want, -sf.rate_dps * h, sf.rate_dps * h);
+    }
+  }
+
+  void add_surface_loads(Loads& l, const State& s, const Air& air, const V3& vrel, const MassProps& mp) const {
+    for (std::size_t i = 0; i < g_.surfaces.size(); ++i) {
+      const SurfaceSpec& sf = g_.surfaces[i];
+      if (!active_[static_cast<std::size_t>(sf.stage)] || (!surf_deployed_[i] && sf.kind == SurfaceKind::GridFin)) {
+        continue;   // (a grid fin folded against the skin does nothing)
+      }
+      const V3 pt = surface_point(sf, surf_pos_[i]);
+      const V3 rc{pt.x - mp.x_cg, pt.y, pt.z};
+      const V3 v_air = vrel + cross(s.w, rc);   // the velocity of the surface's own point through the air
+      const SurfaceFrame fr = surface_frame(sf, surf_pos_[i]);
+      const SurfaceLoad sl = surface_load(sf, surf_pos_[i], v_air, air.density, air.sound, stream_fraction(vrel, fr.radial));
+      l.f_aero = l.f_aero + sl.force;
+      l.m_aero = l.m_aero + cross(rc, sl.force);
+    }
+  }
+
+  void add_chute_loads(Loads& l, const State& s, const Air& air, const V3& vrel, const MassProps& mp, double t) const {
+    for (std::size_t i = 0; i < g_.parachutes.size(); ++i) {
+      if (chute_open_[i] < 0.0 || !active_[static_cast<std::size_t>(g_.parachutes[i].stage)]) {
+        continue;
+      }
+      const V3 rc{g_.parachutes[i].x_attach - mp.x_cg, 0.0, 0.0};
+      const V3 f = parachute_force(chute_of(i), t, vrel + cross(s.w, rc), air.density);
+      l.f_aero = l.f_aero + f;
+      l.m_aero = l.m_aero + cross(rc, f);
+    }
+  }
+
+  // ---- engines the flight computers drive ----
+
+  double start_uniform() {
+    start_rng_ ^= start_rng_ << 13U;
+    start_rng_ ^= start_rng_ >> 7U;
+    start_rng_ ^= start_rng_ << 17U;
+    return (static_cast<double>(start_rng_ >> 11U) + 0.5) / 9007199254740992.0;
+  }
+
+  // One engine of a stage that the computers drive: it starts when its group is commanded on (if it has starts left, and the start takes: the scenario can make a start fail), runs at the throttle
+  // commanded (raised to the engine's lowest, `min_throttle`) and stops when its group is commanded off or the propellant is gone.
+  void update_guided_engine(std::size_t e, double h) {
+    const EngineSpec& en = g_.engines[e];
+    const std::size_t st = static_cast<std::size_t>(en.stage);
+    const bool bit = ((ctrl_.group_mask >> static_cast<unsigned>(en.group)) & 1U) != 0U;
+    const bool fuel = s_.prop[st] > kEmptyProp;
+    const bool want = bit && fuel && !failed_[e] && ctrl_.throttle > 0.0;
+    if (want && !eng_on_[e] && !start_failed_[e]) {
+      if (en.max_starts > 0 && starts_[e] >= en.max_starts) {
+        start_failed_[e] = true;
+      } else {
+        ++starts_[e];
+        if (sc_.start_failure_prob > 0.0 && start_uniform() < sc_.start_failure_prob) {
+          start_failed_[e] = true;
+        } else {
+          eng_on_[e] = true;
+          eng_t_on_[e] = t_;
+          if (t_ign_[st] < 0.0) {
+            t_ign_[st] = t_;
+          }
+        }
+      }
+    } else if (!want) {
+      eng_on_[e] = false;
+      if (!bit) {
+        start_failed_[e] = false;   // commanded off: the next time it is commanded on is a new attempt
+      }
+    }
+    const bool running = eng_on_[e] && t_ >= eng_t_on_[e] + en.start_offset_s && fuel;
+    const double cmd = running ? std::clamp(std::max(ctrl_.throttle, en.min_throttle), 0.0, 1.0) : 0.0;
+    const double tau = cmd > frac_[e] ? en.rise_s : en.tail_s;
+    frac_[e] = (tau > 0.0 && !failed_[e]) ? frac_[e] + ((cmd - frac_[e]) * (1.0 - std::exp(-h / tau))) : cmd;
+  }
+
+  // ---- the ground, the legs and the tower ----
+
+  // The height of the centre of gravity above the lowest point of the vehicle standing upright (the pad's height of the centre of gravity above the ground).
+  [[nodiscard]] double ground_offset() const {
+    double aft = 1.0e30;
+    for (std::size_t k = 0; k < g_.stages.size(); ++k) {
+      if (active_[k]) {
+        aft = std::min(aft, g_.stages[k].x_start);
+      }
+    }
+    return aft < 1.0e29 ? mass_props_state(s_, -1).x_cg - aft : 0.0;
+  }
+
+  // The aft end of the lowest stage on the vehicle, the foot of its legs if they are out, and the forward end of the highest.
+  void ends(double& foot_x, double& fore_x, double& radius) const {
+    foot_x = 1.0e30;
+    fore_x = -1.0e30;
+    radius = 0.0;
+    for (std::size_t k = 0; k < g_.stages.size(); ++k) {
+      if (!active_[k]) {
+        continue;
+      }
+      const StageSpec& st = g_.stages[k];
+      const double foot = st.x_start + (legs_out_ ? st.leg_x : 0.0);
+      foot_x = std::min(foot_x, foot);
+      fore_x = std::max(fore_x, st.x_start + st.length);
+      radius = std::max(radius, st.radius);
+    }
+  }
+
+  [[nodiscard]] double lowest_point_height() const {
+    double foot = 0.0;
+    double fore = 0.0;
+    double rad = 0.0;
+    ends(foot, fore, rad);
+    if (foot > 1.0e29) {
+      return 1.0e30;
+    }
+    const double x_cg = mass_props_state(s_, -1).x_cg;
+    const V3 up = s_.r / norm(s_.r);
+    const V3 u = rotate(s_.q, V3{1.0, 0.0, 0.0});
+    const double uz = dot(u, up);
+    const double rim = rad * std::sqrt(std::max(1.0 - (uz * uz), 0.0));   // a disc tilted from the horizontal reaches this much lower at its edge
+    const double h_foot = norm(s_.r + (u * (foot - x_cg))) - ground_radius_ - rim;
+    const double h_fore = norm(s_.r + (u * (fore - x_cg))) - ground_radius_ - rim;
+    return std::min(h_foot, h_fore);
+  }
+
+  [[nodiscard]] bool pin_x(double& x) const {
+    for (std::size_t k = 0; k < g_.stages.size(); ++k) {
+      if (active_[k] && g_.stages[k].catch_pin_x > 0.0) {
+        x = g_.stages[k].x_start + g_.stages[k].catch_pin_x;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] V3 pin_position() const {
+    double x = 0.0;
+    (void)pin_x(x);
+    return s_.r + rotate(s_.q, V3{x - mass_props_state(s_, -1).x_cg, 0.0, 0.0});
+  }
+
+  [[nodiscard]] double pin_height_now() const {
+    double x = 0.0;
+    return pin_x(x) ? norm(pin_position()) - ground_radius_ : 1.0e30;
+  }
+
+  // The pad's axes now: up, downrange, crossrange (a rotating planet carries them round its pole).
+  void pad_frame(V3& up, V3& down, V3& cross_r) const {
+    const Q4 turn = rotating_ ? from_axis_angle(pole_, pl_.rotation_rate * t_) : Q4{};
+    up = rotate(turn, V3{1.0, 0.0, 0.0});
+    down = rotate(turn, V3{0.0, 1.0, 0.0});
+    cross_r = rotate(turn, V3{0.0, 0.0, 1.0});
+  }
+
+  // Held to the ground, a vehicle goes round with the planet.
+  void co_rotate(double h) {
+    if (rotating_) {
+      const Q4 turn = from_axis_angle(pole_, pl_.rotation_rate * h);
+      s_.r = rotate(turn, s_.r);
+      s_.q = turn * s_.q;
+      s_.v = cross(omega_, s_.r);
+      s_.w = rotate_inv(s_.q, omega_);
+    }
+  }
+
+  // The vehicle that has left the pad meets the ground or the tower. Returns true while it is held (the equations of motion are not integrated).
+  bool resolve_contact(double h) {
+    if (crashed_ || landed_ || caught_) {
+      s_.v = V3{};
+      s_.w = V3{};
+      co_rotate(h);
+      return true;
+    }
+    V3 up_pad;
+    V3 down_pad;
+    V3 cross_pad;
+    pad_frame(up_pad, down_pad, cross_pad);
+    const V3 v_ground = rotating_ ? cross(omega_, s_.r) : V3{};
+    if (sc_.tower.enabled) {
+      double xp = 0.0;
+      if (pin_x(xp)) {
+        const double hp = pin_height_now();
+        if (prev_pin_h_ >= sc_.tower.height_m && hp < sc_.tower.height_m) {   // the pins come down through the arms
+          const V3 p_rel = pin_position() - (up_pad * ground_radius_);
+          const double miss = std::hypot(dot(p_rel, down_pad) - sc_.tower.offset_y_m, dot(p_rel, cross_pad) - sc_.tower.offset_z_m);
+          const V3 v_rel = s_.v - v_ground;
+          const double sink = -dot(v_rel, up_pad);
+          const double lat = norm(v_rel + (up_pad * sink));
+          const double tilt = std::acos(std::clamp(dot(rotate(s_.q, V3{1.0, 0.0, 0.0}), up_pad), -1.0, 1.0)) * kRad2Deg;
+          if (miss <= sc_.tower.capture_radius_m && sink >= 0.0 && sink <= sc_.tower.max_sink_ms && lat <= sc_.tower.max_lateral_ms && tilt <= sc_.tower.max_tilt_deg) {
+            caught_ = true;
+            s_.r = s_.r + (up_pad * (sc_.tower.height_m - hp));
+            s_.v = v_ground;
+            s_.w = V3{};
+            prev_pin_h_ = sc_.tower.height_m;
+            return true;
+          }
+          catch_missed_ = true;
+        }
+        prev_pin_h_ = hp;
+      }
+    }
+    const double hb = lowest_point_height();
+    if (hb > 0.0) {
+      return false;
+    }
+    const V3 up = s_.r / norm(s_.r);
+    const V3 v_rel = s_.v - v_ground;
+    const double v_up = dot(v_rel, up);
+    if (v_up > 0.0) {
+      return false;   // moving away from the ground (a hop)
+    }
+    const double lateral = norm(v_rel - (up * v_up));
+    const double tilt = std::acos(std::clamp(dot(rotate(s_.q, V3{1.0, 0.0, 0.0}), up), -1.0, 1.0)) * kRad2Deg;
+    const bool ok = -v_up <= p_.crash_speed_ms && lateral <= p_.landing_lateral_ms && tilt <= p_.landing_tilt_deg;
+    landed_ = ok;
+    crashed_ = !ok;
+    s_.r = s_.r - (up * hb);   // the lowest point rests on the ground
+    s_.v = v_ground;
+    s_.w = V3{};
+    return true;
+  }
+
+  // Let stage `s` go. The vehicle that stays is lighter and (with the landing model, which keeps the position of the centre of gravity honest) its centre of gravity moves to where the remaining parts'
+  // centre of gravity is: position and velocity shift by the offset along the axis, and by the turning of the body. A stage let go is recorded (`take_detached`) with everything needed to fly it on.
+  void separate_stage(std::size_t s) {
+    const StageSpec& st = g_.stages[s];
+    const MassProps before = mass_props_state(s_, -1);
+    Detached d;
+    d.stage = static_cast<int>(s);
+    d.t = t_;
+    d.state = s_;
+    d.x_cg_parent = before.x_cg;
+    d.ground_radius = ground_radius_;
+    d.launched = launched_;
+    d.x_off = st.x_start;
+    active_[s] = false;
+    t_sep_[s] = t_;
+    refresh_fixed();
+    s_.m = total_mass(s_.prop);
+    const MassProps after = mass_props_state(s_, -1);
+    if (p_.landing_model && after.mass > 0.0) {
+      const V3 off_body{after.x_cg - before.x_cg, 0.0, 0.0};   // the centre of gravity of what is left, from that of the whole
+      s_.r = s_.r + rotate(s_.q, off_body);
+      s_.v = s_.v + rotate(s_.q, cross(s_.w, off_body));
+    }
+    const double m_child = st.dry_mass + std::clamp(d.state.prop[s], 0.0, capacity(s));
+    if (st.separation_dv_ms != 0.0) {  // the springs push the rest of the vehicle forward (and the stage back, by the same momentum)
+      s_.v = s_.v + rotate(s_.q, V3{st.separation_dv_ms, 0.0, 0.0});
+      d.recoil_ms = m_child > 0.0 ? st.separation_dv_ms * s_.m / m_child : 0.0;
+    }
+    if (st.tipoff_pitch_dps != 0.0 || st.tipoff_yaw_dps != 0.0 || st.tipoff_roll_dps != 0.0) {  // and the release leaves it turning (roll about X, yaw about Y, pitch about Z)
+      s_.w = s_.w + (V3{st.tipoff_roll_dps, st.tipoff_yaw_dps, st.tipoff_pitch_dps} * kDeg2Rad);
+      if (ideal_roll_) {
+        s_.w.x = 0.0;  // a roll that is held ideally has no roll rate to hand on
+      }
+    }
+    d.spec = stage_alone(s, d.x_off);
+    const double prop_s = d.state.prop[s];   // (the copy was taken before the stage left)
+    d.state.prop = std::array<double, kMaxStages>{};
+    d.state.prop[0] = prop_s;
+    d.state.prop_set = true;
+    d.state.m = m_child;
+    detached_.push_back(d);
+  }
+
+  // The description of stage `s` on its own: its parts and the engines, surfaces and parachutes of the stage, with every x measured from its own aft end.
+  [[nodiscard]] VehicleSpec stage_alone(std::size_t s, double x_off) const {
+    VehicleSpec v;
+    v.planet = g_.planet;
+    v.aero = g_.aero;
+    v.actuator = g_.actuator;
+    v.jet_damping = g_.jet_damping;
+    StageSpec st = g_.stages[s];
+    st.x_start = 0.0;
+    if (st.x_cg_dry >= 0.0) {
+      st.x_cg_dry -= x_off;
+    }
+    for (TankSpec& t : st.tanks) {
+      t.x_bottom -= x_off;
+    }
+    for (SectionSpec& sec : st.sections) {
+      sec.x_start -= x_off;
+    }
+    for (FinPlanform& f : st.stabilizers) {
+      f.x_le_root -= x_off;
+    }
+    st.guided = true;   // flown on its own, its engines are whatever its own computers command (none, if it has none)
+    st.ignite_after_sep_of = -1;
+    st.ignite_time_s = 0.0;
+    st.separate_time_s = -1.0;
+    st.separate_on_burnout = false;
+    st.separation_dv_ms = 0.0;
+    st.tipoff_pitch_dps = 0.0;
+    st.tipoff_yaw_dps = 0.0;
+    st.tipoff_roll_dps = 0.0;
+    v.stages.push_back(st);
+    for (const EngineSpec& e : g_.engines) {
+      if (e.stage == static_cast<int>(s)) {
+        EngineSpec k = e;
+        k.stage = 0;
+        k.pos.x -= x_off;
+        v.engines.push_back(k);
+      }
+    }
+    for (const SurfaceSpec& sf : g_.surfaces) {
+      if (sf.stage == static_cast<int>(s)) {
+        SurfaceSpec k = sf;
+        k.stage = 0;
+        k.x_hinge -= x_off;
+        v.surfaces.push_back(k);
+      }
+    }
+    for (const ParachuteSpec& pc : g_.parachutes) {
+      if (pc.stage == static_cast<int>(s)) {
+        ParachuteSpec k = pc;
+        k.stage = 0;
+        k.x_attach -= x_off;
+        v.parachutes.push_back(k);
+      }
+    }
+    return v;
   }
 
   // The aerodynamic force and moment from the shape (or a table by Mach): the normal force of the slender parts, the cross-flow force of the body in the flow across it, the axial force
@@ -1041,6 +1620,72 @@ class Vehicle6 {
       l.f_aero.z = -q_s * n_total * n.z;
       l.m_aero = cross(V3{-q_s * arm_sum, 0.0, 0.0}, n);
     }
+  }
+
+  // The aerodynamic force and moment over the whole speed range and at any angle of attack (aero.full_regime): the slender-body build-up and the cross-flow of the body at the Mach number of the flow across
+  // it, blended from Mach 3 to 6 into the Newtonian impact theory of the body in the stream (newtonian.hpp), and, added to either, what the body's own turning adds (the damping of its parts and of the
+  // strips of its body in the local flow). The angle of attack runs the full circle; flying tail first the base and the engines face the stream.
+  void shape_forces_full(Loads& l, const Air& air, const V3& vrel, double v_abs, const MassProps& mp, const V3& w) const {
+    const AeroSpec& a = g_.aero;
+    const double lat = std::hypot(vrel.y, vrel.z);
+    const double alpha = std::atan2(lat, vrel.x);
+    l.alpha = alpha;
+    const double sa = std::sin(alpha);
+    const double ca = std::cos(alpha);
+    const double s_ref = geo_.reference_area();
+    double cn_alpha = 0.0;
+    double moment_slope = 0.0;
+    geo_.slopes(l.mach, mp.x_cg, cn_alpha, moment_slope);
+    const double re = air.density * v_abs * geo_.length() / aero::viscosity(air.temperature);
+    const double axial_front = geo_.axial(l.mach, re, power_fraction(), a);
+    const double plan_ratio = geo_.plan_area() / s_ref;
+    const double x_cf = geo_.plan_centroid();
+    const double q_s = l.dynamic_pressure * s_ref;
+    const double lin = sa * ca;
+    const double cdc = aero::cross_cd(l.mach * std::fabs(sa));
+    const double crossflow = a.crossflow_eta * cdc * plan_ratio * sa * sa;
+    double n_total = (p_.cn_scale * cn_alpha * lin) + crossflow;
+    double arm_sum = (p_.cn_scale * moment_slope * lin) + (crossflow * (x_cf - mp.x_cg));
+    double x_coef = p_.cd_scale * (ca >= 0.0 ? axial_front : a.rear_axial) * ca;
+    const double wn = aero::smoothstep(a.newtonian_from_mach, a.newtonian_to_mach, l.mach);
+    if (wn > 0.0 && newton_.ready()) {
+      double cx = 0.0;
+      double cn = 0.0;
+      double a0 = 0.0;
+      newton_.at(alpha, cx, cn, a0);
+      const double cx_n = p_.cd_scale * (cx + (geo_.skin(l.mach, re, a) * ca));
+      n_total = ((1.0 - wn) * n_total) + (wn * p_.cn_scale * cn);
+      arm_sum = ((1.0 - wn) * arm_sum) + (wn * p_.cn_scale * (a0 - (mp.x_cg * cn)));
+      x_coef = ((1.0 - wn) * x_coef) + (wn * cx_n);
+    }
+    l.f_aero.x = -q_s * x_coef;
+    if (lat > 1e-9) {
+      const V3 n{0.0, vrel.y / lat, vrel.z / lat};
+      l.f_aero.y = -q_s * n_total * n.y;
+      l.f_aero.z = -q_s * n_total * n.z;
+      l.m_aero = cross(V3{-q_s * arm_sum, 0.0, 0.0}, n);
+    }
+    if (w.y != 0.0 || w.z != 0.0) {
+      V3 df;
+      V3 dm;
+      geo_.rotation_increment(l.mach, air.sound, air.density, vrel, w, mp.x_cg, a, p_.cn_scale, df, dm);
+      l.f_aero = l.f_aero + df;
+      l.m_aero = l.m_aero + dm;
+    }
+  }
+
+  // The fraction of a stage's main engines' rated thrust that is running now.
+  [[nodiscard]] double stage_power(std::size_t st) const {
+    double running = 0.0;
+    double rated = 0.0;
+    for (std::size_t e = 0; e < g_.engines.size(); ++e) {
+      const EngineSpec& en = g_.engines[e];
+      if (en.control == Control::None && static_cast<std::size_t>(en.stage) == st) {
+        running += frac_[e] * en.thrust_vac;
+        rated += en.thrust_vac;
+      }
+    }
+    return rated > 0.0 ? running / rated : 0.0;
   }
 
   // The fraction of the main engines' rated thrust that is running (the plume fills the wake and takes drag off the base).
@@ -1096,6 +1741,9 @@ class Vehicle6 {
     }
     geo_.build(sections, fins, g_.aero.reference_diameter_m);
     shaped_ = geo_.ready() || !g_.aero.table.empty();
+    if (g_.aero.full_regime && geo_.ready()) {
+      newton_.build(sections, fins, geo_.reference_area());
+    }
   }
 
   // Could engine e fire now (its stage is on the vehicle, lit and has propellant, and the engine has not failed)?
@@ -1157,7 +1805,14 @@ class Vehicle6 {
         frac_[e] = 0.0;
         continue;
       }
-      const bool lit = t_ign_[st] >= 0.0 && t_ >= t_ign_[st] + en.start_offset_s && s_.prop[st] > kEmptyProp && !failed_[e] && (en.cutoff_time_s < 0.0 || t_ < en.cutoff_time_s);
+      const bool guided = g_.stages[st].guided;
+      if (guided && en.control == Control::None) {
+        update_guided_engine(e, h);
+        continue;
+      }
+      // (a thruster of a stage the computers drive needs only propellant in the stage: it works before the main engines have ever been lit)
+      const bool lit = guided ? (s_.prop[st] > kEmptyProp && !failed_[e])
+                              : (t_ign_[st] >= 0.0 && t_ >= t_ign_[st] + en.start_offset_s && s_.prop[st] > kEmptyProp && !failed_[e] && (en.cutoff_time_s < 0.0 || t_ < en.cutoff_time_s));
       double duty = 1.0;  // a thruster fires in proportion to the command that asks for it
       switch (en.control) {
         case Control::None:
@@ -1174,8 +1829,17 @@ class Vehicle6 {
         case Control::YawMinus:
           duty = std::clamp(-cmd_yaw_deg / en.full_cmd_deg, 0.0, 1.0);
           break;
+        case Control::RollPlus:
+          duty = std::clamp(ctrl_.roll_deg / en.full_cmd_deg, 0.0, 1.0);
+          break;
+        case Control::RollMinus:
+          duty = std::clamp(-ctrl_.roll_deg / en.full_cmd_deg, 0.0, 1.0);
+          break;
       }
-      const double cmd = lit ? throttle_of(g_.stages[st], t_ - t_ign_[st]) * duty : 0.0;
+      if (guided && duty > 0.0 && (en.control == Control::PitchPlus || en.control == Control::PitchMinus || en.control == Control::YawPlus || en.control == Control::YawMinus) && stage_power(st) > 0.05) {
+        duty = 0.0;   // the gimbal steers while the main engines burn: the pitch and yaw thrusters are inhibited then (the roll ones are not: the gimbal has no roll)
+      }
+      const double cmd = lit ? (guided ? duty : throttle_of(g_.stages[st], t_ - t_ign_[st]) * duty) : 0.0;
       const double tau = cmd > frac_[e] ? en.rise_s : en.tail_s;
       frac_[e] = (tau > 0.0 && failed_[e] == false) ? frac_[e] + ((cmd - frac_[e]) * (1.0 - std::exp(-h / tau))) : cmd;
     }
@@ -1210,6 +1874,9 @@ class Vehicle6 {
   // or destroyed above `crash_speed_ms`. Returns true while the ground holds the vehicle (the equations of motion are not integrated). Nothing here changes the state of a vehicle
   // that is flying, or that is at the surface with a net upward force and no downward speed (a normal lift-off), so the nominal flight is arithmetic for arithmetic what it was.
   bool held_by_ground(double h) {
+    if (p_.landing_model && launched_) {
+      return resolve_contact(h);   // after lift-off the ground is met by the lowest point of the vehicle, and the tower's arms can take it
+    }
     if (crashed_) {
       return true;
     }
@@ -1442,6 +2109,26 @@ class Vehicle6 {
   std::vector<EngineFailure> failures_;
   bool grounded_ = false;
   bool crashed_ = false;
+  // the propulsion, surfaces, parachutes and landing
+  Controls ctrl_{};
+  uint32_t ev_prev_ = 0U;
+  std::array<bool, kMaxEngines> eng_on_{};       // commanded on (a stage the computers drive)
+  std::array<double, kMaxEngines> eng_t_on_{};
+  std::array<int, kMaxEngines> starts_{};
+  std::array<bool, kMaxEngines> start_failed_{};  // this start did not take: no new try until the group is commanded off
+  uint64_t start_rng_ = 1U;
+  std::array<double, kMaxSurfaces> surf_pos_{};
+  std::array<bool, kMaxSurfaces> surf_deployed_{};
+  std::array<double, kMaxParachutes> chute_open_{};   // the time it was released (< 0: not yet)
+  bool legs_out_ = false;
+  bool launched_ = false;
+  bool landed_ = false;
+  bool caught_ = false;
+  bool catch_missed_ = false;
+  double ground_radius_ = 0.0;
+  double prev_pin_h_ = 1.0e30;
+  NewtonTable newton_;
+  std::vector<Detached> detached_;
 };
 
 }  // namespace sim

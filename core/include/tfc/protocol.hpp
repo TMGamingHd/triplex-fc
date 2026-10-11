@@ -17,6 +17,8 @@ constexpr uint32_t kSync = 0x010;       // frame tick, sent by the sync master
 constexpr uint32_t kGyroBase = 0x100;   // + node (0..2)
 constexpr uint32_t kAccelBase = 0x110;  // + node
 constexpr uint32_t kCmdBase = 0x200;    // + node: per-node control command
+constexpr uint32_t kPropBase = 0x210;   // + node: per-node propulsion command (throttle, engine groups, events), sent after the control command (docs/design/GNC.md)
+constexpr uint32_t kSurfBase = 0x220;   // + node: per-node surface command (four deflections)
 constexpr uint32_t kActOut = 0x300;     // voted output + vote status from ACT
 constexpr uint32_t kHeartbeat = 0x400;  // + node: health / mode flags (protocol v2: see Heartbeat)
 constexpr uint32_t kState = 0x410;      // + node: strike counts and the last accepted command counter (FDIR-041)
@@ -27,6 +29,7 @@ constexpr uint32_t kSimAccel = 0x502;      // simulator: sensor-frame accelerome
 constexpr uint32_t kSimState = 0x503;      // simulator telemetry: altitude, speed, mass
 constexpr uint32_t kSimTelemetry = 0x504;  // simulator telemetry: dynamic pressure, attitude error
 constexpr uint32_t kSimFlags = 0x505;      // simulator: flags, engines on, time
+constexpr uint32_t kSimGnss = 0x506;       // simulator: the GNSS fix, three frames 0x506 to 0x508 (position, velocity)
 constexpr uint32_t kSimLast = 0x50F;
 constexpr uint32_t kGround = 0x510;     // operator / ground command (lowest priority of the control traffic)
 }  // namespace id
@@ -684,6 +687,182 @@ inline DecodedSimFlags unpack_sim_flags(const Frame& f) noexcept {
   d.seq = f.data[6];
   d.ok = true;
   return d;
+}
+
+// ---- Propulsion and surface commands (docs/design/GNC.md): what the guidance of a flight computer asks of the vehicle beyond the gimbal ----
+// The gimbal command (0x200 + node) is voted by ACT as always. The rest of what the guidance commands goes out in two more frames of each computer, sent right after its control command, and is voted by the
+// consumer (the vehicle's engine controller and surface actuators: in the simulator, the vehicle model): the middle of the three values for a number, two of three for each bit.
+// 0x210 + node, the propulsion command: byte 0 the throttle (0.5 % per count, 0 to 200), byte 1 the engine groups commanded on (bit g = group g), byte 2 the event levels (kEvent*), byte 3 the guidance phase
+// (for telemetry and as a cross-check between the replicas), byte 4 the roll command (0.25 degree per count, signed: a reaction-control torque or a surface differential in the units of the gimbal command).
+namespace propbit {
+constexpr uint8_t kSeparate = 0x01U;
+constexpr uint8_t kDeploySurfaces = 0x02U;
+constexpr uint8_t kExtendLegs = 0x04U;
+constexpr uint8_t kChute0 = 0x08U;
+constexpr uint8_t kChute1 = 0x10U;
+constexpr uint8_t kJettison = 0x20U;
+}  // namespace propbit
+
+struct PropCommand {
+  float throttle = 0.0F;      // 0 to 1
+  uint8_t groups = 0U;
+  uint8_t events = 0U;
+  uint8_t phase = 0U;
+  float roll_deg = 0.0F;
+};
+struct DecodedProp {
+  PropCommand p;
+  uint8_t seq = 0;
+  bool ok = false;
+};
+
+constexpr float kThrottleLsb = 0.005F;
+constexpr float kRollLsbDeg = 0.25F;
+
+inline Frame pack_prop(uint8_t node, const PropCommand& c, uint8_t seq) noexcept {
+  Frame f;
+  f.id = id::kPropBase + node;
+  f.data[0] = static_cast<uint8_t>(detail::quantize_u16(c.throttle > 1.0F ? 1.0F : c.throttle, kThrottleLsb));   // (negative and NaN are 0)
+  f.data[1] = c.groups;
+  f.data[2] = c.events;
+  f.data[3] = c.phase;
+  const float r = c.roll_deg / kRollLsbDeg;
+  const float rc = r < -127.0F ? -127.0F : (r > 127.0F ? 127.0F : r);
+  f.data[4] = static_cast<uint8_t>(static_cast<int8_t>(rc >= 0.0F ? rc + 0.5F : rc - 0.5F));
+  f.data[5] = 0U;
+  detail::seal(f, seq);
+  return f;
+}
+
+inline DecodedProp unpack_prop(const Frame& f) noexcept {
+  DecodedProp d;
+  if ((f.id & ~0x3U) != id::kPropBase || (f.id & 0x3U) >= 3U || !detail::check(f)) {
+    return d;
+  }
+  d.p.throttle = static_cast<float>(f.data[0] > 200U ? 200U : f.data[0]) * kThrottleLsb;
+  d.p.groups = f.data[1];
+  d.p.events = f.data[2];
+  d.p.phase = f.data[3];
+  d.p.roll_deg = static_cast<float>(static_cast<int8_t>(f.data[4])) * kRollLsbDeg;
+  d.seq = f.data[6];
+  d.ok = true;
+  return d;
+}
+
+// 0x220 + node, the surface command: four deflections of 12 bits each (0.05 degree per count, signed, -102.4 to +102.35 degrees), packed little-endian into bytes 0 to 5.
+constexpr float kSurfLsbDeg = 0.05F;
+struct SurfCommand {
+  std::array<float, 4> deg{};
+};
+struct DecodedSurf {
+  SurfCommand s;
+  uint8_t seq = 0;
+  bool ok = false;
+};
+
+inline Frame pack_surf(uint8_t node, const SurfCommand& c, uint8_t seq) noexcept {
+  Frame f;
+  f.id = id::kSurfBase + node;
+  uint64_t bits = 0U;
+  for (unsigned i = 0; i < 4U; ++i) {
+    const float q = c.deg[i] / kSurfLsbDeg;
+    const float qc = q < -2047.0F ? -2047.0F : (q > 2047.0F ? 2047.0F : q);
+    const int32_t v = static_cast<int32_t>(qc >= 0.0F ? qc + 0.5F : qc - 0.5F);
+    bits |= static_cast<uint64_t>(static_cast<uint32_t>(v) & 0xFFFU) << (12U * i);
+  }
+  for (unsigned i = 0; i < 6U; ++i) {
+    f.data[i] = static_cast<uint8_t>((bits >> (8U * i)) & 0xFFU);
+  }
+  detail::seal(f, seq);
+  return f;
+}
+
+inline DecodedSurf unpack_surf(const Frame& f) noexcept {
+  DecodedSurf d;
+  if ((f.id & ~0x3U) != id::kSurfBase || (f.id & 0x3U) >= 3U || !detail::check(f)) {
+    return d;
+  }
+  uint64_t bits = 0U;
+  for (unsigned i = 0; i < 6U; ++i) {
+    bits |= static_cast<uint64_t>(f.data[i]) << (8U * i);
+  }
+  for (unsigned i = 0; i < 4U; ++i) {
+    int32_t v = static_cast<int32_t>((bits >> (12U * i)) & 0xFFFU);
+    if (v >= 2048) {
+      v -= 4096;
+    }
+    d.s.deg[i] = static_cast<float>(v) * kSurfLsbDeg;
+  }
+  d.seq = f.data[6];
+  d.ok = true;
+  return d;
+}
+
+// The mid-value of three numbers, and the two-of-three of three bytes (bit by bit): how the consumer of the propulsion and surface commands votes the three computers' values.
+constexpr float mid3(float a, float b, float c) noexcept {
+  const float lo = a < b ? a : b;
+  const float hi = a < b ? b : a;
+  return c < lo ? lo : (c > hi ? hi : c);
+}
+constexpr uint8_t majority3(uint8_t a, uint8_t b, uint8_t c) noexcept { return static_cast<uint8_t>((a & b) | (a & c) | (b & c)); }
+
+// 0x506 to 0x508, the GNSS fix: position and velocity in the navigation frame (the launch-centred inertial frame of docs/design/GNC.md), each component a signed 24-bit number, the position in metres
+// and the velocity in 0.01 m/s, in the order x, y, z: frame 0 holds x and y of the position, frame 1 the z of the position and the x of the velocity, frame 2 the y and z of the velocity. The three
+// frames of a fix carry the same sequence byte (the low byte of the frame number); a receiver uses a fix only when it has all three.
+struct GnssRaw {
+  std::array<int32_t, 3> pos_m{};
+  std::array<int32_t, 3> vel_cms{};
+};
+
+namespace detail {
+inline void put_i24(Frame& f, unsigned off, int32_t v) noexcept {
+  const int32_t c = v < -8388607 ? -8388607 : (v > 8388607 ? 8388607 : v);
+  const uint32_t u = static_cast<uint32_t>(c) & 0xFFFFFFU;
+  f.data[off] = static_cast<uint8_t>(u & 0xFFU);
+  f.data[off + 1U] = static_cast<uint8_t>((u >> 8U) & 0xFFU);
+  f.data[off + 2U] = static_cast<uint8_t>((u >> 16U) & 0xFFU);
+}
+inline int32_t get_i24(const Frame& f, unsigned off) noexcept {
+  const uint32_t u = static_cast<uint32_t>(f.data[off]) | (static_cast<uint32_t>(f.data[off + 1U]) << 8U) | (static_cast<uint32_t>(f.data[off + 2U]) << 16U);
+  return (u & 0x800000U) != 0U ? static_cast<int32_t>(u) - 16777216 : static_cast<int32_t>(u);
+}
+}  // namespace detail
+
+inline Frame pack_gnss(unsigned part, const GnssRaw& g, uint8_t seq) noexcept {
+  Frame f;
+  f.id = id::kSimGnss + part;
+  if (part == 0U) {
+    detail::put_i24(f, 0, g.pos_m[0]);
+    detail::put_i24(f, 3, g.pos_m[1]);
+  } else if (part == 1U) {
+    detail::put_i24(f, 0, g.pos_m[2]);
+    detail::put_i24(f, 3, g.vel_cms[0]);
+  } else {
+    detail::put_i24(f, 0, g.vel_cms[1]);
+    detail::put_i24(f, 3, g.vel_cms[2]);
+  }
+  detail::seal(f, seq);
+  return f;
+}
+
+// One frame of a fix, decoded into the right fields of `g`. False if it is not a GNSS frame or its check fails.
+inline bool unpack_gnss(const Frame& f, GnssRaw& g, uint8_t& seq, unsigned& part) noexcept {
+  if (f.id < id::kSimGnss || f.id > id::kSimGnss + 2U || !detail::check(f)) {
+    return false;
+  }
+  part = f.id - id::kSimGnss;
+  if (part == 0U) {
+    g.pos_m[0] = detail::get_i24(f, 0);
+    g.pos_m[1] = detail::get_i24(f, 3);
+  } else if (part == 1U) {
+    g.pos_m[2] = detail::get_i24(f, 0);
+    g.vel_cms[0] = detail::get_i24(f, 3);
+  } else {
+    g.vel_cms[1] = detail::get_i24(f, 0);
+    g.vel_cms[2] = detail::get_i24(f, 3);
+  }
+  seq = f.data[6];
+  return true;
 }
 
 }  // namespace tfc

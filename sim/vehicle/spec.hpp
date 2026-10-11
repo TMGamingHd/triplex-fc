@@ -21,6 +21,10 @@ constexpr unsigned kMaxTanks = 8U;      // per stage
 constexpr unsigned kMaxPayloads = 4U;
 constexpr unsigned kMaxFins = 4U;       // sets of fins (a set is a cruciform of four)
 constexpr unsigned kMaxSlosh = 8U;      // tanks that slosh, on the whole vehicle
+constexpr unsigned kMaxSurfaces = 12U;  // articulated aerodynamic surfaces (flaps, grid fins) on the whole vehicle
+constexpr unsigned kMaxParachutes = 4U;
+constexpr unsigned kEngineGroups = 8U;  // the propulsion command selects engines by group (a byte of the command)
+constexpr unsigned kSurfaceChannels = 4U;  // the surface command carries this many deflections
 
 // The first sloshing mode of a tank (slosh.hpp, docs/design/DYNAMICS.md): off by default (the liquid is part of the rigid body, as always).
 struct SloshSpec {
@@ -80,6 +84,14 @@ struct AeroSpec {
   double power_on_base = 0.7;         // how much of the base drag a running engine takes away (the plume fills the wake)
   double wetted_roughness = 1.0;      // a factor on the skin friction (1: a smooth painted skin)
   bool full_angle = true;             // the force at every angle of attack (false: linear in the angle, none past 90 degrees: the reference model)
+  // The full speed range (docs/design/AERODYNAMICS.md sections 7 and 8): Mach-dependent cross-flow drag, the forces of the parts at their own places in the local flow (so a turning vehicle
+  // feels the damping of its fins and body), and, from Mach 3 to 6, a blend into modified Newtonian impact theory (newtonian.hpp) for the body at any angle of attack. Off: the build-up exactly as it was.
+  bool full_regime = false;
+  double newtonian_from_mach = 3.0;   // the blend starts here and is complete at `newtonian_to_mach`
+  double newtonian_to_mach = 6.0;
+  double nose_radius_m = 0.0;         // the radius of the blunt nose or heat shield, for the stagnation heating (0: a 0.5 m default is used for the diagnostic)
+  double belly_heat_factor = 0.3;     // the heat flux over the lower surface as a fraction of the stagnation flux (a flat-plate estimate at the angle of attack of an entry)
+  double emissivity = 0.85;           // of the heat shield, for the radiative-equilibrium temperature
   std::vector<AeroTablePoint> table;  // a table by Mach instead of the build-up (used when `sections` of every stage are empty)
 };
 
@@ -118,11 +130,17 @@ struct StageSpec {
   double tipoff_pitch_dps = 0.0;
   double tipoff_yaw_dps = 0.0;
   double tipoff_roll_dps = 0.0;
+  // The flight computers drive this stage's engines: they start and stop with the propulsion command's group mask and run at its throttle (the schedule fields above, and `throttle`, are not used),
+  // and the stage is let go by the command's separation event as well as by its schedule. False: the stage follows its schedule, as always.
+  bool guided = false;
+  // Where the stage's grapple pins are, for a catch (m from the stage's own aft end), and how it comes back (docs/design/RECOVERY.md).
+  double catch_pin_x = 0.0;
+  double leg_x = 0.0;             // the foot of the landing legs when deployed, m from the aft end (0: the aft end itself); legs add nothing to the shape in flight
 };
 
 // An engine that fires when the pitch or yaw command asks for that direction, in proportion to it: a reaction-control thruster. PitchPlus fires for a positive pitch command (one that
 // should turn the nose toward downrange), PitchMinus for a negative one, and likewise for the yaw plane. Its position and direction decide the torque and the parasitic force it makes.
-enum class Control : int { None = 0, PitchPlus = 1, PitchMinus = 2, YawPlus = 3, YawMinus = 4 };
+enum class Control : int { None = 0, PitchPlus = 1, PitchMinus = 2, YawPlus = 3, YawMinus = 4, RollPlus = 5, RollMinus = 6 };
 
 struct EngineSpec {
   int stage = 0;
@@ -142,6 +160,11 @@ struct EngineSpec {
   V3 dir{1.0, 0.0, 0.0};
   Control control = Control::None;
   double full_cmd_deg = 1.0;    // the command (degrees of the flight computers' output) at which the thruster is fully on
+  // For a stage the flight computers drive (`StageSpec::guided`): the group the propulsion command's mask addresses it by (0 to 7), the lowest thrust it can hold while it runs (a fraction of
+  // full thrust; the command is raised to it, or the engine shut down), and how many times it can be started (0: without limit).
+  int group = 0;
+  double min_throttle = 0.0;
+  int max_starts = 0;
 };
 
 // A set of four fins in a cross, two in the pitch plane and two in the yaw plane, that steer by aerodynamic force: deflection = gain x the command, limited, rate-limited, lagged. The force of a
@@ -156,6 +179,41 @@ struct FinSpec {
   double limit_deg = 15.0;
   double rate_dps = 100.0;
   double lag_s = 0.0;
+};
+
+// An articulated aerodynamic surface: a flap on a hinge along the skin (a Starship-class ship's four flaps), or a grid fin on a shaft along the radius (the booster's), or a canard. It is driven by
+// one channel of the surface command, with a travel, a rate limit and a lag; before it is deployed it lies stowed against the skin. Its force is the plate model of surfaces.hpp at its own place.
+enum class SurfaceKind : int { Flap = 0, GridFin = 1 };
+
+struct SurfaceSpec {
+  std::string name;
+  int stage = 0;
+  SurfaceKind kind = SurfaceKind::Flap;
+  double x_hinge = 0.0;       // m, axial place of the hinge line
+  double azimuth_deg = 0.0;   // where it sits around the axis: 0 is the body's +Y direction, 90 the +Z
+  double radius = 0.0;        // m, from the axis to the hinge line
+  double area = 0.0;          // m^2: the planform of a flap, the frame of a grid fin
+  double chord = 1.0;         // m, from the hinge to the free edge (a grid fin: its depth along the cells)
+  double span = 1.0;          // m, along the hinge line
+  double sweep_deg = 0.0;
+  double chord_dir = -1.0;    // a flap: +1 if its free edge points forward from the hinge, -1 aft
+  double stow_deg = 0.0;      // the deflection while stowed
+  double min_deg = 0.0;       // travel
+  double max_deg = 90.0;
+  double rate_dps = 30.0;
+  double lag_s = 0.0;
+  int channel = -1;           // the surface command channel (0 to 3) that moves it; < 0: it stays at its stowed angle
+  bool deployed = true;       // false: stowed until the "deploy surfaces" event
+};
+
+// A parachute (a drogue or a main canopy): released by an event, inflates over `inflation_s`, and pulls on the vehicle at `x_attach` along the velocity through the air.
+struct ParachuteSpec {
+  std::string name;
+  int stage = 0;              // the stage it belongs to: it is lost with the stage
+  double drag_area = 0.0;     // Cd A when full, m^2
+  double inflation_s = 3.0;
+  double x_attach = 0.0;      // m
+  double max_speed_ms = 0.0;  // the canopy tears above this speed at release (0: no limit); the vehicle file's own check for a bad sequence
 };
 
 // Two reaction wheels, one about the body's Y axis (yaw) and one about Z (pitch): the command asks for a torque in proportion, up to `torque_max`; the wheel takes the opposite angular
@@ -275,6 +333,8 @@ struct VehicleSpec {
   std::vector<EngineSpec> engines;
   std::vector<PayloadSpec> payloads;
   std::vector<FinSpec> fins;
+  std::vector<SurfaceSpec> surfaces;
+  std::vector<ParachuteSpec> parachutes;
   WheelSpec wheels;
   AeroSpec aero;
   PlanetSpec planet;
@@ -416,6 +476,9 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
     if (en.control != Control::None && en.gimbal) {
       fail(at + " is a thruster (it has a control): it cannot gimbal");
     }
+    if (en.group < 0 || en.group >= static_cast<int>(kEngineGroups) || !(en.min_throttle >= 0.0 && en.min_throttle <= 1.0) || en.max_starts < 0) {
+      fail(at + ": group is 0 to 7, min_throttle between 0 and 1, max_starts not negative");
+    }
   }
   for (std::size_t s = 0; s < v.stages.size(); ++s) {
     bool has_engine = false;
@@ -478,6 +541,47 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
     }
     if (!(fin.area_each > 0.0) || !(fin.lift_slope > 0.0) || !(fin.limit_deg > 0.0) || !(fin.rate_dps > 0.0) || fin.lag_s < 0.0 || fin.gain == 0.0) {
       fail(at + ": area_each, lift_slope, limit_deg and rate_dps must be positive, lag_s not negative and gain not zero");
+    }
+  }
+  if (v.surfaces.size() > kMaxSurfaces) {
+    fail("surfaces: at most " + std::to_string(kMaxSurfaces) + " are supported");
+  }
+  for (std::size_t i = 0; i < v.surfaces.size(); ++i) {
+    const SurfaceSpec& sf = v.surfaces[i];
+    const std::string at = "surfaces[" + std::to_string(i) + "]";
+    if (sf.stage < 0 || sf.stage >= static_cast<int>(v.stages.size())) {
+      fail(at + ".stage must name a stage");
+    }
+    if (!(sf.area > 0.0) || !(sf.chord > 0.0) || !(sf.span > 0.0) || sf.radius < 0.0) {
+      fail(at + ": area_m2, chord_m and span_m must be positive and radius_m not negative");
+    }
+    if (!(sf.max_deg >= sf.min_deg) || !(sf.rate_dps > 0.0) || sf.lag_s < 0.0 || !(std::fabs(sf.chord_dir) == 1.0)) {
+      fail(at + ": max_deg must not be below min_deg, rate_dps must be positive, lag_s not negative and chord_dir 1 or -1");
+    }
+    if (sf.channel >= static_cast<int>(kSurfaceChannels)) {
+      fail(at + ".channel must be below " + std::to_string(kSurfaceChannels));
+    }
+  }
+  if (v.parachutes.size() > kMaxParachutes) {
+    fail("parachutes: at most " + std::to_string(kMaxParachutes) + " are supported");
+  }
+  for (std::size_t i = 0; i < v.parachutes.size(); ++i) {
+    const ParachuteSpec& pc = v.parachutes[i];
+    const std::string at = "parachutes[" + std::to_string(i) + "]";
+    if (pc.stage < 0 || pc.stage >= static_cast<int>(v.stages.size())) {
+      fail(at + ".stage must name a stage");
+    }
+    if (!(pc.drag_area > 0.0) || !(pc.inflation_s >= 0.0) || pc.max_speed_ms < 0.0) {
+      fail(at + ": drag_area_m2 must be positive, inflation_s and max_speed_ms not negative");
+    }
+  }
+  {
+    const AeroSpec& a = v.aero;
+    if (a.full_regime && !(a.newtonian_to_mach > a.newtonian_from_mach && a.newtonian_from_mach > 1.0)) {
+      fail("aero: newtonian_to_mach must be above newtonian_from_mach, which is above Mach 1");
+    }
+    if (a.nose_radius_m < 0.0 || a.belly_heat_factor < 0.0 || !(a.emissivity > 0.0 && a.emissivity <= 1.0)) {
+      fail("aero: nose_radius_m and belly_heat_factor must not be negative and emissivity lies between 0 and 1");
     }
   }
   {
