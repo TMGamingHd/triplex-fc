@@ -46,7 +46,7 @@ export default {
       gim: new Chart(h('canvas'), { height: 110, window: 150, series: [{ key: 'gim_p', label: 'gimbal pitch °', color: 'var(--accent)' }, { key: 'gim_y', label: 'gimbal yaw °', color: 'var(--nC)' }], zero: true }), mass: new Chart(h('canvas'), { height: 110, window: 150, series: [{ key: 'mass', label: 'mass kg', color: 'var(--nB)' }] }),
     };
     S.curve = h('canvas', { class: 'v-profile', width: 320, height: 260 });
-    const ch = (t, c) => card(t, [c.c, legend(c.o.series)]);
+    let chN = 0; const ch = (t, c) => card(t, [c.c, legend(c.o.series)], null, { open: chN++ === 0 });
     app.right.replaceChildren(card('Show', [toggle('See through the vehicle (cutaway with the tanks)', S.cutaway, (v) => { S.cutaway = v; store.set('prop.cut', v); this.applyCutaway(app); }), toggle('State of each engine', S.showTags, (v) => { S.showTags = v; store.set('prop.tags', v); })]),
       card('Thrust against altitude (this stage)', [S.curve, h('p', { class: 'note' }, 'Vacuum thrust minus the ambient pressure times the exit area: the engines make more as the air thins. The dot is the vehicle now.')]),
       ch('Thrust', S.charts.thrust), ch('Effective specific impulse', S.charts.isp), ch('Gimbal of the first stage', S.charts.gim), ch('Mass', S.charts.mass),

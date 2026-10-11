@@ -75,14 +75,18 @@ const srcChip = h('button', { class: 'chip muted v-chip', id: 'v-src', type: 'bu
 const vehChip = h('span', { class: 'chip muted', id: 'v-veh' }, '—');
 const clockEl = h('div', { id: 'v-clock', 'aria-live': 'off' }, 'T —');
 const lensBar = h('nav', { id: 'v-lenses', role: 'tablist', 'aria-label': 'Lenses' }, LENSES.map((l) => h('button', { type: 'button', role: 'tab', dataset: { id: l.id }, 'aria-selected': 'false', onclick: () => setLens(l.id) }, l.label, h('kbd', {}, l.key))));
-const camBtn = h('button', { class: 'v-iconbtn', type: 'button', id: 'v-cam', title: 'Next camera (C)', onclick: () => nextCamera() }, 'Camera: ', h('b', {}, 'orbit'));
 const top = h('header', { id: 'v-top' },
   h('div', { class: 'v-brand' }, h('svg', { viewBox: '0 0 32 32', 'aria-hidden': 'true' }, h('path', { d: 'M16 4l4 9v8l-4 5-4-5v-8z', fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2.2, 'stroke-linejoin': 'round' })), h('span', {}, 'TFC ', h('small', {}, '3D viewer'))),
   srcChip, vehChip, clockEl, h('span', { class: 'v-spacer' }), lensBar, h('span', { class: 'v-spacer' }),
-  camBtn,
   h('a', { class: 'v-iconbtn', href: '/', target: '_blank', rel: 'noopener', title: 'The flight console', onclick: (e) => { e.preventDefault(); window.open('/?token=' + encodeURIComponent(sessionStorage.getItem('tfc.token') || ''), '_blank'); } }, 'Console ↗'),
   h('button', { class: 'v-iconbtn', type: 'button', id: 'v-hide', title: 'Hide or show the panels (H)', onclick: () => toggleUI() }, 'Panels'));
 const bottom = h('div', { id: 'v-bottom' });
+// the cameras: always on the screen, whatever the lens, with what the current one does said under it (they were a card of the overview lens, which made them invisible in the other five)
+const camHint = h('div', { id: 'v-camhint' });
+const camBar = h('div', { id: 'v-cams' }, h('nav', { 'aria-label': 'Camera', role: 'group' }, CAMERAS.map((c) => h('button', { type: 'button', dataset: { id: c.id }, 'aria-pressed': 'false', title: c.hint, onclick: () => { world.rig.set(c.id); store.set('v.cam', c.id); syncCamSeg(); } }, c.label))), camHint);
+// the docks can be folded away one at a time (H hides everything); a narrow window starts with the right one folded
+const dockBtn = (side, glyph) => h('button', { type: 'button', class: 'v-dockbtn', id: 'v-tg-' + side, 'aria-label': `Hide or show the ${side} panels`, title: `Hide or show the ${side} panels`, onclick: () => setDock(side, document.body.classList.contains('no-' + side)) }, glyph);
+function setDock(side, show) { document.body.classList.toggle('no-' + side, !show); store.set('v.dock.' + side, show); const b = document.getElementById('v-tg-' + side); if (b) b.textContent = side === 'left' ? (show ? '‹' : '›') : (show ? '›' : '‹'); }
 // what the page says when nothing has arrived: where the data can come from, and a button for each
 const empty = h('div', { class: 'v-empty card v-card', hidden: true },
   h('header', {}, h('h3', {}, 'Nothing to show yet')),
@@ -93,12 +97,17 @@ const empty = h('div', { class: 'v-empty card v-card', hidden: true },
       h('button', { class: 'btn', type: 'button', onclick: () => fly('starship') }, 'Fly the Starship-class vehicle'),
       h('button', { class: 'btn', type: 'button', onclick: () => openMenu() }, 'More…')),
     h('p', { class: 'note' }, 'Flying a vehicle runs the real flight software on it (tfc_fly, a few seconds) and plays the result. The live rig is started from the console\'s Rig tab.')));
-ui.append(top, app.left, app.right, bottom, empty);
+ui.append(top, app.left, app.right, camBar, dockBtn('left', '‹'), dockBtn('right', '›'), bottom, empty);
+setDock('left', store.get('v.dock.left', true)); setDock('right', store.get('v.dock.right', window.innerWidth >= 1280));
 app.empty = empty;
 
 function toggleUI() { document.body.classList.toggle('hideui'); }
 function nextCamera() { const i = CAMERAS.findIndex((c) => c.id === world.rig.mode); const n = CAMERAS[(i + 1) % CAMERAS.length]; world.rig.set(n.id); store.set('v.cam', n.id); syncCamSeg(); }
-function syncCamSeg() { const s = app.lens && app.lens.s && app.lens.s.camSeg; if (s) s.setValue(world.rig.mode); }
+function syncCamSeg() {
+  const m = world.rig.mode;
+  for (const b of camBar.querySelectorAll('button')) b.setAttribute('aria-pressed', b.dataset.id === m ? 'true' : 'false');
+  const c = CAMERAS.find((x) => x.id === m); const t = c ? c.hint : ''; if (camHint.textContent !== t) camHint.textContent = t;
+}
 
 // ---- lenses
 function setLens(id) {
@@ -250,7 +259,6 @@ function updateHeader(pose) {
   if (pose) {
     const t = fmt.t(pose.t); if (clockEl.textContent !== t) clockEl.textContent = t;
     clockEl.className = pose.t >= 0 && !pose.clamp ? 'fl' : 'cd';
-    const cname = CAMERAS.find((c) => c.id === world.rig.mode)?.label.toLowerCase() || world.rig.mode; const b = camBtn.querySelector('b'); if (b.textContent !== cname) b.textContent = cname;
   }
 }
 
@@ -260,7 +268,8 @@ canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clie
 canvas.addEventListener('pointermove', (e) => { if (!drag) return; world.rig.drag(e.clientX - drag.x, e.clientY - drag.y, drag.slide); drag.x = e.clientX; drag.y = e.clientY; syncCamSeg(); });
 canvas.addEventListener('pointerup', () => { drag = null; canvas.classList.remove('dragging'); });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-canvas.addEventListener('wheel', (e) => { e.preventDefault(); if (world.rig.mode === 'ground') world.rig.gfov = Math.min(110, Math.max(4, world.rig.gfov * Math.exp(e.deltaY * 0.001))); else world.rig.zoom(e.deltaY); }, { passive: false });
+canvas.addEventListener('dblclick', () => { world.rig.recenter(); syncCamSeg(); });
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); if (world.rig.mode === 'ground') world.rig.gzoom = Math.min(4, Math.max(0.12, world.rig.gzoom * Math.exp(e.deltaY * 0.001))); else world.rig.zoom(e.deltaY); }, { passive: false });
 window.addEventListener('keydown', (e) => {
   if (/INPUT|SELECT|TEXTAREA/.test((document.activeElement && document.activeElement.tagName) || '')) return;
   const k = e.key.toLowerCase(), lens = LENSES.find((l) => l.key === e.key);
@@ -318,7 +327,8 @@ function loop(now) {
 buildBottom();
 world.setVehicle(data.spec, app.styleName.startsWith('gltf:') ? 'auto' : app.styleName, { dress: app.dress });
 if (Q.get('cam') || store.get('v.cam', null)) world.rig.set(Q.get('cam') || store.get('v.cam', 'orbit'));
-if (Q.get('gaz')) world.rig.gaz = +Q.get('gaz'); if (Q.get('gel')) world.rig.gel = +Q.get('gel'); if (Q.get('gfov')) world.rig.gfov = +Q.get('gfov'); if (Q.get('gpos')) world.rig.gpos = Q.get('gpos').split(',').map(Number);
+syncCamSeg();
+if (Q.get('gaz')) world.rig.gaz = +Q.get('gaz'); if (Q.get('gel')) world.rig.gel = +Q.get('gel'); if (Q.get('gzoom')) world.rig.gzoom = +Q.get('gzoom'); if (Q.get('gpos')) world.rig.gpos = Q.get('gpos').split(',').map(Number);
 if (Q.get('yaw')) world.rig.yaw = +Q.get('yaw'); if (Q.get('pitch')) world.rig.pitch = +Q.get('pitch'); if (Q.get('dist')) world.rig.dist = +Q.get('dist'); if (Q.get('anchor')) world.rig.anchor = +Q.get('anchor');
 if (Q.get('dbgmode')) world.sky.u.uDebug.value.x = +Q.get('dbgmode');
 if (Q.get('el')) st.sunElev = +Q.get('el'); if (Q.get('bear')) st.sunBear = +Q.get('bear'); if (Q.get('cloud')) st.cloud = +Q.get('cloud');

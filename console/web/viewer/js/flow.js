@@ -207,7 +207,7 @@ uniform float uTime, uOpacity; uniform vec3 uColor;
 void main() {
   float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 1.6);
   float ring = 0.5 + 0.5 * sin(vS * 60.0 - uTime * 5.0);
-  float a = (0.10 + 0.55 * f) * (1.0 - vS) * (0.7 + 0.3 * ring) * uOpacity;
+  float a = (0.03 + 0.42 * f) * pow(1.0 - vS, 1.5) * (0.7 + 0.3 * ring) * uOpacity * 0.7;     // a thin bright rim that fades down the cone: it was a sheet that hid the vehicle
   gl_FragColor = vec4(uColor * (0.6 + 0.8 * f), a);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>

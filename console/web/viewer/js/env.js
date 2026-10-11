@@ -321,7 +321,7 @@ void main() {
     // the sky: the stars, the sun, and the scattered light between
     vec3 sky = vec3(0.0);
     float lum = dot(scat, vec3(.3, .6, .1));
-    float dark = exp(-lum * 18.0);
+    float dark = exp(-lum * 60.0);                                  // daylight puts the stars out: at 18 they were still visible as dots in a blue sky
     sky += stars(rd) * uStars * dark;
     float sd = smoothstep(.99996, .999985, mu);                       // the sun's disc, 0.53 degrees
     sky += vec3(1.0, .93, .8) * sd * uSunI * 120.0;

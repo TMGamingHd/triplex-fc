@@ -9,10 +9,10 @@ import { lathe, canvasTexture, outline, tileTextures } from './common.js';
 const TAU = Math.PI * 2;
 
 /** The parts of the dressing that are a choice and not the vehicle file's: Block 3 as reported (three grid fins, each 50 % larger in area than Block 2's, set lower on the booster) and Block 2 before it.
- *  finScale is linear (the fin of Block 2 is 2.2 m by 3.4 m here), finDrop the metres from the bottom of the hot-stage ring to the top of the fin. These are illustrations of public descriptions, not drawings. */
+ *  flapAngle is how far the flaps stand out from the skin (0: stowed flat against it, as in the climb; the viewer shows them part-way so that they can be seen, and says so). finScale is linear (the fin of Block 2 is 2.2 m by 3.4 m here), finDrop the metres from the bottom of the hot-stage ring to the top of the fin. These are illustrations of public descriptions, not drawings. */
 export const DRESS = {
-  v3: { name: 'Block 3 (V3)', fins: 3, finScale: 1.22, finDrop: 5.0, flapScale: 1.0, ringHeight: 3.4, pins: true },
-  v2: { name: 'Block 2 (V2)', fins: 4, finScale: 1.0, finDrop: 1.6, flapScale: 1.0, ringHeight: 3.4, pins: true },
+  v3: { name: 'Block 3 (V3)', fins: 3, finScale: 1.22, finDrop: 5.0, flapScale: 1.0, flapAngle: 30, ringHeight: 3.4, pins: true },
+  v2: { name: 'Block 2 (V2)', fins: 4, finScale: 1.0, finDrop: 1.6, flapScale: 1.0, flapAngle: 30, ringHeight: 3.4, pins: true },
 };
 export const dressOf = (d) => Object.assign({}, DRESS.v3, d || {});
 
@@ -35,6 +35,10 @@ function gridFin(mats, w = 2.2, hgt = 3.4, depth = 0.55) {
   return g;
 }
 
+let _flapSteel = null;
+/** Bare steel that is seen from the side: less of a mirror than the hull's, which reflects a dark sky and turns black in shadow. */
+function flapSteel() { return _flapSteel || (_flapSteel = new THREE.MeshStandardMaterial({ color: 0xc4c9cf, metalness: 0.45, roughness: 0.5 })); }
+
 function flap(mats, w, hgt, thick = 0.4) {
   const tileMat = tileMaterial();
   const g = new THREE.Group();
@@ -42,9 +46,9 @@ function flap(mats, w, hgt, thick = 0.4) {
   shape.moveTo(-w / 2, 0); shape.lineTo(w / 2, 0); shape.lineTo(w * 0.42, hgt); shape.lineTo(-w * 0.42, hgt); shape.closePath();
   const geo = new THREE.ExtrudeGeometry(shape, { depth: thick, bevelEnabled: true, bevelSize: 0.06, bevelThickness: 0.06, bevelSegments: 1 });
   geo.translate(0, 0, -thick / 2);
-  const m = new THREE.Mesh(geo, mats.steel); g.add(m);
+  const m = new THREE.Mesh(geo, flapSteel()); g.add(m);
   const pg = new THREE.PlaneGeometry(w * 0.9, hgt * 0.93); pg.attributes.uv.array.forEach((v, i, a) => { a[i] = v * (i % 2 ? hgt / 2.6 : w / 2.6); });
-  const tileSide = new THREE.Mesh(pg, tileMat); tileSide.position.set(0, hgt / 2, thick / 2 + 0.09); g.add(tileSide);
+  const tileSide = new THREE.Mesh(pg, tileMat); tileSide.rotation.y = Math.PI; tileSide.position.set(0, hgt / 2, -(thick / 2 + 0.09)); g.add(tileSide);   // the tiles on the face toward the belly (the windward side), bare steel on the outer face
   return g;
 }
 
@@ -102,10 +106,19 @@ export function decorateStarship(model) {
     const grow = (p, d) => p.map((q) => ({ x: q.x, r: q.r + d }));
     if (tubeProf.length) g.add(new THREE.Mesh(lathe(grow(tubeProf, 0.035), { segments: 40, phiStart: belly - bellyHalf, phiLength: 2 * bellyHalf, ring: 2.6, colour: () => [1, 1, 1], uRepeat: 0.33 }), tileMat));
     if (noseProf.length) g.add(new THREE.Mesh(lathe(grow(noseProf, 0.035), { segments: 56, phiStart: belly - Math.PI * 0.72, phiLength: Math.PI * 1.44, ring: 2.6, colour: () => [1, 1, 1], uRepeat: 0.33 }), tileMat));
-    // the flaps: forward pair just under the nose, aft pair at the tail, on the sides of the belly, stowed against the skin
-    const place = (x, w, h, a) => { const holder = new THREE.Group(); holder.rotation.y = a; const f = flap(m, w, h); f.rotation.set(0, 0, 0); f.position.set(0, x, R + 0.28); f.userData.tile = true; holder.add(f); g.add(holder); return f; };
-    const fwdX = tubeEnd - 5.2, aftX = x0 + 1.4;
-    for (const s of [-1, 1]) { place(fwdX, 2.6 * dress.flapScale, 5.0 * dress.flapScale, belly + s * (Math.PI * 0.46)); place(aftX, 4.6 * dress.flapScale, 9.0 * dress.flapScale, belly + s * (Math.PI * 0.46)); }
+    // the flaps: forward pair just under the nose, aft pair at the tail, on the sides of the belly. Each hangs on a hinge along its edge nearer the belly and stands `flapAngle` degrees out of the skin; a fairing covers the hinge.
+    // Stowed flat (0) they are dark plates on a dark skin and cannot be seen, so the default is 30 degrees, an illustration and not the vehicle's state in the climb.
+    const ang = (THREE.MathUtils.clamp(dress.flapAngle ?? 30, 0, 90) * Math.PI) / 180;
+    const place = (x, w, h, a, side) => {
+      const holder = new THREE.Group(); holder.rotation.y = a;
+      const pivot = new THREE.Group(); pivot.position.set(side * (w / 2), x, R + 0.3); holder.add(pivot);       // the hinge line: along the body, on the belly-side edge of the flap
+      const f = flap(m, w, h); f.position.set(-side * (w / 2), 0, 0); f.userData.tile = true; pivot.add(f);
+      pivot.rotation.y = side * ang;                                                                                // out of the skin, on the leeward side
+      const fair = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, h * 0.96, 10), m.dark); fair.position.set(0, h / 2, 0); pivot.add(fair);
+      g.add(holder); return f;
+    };
+    const fwdX = tubeEnd - 6.2, aftX = x0 + 1.4;
+    for (const s of [-1, 1]) { place(fwdX, 3.0 * dress.flapScale, 6.0 * dress.flapScale, belly + s * (Math.PI * 0.46), s); place(aftX, 4.6 * dress.flapScale, 9.0 * dress.flapScale, belly + s * (Math.PI * 0.46), s); }
     // the base: the engine skirt of the ship
     const sk = new THREE.Mesh(new THREE.CircleGeometry(R * 0.97, 48), m.plate); sk.geometry.rotateX(-Math.PI / 2); sk.position.y = x0 + 1.6; g.add(sk);
   }

@@ -29,7 +29,7 @@ export default {
     S.qSeg = seg(Object.entries(QTY).map(([id, q]) => [id, { T: 'Temp', p: 'Pressure', rho: 'Density', a: 'Sound', wind: 'Wind' }[id], q.label]), S.q, (v) => { S.q = v; store.set('atm.q', v); }, 'quantity');
     S.charts = { p: new Chart(h('canvas'), { height: 100, window: 120, series: [{ key: 'p_amb', label: 'ambient pressure Pa', color: 'var(--info)' }] }), rho: new Chart(h('canvas'), { height: 100, window: 120, series: [{ key: 'rho', label: 'density kg/m³', color: 'var(--nC)' }] }),
       alt: new Chart(h('canvas'), { height: 100, window: 120, series: [{ key: 'alt', label: 'altitude m', color: 'var(--accent)' }] }) };
-    const ch = (t, c) => card(t, [c.c, legend(c.o.series)]);
+    let chN = 0; const ch = (t, c) => card(t, [c.c, legend(c.o.series)], null, { open: chN++ === 0 });
     app.right.replaceChildren(card('Profile, with the vehicle on it', [h('div', { class: 'v-row' }, S.qSeg), S.canvas, toggle('Show the layers in the sky', S.shells, (v) => { S.shells = v; store.set('atm.shells', v); }, 'Faint shells at the layer boundaries, brightest where seen edge-on')]),
       ch('Ambient pressure', S.charts.p), ch('Density', S.charts.rho), ch('Altitude', S.charts.alt),
       card('Where the numbers come from', [provenance('measured', 'pressure, density, temperature and the speed of sound at the vehicle, and the mean wind: the simulator\'s atmosphere (US 1976 standard, with the scenario\'s dispersions) sampled every kilometre.'),

@@ -65,7 +65,7 @@ export default {
       card('Loads at each station', [h('div', { class: 'v-row' }, S.which), S.canvas, h('p', { class: 'note' }, 'The vehicle is drawn along the left edge (nose at the top); the curve is the load at that station. The shaded part is the stage that is still on.')]));
     S.charts = { qa: new Chart(h('canvas'), { height: 110, window: 150, series: [{ key: 'qalpha', label: 'q·α  Pa·rad', color: 'var(--warn)' }] }), gx: new Chart(h('canvas'), { height: 110, window: 150, series: [{ key: 'gx', label: 'axial g', color: 'var(--ok)' }, { key: 'glat', label: 'lateral g', color: 'var(--nC)' }] }),
       q: new Chart(h('canvas'), { height: 110, window: 150, series: [{ key: 'q', label: 'q Pa', color: 'var(--info)' }] }) };
-    const ch = (t, c) => card(t, [c.c, legend(c.o.series)]);
+    let chN = 0; const ch = (t, c) => card(t, [c.c, legend(c.o.series)], null, { open: chN++ === 0 });
     // the diagram beside the vehicle in 3D: the chosen load plotted across the vehicle, in the plane of the lateral force
     const g = S.group = new THREE.Group(); world.modelHolder.add(g);
     S.poly = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: 0xffb454, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthTest: false, depthWrite: false, toneMapped: false })); S.poly.renderOrder = 70; S.poly.frustumCulled = false;
