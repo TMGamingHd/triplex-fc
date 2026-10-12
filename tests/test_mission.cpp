@@ -802,3 +802,28 @@ TFC_TEST(sequencer_a_belly_entry_holds_the_nose_raised_from_the_velocity_and_the
     CHECK(norm(m.miss()) == 0.0);
   }
 }
+
+TFC_TEST(sequencer_a_program_phase_rolls_a_little_out_and_back_when_it_is_asked_to) {
+  const auto roll_at = [](double frames, double peak, double start, double duration) {
+    Tables t = plain(1);
+    t.plane_normal = Vec3{0.0, 0.0, 1.0};
+    t.phase[0].kind = kind::kProgram;
+    t.phase[0].p[0] = static_cast<float>(peak);
+    t.phase[0].p[1] = static_cast<float>(start);
+    t.phase[0].p[2] = static_cast<float>(duration);
+    Mission m;
+    m.configure(&t);
+    const Inputs in = inputs_at(100.0, Vec3{});
+    m.start(in);
+    for (int i = 0; i < static_cast<int>(frames); ++i) {
+      (void)m.step(in);
+    }
+    const Vec3 z = tfc::dm::rotate(m.target(), Vec3{0.0, 0.0, 1.0});
+    return std::acos(std::fmin(1.0, std::fmax(-1.0, dot(z, Vec3{0.0, 0.0, 1.0})))) * tfc::dm::kRadToDeg;   // how far the body's z has turned from the plane's normal: the roll
+  };
+  CHECK(near_abs(roll_at(50.0, 20.0, 1.0, 4.0), 0.0, 1e-3));      // before it starts
+  CHECK(near_abs(roll_at(300.0, 20.0, 1.0, 4.0), 20.0, 0.3));     // at the middle of it: the peak
+  CHECK(roll_at(200.0, 20.0, 1.0, 4.0) > 5.0 && roll_at(200.0, 20.0, 1.0, 4.0) < 20.0);   // on the way
+  CHECK(near_abs(roll_at(600.0, 20.0, 1.0, 4.0), 0.0, 1e-3));     // and back, with nothing left of it
+  CHECK(near_abs(roll_at(300.0, 20.0, 1.0, 0.0), 0.0, 1e-3));     // no duration: no roll
+}

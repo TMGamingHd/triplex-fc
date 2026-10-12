@@ -6,6 +6,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -13,6 +15,7 @@
 
 #include "mission_design.hpp"
 #include "spec_io.hpp"
+#include "stage_flier.hpp"
 
 namespace {
 
@@ -64,6 +67,52 @@ const sim::AxisProbe* first_probe(const std::vector<sim::AxisProbe>& all, int ow
 }
 
 }  // namespace
+
+// A two-stage rocket whose lower stage is flown on, under a canopy, by computers of its own once it is let go.
+static std::string two_stage_text() {
+  return R"({
+  "name": "two stages",
+  "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 30, "ideal_roll_control": false, "landing_model": true, "crash_speed_ms": 9, "landing_tilt_deg": 60, "landing_lateral_ms": 12},
+  "aero": {"diameter_m": 0.8},
+  "stages": [
+    {"name": "lower", "dry_mass_kg": 400, "x_start_m": 0, "length_m": 4, "radius_m": 0.4, "inertia_factor": 0.6, "x_cg_dry_m": 2, "guided": true, "separation_dv_ms": 1.0,
+     "tanks": [{"propellant_kg": 500, "x_bottom_m": 0.5, "radius_m": 0.38, "density_kg_m3": 1000}],
+     "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 4, "d_aft_m": 0.8, "d_fore_m": 0.8}],
+     "stabilizers": [{"count": 4, "x_le_root_m": 0.3, "root_chord_m": 1.0, "tip_chord_m": 0.4, "span_m": 0.6, "sweep_m": 0.6, "thickness_m": 0.015}],
+     "gimbal_limit_deg": 8, "gimbal_rate_dps": 30, "gimbal_lag_s": 0.05},
+    {"name": "upper", "dry_mass_kg": 150, "x_start_m": 4, "length_m": 3, "radius_m": 0.4, "inertia_factor": 0.6, "x_cg_dry_m": 5.5, "guided": true,
+     "tanks": [{"propellant_kg": 150, "x_bottom_m": 4.3, "radius_m": 0.38, "density_kg_m3": 1000}],
+     "sections": [{"kind": "tube", "x_start_m": 4, "length_m": 2, "d_aft_m": 0.8, "d_fore_m": 0.8}, {"kind": "nose", "x_start_m": 6, "length_m": 1, "d_aft_m": 0.8, "d_fore_m": 0, "shape": "ogive"}],
+     "gimbal_limit_deg": 8, "gimbal_rate_dps": 30, "gimbal_lag_s": 0.05}
+  ],
+  "engines": [
+    {"stage": 0, "position_m": [0, 0, 0], "thrust_vac_n": 36000, "exit_area_m2": 0.1, "isp_vac_s": 290, "group": 0, "rise_s": 0.2, "tail_s": 0.2},
+    {"stage": 1, "position_m": [4, 0, 0], "thrust_vac_n": 8000, "exit_area_m2": 0.04, "isp_vac_s": 310, "group": 1, "rise_s": 0.2, "tail_s": 0.2},
+    {"stage": 0, "position_m": [3.5, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 1, 0], "control": "pitch+", "full_cmd_deg": 2.0},
+    {"stage": 0, "position_m": [3.5, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, -1, 0], "control": "pitch-", "full_cmd_deg": 2.0},
+    {"stage": 0, "position_m": [3.5, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, -1], "control": "yaw+", "full_cmd_deg": 2.0},
+    {"stage": 0, "position_m": [3.5, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, 1], "control": "yaw-", "full_cmd_deg": 2.0},
+    {"stage": 0, "position_m": [3.5, 0.4, 0], "thrust_vac_n": 150, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, 1], "control": "roll+", "full_cmd_deg": 2.0},
+    {"stage": 0, "position_m": [3.5, 0.4, 0], "thrust_vac_n": 150, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, -1], "control": "roll-", "full_cmd_deg": 2.0}
+  ],
+  "parachutes": [{"name": "canopy", "stage": 0, "drag_area_m2": 120.0, "inflation_s": 3.0, "x_attach_m": 3.8, "max_speed_ms": 300}],
+  "mission": {
+    "design": {"wn": 1.5, "zeta": 0.8, "sample_s": 1, "max_time_s": 400, "tail_s": 3},
+    "mixers": [{"name": "tvc", "gimbal": true, "roll_thrusters": true}, {"name": "rcs", "gimbal": false, "roll_thrusters": true}],
+    "main": [
+      {"name": "lower burn", "kind": "program", "groups": [0], "mixer": 0, "end": {"time_s": 12}, "program": [[0, 0], [4, 0], [12, 6]], "slew_dps": 5},
+      {"name": "separation", "kind": "coast", "hold": "inertial", "groups": [], "mixer": 0, "events": ["separate"], "end": {"time_s": 0.5}, "slew_dps": 5},
+      {"name": "upper burn", "kind": "program", "groups": [1], "mixer": 0, "end": {"time_s": 10}, "program": [[0, 6], [10, 20]], "slew_dps": 5, "mass_set_kg": 310},
+      {"name": "coast", "kind": "coast", "hold": "prograde", "groups": [], "mixer": 1, "slew_dps": 5, "end": {"time_s": 20}}
+    ],
+    "stage0": [
+      {"name": "tumble", "kind": "coast", "hold": "retrograde", "groups": [], "mixer": 1, "end": {"time_s": 5}, "slew_dps": 10},
+      {"name": "fall", "kind": "glide", "groups": [], "mixer": 1, "end": {"time_s": 8}, "slew_dps": 10, "alpha_max_deg": 10},
+      {"name": "open", "kind": "chute", "groups": [], "mixer": 1, "drogue_altitude_m": 100000, "main_altitude_m": 100000}
+    ]
+  }
+})";
+}
 
 TFC_TEST(missionfile_the_committed_missions_load_and_their_text_reads_back_the_same) {
   for (const char* name : {"missions/starship_return.json", "missions/starship_ship_return.json", "missions/rocket_recovery.json"}) {
@@ -385,48 +434,8 @@ TFC_TEST(missionworld_a_rocket_flown_ideally_and_on_its_three_computers_comes_do
 TFC_TEST(missionworld_a_stage_let_go_is_flown_on_by_computers_of_its_own_and_comes_down_under_its_parachute) {
   sim::VehicleFile v;
   std::vector<std::string> errors;
-  const std::string text = R"({
-  "name": "two stages",
-  "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 30, "ideal_roll_control": false, "landing_model": true, "crash_speed_ms": 9, "landing_tilt_deg": 60, "landing_lateral_ms": 12},
-  "aero": {"diameter_m": 0.8},
-  "stages": [
-    {"name": "lower", "dry_mass_kg": 400, "x_start_m": 0, "length_m": 4, "radius_m": 0.4, "inertia_factor": 0.6, "x_cg_dry_m": 2, "guided": true, "separation_dv_ms": 1.0,
-     "tanks": [{"propellant_kg": 500, "x_bottom_m": 0.5, "radius_m": 0.38, "density_kg_m3": 1000}],
-     "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 4, "d_aft_m": 0.8, "d_fore_m": 0.8}],
-     "stabilizers": [{"count": 4, "x_le_root_m": 0.3, "root_chord_m": 1.0, "tip_chord_m": 0.4, "span_m": 0.6, "sweep_m": 0.6, "thickness_m": 0.015}],
-     "gimbal_limit_deg": 8, "gimbal_rate_dps": 30, "gimbal_lag_s": 0.05},
-    {"name": "upper", "dry_mass_kg": 150, "x_start_m": 4, "length_m": 3, "radius_m": 0.4, "inertia_factor": 0.6, "x_cg_dry_m": 5.5, "guided": true,
-     "tanks": [{"propellant_kg": 150, "x_bottom_m": 4.3, "radius_m": 0.38, "density_kg_m3": 1000}],
-     "sections": [{"kind": "tube", "x_start_m": 4, "length_m": 2, "d_aft_m": 0.8, "d_fore_m": 0.8}, {"kind": "nose", "x_start_m": 6, "length_m": 1, "d_aft_m": 0.8, "d_fore_m": 0, "shape": "ogive"}],
-     "gimbal_limit_deg": 8, "gimbal_rate_dps": 30, "gimbal_lag_s": 0.05}
-  ],
-  "engines": [
-    {"stage": 0, "position_m": [0, 0, 0], "thrust_vac_n": 36000, "exit_area_m2": 0.1, "isp_vac_s": 290, "group": 0, "rise_s": 0.2, "tail_s": 0.2},
-    {"stage": 1, "position_m": [4, 0, 0], "thrust_vac_n": 8000, "exit_area_m2": 0.04, "isp_vac_s": 310, "group": 1, "rise_s": 0.2, "tail_s": 0.2},
-    {"stage": 0, "position_m": [3.5, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 1, 0], "control": "pitch+", "full_cmd_deg": 2.0},
-    {"stage": 0, "position_m": [3.5, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, -1, 0], "control": "pitch-", "full_cmd_deg": 2.0},
-    {"stage": 0, "position_m": [3.5, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, -1], "control": "yaw+", "full_cmd_deg": 2.0},
-    {"stage": 0, "position_m": [3.5, 0, 0], "thrust_vac_n": 300, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, 1], "control": "yaw-", "full_cmd_deg": 2.0},
-    {"stage": 0, "position_m": [3.5, 0.4, 0], "thrust_vac_n": 150, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, 1], "control": "roll+", "full_cmd_deg": 2.0},
-    {"stage": 0, "position_m": [3.5, 0.4, 0], "thrust_vac_n": 150, "exit_area_m2": 0.0, "isp_vac_s": 60, "gimbal": false, "direction": [0, 0, -1], "control": "roll-", "full_cmd_deg": 2.0}
-  ],
-  "parachutes": [{"name": "canopy", "stage": 0, "drag_area_m2": 120.0, "inflation_s": 3.0, "x_attach_m": 3.8, "max_speed_ms": 300}],
-  "mission": {
-    "design": {"wn": 1.5, "zeta": 0.8, "sample_s": 1, "max_time_s": 400, "tail_s": 3},
-    "mixers": [{"name": "tvc", "gimbal": true, "roll_thrusters": true}, {"name": "rcs", "gimbal": false, "roll_thrusters": true}],
-    "main": [
-      {"name": "lower burn", "kind": "program", "groups": [0], "mixer": 0, "end": {"time_s": 12}, "program": [[0, 0], [4, 0], [12, 6]], "slew_dps": 5},
-      {"name": "separation", "kind": "coast", "hold": "inertial", "groups": [], "mixer": 0, "events": ["separate"], "end": {"time_s": 0.5}, "slew_dps": 5},
-      {"name": "upper burn", "kind": "program", "groups": [1], "mixer": 0, "end": {"time_s": 10}, "program": [[0, 6], [10, 20]], "slew_dps": 5, "mass_set_kg": 310},
-      {"name": "coast", "kind": "coast", "hold": "prograde", "groups": [], "mixer": 1, "slew_dps": 5, "end": {"time_s": 20}}
-    ],
-    "stage0": [
-      {"name": "tumble", "kind": "coast", "hold": "retrograde", "groups": [], "mixer": 1, "end": {"time_s": 5}, "slew_dps": 10},
-      {"name": "fall", "kind": "glide", "groups": [], "mixer": 1, "end": {"time_s": 8}, "slew_dps": 10, "alpha_max_deg": 10},
-      {"name": "open", "kind": "chute", "groups": [], "mixer": 1, "drogue_altitude_m": 100000, "main_altitude_m": 100000}
-    ]
-  }
-})";
+  const std::string text = two_stage_text();
+
   CHECK(reads(text, v, errors));
   CHECK(errors.empty());
   sim::BuiltMission bm;
@@ -475,6 +484,100 @@ TFC_TEST(missionworld_a_stage_let_go_is_flown_on_by_computers_of_its_own_and_com
     }
     CHECK(w.seeds().empty());
   }
+}
+
+TFC_TEST(stageflier_a_stage_let_go_by_a_vehicle_that_is_not_in_the_world_is_flown_on_by_the_mission_files_plan) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(reads(two_stage_text(), v, errors));
+  // the vehicle of the rig: here a plain vehicle model, which lets the lower stage go three seconds in (the "separate" bit)
+  sim::Vehicle6 parent(v.params, v.scenario);
+  std::vector<sim::Detached> gone;
+  for (int k = 0; k < 6000 && gone.empty(); ++k) {
+    sim::Controls c;
+    c.group_mask = 1U;
+    c.throttle = 1.0;
+    c.events = k == 300 ? 1U : 0U;
+    parent.step(0.01, c);
+    gone = parent.take_detached();
+  }
+  CHECK(!gone.empty());
+  if (gone.empty()) {
+    return;
+  }
+  sim::StageFlier flier;
+  CHECK(!flier.enabled() && flier.others(1.0).empty() && flier.bodies() == 0U);
+  flier.step();                                                         // (nothing configured: nothing happens)
+  CHECK(!flier.adopt(gone[0], parent.time()));
+  std::string why;
+  CHECK(flier.load(v, v.scenario, why));
+  CHECK(flier.enabled() && flier.bodies() == 0U && flier.others(1.0).empty() && flier.file().mission.present);
+  // only the first stage is flown
+  sim::Detached other = gone[0];
+  other.stage = 1;
+  CHECK(!flier.adopt(other, parent.time()) && flier.bodies() == 0U);
+  for (int k = 0; k < 50; ++k) {
+    flier.step();
+  }
+  CHECK(flier.adopt(gone[0], parent.time()) && flier.bodies() == 1U);
+  const sim::MissionWorld::Body& lower = flier.world().body(0);
+  CHECK(lower.stage == 0 && lower.name == "lower" && lower.av != nullptr);
+  CHECK(lower.veh.mass() > 400.0 && lower.veh.mass() < 1000.0);          // the dry mass and the propellant the design flew it away with
+  for (int k = 0; k < 9000 && !flier.world().body(0).veh.chute_open(0); ++k) {
+    flier.step();
+  }
+  CHECK(!flier.world().body(0).veh.crashed() && flier.world().body(0).veh.chute_open(0));   // its own computers flew the plan to the canopy
+  // what the viewer is given: the stage as a body of its own
+  sim::Json j;
+  std::string err;
+  CHECK(sim::parse_json(flier.others(12.5), j, err));
+  CHECK(j.type == sim::Json::Type::Array && j.items.size() == 1U);
+  if (j.items.size() == 1U) {
+    CHECK(j.items[0].fields.size() > 0U);
+  }
+  // a new run: the stage is gone
+  flier.reset();
+  CHECK(flier.bodies() == 0U && flier.others(1.0).empty());
+  // a file with no mission, or none for the first stage, is refused with a reason
+  sim::VehicleFile none;
+  CHECK(reads(R"({"name": "x", "stages": [{"dry_mass_kg": 1, "length_m": 1, "radius_m": 0.1, "tanks": [{"propellant_kg": 1, "x_bottom_m": 0, "radius_m": 0.1, "density_kg_m3": 1000}]}], "engines": [{"stage": 0, "position_m": [0, 0, 0], "thrust_vac_n": 1000, "exit_area_m2": 0.01, "isp_vac_s": 300}]})", none, errors));
+  sim::StageFlier refused;
+  CHECK(!refused.load(none, v.scenario, why) && !why.empty() && !refused.enabled());
+  sim::VehicleFile no_plan = v;
+  no_plan.mission.stage[0].clear();
+  CHECK(!refused.load(no_plan, v.scenario, why) && why.find("stage 0") != std::string::npos);
+  CHECK(!refused.load("/nonexistent/mission.json", v.scenario, why) && !why.empty());
+  // a design that takes no probe of the plant is refused
+  sim::VehicleFile unprobed = v;
+  unprobed.mission.max_time_s = 0.001;               // (the design run is over before it has taken a probe)
+  CHECK(!refused.load(unprobed, v.scenario, why) && why.find("design run") != std::string::npos);
+  // a vehicle with one stage never lets one go: refused, with its reason
+  sim::VehicleFile single;
+  CHECK(sim::load_vehicle_file(repo_root() + "vehicles/missions/rocket_recovery.json", single, errors));
+  single.mission.stage[0] = single.mission.main;
+  CHECK(!refused.load(single, v.scenario, why) && why.find("first stage") != std::string::npos);
+  // a mission file read from a path, with another noise realisation of the stage's sensors
+  const std::string path = (std::filesystem::temp_directory_path() / "tfc_stage_flier_test.json").string();
+  {
+    std::FILE* f = std::fopen(path.c_str(), "w");
+    CHECK(f != nullptr);
+    if (f != nullptr) {
+      (void)std::fputs(two_stage_text().c_str(), f);
+      (void)std::fclose(f);
+    }
+  }
+  sim::StageFlier seeded;
+  seeded.set_seed(5U);
+  CHECK(seeded.load(path, v.scenario, why) && seeded.enabled());
+  (void)std::remove(path.c_str());
+  // a stage let go far from where the design let it go flies the state the stack gave it
+  sim::Detached far = gone[0];
+  far.state.r = far.state.r * 1.01;                 // 64 km higher
+  CHECK(seeded.adopt(far, parent.time()) && seeded.bodies() == 1U);
+  for (int k = 0; k < 100; ++k) {
+    seeded.step();
+  }
+  CHECK(!seeded.world().body(0).veh.crashed() && seeded.world().body(0).veh.mass() > 400.0);
 }
 
 TFC_TEST(missionworld_the_gnss_receiver_gives_a_noisy_fix_at_its_rate_and_none_in_an_outage) {

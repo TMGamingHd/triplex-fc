@@ -613,6 +613,9 @@ inline void read_phase(const Json& j, const std::string& path, PhaseSpec& ph, st
   o.num("alpha_deg", ph.alpha_deg);
   o.num("alpha_min_deg", ph.alpha_min_deg);
   o.num("beta_kg_m2", ph.beta_kg_m2);
+  o.num("roll_deg", ph.roll_deg);
+  o.num("roll_start_s", ph.roll_start_s);
+  o.num("roll_duration_s", ph.roll_duration_s);
   o.num("bank_gain_deg_per_km", ph.bank_gain_deg_per_km);
   o.num("bank_max_deg", ph.bank_max_deg);
   if (const Json* lg = o.get("landing_groups")) {
@@ -1124,7 +1127,7 @@ inline std::string phase_text(const PhaseSpec& p) {
        ", \"cutoff_km\": " + num_text(p.cutoff_km) + "}, \"burnout_mass_kg\": " + num_text(p.burnout_mass_kg) + ", \"bias_m\": " + num_text(p.bias_m) + ", \"reserve_mass_kg\": " + num_text(p.reserve_mass_kg) +
        ", \"pitch_up_deg\": " + num_text(p.pitch_up_deg) + ", \"alpha_max_deg\": " + num_text(p.alpha_max_deg) + ", \"gain_deg_per_km\": " + num_text(p.gain_deg_per_km) + ", \"alpha_brake_deg\": " +
        num_text(p.alpha_brake_deg) + ", \"gate_speed_ms\": " + num_text(p.gate_speed_ms) + ", \"gate_height_m\": " + num_text(p.gate_height_m) + ", \"brake_max_deg\": " + num_text(p.brake_max_deg) +
-       ", \"lift_area_per_deg_m2\": " + num_text(p.lift_area_per_deg_m2) + ", \"alpha_deg\": " + num_text(p.alpha_deg) + ", \"alpha_min_deg\": " + num_text(p.alpha_min_deg) + ", \"beta_kg_m2\": " + num_text(p.beta_kg_m2) + ", \"bank_gain_deg_per_km\": " + num_text(p.bank_gain_deg_per_km) + ", \"bank_max_deg\": " + num_text(p.bank_max_deg) + ", \"landing_groups\": {\"one\": " + ints_text(p.landing_groups[0]) + ", \"two\": " + ints_text(p.landing_groups[1]) + ", \"three\": " +
+       ", \"lift_area_per_deg_m2\": " + num_text(p.lift_area_per_deg_m2) + ", \"alpha_deg\": " + num_text(p.alpha_deg) + ", \"alpha_min_deg\": " + num_text(p.alpha_min_deg) + ", \"beta_kg_m2\": " + num_text(p.beta_kg_m2) + ", \"roll_deg\": " + num_text(p.roll_deg) + ", \"roll_start_s\": " + num_text(p.roll_start_s) + ", \"roll_duration_s\": " + num_text(p.roll_duration_s) + ", \"bank_gain_deg_per_km\": " + num_text(p.bank_gain_deg_per_km) + ", \"bank_max_deg\": " + num_text(p.bank_max_deg) + ", \"landing_groups\": {\"one\": " + ints_text(p.landing_groups[0]) + ", \"two\": " + ints_text(p.landing_groups[1]) + ", \"three\": " +
        ints_text(p.landing_groups[2]) + ", \"many\": " + ints_text(p.landing_groups[3]) + "}, \"drogue_altitude_m\": " + num_text(p.drogue_altitude_m) + ", \"main_altitude_m\": " + num_text(p.main_altitude_m) + "}";
   return o;
 }

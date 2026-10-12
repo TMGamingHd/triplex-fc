@@ -1,5 +1,5 @@
 // The Starship V3 class stack WITH A MISSION IN THE FILE: the flight computers fly all of it (docs/design/GNC.md, docs/design/RECOVERY.md). The ascent follows a pitch program; the booster is let go at hot staging, flips,
-// burns back, falls under three grid fins, lights for the landing and is caught by the tower's arms; the ship's computers steer it to a 250 km circular orbit with PEG (a predictor-corrector burn guidance), then, in THIS file, bring it home: a coast to the right place, a short deorbit burn, a belly entry on the four flaps
+// burns back, falls under two grid fins (one for each side the tower takes it by), lights for the landing and is caught by the tower's arms; the ship's computers steer it to a 250 km circular orbit with PEG (a predictor-corrector burn guidance), then, in THIS file, bring it home: a coast to the right place, a short deorbit burn, a belly entry on the four flaps
 // (held at their trim and steered about it, the angle of attack and a bank steering the point where it would come down) and, at 6 km, the landing burn. EXPERIMENTAL: the entry guidance predicts without lift, so the ship comes down
 // tens of kilometres from the tower (docs/design/GNC.md section 11 says how far and why); the flip and the ship's catch are NOT finished. starship_return.json is the mission that is.
 // Built from PUBLICLY REPORTED numbers (9-10 Oct 2026: Super Heavy 72.3 m, 9 m, 33 Raptor 3, 80.8 MN at sea level, 3,650 t of propellant; the ship's six Raptor, three sea-level and three vacuum, 1,600 t; Flight 12 of
@@ -645,7 +645,7 @@
       "stage": 0,
       "kind": "grid_fin",
       "x_hinge_m": 62.5,
-      "azimuth_deg": 0.0,
+      "azimuth_deg": 96.0,
       "radius_m": 4.5,
       "area_m2": 11.1,
       "chord_m": 4.15,
@@ -662,23 +662,6 @@
       "stage": 0,
       "kind": "grid_fin",
       "x_hinge_m": 62.5,
-      "azimuth_deg": 96.0,
-      "radius_m": 4.5,
-      "area_m2": 11.1,
-      "chord_m": 4.15,
-      "span_m": 2.68,
-      "min_deg": -35,
-      "max_deg": 35,
-      "rate_dps": 60,
-      "lag_s": 0.03,
-      "channel": 1,
-      "deployed": false
-    },
-    {
-      "name": "grid fin 3",
-      "stage": 0,
-      "kind": "grid_fin",
-      "x_hinge_m": 62.5,
       "azimuth_deg": 264.0,
       "radius_m": 4.5,
       "area_m2": 11.1,
@@ -688,7 +671,7 @@
       "max_deg": 35,
       "rate_dps": 60,
       "lag_s": 0.03,
-      "channel": 2,
+      "channel": 1,
       "deployed": false
     },
     {
@@ -793,8 +776,8 @@
     "mixers": [
       {"name": "tvc", "gimbal": true, "roll_thrusters": true},
       {"name": "rcs", "gimbal": true, "roll_thrusters": true},
-      {"name": "fins", "gimbal": false, "roll_thrusters": false, "surfaces": [0, 1, 2]},
-      {"name": "fins+rcs", "gimbal": true, "roll_thrusters": true, "surfaces": [0, 1, 2]},
+      {"name": "fins", "gimbal": false, "roll_thrusters": false, "surfaces": [0, 1]},
+      {"name": "fins+rcs", "gimbal": true, "roll_thrusters": true, "surfaces": [0, 1]},
       {"name": "flaps+rcs", "gimbal": true, "roll_thrusters": true, "surfaces": [0, 1, 2, 3], "trim_deg": [60.0, 60.0, 60.0, 60.0]}
     ],
     "main": [
@@ -807,7 +790,10 @@
         "throttle": 1.0,
         "throttle_track": [[0, 1.0], [35, 1.0], [48, 0.78], [85, 0.78], [100, 1.0]],
         "slew_dps": 5,
-        "program": [[0, 0], [10, 0], [30, 15], [60, 30], [100, 45], [130, 56]]
+        "program": [[0, 0], [10, 0], [30, 15], [60, 30], [100, 45], [130, 56]],
+        "roll_deg": 12.0,
+        "roll_start_s": 10,
+        "roll_duration_s": 40
       },
       {"name": "MECO", "kind": "coast", "hold": "inertial", "end": {"time_s": 0.6}, "groups": [], "mixer": 0, "slew_dps": 5},
       {"name": "hot staging", "kind": "coast", "hold": "inertial", "end": {"time_s": 1.4}, "groups": [5, 6, 7], "mixer": 0, "throttle": 1.0, "slew_dps": 5},

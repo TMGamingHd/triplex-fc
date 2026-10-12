@@ -285,7 +285,9 @@ class Vehicles:
         p = self.scratch / "_rig.json"
         self.scratch.mkdir(parents=True, exist_ok=True)
         p.write_text(text)
-        return ["--vehicle", str(p)] + ([] if name == "reference" else ["--vehicle-true"])
+        # a vehicle with a mission of its own (`vehicles/missions/<name>_return.json`: the plans of the stages that come back) has the stage it lets go flown by the simulator, so that its return can be followed
+        mission = self.dir / "missions" / f"{name}_return.json"
+        return ["--vehicle", str(p)] + ([] if name == "reference" else ["--vehicle-true"]) + (["--mission", str(mission)] if mission.exists() else [])
 
     def snapshot(self) -> dict:
         return {"active": self.active, "tables_note": "reference" if self.active["name"] == "reference" else "other"}

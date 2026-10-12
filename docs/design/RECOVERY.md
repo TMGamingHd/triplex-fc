@@ -48,7 +48,7 @@ The staging is at a stack mass chosen so that the booster keeps **650 t** of pro
 | 135.0 | ship | ship ascent: PEG to a 250 km circular orbit | 45.1 km |
 | 134.0 | booster | **flip**: against the horizontal velocity, 4.5 degrees a second | 44.3 km, 1,525 m/s, 926 t |
 | 153.9 | booster | **boost-back**: 13 engines | 56.7 km, 1,438 m/s |
-| 199.3 | booster | coast (radial hold, already below 70 km), then **entry**: engines off, three grid fins out, angle of attack up to 12 degrees | 65.7 km, 840 m/s, 487 t |
+| 199.3 | booster | coast (radial hold, already below 70 km), then **entry**: engines off, two grid fins out, angle of attack up to 12 degrees | 65.7 km, 840 m/s, 487 t |
 | 312.9 | booster | **landing burn**: 3 engines, then 13 | 4.0 km, 733 m/s, 472 t |
 | 363.7 | booster | **caught** | pins at 70 m |
 | 474.9 | ship | coast prograde (PEG cut-off) | 250 km, 7,754 m/s |
@@ -83,6 +83,16 @@ In the order they were found, each of them a thing that made a closed-loop boost
 
 * The ship's **deorbit, entry and landing**. The plant has flaps and a belly-first Newtonian aerodynamics and the sequencer has a glide phase, but no mission flies the ship down.
 * **Dispersions in the booster's return.** The mission flies the built-in mean wind profile (crossrange, `wind_scale` 1) with no gusts, no turbulence, no engine failure and every engine lighting when commanded; the Monte Carlo (`tfc_mc`) has not been pointed at it. One in nine GNSS noise seeds already misses the catch.
-* **The firmware, the rig, the console and the viewer** do not fly or show a mission (`GNC.md` section 11): `tfc_mission --pose FILE --pose-body N` writes a pose file for one body (the booster is body 1) with the writer `tfc_fly --pose` uses, and the viewer's replay opens it without error; **I have not looked at it in a browser**, and the stack and the stage together, and the tower, are not drawn.
+* **The firmware does not fly a mission** (`GNC.md` section 11). The rig and `tfc_fly` fly the stack on the firmware's pitch program and the host flies the stage that is let go (section 8); the ship's own return is not on either.
 * **Real tower behaviour**: the arms are a capture window (a position, a sink speed, a drift and a tilt), not a mechanism.
 * **A real vehicle's numbers**: see section 2.
+
+## 8. The returning stage in the rig and in `tfc_fly` (ADR-046)
+
+The rig's flight computers are real processes with a pitch program and no mission, so a stage let go at hot staging had no computers and was not flown (the viewer showed only the ship). `tfc_simd --mission FILE` and `tfc_fly --mission FILE` (the console passes `--mission vehicles/missions/starship_return.json` to the rig's simulator whenever the vehicle it flies has a `vehicles/missions/<name>_return.json`) now give it some: `sim/vehicle/stage_flier.hpp` designs that file's mission once (the same design `tfc_mission` makes: about 15 s at the simulator's start, under the sanitizers) and, when the stack lets stage 0 go, flies it on by the file's plan for it (a `MissionWorld` without a main body: the vehicle model, the flight function in three replicas, a GNSS receiver, ACT's vote), and sends its pose in the viewer's `others`, so that the Follow bar offers it and its boost-back, entry and catch can be followed from the live rig. The replicas are **in-process, not firmware**; the stage's pose is an output only.
+
+* **The stage is the mission file's own**, not the stack's: `vehicles/starship.json` is now generated from the same plant as the mission files (`tools/vehicle/gen_starship_return.py`: the booster burns for 132 s on the mission's program and throttle, its engines cut off, it is let go at 134 s; the ship lights at 132.6 s and follows the mission's own ship pitch, less what the firmware cannot fly), so the stack separates in the state the stage's plan was designed for: 44.4 km, 1,533 m/s against the design's 44.3 km, 1,524 m/s.
+* **A release near the design's is the design's.** The plan was designed for one separation and is not robust to others: with the stack's own state (a few tenths of a percent off in speed, 60 m to 400 m in altitude) the stage came to the tower and was caught in about one run in five (`tfc_fly --mission --stage-seed 1..6`); in the design's state, in 5 of 6 (debug build, stage seeds 1 to 6) and 8 of 9 (release build, seeds 0 to 8). So a stack that lets the stage go within 3 km of altitude and 200 m/s of the design's lets it go in the design's own state (position and velocity of the stage, from an ideal flight of the mission, the stage's mass from the design); any other release flies the state the stack gave it. The visible cost is a jump of the booster's picture of up to a few hundred metres at the separation.
+* **The ship in the rig does not reach an orbit**: the firmware measures the tilt as a pitch angle, which is singular at 90 degrees from the vertical, and the mission's PEG goes to 111; held under 89 the ship reaches 7.7 km/s with a perigee of about 64 km and an apogee of about 650 km (`tfc_fly`, measured).
+* **Stage 0 only**, and only on the host: a real firmware path for the stage's plan is not built.
+

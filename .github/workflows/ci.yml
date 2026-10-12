@@ -87,12 +87,14 @@ jobs:
           TFC_REPLAY_BIN="$GITHUB_WORKSPACE/build/rel/tfc_replay" python3 -m campaign.run --workers 4 --quiet --strict $sample --out "$RUNNER_TEMP/campaign.jsonl"
       - name: Missions (guidance, navigation and a stage's return, docs/design/GNC.md; release build, about 100 s)
         run: |
-          cmake --build build/rel --target tfc_mission
+          cmake --build build/rel --target tfc_mission tfc_fly
           # the Starship V3 class stack designed and flown on the three flight computers: the ship in an orbit above 100 km and the booster caught by the tower (exits 3 if not)
           build/rel/tfc_mission vehicles/missions/starship_return.json --expect-orbit --expect-catch
           # the same, and then the ship's deorbit and belly entry on its flaps (experimental, ADR-044: it is flown to its end, which is a crash 17 km from the tower, so that no outcome is expected; what is checked is that the
           # whole of it designs and flies on the three computers without a fault, in about 80 s)
           build/rel/tfc_mission vehicles/missions/starship_ship_return.json
+          # the rig's flight (the firmware's pitch program, no mission) with the host flying the stage that is let go on the mission's plan: the booster comes back to the tower and is caught (exits 3 if not)
+          build/rel/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 1500 --frames 41000 --mission vehicles/missions/starship_return.json --expect-catch
           # a single-stage rocket comes back under its parachutes
           build/rel/tfc_mission vehicles/missions/rocket_recovery.json --expect-landing
       - name: Campaign tables (for the job summary)

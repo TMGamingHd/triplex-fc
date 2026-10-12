@@ -48,6 +48,10 @@ struct PhaseSpec {
   double brake_max_deg = 25.0;      // the most the tilt adds when the fall is too fast by its own speed or more
   double alpha_brake_deg = 0.0;     // a steady angle of attack toward the site while gliding: extra drag, and the lift that goes with it
   // belly (an entry belly first, steered by the angle of attack: alpha_max_deg and gain_deg_per_km above are its largest angle and its gain)
+  // program (a small roll through the climb, as launchers fly: out to roll_deg and back, starting at roll_start_s and taking roll_duration_s; 0: none)
+  double roll_deg = 0.0;
+  double roll_start_s = 0.0;
+  double roll_duration_s = 0.0;
   double alpha_deg = 70.0;          // the nominal angle between the body axis and the velocity, nose raised
   double alpha_min_deg = 50.0;      // the smallest the steering lets it be (the most lift)
   double bank_gain_deg_per_km = 0.0;  // the bank that steers across the ground track: degrees of roll about the velocity per kilometre of predicted miss across it

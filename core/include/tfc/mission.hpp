@@ -482,7 +482,15 @@ inline void Mission::step_program(const Inputs& in, Output& out) noexcept {
   const double ty = static_cast<double>(ref.tilt_y_deg) * dm::kDegToRad;
   const double tx = static_cast<double>(ref.tilt_x_deg) * dm::kDegToRad;
   const Vec3 dir{dm::cos_(tx) * dm::cos_(ty), dm::cos_(tx) * dm::sin_(ty), -dm::sin_(tx)};
-  reference_toward(dir);
+  // a small roll about the axis through the climb (p[0] degrees at most, from p[1] s, over p[2] s, out and back as sin^2: the vehicle is rolled a little and comes back before the stage burns out)
+  double roll = 0.0;
+  const double t_roll = phase_time_s() - static_cast<double>(p.p[1]);
+  if (p.p[2] > 0.0F && t_roll > 0.0 && t_roll < static_cast<double>(p.p[2])) {
+    const double s = dm::sin_(dm::kPi * t_roll / static_cast<double>(p.p[2]));
+    roll = static_cast<double>(p.p[0]) * dm::kDegToRad * s * s;
+  }
+  const Vec3 hint = (tab_->plane_normal * dm::cos_(roll)) + (dm::cross(dir, tab_->plane_normal) * dm::sin_(roll));
+  reference_toward(dir, hint);
   const float thr = p.throttle_track < kThrottleTracks ? tab_->throttle[p.throttle_track].at(in_phase_, p.throttle) : p.throttle;
   out.throttle = thr;
   flow_ = static_cast<double>(p.mdot) * static_cast<double>(thr);

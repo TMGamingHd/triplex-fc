@@ -106,6 +106,8 @@ struct Loop {
   // If set, called every `pose_every` frames (including the frames on the pad, with a negative time) with the vehicle's whole state, for the 3D viewer (viewer_state.hpp). It only reads.
   std::function<void(const Vehicle6&, double, const PoseExtra&)> on_pose;
   uint32_t pose_every = 2U;
+  // If set, called after every frame (the pad's included) with the runner, to take what the vehicle has let go and fly it on (stage_flier.hpp).
+  std::function<void(SimRunner&)> on_frame;
 };
 
 inline Result run(const Loop& lp) {
@@ -271,6 +273,9 @@ inline Result run(const Loop& lp) {
     const bool lost = k >= lp.act_lost_from && k < lp.act_lost_from + lp.act_lost_for;
     r.held_frames += lost ? 1U : 0U;
     pending = runner.end_of_frame(k, lost ? nullptr : &wire.act);
+    if (lp.on_frame) {
+      lp.on_frame(runner);
+    }
     const Tilts t = runner.vehicle().tilts();
     if (lp.on_pose && lp.pose_every != 0U && k % lp.pose_every == 0U) {
       PoseExtra px;

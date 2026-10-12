@@ -106,6 +106,8 @@ class SimRunner {
   void abort_run() { flags_ = static_cast<uint8_t>(flags_ | tfc::simflag::kAborted); }
 
   [[nodiscard]] const Vehicle6& vehicle() const { return vehicle_; }
+  // The stages the vehicle has let go since the last call (to be flown on by whoever wants to: the rig's simulator hands them to a MissionWorld of its own).
+  [[nodiscard]] std::vector<Detached> take_detached() { return vehicle_.take_detached(); }
   [[nodiscard]] const Platform& platform() const { return platform_; }
   [[nodiscard]] uint32_t frame() const { return frame_; }
   [[nodiscard]] bool command_held() const { return held_; }

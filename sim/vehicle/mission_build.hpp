@@ -233,6 +233,11 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
       ph.throttle_track = static_cast<uint8_t>(track);
       ++track;
     }
+    if (ph.kind == kind::kProgram) {
+      ph.p[0] = static_cast<float>(ps.roll_deg);
+      ph.p[1] = static_cast<float>(ps.roll_start_s);
+      ph.p[2] = static_cast<float>(ps.roll_duration_s);
+    }
     if (ph.kind == kind::kProgram && !ps.program.empty() && !have_program) {
       have_program = true;
       for (const std::array<double, 2>& p : ps.program) {
