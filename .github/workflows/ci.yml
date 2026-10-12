@@ -90,7 +90,7 @@ jobs:
           cmake --build build/rel --target tfc_mission tfc_fly
           # the Starship V3 class stack designed and flown on the three flight computers: the ship in an orbit above 100 km and the booster caught by the tower (exits 3 if not)
           build/rel/tfc_mission vehicles/missions/starship_return.json --expect-orbit --expect-catch
-          # the same, and then the ship's deorbit and belly entry on its flaps (experimental, ADR-044: it is flown to its end, which is a crash 17 km from the tower, so that no outcome is expected; what is checked is that the
+          # the same, and then the ship's deorbit and belly entry on its flaps (experimental, ADR-044: it is flown to its end, which is a crash about 27 km from the tower, so that no outcome is expected; what is checked is that the
           # whole of it designs and flies on the three computers without a fault, in about 80 s)
           build/rel/tfc_mission vehicles/missions/starship_ship_return.json
           # the rig's flight (the firmware's pitch program, no mission) with the host flying the stage that is let go on the mission's plan: the booster comes back to the tower and is caught (exits 3 if not)

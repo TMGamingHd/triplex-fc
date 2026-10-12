@@ -44,6 +44,7 @@ world.skip = { sky: Q.get('nosky'), near: Q.get('nonear'), env: Q.get('noenv') }
 // remembered choices
 const st = world.settings;
 st.sunElev = store.get('v.sunEl', st.sunElev); st.sunBear = store.get('v.sunBear', st.sunBear); st.cloud = store.get('v.cloud', st.cloud);
+st.inside = Q.get('inside') ? Q.get('inside') !== '0' : store.get('v.inside', false);
 st.plumes = store.get('v.plumes', true); st.trail = store.get('v.trail', true); st.pad = store.get('v.pad', true);
 
 const app = {
@@ -106,7 +107,12 @@ function setFocus(n) {
   world.rig.firstFrame = true;
   toast('Following ' + (n === 'main' ? 'the main vehicle' : 'the ' + n), 'info', 2500);
 }
-const camBar = h('div', { id: 'v-cams' }, h('nav', { 'aria-label': 'Camera', role: 'group' }, CAMERAS.map((c) => h('button', { type: 'button', dataset: { id: c.id }, 'aria-pressed': 'false', title: c.hint, onclick: () => { world.rig.set(c.id); store.set('v.cam', c.id); syncCamSeg(); } }, c.label))), camHint, followBar);
+// "Inside": the cutaway. The half of the skin toward the camera is removed (whichever way the camera goes round) and the tanks with the liquid in them, the thrust structure, the header tanks and the payload are seen (models/interior.js).
+const insideBtn = h('button', { type: 'button', id: 'v-inside', 'aria-pressed': 'false', title: 'See inside the vehicle: the skin cut away, the tanks with the liquid in them, the engine mount and the payload (I)', onclick: () => setInside(!world.settings.inside) }, 'Inside');
+function showInside() { const on = !!world.settings.inside; insideBtn.setAttribute('aria-pressed', String(on)); insideBtn.textContent = on ? 'Inside: on' : 'Inside'; }
+function setInside(on) { world.settings.inside = !!on; store.set('v.inside', !!on); showInside(); }
+showInside();
+const camBar = h('div', { id: 'v-cams' }, h('nav', { 'aria-label': 'Camera', role: 'group' }, CAMERAS.map((c) => h('button', { type: 'button', dataset: { id: c.id }, 'aria-pressed': 'false', title: c.hint, onclick: () => { world.rig.set(c.id); store.set('v.cam', c.id); syncCamSeg(); } }, c.label))), camHint, h('div', { class: 'v-viewrow' }, followBar, insideBtn));
 // the docks can be folded away one at a time (H hides everything); a narrow window starts with the right one folded
 const dockBtn = (side, glyph) => h('button', { type: 'button', class: 'v-dockbtn', id: 'v-tg-' + side, 'aria-label': `Hide or show the ${side} panels`, title: `Hide or show the ${side} panels`, onclick: () => setDock(side, document.body.classList.contains('no-' + side)) }, glyph);
 function setDock(side, show) { document.body.classList.toggle('no-' + side, !show); store.set('v.dock.' + side, show); const b = document.getElementById('v-tg-' + side); if (b) b.textContent = side === 'left' ? (show ? '‹' : '›') : (show ? '›' : '‹'); }
@@ -315,6 +321,7 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase(), lens = LENSES.find((l) => l.key === e.key);
   if (lens) setLens(lens.id);
   else if (k === 'c') nextCamera();
+  else if (k === 'i') setInside(!world.settings.inside);
   else if (k === 'h') toggleUI();
   else if (k === ' ') { e.preventDefault(); control('toggle'); }
   else if (k === 'f') app.fullscreen();

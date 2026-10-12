@@ -56,11 +56,18 @@ export function decorateStarship(model) {
     // the hot-stage ring: a collar a little proud of the skin, slotted all round
     const ringTop = topB, ringH = dress.ringHeight;
     const ringTex = ventTexture(); ringTex.repeat.set(2, 1);
-    const ring = new THREE.Mesh(lathe([{ x: ringTop - ringH, r: R + 0.06 }, { x: ringTop - 0.2, r: R + 0.06 }, { x: ringTop, r: R + 0.02 }], { segments: 96, colour: () => [1, 1, 1] }),
-      new THREE.MeshStandardMaterial({ map: ringTex, metalness: 0.8, roughness: 0.5, vertexColors: true }));
+    const ringMat = new THREE.MeshStandardMaterial({ map: ringTex, metalness: 0.8, roughness: 0.5, vertexColors: true }); model.hull.push(ringMat);
+    const ring = new THREE.Mesh(lathe([{ x: ringTop - ringH, r: R + 0.04 }, { x: ringTop - ringH + 0.25, r: R + 0.17 }, { x: ringTop - 0.35, r: R + 0.17 }, { x: ringTop, r: R + 0.03 }], { segments: 96, colour: () => [1, 1, 1] }), ringMat);
     ring.geometry.attributes.uv.array.forEach((v, i, a) => { if (i % 2 === 1) a[i] = (a[i] * 1.8 - (ringTop - ringH)) / ringH; });   // v from 0 at the bottom of the ring to 1 at the top
     ring.geometry.attributes.uv.needsUpdate = true;
     g.add(ring);
+    // a rim of darker steel under the ring and a raceway (the cable and propellant-line fairing) down the side away from the grid fins, from the engine bay to the ring
+    const rim = new THREE.Mesh(lathe([{ x: ringTop - ringH - 0.5, r: R + 0.02 }, { x: ringTop - ringH - 0.5, r: R + 0.09 }, { x: ringTop - ringH, r: R + 0.09 }], { segments: 96, colour: () => [0.55, 0.55, 0.57] }), steel); g.add(rim);
+    const raceway = new THREE.Group(); raceway.rotation.y = Math.PI;                          // (azimuth 180: the fins are at 96 and 264 and the spine side is open)
+    const rl = ringTop - ringH - 0.5 - 5.0;
+    const rb = new THREE.Mesh(new THREE.BoxGeometry(0.85, rl, 0.3), steel); rb.position.set(0, 5.0 + rl / 2, R + 0.1); raceway.add(rb);
+    for (let y = 8; y < 5.0 + rl; y += 9) { const band = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.28, 0.36), m.plate); band.position.set(0, y, R + 0.12); raceway.add(band); }   // its straps
+    g.add(raceway);
     // the grid fins are the vehicle file's `surfaces` (models/flaps.js folds and deploys them as the simulator says). A file without any gets the viewer's stowed ones, so that a booster always has its fins.
     if (!(spec.surfaces || []).some((x) => x.kind === 'grid_fin' && x.stage === 0)) {
       const fw = 2.2 * dress.finScale, fh = 3.4 * dress.finScale, fy = ringTop - ringH - dress.finDrop - fh / 2;
@@ -79,12 +86,23 @@ export function decorateStarship(model) {
     const x0 = ship.spec.x_start_m, tubeEnd = (ship.spec.sections || []).filter((s) => s.kind === 'tube').reduce((a, s) => Math.max(a, s.x_start_m + s.length_m), x0 + 20);
     const bellyHalf = (200 * Math.PI) / 360;              // tiles cover 200 degrees of the tube, centred on the belly
     const belly = 0;                                      // the belly (the heat shield, the side that meets the air in the entry) faces model +Z: the body's +y, azimuth 0 of the surfaces table (lathe's phi 0 is +Z, phi pi/2 is +X: the tiles were 90 degrees away, on the flaps' side)
-    const tileMat = tileMaterial();
+    const tileMat = tileMaterial().clone(); model.hull.push(tileMat);                    // (this model's own: the cutaway clips it)
     const tubeProf = outline((ship.spec.sections || []).filter((s) => s.kind !== 'nose'));
     const noseProf = outline((ship.spec.sections || []).filter((s) => s.kind === 'nose'));
     const grow = (p, d) => p.map((q) => ({ x: q.x, r: q.r + d }));
     if (tubeProf.length) g.add(new THREE.Mesh(lathe(grow(tubeProf, 0.035), { segments: 40, phiStart: belly - bellyHalf, phiLength: 2 * bellyHalf, ring: 2.6, colour: () => [1, 1, 1], uRepeat: 0.33 }), tileMat));
     if (noseProf.length) g.add(new THREE.Mesh(lathe(grow(noseProf, 0.035), { segments: 56, phiStart: belly - Math.PI * 0.72, phiLength: Math.PI * 1.44, ring: 2.6, colour: () => [1, 1, 1], uRepeat: 0.33 }), tileMat));
+    // the edge of the heat shield: a strip of darker steel along each side of the tiles, where the tiles end and the bare skin begins
+    for (const sgn of [-1, 1]) {
+      const edge = new THREE.Mesh(lathe(grow(tubeProf, 0.05), { segments: 2, phiStart: belly + sgn * (bellyHalf - 0.012), phiLength: 0.024, ring: 2.6, colour: () => [0.32, 0.33, 0.35] }), steel);
+      edge.material = m.plate; g.add(edge);
+    }
+    // four small attitude-thruster pods near the tip of the nose, dark rectangles in the skin
+    const noseSec = (ship.spec.sections || []).find((q) => q.kind === 'nose');
+    if (noseSec) for (let k = 0; k < 4; k++) {
+      const holder = new THREE.Group(); holder.rotation.y = (k * Math.PI) / 2 + Math.PI / 4;
+      const pod = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.9, 0.12), m.dark); pod.position.set(0, noseSec.x_start_m + noseSec.length_m - 1.8, 1.05); pod.rotation.x = -0.28; holder.add(pod); g.add(holder);
+    }
     // the flaps are not drawn here: they are the vehicle file's `surfaces`, built and moved by models/flaps.js
     // the base: the engine skirt of the ship
     const sk = new THREE.Mesh(new THREE.CircleGeometry(R * 0.97, 48), m.plate); sk.geometry.rotateX(-Math.PI / 2); sk.position.y = x0 + 1.6; g.add(sk);

@@ -758,6 +758,7 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
     o.num("gimbal_rate_dps", p.gimbal_rate_dps);
     o.num("gimbal_lag_s", p.gimbal_lag_s);
     o.flag("ideal_roll_control", p.ideal_roll_control);
+    o.pairs("roll_rate_dps", p.roll_rate_dps);
     o.flag("ground_contact", p.ground_contact);
     o.num("crash_speed_ms", p.crash_speed_ms);
     o.flag("landing_model", p.landing_model);
@@ -1178,7 +1179,7 @@ inline std::string write_vehicle(const VehicleFile& v) {
   std::string o = "{\n";
   o += "  \"name\": " + quoted(v.name) + ",\n  \"description\": " + quoted(v.description) + ",\n";
   o += "  \"vehicle\": {\"gimbal_limit_deg\": " + num_text(p.gimbal_limit_deg) + ", \"gimbal_rate_dps\": " + num_text(p.gimbal_rate_dps) + ", \"gimbal_lag_s\": " + num_text(p.gimbal_lag_s) +
-       ", \"ideal_roll_control\": " + (p.ideal_roll_control ? "true" : "false") + ", \"ground_contact\": " + (p.ground_contact ? "true" : "false") + ", \"crash_speed_ms\": " +
+       ", \"ideal_roll_control\": " + (p.ideal_roll_control ? "true" : "false") + (p.roll_rate_dps.empty() ? std::string() : ", \"roll_rate_dps\": " + pairs_text(p.roll_rate_dps)) + ", \"ground_contact\": " + (p.ground_contact ? "true" : "false") + ", \"crash_speed_ms\": " +
        num_text(p.crash_speed_ms) + ", \"max_substep_s\": " + num_text(p.max_substep) + ", \"thrust_scale\": " + num_text(p.thrust_scale) + ", \"cd_scale\": " + num_text(p.cd_scale) +
        ", \"cn_scale\": " + num_text(p.cn_scale) + ", \"thrust_misalign_pitch_deg\": " + num_text(p.thrust_misalign_pitch_deg) + ", \"thrust_misalign_yaw_deg\": " +
        num_text(p.thrust_misalign_yaw_deg) + (p.landing_model ? ", \"landing_model\": true, \"landing_tilt_deg\": " + num_text(p.landing_tilt_deg) + ", \"landing_lateral_ms\": " + num_text(p.landing_lateral_ms) : std::string()) + "},\n";

@@ -58,6 +58,9 @@ struct Params {
   // flight computers' two-plane gimbal does not provide it), which is not modelled; without it an engine-out's roll torque, acting on an inertia 40 times
   // smaller than the pitch inertia, would turn the vehicle's gimbal planes away from the pad's and end the flight for a reason that is not the subject.
   bool ideal_roll_control = true;
+  // With the ideal roll control, the roll rate it holds is this schedule (deg/s against the time since the vehicle's own start, linear between the points, held after the last) and not zero: a launcher's slow roll
+  // in the climb, imposed. The flight computers' two tilt angles do not follow a vehicle that has rolled far from the pad's planes, so the roll that is asked for must stay small. Empty: no roll.
+  std::vector<std::array<double, 2>> roll_rate_dps;
   // The ground. The pad (and the Earth's surface below it) holds the vehicle up, so that a vehicle whose thrust-to-weight is under 1 stands on the pad (burning
   // propellant, until it is light enough to rise) instead of sinking through it, and a vehicle that comes back down lands or is destroyed. A vehicle that flies from the first step
   // is not touched by it. `false` is for tests that want the bare equations.
@@ -394,6 +397,23 @@ class Vehicle6 {
   [[nodiscard]] double time() const { return t_; }
   [[nodiscard]] const State& state() const { return s_; }
   [[nodiscard]] double altitude() const { return norm(s_.r) - pl_.radius; }
+  // The roll rate (rad/s) the ideal roll control holds now: the file's schedule at the vehicle's time, or zero.
+  [[nodiscard]] double roll_rate_now() const {
+    const std::vector<std::array<double, 2>>& tab = p_.roll_rate_dps;
+    if (tab.empty()) {
+      return 0.0;
+    }
+    if (t_ <= tab.front()[0]) {
+      return tab.front()[1] * kDeg2Rad;
+    }
+    for (std::size_t i = 1; i < tab.size(); ++i) {
+      if (t_ <= tab[i][0]) {
+        const double f = (t_ - tab[i - 1][0]) / std::max(tab[i][0] - tab[i - 1][0], 1e-9);
+        return (tab[i - 1][1] + (f * (tab[i][1] - tab[i - 1][1]))) * kDeg2Rad;
+      }
+    }
+    return tab.back()[1] * kDeg2Rad;
+  }
   [[nodiscard]] double speed() const { return norm(s_.v); }
   // The distance along the planet's surface from the launch point (the vehicle frame's +X axis at T-zero): the arc of the angle between the position and that axis. It is inertial: a rotating
   // planet's own motion is not taken out of it. (atan2 of the sideways part, not acos of the cosine: acos has no precision left for a small angle, and the first kilometres are small angles.)
@@ -2057,7 +2077,7 @@ class Vehicle6 {
     s_ = advanced(s_, k, h);
     s_.q = normalized(s_.q);
     if (ideal_roll_) {
-      s_.w.x = 0.0;
+      s_.w.x = roll_rate_now();   // (held: zero, unless the file schedules a roll)
     }
     if (g_.stages.size() == 1U) {
       s_.m = std::max(s_.m, fixed_);  // the propellant cannot go below empty

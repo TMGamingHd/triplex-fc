@@ -139,7 +139,7 @@ export function lathe(profile, { segments = 64, phiStart = 0, phiLength = Math.P
 
 /* ---------------------------------------------------------------------------------------------------------------------------------- the engine */
 const darkMetal = new THREE.MeshStandardMaterial({ color: 0x2a2623, metalness: 0.9, roughness: 0.42, side: THREE.DoubleSide });
-const bellMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, metalness: 0.95, roughness: 0.34, side: THREE.DoubleSide });
+const bellMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, metalness: 0.8, roughness: 0.5, side: THREE.DoubleSide });
 const pumpMat = new THREE.MeshStandardMaterial({ color: 0x7c7f84, metalness: 0.9, roughness: 0.4 });
 
 /** A rocket engine as seen from outside: a bell of exit radius from the nozzle's exit area, its chamber and turbopumps above it. The group's origin is the centre of the exit plane; the bell reaches up the +Y axis (the vehicle's forward). */
@@ -148,7 +148,7 @@ export function engineMesh(exitArea, vacuum = false) {
   const prof = [];
   const N = 22;
   for (let i = 0; i <= N; i++) { const s = i / N; prof.push({ x: s * Ln, r: rt + (re - rt) * Math.pow(1 - s, vacuum ? 0.62 : 0.52) }); }
-  const g = lathe(prof, { segments: 28, colour: (x) => { const s = x / Ln; const k = 0.28 + 0.62 * s; return [k * 1.0, k * 0.86, k * 0.76]; }, ring: 100 });
+  const g = lathe(prof, { segments: 28, colour: (x) => { const s = x / Ln; const k = 0.2 + 0.5 * s * s; return [k * 1.0, k * 0.74, k * 0.55]; }, ring: 100 });
   const grp = new THREE.Group();
   grp.add(new THREE.Mesh(g, bellMat));
   const cham = new THREE.Mesh(new THREE.CylinderGeometry(rt * 1.9, rt * 2.4, re * 0.9, 16), darkMetal); cham.position.y = Ln + re * 0.35; grp.add(cham);

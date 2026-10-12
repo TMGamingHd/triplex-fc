@@ -47,7 +47,7 @@ export function flapOutline(len, wid, aft) {
 
 /** A flat flap: the outline extruded `thick` out of the plane, the hinge along Y at the origin, the plate lying toward `s` (+1 or -1) along X and its thickness along +Z. Faces: the outer one (the tile face), the inner
  *  one (the leeward face: bare steel) and the edge all round; the texture follows the plan, so that tiles and weld lines are in the plate's own scale. */
-export function flatFlapGeometry(len, wid, s, aft, thick = 0.5) {
+export function flatFlapGeometry(len, wid, s, aft, thick = 0.9) {
   const ol = flapOutline(len, wid, aft), n = ol.length, pos = [], uv = [], idx = [], groups = [];
   const at = (pt, z) => [s * pt[1], pt[0], z];
   const face = (z, flip, mat) => {
