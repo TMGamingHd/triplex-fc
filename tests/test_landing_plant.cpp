@@ -633,6 +633,17 @@ TFC_TEST(tower_the_arms_catch_a_stage_whose_pins_come_down_through_them_close_en
   fall(good, 400);
   CHECK(good.caught() && !good.catch_missed() && !good.crashed());
   CHECK(near_abs(good.pin_height(), 30.0, 1e-6) && near_abs(good.base_height(), 10.0, 0.01));
+  // held in the arms, whatever the computers go on commanding, the stage's engines are off: the thrust falls to nothing with the engines' tail
+  {
+    sim::Controls on = good.controls();
+    on.group_mask = 0xFFU;
+    on.throttle = 1.0;
+    on.pitch_deg = 3.0;
+    for (int k = 0; k < 300; ++k) {
+      good.step(0.01, on);
+    }
+    CHECK(good.caught() && good.current_loads().thrust < 1.0);
+  }
   // 3 m off to the side: the arms cannot reach it; it falls on to the ground
   sim::Vehicle6 wide = booster_at(10.0 + 1.5, 1.0, false, t);
   sim::State st = wide.state();

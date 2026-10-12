@@ -32,6 +32,8 @@ struct PoseExtra {
   // The other bodies of a mission world (a stage that was let go and flies on under its own computers): a JSON array of {"name", "stage", "pose"}, each `pose` a whole pose of that body from its own
   // `viewer_pose_json`. Empty: there are none. The viewer draws each as a vehicle of its own.
   std::string others;
+  // Added to the position the pose reports (m, inertial): the picture of a body that has been moved a little at its start eases back to where it flies (stage_flier.hpp), so that it does not jump.
+  V3 shift{};
 };
 
 namespace viewer_detail {
@@ -193,7 +195,7 @@ inline std::string viewer_pose_json(const Vehicle6& veh, double t_s, const PoseE
   o.kv("t", t_s, 3);
   o.kvi("fr", static_cast<long>(x.frame));
   o.kv("tt", veh.time(), 3);
-  o.vec("r", s.r, 2);
+  o.vec("r", s.r + x.shift, 2);
   o.vec("v", s.v, 3);
   o.key("q");
   o.open('[');

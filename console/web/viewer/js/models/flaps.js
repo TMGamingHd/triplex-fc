@@ -45,9 +45,54 @@ export function flapOutline(len, wid, aft) {
   return [[0, 0], [len, 0], [len - c * 0.3, c * 1.2], [y1 + c * 1.1, wid - c * 0.55], [y1, wid], [y0 + c * 0.6, wid], [y0 - c * 0.2, wid - c * 0.8], [0 + c * 0.2, c * 1.1]];
 }
 
+/** The outline of a Starship flap as a Shape in (outward from the hinge, along the hinge): the big rear flap a trapezoid with a swept leading edge and rounded corners, the forward canard a triangle (the hinge is its base,
+ *  the apex out and toward the tail, as the pictures of the ship's canards show them). `s` mirrors it for the other side. */
+export function flapShape(len, wid, s, aft) {
+  const pts = aft ? [[0, 0], [0, len], [wid * 0.98, len * 0.66], [wid, len * 0.16]] : [[0, 0], [0, len], [wid, len * 0.26]];
+  const r = aft ? 0.7 : 0.18, shape = new THREE.Shape(), n = pts.length;
+  const P = (k) => { const q = pts[(k + n) % n]; return new THREE.Vector2(s * q[0], q[1]); };
+  for (let k = 0; k < n; k++) {                                        // each corner is cut by a curve of radius r
+    const a = P(k - 1), b = P(k), c = P(k + 1), ab = a.clone().sub(b), cb = c.clone().sub(b);
+    const ra = Math.min(r, ab.length() * 0.45), rc = Math.min(r, cb.length() * 0.45);
+    const p0 = b.clone().add(ab.normalize().multiplyScalar(ra)), p1 = b.clone().add(cb.normalize().multiplyScalar(rc));
+    if (k === 0) shape.moveTo(p0.x, p0.y); else shape.lineTo(p0.x, p0.y);
+    shape.quadraticCurveTo(b.x, b.y, p1.x, p1.y);
+  }
+  shape.closePath();
+  return shape;
+}
+
+/** A thick, smooth flap: the outline extruded with a rounded edge all round (a bevel of several segments) and cut into its faces by their normals: the outer face (tiles), the inner one (steel) and the edge, as three meshes of
+ *  one group. The hinge is along Y at the origin, the plate toward `s` along X, its thickness along +Z from 0. */
+export function smoothFlap(len, wid, s, aft, mats) {
+  const depth = aft ? 0.5 : 0.3, bevel = aft ? 0.45 : 0.2;
+  const geo = new THREE.ExtrudeGeometry(flapShape(len, wid, s, aft), { depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel * 0.9, bevelSegments: 5, curveSegments: 10 });
+  geo.translate(0, 0, bevel);
+  const pos = geo.attributes.position, nor = geo.attributes.normal, uv = geo.attributes.uv, tri = pos.count / 3;
+  const bins = [[], [], []];                                            // outer, inner, edge
+  for (let t = 0; t < tri; t++) {
+    const nz = (nor.getZ(3 * t) + nor.getZ(3 * t + 1) + nor.getZ(3 * t + 2)) / 3;
+    bins[nz > 0.75 ? 0 : nz < -0.75 ? 1 : 2].push(t);
+  }
+  const g = new THREE.Group();
+  [[0, mats[1]], [1, mats[3]], [2, mats[2]]].forEach(([k, m]) => {
+    const n = bins[k].length * 3, p = new Float32Array(n * 3), q = new Float32Array(n * 3), u = new Float32Array(n * 2);
+    bins[k].forEach((t, i) => {
+      for (let j = 0; j < 3; j++) {
+        const v = 3 * t + j, o = 3 * i + j;
+        p.set([pos.getX(v), pos.getY(v), pos.getZ(v)], o * 3); q.set([nor.getX(v), nor.getY(v), nor.getZ(v)], o * 3); u.set([uv.getX(v) / 3.0, uv.getY(v) / 3.0], o * 2);
+      }
+    });
+    const part = new THREE.BufferGeometry();
+    part.setAttribute('position', new THREE.BufferAttribute(p, 3)); part.setAttribute('normal', new THREE.BufferAttribute(q, 3)); part.setAttribute('uv', new THREE.BufferAttribute(u, 2));
+    if (n) g.add(new THREE.Mesh(part, m));
+  });
+  return g;
+}
+
 /** A flat flap: the outline extruded `thick` out of the plane, the hinge along Y at the origin, the plate lying toward `s` (+1 or -1) along X and its thickness along +Z. Faces: the outer one (the tile face), the inner
  *  one (the leeward face: bare steel) and the edge all round; the texture follows the plan, so that tiles and weld lines are in the plate's own scale. */
-export function flatFlapGeometry(len, wid, s, aft, thick = 0.5) {
+export function flatFlapGeometry(len, wid, s, aft, thick = 0.9) {
   const ol = flapOutline(len, wid, aft), n = ol.length, pos = [], uv = [], idx = [], groups = [];
   const at = (pt, z) => [s * pt[1], pt[0], z];
   const face = (z, flip, mat) => {
@@ -135,8 +180,10 @@ export function buildSurface(sf, index) {
   }
   if (sf.axial_hinge) {
     const s = sf.chord_dir >= 0 ? 1 : -1, len = sf.span_m, wid = sf.chord_m, aft = len > 7.5;                 // the big rear flaps and the smaller forward ones
-    const pivot = new THREE.Group(); pivot.position.set(0, sf.x_hinge_m, R + 0.15); holder.add(pivot);
-    pivot.add(new THREE.Mesh(flatFlapGeometry(len, wid, s, aft), [steel(), tileMaterial(), dark(), leeward(), rib()]));
+    // the forward canards sit on the slant of the nose: their hinge follows it (the nose narrows by about a metre over a canard's length), the plant's hinge being along the axis at the hull's radius there
+    const slant = new THREE.Group(); slant.position.set(0, sf.x_hinge_m, R + 0.15); slant.rotation.x = aft ? 0 : -0.15; holder.add(slant);
+    const pivot = new THREE.Group(); slant.add(pivot);
+    pivot.add(smoothFlap(len, wid, s, aft, [steel(), tileMaterial(), dark(), leeward(), rib()]));
     // the hinge, tight to the body: a barrel along the hinge line with a bracket at each end and a low half-shell fairing over it that keeps the stream out of the gap
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, len * 1.0, 14), steel()); barrel.position.set(0, len / 2, 0.22); pivot.add(barrel);
     for (const y of [0.05 * len, 0.95 * len]) { const br = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.8), dark()); br.position.set(0, y, 0.1); pivot.add(br); }

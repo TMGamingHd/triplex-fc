@@ -153,7 +153,7 @@ class SimRunner {
       out.add(tfc::pack_sim_telemetry(tm, seq));
       tfc::SimFlags fl;
       fl.flags = flags_;
-      if (platform_.saturated()) {
+      if (platform_.saturated() && !cfg_.vehicle_true) {      // (a vehicle whose sensors are its own does not use the platform: its tilt past the platform's travel is not a fault)
         fl.flags = static_cast<uint8_t>(fl.flags | tfc::simflag::kPlatformSaturated);
       }
       if (vehicle_.engines_on() < vehicle_.engine_count()) {

@@ -248,3 +248,27 @@ TFC_TEST(runner_a_simulator_started_after_t_zero_joins_the_flight_in_progress) {
   (void)early.start_in_flight(10U, 500U);
   CHECK(early.flight_frame() == 500U);
 }
+
+TFC_TEST(runner_a_tilt_beyond_the_platforms_travel_is_flagged_only_when_the_platform_is_the_sensor) {
+  for (const bool vehicle_true : {false, true}) {
+    sim::RunnerConfig cfg;
+    cfg.vehicle_true = vehicle_true;
+    cfg.scenario.has_initial = true;
+    cfg.scenario.initial.r = sim::V3{sim::kEarthR + 300000.0, 0.0, 0.0};
+    cfg.scenario.initial.q = sim::Q4{std::cos(30.0 * sim::kPi / 180.0), 0.0, 0.0, std::sin(30.0 * sim::kPi / 180.0)};   // 60 degrees from the vertical
+    sim::SimRunner runner(cfg);
+    (void)runner.start(0U);
+    CHECK(runner.vehicle().tilts().y_deg > 45.0 || runner.vehicle().tilts().x_deg > 45.0 || std::fabs(runner.vehicle().tilts().y_deg) > 45.0);
+    sim::SimFrames f;
+    const tfc::ActFrame neutral;
+    for (uint32_t k = 0; k < 20U; ++k) {
+      f = runner.end_of_frame(k, &neutral);
+    }
+    bool flagged = false;
+    for (std::size_t i = 0; i < f.f.size(); ++i) {
+      const tfc::DecodedSimFlags fl = tfc::unpack_sim_flags(f.f[i]);
+      flagged = flagged || (fl.ok && (fl.s.flags & tfc::simflag::kPlatformSaturated) != 0U);
+    }
+    CHECK(flagged == !vehicle_true);
+  }
+}

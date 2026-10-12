@@ -41,6 +41,18 @@ export async function run(app, lenses, setLens, world) {
   // a vehicle too small to see is circled, one that fills the picture is not
   world.rig.set('orbit'); await settle(300);
   check(document.getElementById('v-locator').hidden, 'the locator is hidden when the vehicle is big on the screen');
+  // the cutaway: every skin material is clipped by the vehicle's plane, the inside appears and goes away again
+  {
+    const was = world.settings.inside;
+    world.settings.inside = true; await settle(300);
+    check(world.vehicle.inside && world.vehicle.hull.length > 0 && world.vehicle.hull.every((m) => m.clippingPlanes && m.clippingPlanes.length === 1), `the cutaway clips the skin (${world.vehicle.hull.length} materials)`);
+    check(world.vehicle.interior.tanks.length === app.spec.tanks.length && world.vehicle.interior.parts.some((p) => p.visible), `and shows the inside: ${app.spec.tanks.length} tanks`);
+    const n = world.vehicle.interior.tanks.filter((q) => q.liquid.visible).length;
+    check(n > 0, `liquid in ${n} tanks, at the levels the pose gives`);
+    world.settings.inside = false; await settle(200);
+    check(!world.vehicle.inside && world.vehicle.hull.every((m) => !m.clippingPlanes), 'and the skin is whole again');
+    world.settings.inside = was;
+  }
   // the surfaces of the vehicle file are in the model (the flaps hinged on the axis, the grid fins), and they follow the deflection and the deployed bit in the pose
   const drawn = (app.spec.surfaces || []).filter((x) => x.kind === 'grid_fin' || x.axial_hinge);
   check(world.vehicle.flaps.length === drawn.length, `the model has the vehicle file's ${drawn.length} surfaces (flaps and grid fins)`);

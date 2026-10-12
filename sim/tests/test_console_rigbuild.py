@@ -162,6 +162,24 @@ class TheBuild(Fixture):
         self.assertEqual(self.b.prepare("starship", {})["state"], "cannot-build")
 
 
+class StaleTools(Fixture):
+    def test_a_tool_older_than_the_sources_is_named_with_the_command_to_rebuild_it(self):
+        self.assertIsNone(self.b.stale_tools())                                          # no sources in the fixture's repo: nothing is older
+        src = self.repo / "sim" / "vehicle"
+        src.mkdir(parents=True)
+        (src / "vehicle6.hpp").write_text("// newer\n")
+        import os, time
+        later = time.time() + 100
+        os.utime(src / "vehicle6.hpp", (later, later))
+        why = self.b.stale_tools()
+        self.assertIn("cmake --build build/host", why)
+        self.assertIn("tfc_gen_tables", why)
+        self.assertEqual(self.b.toolchain(), why)                                         # and the rig refuses to build with them
+        for tool in (self.gen, self.fly):                                                # rebuilt: newer than the sources
+            os.utime(tool, (later + 50, later + 50))
+        self.assertIsNone(self.b.stale_tools())
+
+
 class TheRigIsGivenTheVehicle(Fixture):
     def make_rig(self):
         for rel in ("build/host/tfc_simd", "build/launch_a/zephyr/zephyr.exe", "build/launch_b/zephyr/zephyr.exe", "build/launch_c/zephyr/zephyr.exe"):

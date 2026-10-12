@@ -535,6 +535,31 @@ TFC_TEST(stageflier_a_stage_let_go_by_a_vehicle_that_is_not_in_the_world_is_flow
   if (j.items.size() == 1U) {
     CHECK(j.items[0].fields.size() > 0U);
   }
+  // the picture of a stage released near the design's state starts where the stack's own state would have put it and eases to where it flies: the position the pose reports differs from the vehicle's by a
+  // shift that is gone after the ease
+  {
+    sim::StageFlier second;
+    CHECK(second.load(v, v.scenario, why));
+    CHECK(second.adopt(gone[0], parent.time()));
+    const auto off = [&second](double t) {
+      sim::Json q;
+      std::string e;
+      CHECK(sim::parse_json(second.others(t), q, e));
+      const sim::Json* pose = q.items.empty() ? nullptr : q.items[0].find("pose");
+      const sim::Json* r = pose != nullptr ? pose->find("r") : nullptr;
+      CHECK(r != nullptr && r->items.size() == 3U);
+      if (r == nullptr || r->items.size() != 3U) {
+        return 0.0;
+      }
+      const sim::V3 truth = second.world().body(0).veh.state().r;
+      return std::hypot(std::hypot(r->items[0].number - truth.x, r->items[1].number - truth.y), r->items[2].number - truth.z);
+    };
+    const double at_start = off(0.0);
+    for (int k = 0; k < 3000; ++k) {
+      second.step();
+    }
+    CHECK(at_start > 0.5 && off(30.0) < 0.01);
+  }
   // a new run: the stage is gone
   flier.reset();
   CHECK(flier.bodies() == 0U && flier.others(1.0).empty());

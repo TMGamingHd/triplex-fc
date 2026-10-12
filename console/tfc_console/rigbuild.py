@@ -90,6 +90,23 @@ class RigBuilder:
                 return None
         return exes if all(p.is_file() and os.access(p, os.X_OK) for p in exes) else None
 
+    def stale_tools(self) -> str | None:
+        """The simulator's own tools (`tfc_fly`, which checks a vehicle file, and `tfc_gen_tables`, which designs the tables) are built from the sources the vehicle files are read with: a tool older than those sources
+        refuses a field the sources already know ("vehicle.roll_rate_dps: unknown field") and the build of the flight computers fails for a reason that is only an old binary. Say so, with the command."""
+        tools = [p for p in (self.gen, self.vehicles.fly) if p is not None and Path(p).exists()]
+        if not tools:
+            return None
+        newest, src = 0.0, None
+        for pattern in ("sim/vehicle/*.hpp", "core/include/tfc/*.hpp", "tools/sim/*.cpp", "tools/vehicle/*.cpp"):
+            for f in self.repo.glob(pattern):
+                m = f.stat().st_mtime
+                if m > newest:
+                    newest, src = m, f
+        old = [p for p in tools if Path(p).stat().st_mtime < newest]
+        if old and src is not None:
+            return f"{', '.join(Path(p).name for p in old)} in build/host {'is' if len(old) == 1 else 'are'} older than the sources ({src.name} changed): rebuild them with `cmake --build build/host`"
+        return None
+
     def toolchain(self) -> str | None:
         """None if `west` can be run the way firmware/env.sh sets it up; else what is missing."""
         venv = Path(os.environ.get("TFC_VENV") or self.repo.parent / ".venv")
@@ -99,7 +116,7 @@ class RigBuilder:
             return f"{self.gen.relative_to(self.repo) if self.gen.is_relative_to(self.repo) else self.gen} is not built (cmake --build build/host)"
         if not (self.repo / "build" / "act_native" / "zephyr" / "zephyr.exe").exists():
             return "the actuator node's image build/act_native is not built (tools/bench/sil_triplex.sh --build --launch)"
-        return None
+        return self.stale_tools()
 
     # ------------------------------------------------------------------ the build
     def status(self, name: str, knobs: dict) -> dict:
@@ -196,7 +213,8 @@ class RigBuilder:
             header = target / "flight_tables.hpp"
             rc, out = self._run([str(self.gen), "--vehicle", str(vfile), str(header)], "tables")
             if rc != 0:
-                raise ValueError("the design could not make tables for this vehicle:\n" + out)
+                stale = self.stale_tools()
+                raise ValueError("the design could not make tables for this vehicle:\n" + out + (f"\n({stale})" if stale else ""))
             self._step("design the tables", "done", f"{header.stat().st_size} bytes")
             for n, letter in enumerate(NODES):
                 label = f"build flight computer {letter.upper()}"

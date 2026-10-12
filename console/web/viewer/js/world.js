@@ -30,6 +30,8 @@ export class World {
     this.canvas = canvas;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: !!opt.preserve });
     const r = this.renderer;
+    r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;       // the sun's shadow falls on the vehicle (a flap on the hull, the tower on the stack at lift-off) and on the pad's structures
+    r.localClippingEnabled = true;                                  // the cutaway clips the skin of a vehicle with a plane of its own
     r.autoClear = false; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 0.45; r.outputColorSpace = THREE.SRGBColorSpace;
     this.quality = opt.quality ?? 1;
     r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2) * (this.quality < 0.7 ? 0.7 : 1));
@@ -39,13 +41,14 @@ export class World {
     this.sky = new Sky();
     this.imagery = new Imagery(this.sky, this.renderer);
     this.sun = new THREE.DirectionalLight(0xffffff, 1);
+    this.sun.castShadow = true; this.sun.shadow.mapSize.set(4096, 4096); this.sun.shadow.bias = -0.0004; this.sun.shadow.normalBias = 0.06;
     this.nearScene.add(this.sun, this.sun.target);
     this.fill = new THREE.AmbientLight(0xffffff, 0.0);
     this.nearScene.add(this.fill);
     this.overlay = new THREE.Group(); this.overlay.name = 'overlays';          // the lenses' objects, in the vehicle's frame
     this.nearScene.add(this.overlay);
     this.worldOverlay = new THREE.Group(); this.nearScene.add(this.worldOverlay);   // and in the near scene's own frame
-    this.settings = { sunElev: 28, sunBear: 135, cloud: 0.35, style: 'auto', stars: 1, trail: true, plumes: true, pad: true, atmosphereQuality: 0.6 };
+    this.settings = { sunElev: 28, sunBear: 135, cloud: 0.35, style: 'auto', stars: 1, trail: true, plumes: true, pad: true, atmosphereQuality: 0.6, inside: false };
     this.vehicle = null; this.pad = null; this.plumes = null; this.debris = []; this.padCG = null; this.last = { stg: null };
     this.bodies = new Map();                                     // the other bodies of a mission (the stage that returns): name -> {model, plumes, holder, spec}
     this.trail = new Trail(); this.nearScene.add(this.trail.mesh);
@@ -90,6 +93,7 @@ export class World {
     this.style = style; this.opts = opts;
     this.vehicle = new VehicleModel(spec, style, opts);
     this.modelHolder.add(this.vehicle.root);
+    { const half = spec.length * 0.62 + 12, c = this.sun.shadow.camera; c.left = c.bottom = -half; c.right = c.top = half; c.near = 5; c.far = 1400; c.updateProjectionMatrix(); }       // the shadow map covers the vehicle (and the tower beside it)
     this.plumes = new Plumes(this.vehicle);
     // the site is sized by the whole vehicle and stays when the viewer turns to follow one stage of it: only a new vehicle makes a new pad
     const sized = opts.padSpec || spec;
@@ -172,6 +176,7 @@ export class World {
     if (this.pad) {
       this.pad.group.position.copy(padRel); this.pad.group.quaternion.copy(padQ);
       this.pad.structures.visible = s.pad && (pose.alt < 25000);
+      this.pad.setRelease(pose.clamp ? 0 : 1, dt);                              // the hold-down clamps fall away and the quick-disconnect arms swing back when the vehicle is released
       const g = this.pad.groundMat.uniforms;
       g.uTime.value = wall; g.uFade.value = 1 - THREE.MathUtils.smoothstep(pose.alt, 12000, 45000);
       this.pad.ground.visible = pose.alt < 50000;
@@ -182,6 +187,10 @@ export class World {
     const camCtx = { len: ext.length, x0: ext.x0, diameter: ext.diameter, axis, up, down, padRel, cg: pose.cg, alt: pose.alt, dt, quat: qs };
     this.rig.update(camCtx);
     const camPos = this.camera.position;
+    if (this.vehicle) {                                                       // the cutaway: the half of the skin toward the camera is removed, and the inside is drawn
+      this.vehicle.setInside(!!s.inside);
+      if (s.inside) { this.vehicle.setCut(axis, _v.set(0, 0, 0), camPos.clone()); this.vehicle.updateInside(pose); }
+    }
 
     // light: the sun in the scene's axes (fixed in space), its colour after the atmosphere, the sky's light from the environment
     const sun = sunFromLocal(s.sunElev, s.sunBear);
@@ -236,6 +245,7 @@ export class World {
     const light = [T[0] * 0.9 + 0.1, T[1] * 0.9 + 0.1, T[2] * 0.9 + 0.1].map((x) => x * Math.max(0.12, Math.min(1.1, sun.dot(up) * 1.1 + 0.3)));
     this.smoke.update(dt, pose.tt, { alt: pose.alt + pose.cg, thrust: pose.thr > 0 ? Math.min(1, thrustFrac * 1.5) : 0, radius: ext.diameter * 0.6 }, this.camera, padM, light);
 
+    this._padFrame = { rel: padRel.clone(), q: padQ.clone() };                // (for the catch arms: where the pad is, and which way is up there)
     this.stepBodies(pose, rS, wall, ctx);
     this.stepDebris(pose, dt, rS, qs, axis);
     this.last.stg = pose.stg;
@@ -259,13 +269,28 @@ export class World {
       b.holder.position.set(r[0] - rS[0], r[1] - rS[1], r[2] - rS[2]); b.holder.quaternion.copy(q);
       b.mh.position.set(0, -p.cg, 0);
       b.model.apply(p);
+      b.model.setInside(!!this.settings.inside);
+      if (this.settings.inside) { const ax = new THREE.Vector3(0, 1, 0).applyQuaternion(q); b.model.setCut(ax, b.holder.position.clone(), this.camera.position.clone().sub(b.holder.position)); b.model.updateInside(p); }
       b.plumes.update(p.cgt || p.lnd ? { ...p, eng: [] } : p, wall, { glow: 1 });         // a stage in the arms or on the ground has its engines off
     }
     for (const [name, b] of [...this.bodies]) if (!seen.has(name)) { b.plumes.dispose(); this.nearScene.remove(b.holder); this.bodies.delete(name); }
-    // the catch pad's arms close on a stage that is held and open again when it is not (the stage is the one that has the pins: a body with `cgt`, or the main one)
-    if (this.catchPad) {
-      const held = (pose.cgt === 1) || (pose.others || []).some((o) => o.pose && o.pose.cgt === 1);
-      this.catchPad.setArms(held ? 1 : 0, this.dtLast || 0.016);
+    // the catch pad's arms close as a stage comes down to them, so that it lands on them: they are open while its pins are more than 60 m above the arms' top and closed when they are 8 m above it, and they
+    // are closed on a stage that is held (a body with `cgt`); the stage is the one that has the pins (`catch_pin_x_m`), seen from the pad's own frame
+    if (this.catchPad && this._padFrame) {
+      const cp = this.catchPad, pf = this._padFrame, upPad = new THREE.Vector3(0, 1, 0).applyQuaternion(pf.q);
+      const site = new THREE.Vector3(cp.structures.position.x, 0, cp.structures.position.z).applyQuaternion(pf.q);
+      let target = ((pose.cgt === 1) || (pose.others || []).some((o) => o.pose && o.pose.cgt === 1)) ? 1 : 0;
+      for (const o of pose.others || []) {
+        const b = this.bodies.get(o.name), pinX = b && b.spec && b.spec.stages[0] ? b.spec.stages[0].catch_pin_x_m : 0;
+        if (!b || !o.pose || !(pinX > 0) || o.pose.cgt === 1) continue;
+        const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(b.holder.quaternion);
+        const rel = b.holder.position.clone().sub(pf.rel).sub(site), hv = rel.dot(upPad);
+        const lateral = rel.clone().addScaledVector(upPad, -hv).length();
+        const pinH = hv + axis.dot(upPad) * (pinX - o.pose.cg);      // the pins' height above the pad's ground
+        const dh = pinH - cp.armTop;
+        if (lateral < 80 && dh < 60 && o.pose.spd < 400) target = Math.max(target, Math.max(0, Math.min(1, (60 - dh) / 52)));
+      }
+      cp.setArms(target, this.dtLast || 0.016);
     }
   }
 

@@ -163,6 +163,22 @@ int main(int argc, char** argv) {
   lp.pad_frames = pad;
   lp.frames = frames != 0U ? frames : static_cast<uint32_t>(vf.plan.trajectory.t_end / 0.01);
   sim::StageFlier stages;
+  if (!mission.empty()) {
+    std::string why;
+    stages.set_seed(stage_seed);
+    if (!stages.load(mission, vf.scenario, why)) {
+      std::fprintf(stderr, "--mission %s: %s\n", mission.c_str(), why.c_str());
+      return 1;
+    }
+    vf.mission = stages.file().mission;   // the viewer draws the catch tower where the mission puts it
+    std::printf("  the stages the vehicle lets go are flown on by %s\n", mission.c_str());
+    lp.on_frame = [&stages](sim::SimRunner& runner) {
+      for (const sim::Detached& d : runner.take_detached()) {
+        (void)stages.adopt(d, runner.vehicle().time());
+      }
+      stages.step();
+    };
+  }
   std::FILE* pose_file = nullptr;
   if (!pose.empty()) {  // the whole state for the 3D viewer (docs/design/VIEWER.md): the vehicle and the air first, then a pose every 1/pose_hz s
     if (pose_hz == 0U || pose_hz > 100U) {
@@ -181,23 +197,6 @@ int main(int argc, char** argv) {
       sim::PoseExtra with = x;
       with.others = stages.others(t);   // (empty without --mission or before a stage is let go)
       std::fprintf(pose_file, "%s\n", sim::viewer_pose_json(v, t, with).c_str());
-    };
-  }
-  if (!mission.empty()) {
-    std::string why;
-    stages.set_seed(stage_seed);
-    if (!stages.load(mission, vf.scenario, why)) {
-      std::fprintf(stderr, "--mission %s: %s\n", mission.c_str(), why.c_str());
-      return 1;
-    }
-    if (pose_file != nullptr) {
-      std::printf("  the stages the vehicle lets go are flown on by %s\n", mission.c_str());
-    }
-    lp.on_frame = [&stages](sim::SimRunner& runner) {
-      for (const sim::Detached& d : runner.take_detached()) {
-        (void)stages.adopt(d, runner.vehicle().time());
-      }
-      stages.step();
     };
   }
   std::vector<sim::TraceRow> trace;

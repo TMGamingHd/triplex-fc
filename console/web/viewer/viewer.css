@@ -130,3 +130,9 @@ canvas.chart { width: 100%; display: block; }
 #v-follow button { background: none; border: 0; color: var(--muted); padding: 5px 12px; border-radius: 7px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
 #v-follow button:hover { color: var(--text); background: var(--panel2); }
 #v-follow button[aria-pressed="true"] { background: var(--panel3); color: var(--text); box-shadow: inset 0 -2px 0 var(--ok); }
+
+/* the row under the camera bar: which body to follow, and the cutaway */
+.v-viewrow { display: flex; align-items: center; gap: 6px; }
+#v-cams #v-inside { background: color-mix(in srgb, var(--bg2) 84%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line); border-radius: 10px; color: var(--muted); padding: 7px 14px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
+#v-cams #v-inside:hover { color: var(--text); }
+#v-cams #v-inside[aria-pressed="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); background: var(--panel3); }

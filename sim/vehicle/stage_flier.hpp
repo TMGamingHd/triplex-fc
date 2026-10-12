@@ -10,6 +10,7 @@
 // rates the stack had when it let the stage go: the vehicle file the stack flies and the mission file need not describe the same stage (the rig's Starship is an older description than the mission's), and
 // the stage then is the mission's. The replicas are in-process, not firmware. Stage 0 is the one flown; a vehicle that lets another go does not have it flown.
 #pragma once
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -111,6 +112,7 @@ class StageFlier {
   void reset() {
     if (enabled_) {
       world_ = std::make_unique<MissionWorld>(config_);
+      offsets_.clear();
     }
   }
 
@@ -143,6 +145,15 @@ class StageFlier {
     mine.state.prop_set = true;
     mine.state.m = dry + prop;
     world_->adopt(mine, parent_time);
+    // where the stack's own state would have put the stage: the design's state is flown, and the picture eases from the one to the other over `kEase` s so that the stage does not jump at the separation
+    Offset off;
+    if (near_nominal) {
+      const Vehicle6& child = world_->body(world_->bodies() - 1U).veh;
+      const V3 dx{d.x_off + child.mass_props().x_cg - d.x_cg_parent, 0.0, 0.0};
+      off.shift = (d.state.r + rotate(d.state.q, dx)) - child.state().r;
+      off.t0 = child.time();
+    }
+    offsets_.push_back(off);
     return true;
   }
 
@@ -161,12 +172,23 @@ class StageFlier {
     std::string list = "[";
     for (std::size_t i = 0; i < world_->bodies(); ++i) {
       const MissionWorld::Body& b = world_->body(i);
-      list += std::string(i > 0U ? "," : "") + "{\"name\":\"" + b.name + "\",\"stage\":" + std::to_string(b.stage) + ",\"pose\":" + viewer_pose_json(b.veh, t, PoseExtra{}) + "}";
+      PoseExtra x;
+      if (i < offsets_.size()) {
+        const double k = std::clamp((b.veh.time() - offsets_[i].t0) / kEase, 0.0, 1.0);
+        x.shift = offsets_[i].shift * (1.0 - (k * k * (3.0 - (2.0 * k))));
+      }
+      list += std::string(i > 0U ? "," : "") + "{\"name\":\"" + b.name + "\",\"stage\":" + std::to_string(b.stage) + ",\"pose\":" + viewer_pose_json(b.veh, t, x) + "}";
     }
     return list + "]";
   }
 
  private:
+  static constexpr double kEase = 20.0;   // s
+  struct Offset {
+    V3 shift{};
+    double t0 = 0.0;
+  };
+  std::vector<Offset> offsets_;
   bool enabled_ = false;
   uint32_t seed_ = 0U;
   VehicleFile file_;

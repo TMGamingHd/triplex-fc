@@ -92,8 +92,8 @@ def plant():
                  "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": i, "deployed": False} for i, az in enumerate((96.0, 264.0))]   # two (11 Oct 2026, the owner: one for each side the tower takes the stage by): one on each flank, about 96 degrees round from the spine
     # the ship's four flaps, as in vehicles/starship.json: hinged along the axis and standing straight out (90) for the climb, edge-on to the stream. They take no command until the entry deploys them (deployed false:
     # stowed at 90); then channels 0 to 3 move them about the mixer's trim (the ship's own mixers; the booster's grid fins use channels 0 to 2 of their own body)
-    for ch, (nm, x, az, area, chord, span, cdir) in enumerate((("aft flap port", 73.6, 80, 36.9, 4.1, 9.0, 1), ("aft flap starboard", 73.6, 280, 36.9, 4.1, 9.0, -1), ("forward flap port", 102.3, 112, 16.2, 2.7, 6.0, 1), ("forward flap starboard", 102.3, 248, 16.2, 2.7, 6.0, -1))):
-        surfaces.append({"name": nm, "stage": 1, "kind": "flap", "axial_hinge": True, "x_hinge_m": x, "azimuth_deg": az, "radius_m": 4.5, "area_m2": area, "chord_m": chord, "span_m": span, "chord_dir": cdir,
+    for ch, (nm, x, az, area, chord, span, cdir) in enumerate((("aft flap port", 73.6, 80, 36.9, 4.1, 9.0, 1), ("aft flap starboard", 73.6, 280, 36.9, 4.1, 9.0, -1), ("forward flap port", 110.0, 112, 16.2, 2.7, 6.0, 1), ("forward flap starboard", 110.0, 248, 16.2, 2.7, 6.0, -1))):
+        surfaces.append({"name": nm, "stage": 1, "kind": "flap", "axial_hinge": True, "x_hinge_m": x, "azimuth_deg": az, "radius_m": 4.5 if span > 7.5 else 4.0, "area_m2": area, "chord_m": chord, "span_m": span, "chord_dir": cdir,
                          "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": ch, "deployed": False})
     return {"name": "starship-v3-class-return",
             "description": "Starship V3 class stack that flies its whole mission on the flight computers: ascent, hot staging, orbital insertion of the ship (PEG), and the booster's flip, boost-back, grid-fin entry, landing burn and catch.",
@@ -113,6 +113,19 @@ RIG_PROGRAM = [[0, 0], [10, 0], [30, 15], [60, 30], [100, 45], [130, 56], [134, 
 RIG_SHIP_CUTOFF_S = 470
 
 
+RIG_ROLL_DEG = 30.0   # the roll of the climb in the rig: out to this many degrees and back between 10 s and 60 s (the firmware's two tilt angles follow a roll of 45 degrees with 4.4 degrees rms of error, 30 with 2.6, 12 with 1.5)
+
+
+def roll_bump(peak_deg, t0, dur, step=2.0):
+    """The roll-rate schedule (deg/s) of a roll that goes out to `peak_deg` and back as sin^2 between t0 and t0 + dur: the derivative of peak sin^2(pi (t - t0) / dur), sampled every `step` s."""
+    pts = [[0, 0.0]]
+    n = int(round(dur / step))
+    for k in range(n + 1):
+        t = t0 + k * step
+        pts.append([round(t, 1), round(peak_deg * math.pi / dur * math.sin(2.0 * math.pi * (t - t0) / dur), 3)])
+    return pts
+
+
 def rig_vehicle():
     """vehicles/starship.json: the mission's plant, flown by the rig's firmware and by tfc_fly, which have no mission: the stages fly their schedules (no guided engines), the booster burns to the end of the booster
     burn of the mission (132 s: its engines cut off) and is let go at 134 s, the ship lights at hot staging and follows the mission's own ship pitch (less the part the firmware cannot fly: MISSION_SHIP_PITCH) to its cut-off at 470 s. The mission's own program and throttle are
@@ -120,7 +133,7 @@ def rig_vehicle():
     v = plant()
     v["name"] = "starship-v3-class"
     v["description"] = "Starship V3 (Block 3) class: two stages, 9 m diameter, 124 m, about 5.4 kt at lift-off, 33 Raptor 3 + 6 Raptor 3, methane and liquid oxygen, hot staging. Public numbers and my estimates, not SpaceX data."
-    v["vehicle"] = {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "landing_model": True}
+    v["vehicle"] = {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "landing_model": True, "roll_rate_dps": roll_bump(RIG_ROLL_DEG, 10.0, 50.0)}
     v["engines"] = [e for e in v["engines"] if "control" not in e]               # (the attitude thrusters are the mission's: the rig's computers command the gimbal)
     for st in v["stages"]:
         st.pop("guided", None)

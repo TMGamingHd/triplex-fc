@@ -5,6 +5,7 @@ import { lathe, outline, engineMesh, weldTextures, tileTextures, bar } from './c
 import { decorateStarship } from './starship.js';
 import { buildFlaps, setFlap } from './flaps.js';
 import { fit, distribute } from './gltf.js';
+import { buildInterior } from './interior.js';
 
 const Y = new THREE.Vector3(0, 1, 0);
 
@@ -50,6 +51,8 @@ export class VehicleModel {
     this.style = style === 'auto' ? autoStyle(spec) : style;
     this.root = new THREE.Group(); this.root.name = 'vehicle';
     this.stages = []; this.payloads = []; this.engines = []; this.parts = {};
+    this.hull = [];                                                     // the materials of the outer skin: the cutaway clips them (every model has its own, so that two bodies can be cut by their own planes)
+    this.cutPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0); this.inside = false;
     this.build();
   }
 
@@ -57,13 +60,18 @@ export class VehicleModel {
     if (this.style.startsWith('gltf:') && this.opts.gltf) return this.buildImported();
     const spec = this.spec;
     const steelStyle = this.style === 'starship';
-    const mats = steelStyle ? steelMaterials() : paintMaterials();
+    const shared = steelStyle ? steelMaterials() : paintMaterials();
+    const mats = steelStyle ? { ...shared, steel: shared.steel.clone(), tile: shared.tile.clone() } : shared;       // (a steel skin of this model's own)
+    if (steelStyle) this.hull.push(mats.steel, mats.tile);
     const colours = steelStyle ? null : [mats.white, mats.grey, mats.white, mats.orange];
     spec.stages.forEach((st, si) => {
       const g = new THREE.Group(); g.name = 'stage ' + (si + 1);
       const sections = st.sections && st.sections.length ? st.sections : [{ kind: 'tube', x_start_m: st.x_start_m || 0, length_m: st.length_m, d_aft_m: 2 * (st.radius_m || 0.9), d_fore_m: 2 * (st.radius_m || 0.9) }];
       const prof = outline(sections);
-      const soot = steelStyle && si === 0 ? (x) => { const k = Math.min(1, 0.32 + 0.68 * Math.min(1, Math.max(0, (x - 1.0) / 14))); return [k, k * 0.97, k * 0.95]; } : () => [1, 1, 1];
+      // the skin's colour along the body: every ring of sheets is a shade of its own (rolled and welded from different coils), and the booster's lower tank is sooted by its own exhaust
+      const hash = (n) => { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+      const tint = (x) => 1 + 0.09 * (hash(Math.floor(x / 1.8) + si * 31) - 0.5);
+      const soot = steelStyle ? (x) => { const t = tint(x), k = si === 0 ? Math.min(1, 0.32 + 0.68 * Math.min(1, Math.max(0, (x - 1.0) / 14))) : 1; return [k * t, k * t * 0.985, k * t * 0.97]; } : () => [1, 1, 1];
       const body = new THREE.Mesh(lathe(prof, { segments: 72, colour: soot }), steelStyle ? mats.steel : colours[si % colours.length]);
       body.castShadow = true; g.add(body);
       this.stages.push({ group: g, spec: st, body, profile: prof });
@@ -85,6 +93,27 @@ export class VehicleModel {
     this.engineParts();
     this.flaps = buildFlaps(spec, this.stages.map((s) => s.group));      // the vehicle file's flaps, wherever they are (a Starship's four); they follow the simulator's deflection in apply()
     if (this.style === 'starship') decorateStarship(this);
+    if (!steelStyle) for (const k of ['white', 'grey', 'orange', 'black']) if (mats[k] && !this.hull.includes(mats[k])) this.hull.push(mats[k]);
+    this.interior = buildInterior(this);
+    this.root.traverse((o) => { if (o.isMesh && !(o.material && o.material.isShaderMaterial)) { o.castShadow = true; o.receiveShadow = true; } });
+  }
+
+  /** The cutaway: the skin is clipped by `cutPlane` (the half toward the camera is removed) and the inside is shown. */
+  setInside(on) {
+    if (on === this.inside) return;
+    this.inside = on;
+    const mats = [...this.hull, ...(this.interior ? this.interior.clipMats : [])];
+    for (const m of mats) { if (m._side == null) m._side = m.side; m.clippingPlanes = on ? [this.cutPlane] : null; m.clipShadows = true; m.side = on ? THREE.DoubleSide : m._side; m.needsUpdate = true; }
+    if (this.interior) this.interior.setVisible(on);
+  }
+  /** Per frame while the cutaway is on: the liquid in the tanks and the payload. */
+  updateInside(pose) { if (this.inside && this.interior) this.interior.update(pose); }
+  /** The plane that cuts the vehicle: it holds the axis and faces `toCamera` (the camera's place from the model's origin, in the scene's axes); `axis` is the vehicle's axis in the scene, `origin` its origin there. */
+  setCut(axis, origin, toCamera) {
+    const d = toCamera.clone().addScaledVector(axis, -toCamera.dot(axis));
+    if (d.lengthSq() < 1e-6) return;
+    d.normalize();
+    this.cutPlane.normal.copy(d).negate(); this.cutPlane.constant = d.dot(origin);
   }
 
   /** An imported picture in place of the generated body: the stages' groups are there (for the engines and for the separation), the outline of each is still the vehicle file's (the lenses use it), the picture is in them. */
@@ -154,6 +183,12 @@ export class VehicleModel {
     this.payloads.forEach((p) => { p.group.visible = !!(pay & (1 << p.index)); });
     const now = performance.now(), dtw = this._applied ? Math.min(0.1, (now - this._applied) / 1000) : 0.016; this._applied = now;
     for (const f of this.flaps || []) setFlap(f, pose.surf && pose.surf[f.index] != null ? pose.surf[f.index] : (f.spec.stow_deg || 0), pose.sdep != null ? ((pose.sdep >> f.index) & 1) === 1 : f.spec.deployed !== false, dtw);
+    // the glow of the heat shield in an entry: the stagnation heating (Sutton-Graves, a nose radius of 0.4 m) from the density and the speed the pose gives, as an orange emission that rises from 0.2 to 3 MW/m^2
+    {
+      const rho = pose.air ? pose.air[2] : 0, v = pose.spd || 0, q = 1.74e-4 * Math.sqrt(Math.max(rho, 0) / 0.4) * v * v * v;
+      const k = Math.max(0, Math.min(1, (q - 2e5) / 2.8e6)), a = k * k * (3 - 2 * k);
+      for (const m of this.hull) if (m.emissive) m.emissive.setRGB(a * 1.0, a * 0.32, a * 0.07);
+    }
     const gim = pose.gim || [];
     const q = new THREE.Quaternion(), d = new THREE.Vector3();
     for (const en of this.engines) {

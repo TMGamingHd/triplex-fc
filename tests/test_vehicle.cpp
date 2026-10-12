@@ -1048,3 +1048,27 @@ TFC_TEST(the_committed_firmware_tables_are_the_ones_the_design_gives) {
     CHECK(near_abs(static_cast<double>(committed_gains.gains_at(i).ki), static_cast<double>(now.gains.gains_at(i).ki), 1e-4));
   }
 }
+
+TFC_TEST(vehicle_the_ideal_roll_control_holds_the_roll_rate_the_file_schedules_and_zero_without_one) {
+  const auto rolled = [](bool schedule) {
+    sim::Params p;
+    p.ground_contact = false;
+    p.ideal_roll_control = true;
+    if (schedule) {
+      p.roll_rate_dps = {{0.0, 0.0}, {1.0, 0.0}, {3.0, 2.0}};   // nothing for a second, up to 2 degrees a second over two, then held
+    }
+    sim::Scenario sc;
+    sc.has_initial = true;
+    sc.initial.r = sim::V3{sim::kEarthR + 300000.0, 0.0, 0.0};
+    sim::Vehicle6 v(p, sc);
+    const sim::V3 y0 = sim::rotate(v.state().q, sim::V3{0.0, 1.0, 0.0});
+    sim::Controls c;
+    for (int k = 0; k < 1000; ++k) {
+      v.step(0.01, c);
+    }
+    const sim::V3 y1 = sim::rotate(v.state().q, sim::V3{0.0, 1.0, 0.0});
+    return std::acos(std::fmin(1.0, std::fmax(-1.0, sim::dot(y0, y1)))) * 180.0 / sim::kPi;
+  };
+  CHECK(near_abs(rolled(false), 0.0, 0.01));
+  CHECK(near_abs(rolled(true), 16.0, 0.3));   // 2 degrees while the rate ramped, 14 at 2 degrees a second
+}
