@@ -220,3 +220,11 @@ The owner, 11 Oct 2026: "make the graphics as best as possible"; the ship's flap
 
 What is not done: the interior of the booster has no engine plumbing beyond the thrust structure and the downcomer; the cutaway is a half-section by a plane, with no cap on the cut (the inside of the far wall is what is seen behind the tanks); the pad's ground takes no shadows; **no frame time has been measured** with the shadows and the cutaway (the machine is one GTX 1660 SUPER; a software renderer's milliseconds mean nothing).
 
+## 19. Flap shapes, a separation that is seen, arms on the descent (ADR-048)
+
+The owner, 11 Oct 2026: the top canards on the slant of the nose, a triangular fin; the bottom a thicker smooth fin; the booster "just kind of disappears" at separation; the arms set as the rocket comes down; the booster off once it has landed.
+
+* **The flaps.** `flapShape()` draws the outline (aft: a rounded swept trapezoid; forward: a triangle with small rounded corners) and `smoothFlap()` extrudes it with a bevel, splitting the faces by normal into tile (outside), steel (inside) and edge meshes: the aft flap is about 1.4 m thick and smooth, the canard 0.3 m with a 0.2 m bevel. The canards sit in a group tilted 0.15 rad about the tangent so that their hinge follows the nose's slant; their `x_hinge_m` is 110.0 m in the file. The shapes are my reading of the owner's description and pictures, and the depth of the lattice is a guess.
+* **Separation.** The stand-in booster no longer jumps to the mission's nominal state: `PoseExtra::shift` carries the offset and eases it to zero over 20 s, so that the stage leaves the stack continuously (screens at 133, 137, 145 and 155 s: together, a ship-length apart, a dot).
+* **Arms.** `Pad.setArms` follows the descent (closing at 1.2 per second, opening at 0.4) from the height of the pins above the arms' top and the distance to the site; the stage then rests on them and its engines are off (`Vehicle6`: held stages are at rest).
+* **Not done:** the separation is not slower in the plant: the plan flips the booster at once and the ship's thrust-to-weight is 0.93 at staging; the arms' closing is the viewer's, not a state of the simulator; the frame time with all this is still not measured.

@@ -92,8 +92,8 @@ def plant():
                  "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": i, "deployed": False} for i, az in enumerate((96.0, 264.0))]   # two (11 Oct 2026, the owner: one for each side the tower takes the stage by): one on each flank, about 96 degrees round from the spine
     # the ship's four flaps, as in vehicles/starship.json: hinged along the axis and standing straight out (90) for the climb, edge-on to the stream. They take no command until the entry deploys them (deployed false:
     # stowed at 90); then channels 0 to 3 move them about the mixer's trim (the ship's own mixers; the booster's grid fins use channels 0 to 2 of their own body)
-    for ch, (nm, x, az, area, chord, span, cdir) in enumerate((("aft flap port", 73.6, 80, 36.9, 4.1, 9.0, 1), ("aft flap starboard", 73.6, 280, 36.9, 4.1, 9.0, -1), ("forward flap port", 107.0, 112, 16.2, 2.7, 6.0, 1), ("forward flap starboard", 107.0, 248, 16.2, 2.7, 6.0, -1))):
-        surfaces.append({"name": nm, "stage": 1, "kind": "flap", "axial_hinge": True, "x_hinge_m": x, "azimuth_deg": az, "radius_m": 4.5, "area_m2": area, "chord_m": chord, "span_m": span, "chord_dir": cdir,
+    for ch, (nm, x, az, area, chord, span, cdir) in enumerate((("aft flap port", 73.6, 80, 36.9, 4.1, 9.0, 1), ("aft flap starboard", 73.6, 280, 36.9, 4.1, 9.0, -1), ("forward flap port", 110.0, 112, 16.2, 2.7, 6.0, 1), ("forward flap starboard", 110.0, 248, 16.2, 2.7, 6.0, -1))):
+        surfaces.append({"name": nm, "stage": 1, "kind": "flap", "axial_hinge": True, "x_hinge_m": x, "azimuth_deg": az, "radius_m": 4.5 if span > 7.5 else 4.0, "area_m2": area, "chord_m": chord, "span_m": span, "chord_dir": cdir,
                          "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": ch, "deployed": False})
     return {"name": "starship-v3-class-return",
             "description": "Starship V3 class stack that flies its whole mission on the flight computers: ascent, hot staging, orbital insertion of the ship (PEG), and the booster's flip, boost-back, grid-fin entry, landing burn and catch.",

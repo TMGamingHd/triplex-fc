@@ -346,10 +346,16 @@ class Vehicle6 {
 
   // Advance by dt seconds with the whole of the commands (the gimbal, the propulsion and the surfaces of the stages the flight computers drive, the events).
   void step(double dt, const Controls& c) {
-    const double cmd_pitch_deg = c.pitch_deg;
-    const double cmd_yaw_deg = c.yaw_deg;
+    const bool at_rest = caught_ || landed_ || crashed_;     // held by the arms or the ground: whatever the computers command, the engines and the thrusters are off (a stage that has been caught or has landed shuts down)
+    const double cmd_pitch_deg = at_rest ? 0.0 : c.pitch_deg;
+    const double cmd_yaw_deg = at_rest ? 0.0 : c.yaw_deg;
     apply_events(c.events);
     ctrl_ = c;
+    if (at_rest) {
+      ctrl_.group_mask = 0U;
+      ctrl_.throttle = 0.0;
+      ctrl_.pitch_deg = ctrl_.yaw_deg = ctrl_.roll_deg = 0.0;
+    }
     if (!launched_ && altitude() > 1.0) {
       launched_ = true;
     }

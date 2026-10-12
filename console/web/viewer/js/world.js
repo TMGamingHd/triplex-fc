@@ -245,6 +245,7 @@ export class World {
     const light = [T[0] * 0.9 + 0.1, T[1] * 0.9 + 0.1, T[2] * 0.9 + 0.1].map((x) => x * Math.max(0.12, Math.min(1.1, sun.dot(up) * 1.1 + 0.3)));
     this.smoke.update(dt, pose.tt, { alt: pose.alt + pose.cg, thrust: pose.thr > 0 ? Math.min(1, thrustFrac * 1.5) : 0, radius: ext.diameter * 0.6 }, this.camera, padM, light);
 
+    this._padFrame = { rel: padRel.clone(), q: padQ.clone() };                // (for the catch arms: where the pad is, and which way is up there)
     this.stepBodies(pose, rS, wall, ctx);
     this.stepDebris(pose, dt, rS, qs, axis);
     this.last.stg = pose.stg;
@@ -273,10 +274,23 @@ export class World {
       b.plumes.update(p.cgt || p.lnd ? { ...p, eng: [] } : p, wall, { glow: 1 });         // a stage in the arms or on the ground has its engines off
     }
     for (const [name, b] of [...this.bodies]) if (!seen.has(name)) { b.plumes.dispose(); this.nearScene.remove(b.holder); this.bodies.delete(name); }
-    // the catch pad's arms close on a stage that is held and open again when it is not (the stage is the one that has the pins: a body with `cgt`, or the main one)
-    if (this.catchPad) {
-      const held = (pose.cgt === 1) || (pose.others || []).some((o) => o.pose && o.pose.cgt === 1);
-      this.catchPad.setArms(held ? 1 : 0, this.dtLast || 0.016);
+    // the catch pad's arms close as a stage comes down to them, so that it lands on them: they are open while its pins are more than 60 m above the arms' top and closed when they are 8 m above it, and they
+    // are closed on a stage that is held (a body with `cgt`); the stage is the one that has the pins (`catch_pin_x_m`), seen from the pad's own frame
+    if (this.catchPad && this._padFrame) {
+      const cp = this.catchPad, pf = this._padFrame, upPad = new THREE.Vector3(0, 1, 0).applyQuaternion(pf.q);
+      const site = new THREE.Vector3(cp.structures.position.x, 0, cp.structures.position.z).applyQuaternion(pf.q);
+      let target = ((pose.cgt === 1) || (pose.others || []).some((o) => o.pose && o.pose.cgt === 1)) ? 1 : 0;
+      for (const o of pose.others || []) {
+        const b = this.bodies.get(o.name), pinX = b && b.spec && b.spec.stages[0] ? b.spec.stages[0].catch_pin_x_m : 0;
+        if (!b || !o.pose || !(pinX > 0) || o.pose.cgt === 1) continue;
+        const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(b.holder.quaternion);
+        const rel = b.holder.position.clone().sub(pf.rel).sub(site), hv = rel.dot(upPad);
+        const lateral = rel.clone().addScaledVector(upPad, -hv).length();
+        const pinH = hv + axis.dot(upPad) * (pinX - o.pose.cg);      // the pins' height above the pad's ground
+        const dh = pinH - cp.armTop;
+        if (lateral < 80 && dh < 60 && o.pose.spd < 400) target = Math.max(target, Math.max(0, Math.min(1, (60 - dh) / 52)));
+      }
+      cp.setArms(target, this.dtLast || 0.016);
     }
   }
 

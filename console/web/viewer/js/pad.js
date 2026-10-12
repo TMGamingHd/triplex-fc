@@ -162,6 +162,7 @@ export class Pad {
     // (a stage comes down between them), the launch pad's wide, as the arms of a tower that is not about to catch anything are.
     const armLen = tx - tw * 0.5, armH = Math.max(1.2, D * 0.3), armW = Math.max(1.3, D * 0.28);
     const armY = this.opts.armY ?? L * 0.74, top = armY - 0.3;
+    this.armTop = top;                                          // the height of the arms' top above the pad's ground, where the stage's pins come to rest
     const dark = new THREE.MeshStandardMaterial({ color: 0x4a4f56, metalness: 0.7, roughness: 0.5 });
     this.arms = [];
     for (const side of [-1, 1]) {
@@ -233,8 +234,8 @@ export class Pad {
   /** The arms toward the vehicle (1: closed on the pins) or away (0: open, swung out about their roots), moved `dt` seconds' worth at about 0.4 per second. */
   setArms(target, dt = 0.016) {
     if (!this.arms) return;
-    const step = Math.min(dt, 0.1) * 0.4;
-    this.armClose += Math.max(-step, Math.min(step, target - this.armClose));
+    const up = Math.min(dt, 0.1) * 1.2, down = Math.min(dt, 0.1) * 0.4;                // they close faster than they open: a stage is coming down on them
+    this.armClose += Math.max(-down, Math.min(up, target - this.armClose));
     const e = this.armClose * this.armClose * (3 - 2 * this.armClose);
     for (const a of this.arms) a.g.rotation.y = a.side * (1 - e) * this.armOpen;      // (an arm at +z swings toward +z as it opens)
   }
