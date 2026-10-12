@@ -2,7 +2,7 @@
 // Fly any vehicle with the real flight software: read a vehicle description (docs/design/VEHICLE_SPEC.md), design the pitch program and the gain schedule on its nominal flight, and close the
 // loop over it (the simulated vehicle, three flight functions with their IMU models, the real ACT logic: sim/vehicle/closed_loop.hpp). Reports what happened, and can write the whole flight
 // as a CSV for a plot.
-//   tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE] [--pose FILE] [--pose-hz N]
+//   tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE] [--pose FILE] [--pose-hz N] [--mission FILE] [--stage-seed N] [--expect-catch]
 // "reference" is the built-in reference vehicle of VEHICLE_SIM.md. --frames: frames of flight after T-zero (default: the design's flight time). --check: only read and validate the file (and print
 // what is in it), do not fly. --dump: write the vehicle back out as a normalised file (every field, in the order the format documents) and stop.
 #include <cstdio>
@@ -13,6 +13,7 @@
 
 #include "closed_loop.hpp"
 #include "spec_io.hpp"
+#include "stage_flier.hpp"
 
 namespace {
 
@@ -67,7 +68,7 @@ void describe(const sim::VehicleFile& v) {
 
 int main(int argc, char** argv) {
   if (argc < 2 || argv[1][0] == '-') {
-    std::fprintf(stderr, "usage: tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE] [--pose FILE] [--pose-hz N]\n");
+    std::fprintf(stderr, "usage: tfc_fly VEHICLE.json|reference [--frames N] [--pad FRAMES] [--sensors platform|vehicle] [--imu bench|ism330dhcx_typical|ism330dhcx_maximum] [--no-accel] [--csv FILE] [--every N] [--check] [--dump FILE] [--pose FILE] [--pose-hz N] [--mission FILE] [--stage-seed N] [--expect-catch]\n");
     return 2;
   }
   uint32_t frames = 0U;
@@ -80,6 +81,9 @@ int main(int argc, char** argv) {
   std::string csv;
   std::string dump;
   std::string pose;
+  std::string mission;   // --mission: a mission file whose plan for the stage the vehicle lets go flies that stage on (stage_flier.hpp)
+  bool expect_catch = false;  // --expect-catch (with --mission): exit 3 unless the stage that was flown on was caught by the tower
+  uint32_t stage_seed = 0U;   // --stage-seed: another realisation of the noise of the sensors of the stage that is flown on (with --mission)
   uint32_t pose_hz = 50U;
   for (int i = 2; i < argc; ++i) {
     const std::string a = argv[i];
@@ -105,6 +109,12 @@ int main(int argc, char** argv) {
       pose = argv[++i];
     } else if (a == "--pose-hz" && i + 1 < argc) {
       pose_hz = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+    } else if (a == "--mission" && i + 1 < argc) {
+      mission = argv[++i];
+    } else if (a == "--expect-catch") {
+      expect_catch = true;
+    } else if (a == "--stage-seed" && i + 1 < argc) {
+      stage_seed = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
     } else {
       std::fprintf(stderr, "unknown option %s\n", a.c_str());
       return 2;
@@ -152,6 +162,7 @@ int main(int argc, char** argv) {
   }
   lp.pad_frames = pad;
   lp.frames = frames != 0U ? frames : static_cast<uint32_t>(vf.plan.trajectory.t_end / 0.01);
+  sim::StageFlier stages;
   std::FILE* pose_file = nullptr;
   if (!pose.empty()) {  // the whole state for the 3D viewer (docs/design/VIEWER.md): the vehicle and the air first, then a pose every 1/pose_hz s
     if (pose_hz == 0U || pose_hz > 100U) {
@@ -166,7 +177,28 @@ int main(int argc, char** argv) {
     const sim::Vehicle6 first(vf.params, vf.scenario);
     std::fprintf(pose_file, "%s\n", sim::viewer_spec_json(vf, first).c_str());
     lp.pose_every = std::max<uint32_t>(1U, 100U / pose_hz);
-    lp.on_pose = [pose_file](const sim::Vehicle6& v, double t, const sim::PoseExtra& x) { std::fprintf(pose_file, "%s\n", sim::viewer_pose_json(v, t, x).c_str()); };
+    lp.on_pose = [pose_file, &stages](const sim::Vehicle6& v, double t, const sim::PoseExtra& x) {
+      sim::PoseExtra with = x;
+      with.others = stages.others(t);   // (empty without --mission or before a stage is let go)
+      std::fprintf(pose_file, "%s\n", sim::viewer_pose_json(v, t, with).c_str());
+    };
+  }
+  if (!mission.empty()) {
+    std::string why;
+    stages.set_seed(stage_seed);
+    if (!stages.load(mission, vf.scenario, why)) {
+      std::fprintf(stderr, "--mission %s: %s\n", mission.c_str(), why.c_str());
+      return 1;
+    }
+    if (pose_file != nullptr) {
+      std::printf("  the stages the vehicle lets go are flown on by %s\n", mission.c_str());
+    }
+    lp.on_frame = [&stages](sim::SimRunner& runner) {
+      for (const sim::Detached& d : runner.take_detached()) {
+        (void)stages.adopt(d, runner.vehicle().time());
+      }
+      stages.step();
+    };
   }
   std::vector<sim::TraceRow> trace;
   lp.trace = &trace;
@@ -231,5 +263,15 @@ int main(int argc, char** argv) {
   }
   const bool ok = r.finite && !r.crashed && r.liftoff_frame != 0xFFFFFFFFU && r.safe_frames == 0U;
   std::printf("  verdict: %s\n", ok ? "flown (no crash, no Safe, finite)" : "NOT a clean flight (see above)");
+  if (!mission.empty()) {
+    bool caught = false;
+    for (std::size_t i = 0; i < stages.bodies(); ++i) {
+      caught = caught || stages.world().body(i).veh.caught();
+    }
+    std::printf("  the stage flown on by %s: %s\n", mission.c_str(), stages.bodies() == 0U ? "none was let go" : (caught ? "caught by the tower" : "not caught"));
+    if (expect_catch && !caught) {
+      return 3;
+    }
+  }
   return ok ? 0 : 1;
 }

@@ -217,20 +217,21 @@ TFC_TEST(viewer_pose_marks_a_failed_engine) {
   CHECK(j.find("eng")->items[2].number > 0.9);
 }
 
-TFC_TEST(viewer_pose_carries_the_deflection_of_every_surface_and_the_starship_has_three_folded_grid_fins_and_four_flaps_standing_out) {
+TFC_TEST(viewer_pose_carries_the_deflection_of_every_surface_and_the_starship_has_two_folded_grid_fins_and_four_flaps_standing_out) {
   sim::VehicleFile vf = load("starship.json");
-  CHECK(vf.params.spec.surfaces.size() == 7U);
+  CHECK(vf.params.spec.surfaces.size() == 6U);
   int aft = 0;
   int fwd = 0;
   int fins = 0;
   for (const sim::SurfaceSpec& f : vf.params.spec.surfaces) {
-    CHECK(f.channel < 0);                                                  // none is commanded by this file
     if (f.kind == sim::SurfaceKind::GridFin) {
+      CHECK(f.channel >= 0 && f.channel < 2);                              // the booster's computers command them (when something flies the return)
       CHECK(f.stage == 0);                                                 // the booster's
       CHECK(!f.deployed);                                                  // folded against the skin for the climb
       ++fins;
       continue;
     }
+    CHECK(f.channel < 0);                                                  // none of the flaps is commanded by this file
     CHECK(f.kind == sim::SurfaceKind::Flap);
     CHECK(f.axial_hinge);                                                  // hinged along the body's axis
     CHECK(f.stage == 1);                                                   // the ship's
@@ -239,7 +240,7 @@ TFC_TEST(viewer_pose_carries_the_deflection_of_every_surface_and_the_starship_ha
     CHECK(std::fabs((f.chord * f.span) - f.area) < 0.05 * f.area);         // the plate is chord x span
     (f.x_hinge < 90.0 ? aft : fwd) += 1;
   }
-  CHECK(fins == 3);
+  CHECK(fins == 2);                                                        // one for each side the tower takes the stage by
   CHECK(aft == 2 && fwd == 2);                                             // two large flaps at the tail, two small ones near the nose
   CHECK(vf.params.spec.stages[0].catch_pin_x > 0.0);                       // where the arms take the booster
   sim::Vehicle6 veh(vf.params, vf.scenario);
@@ -247,17 +248,17 @@ TFC_TEST(viewer_pose_carries_the_deflection_of_every_surface_and_the_starship_ha
   std::string err;
   CHECK(sim::parse_json(sim::viewer_spec_json(vf, veh), spec, err));
   const sim::Json& surf = get(get(spec, "vehicle"), "surfaces");
-  CHECK(surf.items.size() == 7U);                                          // the viewer is given the table it draws them from
-  CHECK(get(surf.items[3], "axial_hinge").boolean);                        // and how the flaps hinge
+  CHECK(surf.items.size() == 6U);                                          // the viewer is given the table it draws them from
+  CHECK(get(surf.items[2], "axial_hinge").boolean);                        // and how the flaps hinge
   sim::PoseExtra x;
   sim::Json j;
   CHECK(sim::parse_json(sim::viewer_pose_json(veh, 0.0, x), j, err));
-  CHECK(get(j, "surf").items.size() == 7U);
-  for (std::size_t i = 3U; i < 7U; ++i) {
+  CHECK(get(j, "surf").items.size() == 6U);
+  for (std::size_t i = 2U; i < 6U; ++i) {
     CHECK(near_abs(get(j, "surf").items[i].number, 90.0, 1e-9));
   }
   CHECK(get(j, "sdep").type == sim::Json::Type::Number);
-  CHECK(static_cast<unsigned>(get(j, "sdep").number) == 0x78U);            // the four flaps (surfaces 3 to 6) are in the stream, the three folded fins (0 to 2) are not
+  CHECK(static_cast<unsigned>(get(j, "sdep").number) == 0x3CU);            // the four flaps (surfaces 2 to 5) are in the stream, the two folded fins (0 and 1) are not
   // a vehicle without surfaces says nothing of them
   sim::VehicleFile ref = load("reference.json");
   sim::Vehicle6 rv(ref.params, ref.scenario);

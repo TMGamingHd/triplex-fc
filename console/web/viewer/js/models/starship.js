@@ -8,7 +8,7 @@ import { lathe, canvasTexture, outline, tileTextures } from './common.js';
 
 const TAU = Math.PI * 2;
 
-/** The parts of the dressing that are a choice and not the vehicle file's: Block 3 as reported (three grid fins, each 50 % larger in area than Block 2's, set lower on the booster) and Block 2 before it.
+/** The parts of the dressing that are a choice and not the vehicle file's: Block 3 as reported (two grid fins, each 50 % larger in area than Block 2's, set lower on the booster) and Block 2 before it.
  *  finScale is linear (the fin of Block 2 is 2.2 m by 3.4 m here), finDrop the metres from the bottom of the hot-stage ring to the top of the fin. These are illustrations of public descriptions, not drawings. */
 export const DRESS = {
   v3: { name: 'Block 3 (V3)', fins: 3, finScale: 1.22, finDrop: 5.0, ringHeight: 3.4, pins: true },
@@ -78,7 +78,7 @@ export function decorateStarship(model) {
     const g = ship.group;
     const x0 = ship.spec.x_start_m, tubeEnd = (ship.spec.sections || []).filter((s) => s.kind === 'tube').reduce((a, s) => Math.max(a, s.x_start_m + s.length_m), x0 + 20);
     const bellyHalf = (200 * Math.PI) / 360;              // tiles cover 200 degrees of the tube, centred on the belly
-    const belly = Math.PI / 2;                            // the belly faces model +Z (the body's y axis)
+    const belly = 0;                                      // the belly (the heat shield, the side that meets the air in the entry) faces model +Z: the body's +y, azimuth 0 of the surfaces table (lathe's phi 0 is +Z, phi pi/2 is +X: the tiles were 90 degrees away, on the flaps' side)
     const tileMat = tileMaterial();
     const tubeProf = outline((ship.spec.sections || []).filter((s) => s.kind !== 'nose'));
     const noseProf = outline((ship.spec.sections || []).filter((s) => s.kind === 'nose'));

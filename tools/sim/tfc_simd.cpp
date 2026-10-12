@@ -5,11 +5,12 @@
 // flight computers' frame count. A run starts at the first SYNC heard and starts over if the frame number goes backwards (the sync master was reset).
 // With --pico PORT it also streams the vehicle's tilts to the Pico that drives the platform (docs/design/PICO.md): one platform frame per simulated frame, so 100 Hz.
 // With --hold the vehicle stands clamped on the pad until the mission frame in SYNC passes T-zero (docs/design/LAUNCH_SEQUENCE.md), then flies; a simulator that starts after T-zero joins the flight in progress.
-//   tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--telemetry PORT] [--viewer PORT] [--viewer-hz N] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
+//   tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--telemetry PORT] [--viewer PORT] [--viewer-hz N] [--mission FILE] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]
 // With --telemetry PORT it also sends the vehicle's true state, 10 times a second, as one JSON object per UDP datagram to 127.0.0.1:PORT (the flight console, docs/design/CONSOLE.md): what the bus does not
 // carry (the distance downrange, the stages, the thrust, the program the flight computers follow). It is an output only: nothing the flight computers do depends on it, and a datagram nobody reads is dropped.
 // With --viewer PORT it also sends the vehicle's whole state to the 3D viewer (docs/design/VIEWER.md): a "pose" (position, attitude, air, forces, engines, tanks) --viewer-hz times a second (default 50), and the
 // "spec" (the vehicle as the simulator reads it, and the air and wind it flies through) once at the start and every two seconds after, because a datagram nobody was listening for is lost. Same rules as --telemetry.
+// --mission FILE flies the stages that the vehicle lets go on the plans in FILE (a mission file, vehicles/missions/*.json): the booster's boost-back, entry and catch, as the viewer's `others` (StageFlier below).
 // --vehicle flies the vehicle described in FILE (docs/design/VEHICLE_SPEC.md) instead of the reference vehicle; give it before the options that adjust the scenario. The flight computers carry the tables
 // they were built with, which are the reference vehicle's: for another vehicle regenerate them (tfc_gen_tables --vehicle FILE firmware/app/src/flight_tables.hpp) and rebuild the firmware.
 #include <fcntl.h>
@@ -32,10 +33,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "design.hpp"
 #include "runner.hpp"
+#include "stage_flier.hpp"
 #include "spec_io.hpp"
 #include "viewer_state.hpp"
 #include "tfc/pico_link.hpp"
@@ -175,8 +179,22 @@ void send_datagram(const Telemetry& t, const std::string& text) {
   (void)::sendto(t.fd, text.data(), text.size(), MSG_DONTWAIT, reinterpret_cast<const sockaddr*>(&t.to), sizeof t.to);
 }
 
+// The stages the vehicle lets go, flown on by the host (sim/vehicle/stage_flier.hpp): with --mission FILE the booster's boost-back, entry and catch can be followed from the live rig. They are in-process
+// replicas of the flight computers, not firmware, and the stage's pose is an output only: nothing on the bus depends on it.
+void fly_stages(sim::StageFlier& stages, sim::SimRunner& runner) {
+  if (!stages.enabled()) {
+    return;
+  }
+  for (const sim::Detached& d : runner.take_detached()) {
+    if (stages.adopt(d, runner.vehicle().time())) {
+      std::fprintf(stderr, "tfc_simd: the stage \"%s\" was let go at t = %.1f s and is flown on by the mission file's plan\n", d.spec.stages.empty() ? "?" : d.spec.stages[0].name.c_str(), runner.vehicle().time());
+    }
+  }
+  stages.step();
+}
+
 // The 3D viewer's pose: the vehicle's whole state (viewer_state.hpp) with the program the flight computers follow and the command ACT sent.
-std::string viewer_pose(const sim::SimRunner& runner, const tfc::ActFrame& act) {
+std::string viewer_pose(const sim::SimRunner& runner, const tfc::ActFrame& act, const std::string& others) {
   sim::PoseExtra x;
   const tfc::Reference ref = runner.tables().guidance.at(runner.flight_frame());
   x.ref_pitch_deg = static_cast<double>(ref.tilt_y_deg);
@@ -186,6 +204,7 @@ std::string viewer_pose(const sim::SimRunner& runner, const tfc::ActFrame& act) 
   x.act_mode = static_cast<int>(act.state);
   x.clamped = runner.clamped();
   x.frame = runner.frame();
+  x.others = others;
   return sim::viewer_pose_json(runner.vehicle(), static_cast<double>(runner.flight_frame()) * 0.01, x);
 }
 
@@ -213,6 +232,7 @@ int main(int argc, char** argv) {
   sim::RunnerConfig cfg;
   uint32_t max_frames = 0U;
   std::string pico_port;
+  std::string mission_file;   // --mission: fly the stages that are let go on this file's plans (StageFlier)
   int telemetry_port = 0;
   int viewer_port = 0;
   unsigned viewer_hz = 50U;
@@ -252,6 +272,8 @@ int main(int argc, char** argv) {
       pico_port = next();
     } else if (a == "--telemetry") {
       telemetry_port = std::atoi(next().c_str());
+    } else if (a == "--mission") {
+      mission_file = next();
     } else if (a == "--viewer") {
       viewer_port = std::atoi(next().c_str());
     } else if (a == "--viewer-hz") {
@@ -280,7 +302,7 @@ int main(int argc, char** argv) {
     } else if (a == "--quiet") {
       quiet = true;
     } else {
-      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--telemetry PORT] [--viewer PORT] [--viewer-hz N] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
+      std::fprintf(stderr, "usage: tfc_simd [--iface vcan0] [--vehicle FILE] [--hold] [--pico PORT] [--telemetry PORT] [--viewer PORT] [--viewer-hz N] [--mission FILE] [--vehicle-true] [--wind-scale X] [--gust T,DUR,PEAK_MS] [--engine-out T[,N]] [--cg-shift M] [--frames N] [--quiet]\n");
       return 2;
     }
   }
@@ -308,6 +330,16 @@ int main(int argc, char** argv) {
   std::signal(SIGTERM, on_signal);
 
   sim::SimRunner runner(cfg);
+  sim::StageFlier stages;
+  if (!mission_file.empty()) {
+    std::string why;
+    std::fprintf(stderr, "tfc_simd: designing the returning stage's mission from %s (about 15 s)\n", mission_file.c_str());
+    if (!stages.load(mission_file, cfg.scenario, why)) {
+      std::fprintf(stderr, "tfc_simd: --mission %s: %s\n", mission_file.c_str(), why.c_str());
+      return 1;
+    }
+    vehicle_file.mission = stages.file().mission;   // the viewer draws the catch tower where the mission puts it
+  }
   vehicle_file.params = cfg.params;        // the scenario options (--wind-scale and the rest) are part of the world the viewer draws
   vehicle_file.scenario = cfg.scenario;
   const std::string viewer_spec = viewer.fd >= 0 ? sim::viewer_spec_json(vehicle_file, runner.vehicle()) : std::string();
@@ -353,6 +385,7 @@ int main(int argc, char** argv) {
         } else {
           send_all(sock, runner.start(k), tx_errors);
         }
+        stages.reset();
         started = true;
         first_frame = k;
         acted = 0xFFFFFFFFU;
@@ -368,6 +401,7 @@ int main(int argc, char** argv) {
       while (runner.frame() < k) {
         const uint32_t m = runner.frame();
         send_all(sock, runner.end_of_frame(m, nullptr), tx_errors);
+        fly_stages(stages, runner);
         if (pico >= 0) {
           send_platform(pico, static_cast<uint8_t>(runner.frame()), runner.vehicle().tilts(), pico_drops);
         }
@@ -383,6 +417,7 @@ int main(int argc, char** argv) {
       acted = k;
       last_act_state = d.act.state;
       send_all(sock, runner.end_of_frame(k, &d.act), tx_errors);
+      fly_stages(stages, runner);
       if (pico >= 0) {
         send_platform(pico, static_cast<uint8_t>(runner.frame()), runner.vehicle().tilts(), pico_drops);
       }
@@ -394,7 +429,7 @@ int main(int argc, char** argv) {
           send_datagram(viewer, viewer_spec);
           last_spec_frame = runner.frame();
         }
-        send_datagram(viewer, viewer_pose(runner, d.act));
+        send_datagram(viewer, viewer_pose(runner, d.act, stages.others(static_cast<double>(runner.flight_frame()) * 0.01)));
       }
       if (!quiet && runner.frame() % 100U == 0U) {
         const sim::Tilts t = runner.vehicle().tilts();

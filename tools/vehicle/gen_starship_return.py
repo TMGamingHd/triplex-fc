@@ -34,6 +34,7 @@ SHIP = {
     "main_propellant_kg": 40000.0,
     "pin_x_m": 40.0,            # the ship's catch pins, from its aft end
     "max_time_s": 7200.0,
+    "roll_deg": 12.0,           # the small roll of the climb: out to this many degrees and back (starting at 10 s, over 40 s); my estimate: launchers roll to their azimuth after the tower, nothing Starship-specific was found
 }
 
 # ---- the vehicle ----
@@ -88,7 +89,7 @@ def plant():
             "sections": [{"kind": "tube", "x_start_m": 72.3, "length_m": 36.0, "d_aft_m": 9.0, "d_fore_m": 9.0}, {"kind": "nose", "x_start_m": 108.3, "length_m": 16.1, "d_aft_m": 9.0, "d_fore_m": 0, "shape": "ogive"}],
             "guided": True, "catch_pin_x_m": SHIP["pin_x_m"], "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
     surfaces = [{"name": "grid fin %d" % (i + 1), "stage": 0, "kind": "grid_fin", "x_hinge_m": 62.5, "azimuth_deg": az, "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68,
-                 "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": i, "deployed": False} for i, az in enumerate((0.0, 96.0, 264.0))]   # three in a T (11 Oct 2026, the owner's description of the V3 booster): one on the spine, one on each flank about 96 degrees round, the leeward side open
+                 "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": i, "deployed": False} for i, az in enumerate((96.0, 264.0))]   # two (11 Oct 2026, the owner: one for each side the tower takes the stage by): one on each flank, about 96 degrees round from the spine
     # the ship's four flaps, as in vehicles/starship.json: hinged along the axis and standing straight out (90) for the climb, edge-on to the stream. They take no command until the entry deploys them (deployed false:
     # stowed at 90); then channels 0 to 3 move them about the mixer's trim (the ship's own mixers; the booster's grid fins use channels 0 to 2 of their own body)
     for ch, (nm, x, az, area, chord, span, cdir) in enumerate((("aft flap port", 73.6, 80, 36.9, 4.1, 9.0, 1), ("aft flap starboard", 73.6, 280, 36.9, 4.1, 9.0, -1), ("forward flap port", 102.3, 112, 16.2, 2.7, 6.0, 1), ("forward flap starboard", 102.3, 248, 16.2, 2.7, 6.0, -1))):
@@ -99,6 +100,45 @@ def plant():
             "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "ideal_roll_control": False, "landing_model": True, "max_substep_s": 0.004},
             "aero": {"diameter_m": 9.0, "roughness": 1.2, "full_regime": True, "nose_radius_m": 0.4},
             "stages": [booster, ship], "engines": engines, "payloads": [{"name": "payload", "mass_kg": 37500, "x_m": 112}], "surfaces": surfaces}
+
+
+# ---- the rig's vehicle: the same plant, flown by firmware that has no mission ----
+# The pitch the mission's own ship flew from hot staging to its cut-off (the angle of the long axis from the launch vertical, PEG's linear tangent steering), raised by 16 degrees and held under 89: the rig's
+# firmware measures the tilt as a pitch angle, which is singular at 90 degrees from the vertical, so that it cannot follow the mission's 111; the ship then reaches 7.7 km/s but not a circular orbit (a perigee of
+# about 64 km and an apogee of about 650 km, measured with tfc_fly).
+MISSION_SHIP_PITCH = [(149, 21.4), (159, 26.5), (169, 28.1), (179, 30.1), (189, 32.6), (199, 35.1), (209, 37.7), (219, 40.4), (229, 43.1), (239, 45.8), (249, 48.5), (259, 51.3), (269, 54.0), (279, 56.7),
+                      (289, 59.4), (299, 62.2), (309, 64.9), (319, 67.7), (329, 70.5), (339, 73.2), (349, 76.1), (359, 78.9), (369, 81.7), (379, 84.5), (389, 87.3), (399, 90.3), (409, 93.1), (419, 96.0),
+                      (429, 99.0), (439, 102.0), (449, 104.9), (459, 108.0), (469, 111.4), (474, 112.5), (491, 104.0)]
+RIG_PROGRAM = [[0, 0], [10, 0], [30, 15], [60, 30], [100, 45], [130, 56], [134, 56]] + [[t, round(min(a + 16.0, 89.0), 1)] for t, a in MISSION_SHIP_PITCH]
+RIG_SHIP_CUTOFF_S = 470
+
+
+def rig_vehicle():
+    """vehicles/starship.json: the mission's plant, flown by the rig's firmware and by tfc_fly, which have no mission: the stages fly their schedules (no guided engines), the booster burns to the end of the booster
+    burn of the mission (132 s: its engines cut off) and is let go at 134 s, the ship lights at hot staging and follows the mission's own ship pitch (less the part the firmware cannot fly: MISSION_SHIP_PITCH) to its cut-off at 470 s. The mission's own program and throttle are
+    used for the booster so that the stack comes to the separation in the state the mission's stage plan was designed for (tfc_simd --mission and tfc_fly --mission fly that plan on the stage let go)."""
+    v = plant()
+    v["name"] = "starship-v3-class"
+    v["description"] = "Starship V3 (Block 3) class: two stages, 9 m diameter, 124 m, about 5.4 kt at lift-off, 33 Raptor 3 + 6 Raptor 3, methane and liquid oxygen, hot staging. Public numbers and my estimates, not SpaceX data."
+    v["vehicle"] = {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "landing_model": True}
+    v["engines"] = [e for e in v["engines"] if "control" not in e]               # (the attitude thrusters are the mission's: the rig's computers command the gimbal)
+    for st in v["stages"]:
+        st.pop("guided", None)
+    for sf in v["surfaces"]:
+        if sf["kind"] == "flap":
+            sf["channel"] = -1          # nothing commands the flaps here: they stand out (stow_deg 90) as in the climb
+            sf.pop("deployed", None)
+    booster, ship = v["stages"]
+    booster["separate_time_s"] = 134.0
+    booster["throttle"] = [[0, 1.0], [35, 1.0], [48, 0.78], [85, 0.78], [100, 1.0]]
+    ship["ignite_time_s"] = 132.6
+    ship["throttle"] = [[0, 1.0]]
+    for e in v["engines"]:
+        e.pop("group", None)
+        e.pop("min_throttle", None)
+        e["cutoff_time_s"] = 132.0 if e["stage"] == 0 else RIG_SHIP_CUTOFF_S
+    v["design"] = {"t_end_s": 491, "program": RIG_PROGRAM, "gains": {"every_s": 0, "wn": 0.5, "zeta": 0.8, "ki_over_kp": 0.15, "b_min": 0.02}}
+    return v
 
 
 # ---- the mission ----
@@ -127,11 +167,12 @@ def mission():
         "limits": {"command_deg": 8, "integrator_deg": 6, "slew_deg_per_frame": 0.6},
         "design": {"wn": 0.5, "zeta": 0.8, "ki_over_kp": 0.1, "kp_max": 80, "sample_s": 1, "max_time_s": SHIP["max_time_s"] if SHIP["with_return"] else 900, "tail_s": 30},
         "mixers": [{"name": "tvc", "gimbal": True, "roll_thrusters": True}, {"name": "rcs", "gimbal": True, "roll_thrusters": True},
-                   {"name": "fins", "gimbal": False, "roll_thrusters": False, "surfaces": [0, 1, 2]}, {"name": "fins+rcs", "gimbal": True, "roll_thrusters": True, "surfaces": [0, 1, 2]},
+                   {"name": "fins", "gimbal": False, "roll_thrusters": False, "surfaces": [0, 1]}, {"name": "fins+rcs", "gimbal": True, "roll_thrusters": True, "surfaces": [0, 1]},
                    ] + ([{"name": "flaps+rcs", "gimbal": True, "roll_thrusters": True, "surfaces": [0, 1, 2, 3], "trim_deg": [SHIP["trim_deg"]] * 4}] if SHIP["with_return"] else []),
         "main": [
             {"name": "booster burn", "kind": "program", "end": {"mass_below_kg": ship_wet + booster_dry + 650000}, "groups": [0, 1, 2, 3, 4], "mixer": 0, "throttle": 1.0,
-             "throttle_track": [[0, 1.0], [35, 1.0], [48, 0.78], [85, 0.78], [100, 1.0]], "slew_dps": 5, "program": [[0, 0], [10, 0], [30, 15], [60, 30], [100, 45], [130, 56]]},
+             "throttle_track": [[0, 1.0], [35, 1.0], [48, 0.78], [85, 0.78], [100, 1.0]], "slew_dps": 5, "program": [[0, 0], [10, 0], [30, 15], [60, 30], [100, 45], [130, 56]],
+             "roll_deg": SHIP["roll_deg"], "roll_start_s": 10, "roll_duration_s": 40},
             {"name": "MECO", "kind": "coast", "hold": "inertial", "end": {"time_s": 0.6}, "groups": [], "mixer": 0, "slew_dps": 5},
             {"name": "hot staging", "kind": "coast", "hold": "inertial", "end": {"time_s": 1.4}, "groups": [5, 6, 7], "mixer": 0, "throttle": 1.0, "slew_dps": 5},
             {"name": "separation", "kind": "coast", "hold": "inertial", "end": {"time_s": 1.0}, "groups": [5, 6, 7], "events": ["separate"], "mixer": 0, "throttle": 1.0, "mass_set_kg": ship_wet - 6000, "slew_dps": 5},
@@ -164,14 +205,25 @@ def dump(x, indent=0, width=170) -> str:
 
 
 HEADER = """// The Starship V3 class stack WITH A MISSION IN THE FILE: the flight computers fly all of it (docs/design/GNC.md, docs/design/RECOVERY.md). The ascent follows a pitch program; the booster is let go at hot staging, flips,
-// burns back, falls under three grid fins, lights for the landing and is caught by the tower's arms; the ship's computers steer it to a 250 km circular orbit with PEG (a predictor-corrector burn guidance).
+// burns back, falls under two grid fins (one for each side the tower takes it by), lights for the landing and is caught by the tower's arms; the ship's computers steer it to a 250 km circular orbit with PEG (a predictor-corrector burn guidance).
 // Built from PUBLICLY REPORTED numbers (9-10 Oct 2026: Super Heavy 72.3 m, 9 m, 33 Raptor 3, 80.8 MN at sea level, 3,650 t of propellant; the ship's six Raptor, three sea-level and three vacuum, 1,600 t; Flight 12 of
 // 22 May 2026: max-Q 0:45, MECO 2:22, hot staging 2:24, boost-back 2:30). NOT SpaceX data and not a model of any flight article: the dry masses (275 t, 100 t), the vacuum Raptor's thrust, the tank split, the
 // grid fins' size, the pitch program and every number of the mission below are my estimates or my tuning. Generated by tools/vehicle/gen_starship_return.py; edit the script, not this file.
 //   build/rel/tfc_mission vehicles/missions/starship_return.json            # design the mission, fly it on the three flight computers, print what happened
 """
+HEADER_RIG = """// The Starship V3 (Block 3) class stack, flown by the rig's firmware and by tfc_fly, which have a pitch program and no mission: GENERATED with the mission files from the same plant by
+// tools/vehicle/gen_starship_return.py (edit the script, not this file). Built from PUBLICLY REPORTED numbers (9-10 Oct 2026: Super Heavy 72.3 m with 33 Raptor 3, ship about 52 m with six Raptor 3, stack 124.4 m;
+// hot staging at T+144 s on Flight 12, 22 May 2026). NOT SpaceX data and not a model of any flight article: the dry masses, the vacuum engine's thrust, the tank split, the grid fins and flaps and the pitch
+// program are my estimates (docs/design/VIEWER.md section 7 lists each number and where it comes from). The booster burns for 132 s on the mission's program and throttle, is let go at 134 s with its return
+// propellant, and the ship follows the pitch program to its cut-off at 470 s (7.7 km/s, a perigee of about 64 km and an apogee of about 650 km: the firmware cannot tilt past 90 degrees, so it is not a circular orbit). With `tfc_simd --mission vehicles/missions/starship_return.json` (the console passes it) or
+// `tfc_fly --mission` the stage let go is flown on by that mission's plan for it, so that its boost-back, entry and catch can be followed. Fly it with a pad phase long enough for the flight computers to calibrate
+// their gyros (10 s of rest; the examples use 1500 frames, 15 s):
+//   build/host/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 1500 --pose starship.pose.jsonl [--mission vehicles/missions/starship_return.json]
+"""
+
+
 HEADER_SHIP = """// The Starship V3 class stack WITH A MISSION IN THE FILE: the flight computers fly all of it (docs/design/GNC.md, docs/design/RECOVERY.md). The ascent follows a pitch program; the booster is let go at hot staging, flips,
-// burns back, falls under three grid fins, lights for the landing and is caught by the tower's arms; the ship's computers steer it to a 250 km circular orbit with PEG (a predictor-corrector burn guidance), then, in THIS file, bring it home: a coast to the right place, a short deorbit burn, a belly entry on the four flaps
+// burns back, falls under two grid fins (one for each side the tower takes it by), lights for the landing and is caught by the tower's arms; the ship's computers steer it to a 250 km circular orbit with PEG (a predictor-corrector burn guidance), then, in THIS file, bring it home: a coast to the right place, a short deorbit burn, a belly entry on the four flaps
 // (held at their trim and steered about it, the angle of attack and a bank steering the point where it would come down) and, at 6 km, the landing burn. EXPERIMENTAL: the entry guidance predicts without lift, so the ship comes down
 // tens of kilometres from the tower (docs/design/GNC.md section 11 says how far and why); the flip and the ship's catch are NOT finished. starship_return.json is the mission that is.
 // Built from PUBLICLY REPORTED numbers (9-10 Oct 2026: Super Heavy 72.3 m, 9 m, 33 Raptor 3, 80.8 MN at sea level, 3,650 t of propellant; the ship's six Raptor, three sea-level and three vacuum, 1,600 t; Flight 12 of
@@ -185,6 +237,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=str(ROOT / "vehicles" / "missions" / "starship_return.json"))
     ap.add_argument("--ship-out", default=str(ROOT / "vehicles" / "missions" / "starship_ship_return.json"), help="the experimental mission in which the ship also deorbits and enters (empty: not written)")
+    ap.add_argument("--rig-out", default=str(ROOT / "vehicles" / "starship.json"), help="the vehicle the rig and tfc_fly fly (empty: not written)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="override a number of the ship's return (SHIP in this script), for scanning")
     args = ap.parse_args()
     for kv in args.set:
@@ -199,6 +252,8 @@ def main() -> int:
         v = plant()
         v["mission"] = mission()
         Path(path).write_text((HEADER_SHIP if with_return else HEADER) + dump(v) + "\n")
+    if args.rig_out:
+        Path(args.rig_out).write_text(HEADER_RIG + dump(rig_vehicle()) + "\n")
     return 0
 
 

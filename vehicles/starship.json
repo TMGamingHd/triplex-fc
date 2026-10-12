@@ -1,61 +1,570 @@
-// A two-stage fully reusable super-heavy launcher of the Starship V3 (Block 3) class, built from PUBLICLY REPORTED numbers (9 Oct 2026: Super Heavy 72.3 m with 33 Raptor 3 of 280 tf; ship about 52 m with six
-// Raptor 3, three sea-level and three vacuum; stack 124.4 m; about 3,400 t of propellant in the booster and 1,600 t in the ship; hot staging at T+144 s on Flight 12, 22 May 2026). It is NOT SpaceX data and not a
-// model of any flight article: every dry mass, the vacuum engine's thrust, the tank split and the pitch program are my estimates (docs/design/VIEWER.md section 7 lists each number and where it comes from), so that
-// the simulator and the 3D viewer have a vehicle of that class to fly. Nothing in the project's claims depends on its numbers. docs/design/VEHICLE_SPEC.md says what every field means.
-// Booster: 33 engines of 2.746 MN at sea level (280 tf; thrust_vac = sea-level thrust + 101325 Pa x exit area), 13 of them on the gimbal (the inner three and the ring of ten), the outer 20 fixed. Ship: three
-// sea-level engines that gimbal and three vacuum engines (larger nozzle, higher Isp) that gimbal too. Fly it with the vehicle's own sensors, as the other large vehicles.
-// The ascent follows a pitch program (design.program: the angle of the long axis from the vertical against time) shaped like a heavy launcher's: vertical for 10 s, then tipping over to 64 degrees at staging and
-// 85 degrees (nearly horizontal) at the ship's cut-off at 491 s, the suborbital trajectory of Flight 12 and not an orbit. Fly it with a pad phase long enough for the flight computers to calibrate their gyros
-// (10 s of rest; the project's examples use 1500 frames, 15 s): with 300 frames the gyro bias is not removed and the yaw drifts to about 10 degrees by the end, which is the sensor's bias and not the vehicle's.
-//   build/host/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 1500 --pose starship.pose.jsonl
+// The Starship V3 (Block 3) class stack, flown by the rig's firmware and by tfc_fly, which have a pitch program and no mission: GENERATED with the mission files from the same plant by
+// tools/vehicle/gen_starship_return.py (edit the script, not this file). Built from PUBLICLY REPORTED numbers (9-10 Oct 2026: Super Heavy 72.3 m with 33 Raptor 3, ship about 52 m with six Raptor 3, stack 124.4 m;
+// hot staging at T+144 s on Flight 12, 22 May 2026). NOT SpaceX data and not a model of any flight article: the dry masses, the vacuum engine's thrust, the tank split, the grid fins and flaps and the pitch
+// program are my estimates (docs/design/VIEWER.md section 7 lists each number and where it comes from). The booster burns for 132 s on the mission's program and throttle, is let go at 134 s with its return
+// propellant, and the ship follows the pitch program to its cut-off at 470 s (7.7 km/s, a perigee of about 64 km and an apogee of about 650 km: the firmware cannot tilt past 90 degrees, so it is not a circular orbit). With `tfc_simd --mission vehicles/missions/starship_return.json` (the console passes it) or
+// `tfc_fly --mission` the stage let go is flown on by that mission's plan for it, so that its boost-back, entry and catch can be followed. Fly it with a pad phase long enough for the flight computers to calibrate
+// their gyros (10 s of rest; the examples use 1500 frames, 15 s):
+//   build/host/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 1500 --pose starship.pose.jsonl [--mission vehicles/missions/starship_return.json]
 {
   "name": "starship-v3-class",
   "description": "Starship V3 (Block 3) class: two stages, 9 m diameter, 124 m, about 5.4 kt at lift-off, 33 Raptor 3 + 6 Raptor 3, methane and liquid oxygen, hot staging. Public numbers and my estimates, not SpaceX data.",
-  "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08},
-  "aero": {"diameter_m": 9.0, "roughness": 1.2},
+  "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "landing_model": true},
+  "aero": {"diameter_m": 9.0, "roughness": 1.2, "full_regime": true, "nose_radius_m": 0.4},
   "stages": [
-    {"name": "booster", "dry_mass_kg": 220000, "x_start_m": 0, "length_m": 72.3, "radius_m": 4.5, "inertia_factor": 0.55, "catch_pin_x_m": 61.0, "x_cg_dry_m": 25,
-     "tanks": [
-       {"propellant_kg": 748000, "x_bottom_m": 3.0, "radius_m": 4.4, "density_kg_m3": 424},       // methane, low (22 % of the propellant: oxidiser to fuel 3.55)
-       {"propellant_kg": 2652000, "x_bottom_m": 32.5, "radius_m": 4.4, "density_kg_m3": 1141}     // liquid oxygen, above it
-     ],
-     "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 72.3, "d_aft_m": 9.0, "d_fore_m": 9.0}],
-     "separate_on_burnout": true, "separate_delay_s": 2.0, "separation_dv_ms": 1.5,
-     "throttle": [[0, 0.98], [38, 0.98], [52, 0.78], [85, 0.78], [100, 0.98]]},   // down through max-Q (45 s on Flight 12)
-    {"name": "ship", "dry_mass_kg": 200000, "x_start_m": 72.3, "length_m": 52.1, "radius_m": 4.5, "inertia_factor": 0.55, "x_cg_dry_m": 93.5,
-     "tanks": [
-       {"propellant_kg": 352000, "x_bottom_m": 76.3, "radius_m": 4.4, "density_kg_m3": 424},
-       {"propellant_kg": 1248000, "x_bottom_m": 90.4, "radius_m": 4.4, "density_kg_m3": 1141}
-     ],
-     "sections": [{"kind": "tube", "x_start_m": 72.3, "length_m": 36.0, "d_aft_m": 9.0, "d_fore_m": 9.0},
-                  {"kind": "nose", "x_start_m": 108.3, "length_m": 16.1, "d_aft_m": 9.0, "d_fore_m": 0, "shape": "ogive"}],
-     "ignite_time_s": 142.4, "throttle": [[0, 0.85]], "gimbal_limit_deg": 6, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08}
+    {
+      "name": "booster",
+      "dry_mass_kg": 275000,
+      "x_start_m": 0,
+      "length_m": 72.3,
+      "radius_m": 4.5,
+      "inertia_factor": 0.55,
+      "x_cg_dry_m": 28,
+      "tanks": [
+        {"propellant_kg": 802000, "x_bottom_m": 2.0, "radius_m": 4.5, "density_kg_m3": 424},
+        {"propellant_kg": 2848000, "x_bottom_m": 32.0, "radius_m": 4.5, "density_kg_m3": 1141}
+      ],
+      "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 72.3, "d_aft_m": 9.0, "d_fore_m": 9.0}],
+      "separation_dv_ms": 1.5,
+      "catch_pin_x_m": 61.0,
+      "gimbal_limit_deg": 8,
+      "gimbal_rate_dps": 15,
+      "gimbal_lag_s": 0.08,
+      "separate_time_s": 134.0,
+      "throttle": [[0, 1.0], [35, 1.0], [48, 0.78], [85, 0.78], [100, 1.0]]
+    },
+    {
+      "name": "ship",
+      "dry_mass_kg": 100000,
+      "x_start_m": 72.3,
+      "length_m": 52.1,
+      "radius_m": 4.5,
+      "inertia_factor": 0.55,
+      "x_cg_dry_m": 94,
+      "tanks": [
+        {"propellant_kg": 1252000, "x_bottom_m": 76.3, "radius_m": 4.5, "density_kg_m3": 1141},
+        {"propellant_kg": 348000, "x_bottom_m": 94.0, "radius_m": 4.5, "density_kg_m3": 424}
+      ],
+      "sections": [
+        {"kind": "tube", "x_start_m": 72.3, "length_m": 36.0, "d_aft_m": 9.0, "d_fore_m": 9.0},
+        {"kind": "nose", "x_start_m": 108.3, "length_m": 16.1, "d_aft_m": 9.0, "d_fore_m": 0, "shape": "ogive"}
+      ],
+      "catch_pin_x_m": 40.0,
+      "gimbal_limit_deg": 6,
+      "gimbal_rate_dps": 15,
+      "gimbal_lag_s": 0.08,
+      "ignite_time_s": 132.6,
+      "throttle": [[0, 1.0]]
+    }
   ],
   "engines": [
-    // Raptor 3: 280 tf = 2.746 MN at sea level; thrust_vac = that + 101325 Pa x 1.33 m^2 exit area; Isp 366 s in vacuum gives the 349 s at sea level that is reported (350 s)
-    {"stage": 0, "count": 3,  "position_m": [0, 0, 0], "ring_radius_m": 0.95, "ring_start_deg": 90, "thrust_vac_n": 2881000, "exit_area_m2": 1.33, "isp_vac_s": 366, "rise_s": 0.8, "tail_s": 0.8},
-    {"stage": 0, "count": 10, "position_m": [0, 0, 0], "ring_radius_m": 2.25, "ring_start_deg": 0,  "thrust_vac_n": 2881000, "exit_area_m2": 1.33, "isp_vac_s": 366, "rise_s": 0.8, "tail_s": 0.8},
-    {"stage": 0, "count": 20, "position_m": [0, 0, 0], "ring_radius_m": 3.85, "ring_start_deg": 0,  "thrust_vac_n": 2881000, "exit_area_m2": 1.33, "isp_vac_s": 366, "rise_s": 0.8, "tail_s": 0.8, "gimbal": false},
-    // ship: three sea-level Raptor 3 in the middle, three vacuum Raptor 3 (larger nozzle: the thrust is Raptor 2 vacuum's 2.55 MN scaled by 280/230, an estimate) on a ring around them
-    {"stage": 1, "count": 3, "position_m": [72.3, 0, 0], "ring_radius_m": 0.95, "ring_start_deg": 90,  "thrust_vac_n": 2881000, "exit_area_m2": 1.33, "isp_vac_s": 366, "rise_s": 0.8, "tail_s": 0.8, "cutoff_time_s": 491},
-    {"stage": 1, "count": 3, "position_m": [72.3, 0, 0], "ring_radius_m": 2.55, "ring_start_deg": 30,  "thrust_vac_n": 3100000, "exit_area_m2": 4.5,  "isp_vac_s": 380, "rise_s": 0.8, "tail_s": 0.8, "cutoff_time_s": 491}
+    {"stage": 0, "position_m": [0.0, 0.0, 0.95], "thrust_vac_n": 2584000, "exit_area_m2": 1.33, "isp_vac_s": 350, "rise_s": 0.8, "tail_s": 0.8, "cutoff_time_s": 132.0},
+    {
+      "stage": 0,
+      "position_m": [0.0, -0.8227, -0.475],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 0.8227, -0.475],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 132.0
+    },
+    {"stage": 0, "position_m": [0.0, 2.25, 0.0], "thrust_vac_n": 2584000, "exit_area_m2": 1.33, "isp_vac_s": 350, "rise_s": 0.8, "tail_s": 0.8, "cutoff_time_s": 132.0},
+    {
+      "stage": 0,
+      "position_m": [0.0, 1.8203, 1.3225],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 0.6953, 2.1399],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -0.6953, 2.1399],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -1.8203, 1.3225],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 132.0
+    },
+    {"stage": 0, "position_m": [0.0, -2.25, 0.0], "thrust_vac_n": 2584000, "exit_area_m2": 1.33, "isp_vac_s": 350, "rise_s": 0.8, "tail_s": 0.8, "cutoff_time_s": 132.0},
+    {
+      "stage": 0,
+      "position_m": [0.0, -1.8203, -1.3225],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -0.6953, -2.1399],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 0.6953, -2.1399],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 1.8203, -1.3225],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 3.85, 0.0],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 3.6616, 1.1897],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 3.1147, 2.263],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 2.263, 3.1147],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 1.1897, 3.6616],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 0.0, 3.85],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -1.1897, 3.6616],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -2.263, 3.1147],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -3.1147, 2.263],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -3.6616, 1.1897],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -3.85, 0.0],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -3.6616, -1.1897],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -3.1147, -2.263],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -2.263, -3.1147],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -1.1897, -3.6616],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, -0.0, -3.85],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 1.1897, -3.6616],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 2.263, -3.1147],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 3.1147, -2.263],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {
+      "stage": 0,
+      "position_m": [0.0, 3.6616, -1.1897],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "gimbal": false,
+      "cutoff_time_s": 132.0
+    },
+    {"stage": 1, "position_m": [72.3, 0.0, 0.95], "thrust_vac_n": 2584000, "exit_area_m2": 1.33, "isp_vac_s": 350, "rise_s": 0.8, "tail_s": 0.8, "cutoff_time_s": 470},
+    {
+      "stage": 1,
+      "position_m": [72.3, -0.8227, -0.475],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 470
+    },
+    {
+      "stage": 1,
+      "position_m": [72.3, 0.8227, -0.475],
+      "thrust_vac_n": 2584000,
+      "exit_area_m2": 1.33,
+      "isp_vac_s": 350,
+      "rise_s": 0.8,
+      "tail_s": 0.8,
+      "cutoff_time_s": 470
+    },
+    {"stage": 1, "position_m": [72.3, 2.2084, 1.275], "thrust_vac_n": 2697000, "exit_area_m2": 4.5, "isp_vac_s": 380, "rise_s": 0.8, "tail_s": 0.8, "cutoff_time_s": 470},
+    {"stage": 1, "position_m": [72.3, -2.2084, 1.275], "thrust_vac_n": 2697000, "exit_area_m2": 4.5, "isp_vac_s": 380, "rise_s": 0.8, "tail_s": 0.8, "cutoff_time_s": 470},
+    {"stage": 1, "position_m": [72.3, -0.0, -2.55], "thrust_vac_n": 2697000, "exit_area_m2": 4.5, "isp_vac_s": 380, "rise_s": 0.8, "tail_s": 0.8, "cutoff_time_s": 470}
   ],
-  "payloads": [
-    {"name": "payload", "mass_kg": 37500, "x_m": 112}       // Flight 12's twenty Starlink V3 mass simulators and two modified Starlink V2, about 37.5 t
-  ],
-  // The booster's three grid fins, folded against the skin for the climb (V3 has three, in a T: one on the spine, one on each flank 96 degrees round, the leeward side open, set low on the stage; the sizes and places are my estimates, as the mission file's) and the ship's four flaps (public numbers are few: two small forward flaps near the nose and two large aft flaps at the tail; the sizes and places are my estimates, docs/design/VIEWER.md section 7).
-  // They are hinged along the body's axis (axial_hinge) and, for the climb, held standing straight out (stow_deg 90): edge-on to a stream along the axis, so they carry only their friction, as the flaps
-  // of the real ship do in the climb. In the belly flop (a stream across the vehicle) the same plate is broadside to it; the deflection is its angle to that stream. No command here (channel -1): the
-  // mission file vehicles/missions/starship_return.json commands them for the ship's entry. x_hinge is the aft end of the hinge, which runs forward by span_m; chord_m is the width of the plate.
+  "payloads": [{"name": "payload", "mass_kg": 37500, "x_m": 112}],
   "surfaces": [
-    {"name": "grid fin 1", "stage": 0, "kind": "grid_fin", "x_hinge_m": 62.5, "azimuth_deg": 0,   "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68, "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": -1, "deployed": false},
-    {"name": "grid fin 2", "stage": 0, "kind": "grid_fin", "x_hinge_m": 62.5, "azimuth_deg": 96,  "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68, "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": -1, "deployed": false},
-    {"name": "grid fin 3", "stage": 0, "kind": "grid_fin", "x_hinge_m": 62.5, "azimuth_deg": 264, "radius_m": 4.5, "area_m2": 11.1, "chord_m": 4.15, "span_m": 2.68, "min_deg": -35, "max_deg": 35, "rate_dps": 60, "lag_s": 0.03, "channel": -1, "deployed": false},
-    {"name": "aft flap port",      "stage": 1, "kind": "flap", "axial_hinge": true, "x_hinge_m": 73.6,  "azimuth_deg": 80,  "radius_m": 4.5, "area_m2": 36.9, "chord_m": 4.1, "span_m": 9.0, "chord_dir": 1,  "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": -1},
-    {"name": "aft flap starboard", "stage": 1, "kind": "flap", "axial_hinge": true, "x_hinge_m": 73.6,  "azimuth_deg": 280, "radius_m": 4.5, "area_m2": 36.9, "chord_m": 4.1, "span_m": 9.0, "chord_dir": -1, "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": -1},
-    {"name": "forward flap port",      "stage": 1, "kind": "flap", "axial_hinge": true, "x_hinge_m": 102.3, "azimuth_deg": 112, "radius_m": 4.5, "area_m2": 16.2, "chord_m": 2.7, "span_m": 6.0, "chord_dir": 1,  "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": -1},
-    {"name": "forward flap starboard", "stage": 1, "kind": "flap", "axial_hinge": true, "x_hinge_m": 102.3, "azimuth_deg": 248, "radius_m": 4.5, "area_m2": 16.2, "chord_m": 2.7, "span_m": 6.0, "chord_dir": -1, "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": -1}
+    {
+      "name": "grid fin 1",
+      "stage": 0,
+      "kind": "grid_fin",
+      "x_hinge_m": 62.5,
+      "azimuth_deg": 96.0,
+      "radius_m": 4.5,
+      "area_m2": 11.1,
+      "chord_m": 4.15,
+      "span_m": 2.68,
+      "min_deg": -35,
+      "max_deg": 35,
+      "rate_dps": 60,
+      "lag_s": 0.03,
+      "channel": 0,
+      "deployed": false
+    },
+    {
+      "name": "grid fin 2",
+      "stage": 0,
+      "kind": "grid_fin",
+      "x_hinge_m": 62.5,
+      "azimuth_deg": 264.0,
+      "radius_m": 4.5,
+      "area_m2": 11.1,
+      "chord_m": 4.15,
+      "span_m": 2.68,
+      "min_deg": -35,
+      "max_deg": 35,
+      "rate_dps": 60,
+      "lag_s": 0.03,
+      "channel": 1,
+      "deployed": false
+    },
+    {
+      "name": "aft flap port",
+      "stage": 1,
+      "kind": "flap",
+      "axial_hinge": true,
+      "x_hinge_m": 73.6,
+      "azimuth_deg": 80,
+      "radius_m": 4.5,
+      "area_m2": 36.9,
+      "chord_m": 4.1,
+      "span_m": 9.0,
+      "chord_dir": 1,
+      "stow_deg": 90,
+      "min_deg": 0,
+      "max_deg": 110,
+      "rate_dps": 30,
+      "lag_s": 0.05,
+      "channel": -1
+    },
+    {
+      "name": "aft flap starboard",
+      "stage": 1,
+      "kind": "flap",
+      "axial_hinge": true,
+      "x_hinge_m": 73.6,
+      "azimuth_deg": 280,
+      "radius_m": 4.5,
+      "area_m2": 36.9,
+      "chord_m": 4.1,
+      "span_m": 9.0,
+      "chord_dir": -1,
+      "stow_deg": 90,
+      "min_deg": 0,
+      "max_deg": 110,
+      "rate_dps": 30,
+      "lag_s": 0.05,
+      "channel": -1
+    },
+    {
+      "name": "forward flap port",
+      "stage": 1,
+      "kind": "flap",
+      "axial_hinge": true,
+      "x_hinge_m": 102.3,
+      "azimuth_deg": 112,
+      "radius_m": 4.5,
+      "area_m2": 16.2,
+      "chord_m": 2.7,
+      "span_m": 6.0,
+      "chord_dir": 1,
+      "stow_deg": 90,
+      "min_deg": 0,
+      "max_deg": 110,
+      "rate_dps": 30,
+      "lag_s": 0.05,
+      "channel": -1
+    },
+    {
+      "name": "forward flap starboard",
+      "stage": 1,
+      "kind": "flap",
+      "axial_hinge": true,
+      "x_hinge_m": 102.3,
+      "azimuth_deg": 248,
+      "radius_m": 4.5,
+      "area_m2": 16.2,
+      "chord_m": 2.7,
+      "span_m": 6.0,
+      "chord_dir": -1,
+      "stow_deg": 90,
+      "min_deg": 0,
+      "max_deg": 110,
+      "rate_dps": 30,
+      "lag_s": 0.05,
+      "channel": -1
+    }
   ],
-  "design": {"t_end_s": 491, "program": [[0,0],[10,0],[30,14],[60,32],[100,52],[144,64],[200,72],[280,79],[380,83],[491,85]],
-             "gains": {"every_s": 0, "wn": 0.5, "zeta": 0.8, "ki_over_kp": 0.15, "b_min": 0.02}}
+  "design": {
+    "t_end_s": 491,
+    "program": [
+      [0, 0],
+      [10, 0],
+      [30, 15],
+      [60, 30],
+      [100, 45],
+      [130, 56],
+      [134, 56],
+      [149, 37.4],
+      [159, 42.5],
+      [169, 44.1],
+      [179, 46.1],
+      [189, 48.6],
+      [199, 51.1],
+      [209, 53.7],
+      [219, 56.4],
+      [229, 59.1],
+      [239, 61.8],
+      [249, 64.5],
+      [259, 67.3],
+      [269, 70.0],
+      [279, 72.7],
+      [289, 75.4],
+      [299, 78.2],
+      [309, 80.9],
+      [319, 83.7],
+      [329, 86.5],
+      [339, 89.0],
+      [349, 89.0],
+      [359, 89.0],
+      [369, 89.0],
+      [379, 89.0],
+      [389, 89.0],
+      [399, 89.0],
+      [409, 89.0],
+      [419, 89.0],
+      [429, 89.0],
+      [439, 89.0],
+      [449, 89.0],
+      [459, 89.0],
+      [469, 89.0],
+      [474, 89.0],
+      [491, 89.0]
+    ],
+    "gains": {"every_s": 0, "wn": 0.5, "zeta": 0.8, "ki_over_kp": 0.15, "b_min": 0.02}
+  }
 }

@@ -2,6 +2,7 @@
 """The vehicle tab's server side: the file reader's comments, the knobs and their limits, what is validated by the simulator's own reader, and what the rig is given."""
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -134,6 +135,19 @@ class WithTheSimulatorsOwnReader(unittest.TestCase):
         self.v.preview(self.v.read("reference")["text"])               # leaves a _tmp file in the scratch directory
         self.assertTrue(list(self.v.scratch.glob("_*.json")))
         self.assertFalse([x["name"] for x in self.v.listing() if x["name"].startswith("_")])
+
+    def test_a_vehicle_with_a_mission_of_its_own_has_its_stage_flown_by_the_simulator(self):
+        repo = Path(self.tmp.name) / "repo"                              # a copy: the test must not write into the real vehicles/
+        (repo / "vehicles").mkdir(parents=True)
+        shutil.copy(ROOT / "vehicles" / "two_stage_launcher.json", repo / "vehicles")
+        v = Vehicles(repo, Path(self.tmp.name) / "state")
+        v.set_active("two_stage_launcher", {})
+        self.assertNotIn("--mission", v.sim_args())                      # no plans for its stages: nothing is flown
+        mission = repo / "vehicles" / "missions" / "two_stage_launcher_return.json"
+        mission.parent.mkdir()
+        mission.write_text("{}")
+        args = v.sim_args()
+        self.assertEqual(args[args.index("--mission") + 1], str(mission))
 
     def test_a_bad_knob_is_refused_when_chosen_not_when_the_rig_starts(self):
         with self.assertRaises(ValueError):

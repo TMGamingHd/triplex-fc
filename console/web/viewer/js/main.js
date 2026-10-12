@@ -89,11 +89,14 @@ const camHint = h('div', { id: 'v-camhint' });
 // which body to follow, when the flight has more than one (a stage that returns to a pad of its own): the simulator flies each, and the viewer follows the one chosen
 const followBar = h('nav', { id: 'v-follow', 'aria-label': 'Follow', role: 'group', hidden: true });
 let followKey = '';
+let followSeen = false;                                    // the toast that says a stage has left (and where to follow it) is shown once per flight
 function updateFollow(raw) {
   const names = data.bodies(raw), key = names.join('|') + '|' + data.focus;
   if (key === followKey) return;
   followKey = key;
   followBar.hidden = names.length < 2;
+  if (names.length < 2) followSeen = false;
+  else if (!followSeen) { followSeen = true; toast('A stage has been let go and is flying on its own: Follow > ' + names.filter((n) => n !== 'main').map((n) => n.charAt(0).toUpperCase() + n.slice(1)).join(' / ') + ' (under the cameras) tracks it', 'info', 8000); }
   const label = (n) => n === 'main' ? (data.spec.stages.length > 1 ? 'Ship' : 'Vehicle') : n.charAt(0).toUpperCase() + n.slice(1);
   followBar.replaceChildren(h('span', { class: 'v-follow-lbl' }, 'Follow'), ...names.map((n) => h('button', { type: 'button', dataset: { id: n }, 'aria-pressed': String(n === data.focus), title: n === 'main' ? 'The main vehicle (the ship, after the stages have left)' : 'The ' + n + ', flown by its own computers', onclick: () => setFocus(n) }, label(n))));
 }

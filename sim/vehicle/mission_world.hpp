@@ -52,6 +52,8 @@ struct WorldConfig {
   AvionicsConfig avionics;                                           // the template for every set of computers (its `tables` is replaced)
   bool ideal = false;
   bool main_external = false;                                        // the main body is flown from outside (the rig): the caller supplies its controls
+  bool children_only = false;                                        // there is no main body here: the stages the caller lets go are handed in (`adopt`) and flown on by computers of their own (the rig's simulator,
+                                                                     // whose main body is the bus's and whose returning stages are not on it)
   uint32_t pad_frames = 0U;                                          // frames the main body stands clamped on the pad before T-zero
   uint32_t probe_every = 100U;                                       // frames between the probes of a design run
 };
@@ -77,12 +79,14 @@ class MissionWorld {
   };
 
   explicit MissionWorld(const WorldConfig& cfg) : cfg_(cfg) {
-    bodies_.push_back(std::make_unique<Body>(cfg.params, cfg.scenario));
-    Body& m = *bodies_[0];
-    m.name = "main";
-    m.tables = cfg.main_tables;
-    attach(m);
-    clamped_ = cfg.pad_frames > 0U;
+    if (!cfg.children_only) {
+      bodies_.push_back(std::make_unique<Body>(cfg.params, cfg.scenario));
+      Body& m = *bodies_[0];
+      m.name = "main";
+      m.tables = cfg.main_tables;
+      attach(m);
+      clamped_ = cfg.pad_frames > 0U;
+    }
   }
 
   void set_probe(std::function<void(const AxisProbe&)> f) { probe_ = std::move(f); }
@@ -103,11 +107,14 @@ class MissionWorld {
     }
     for (std::size_t i = 0; i < bodies_.size(); ++i) {
       for (const Detached& d : bodies_[i]->veh.take_detached()) {
-        spawn(*bodies_[i], d);
+        spawn(bodies_[i]->veh.time(), d);
       }
     }
     ++frame_;
   }
+
+  // A stage let go by a vehicle that is not in this world (`children_only`): flown on from now, `parent_time` being the time that vehicle has reached.
+  void adopt(const Detached& d, double parent_time) { spawn(parent_time, d); }
 
   [[nodiscard]] uint32_t frame() const { return frame_; }
   [[nodiscard]] uint32_t flight_frame() const { return clamped_ ? 0U : frame_ - t0_; }
@@ -290,13 +297,13 @@ class MissionWorld {
     probe_(pr);
   }
 
-  void spawn(Body& parent, const Detached& d) {
+  void spawn(double parent_time, const Detached& d) {
     auto child = std::make_unique<Body>(Vehicle6::spawn(d, cfg_.params, cfg_.scenario));
     child->name = d.spec.stages.empty() ? "stage" : d.spec.stages[0].name;
     child->stage = d.stage;
     child->born = frame_;
     child->tables = d.stage >= 0 && static_cast<std::size_t>(d.stage) < kMaxStages ? cfg_.stage_tables[static_cast<std::size_t>(d.stage)] : nullptr;
-    child->veh.step(parent.veh.time() - d.t, Controls{});   // bring it to the instant the parent has reached
+    child->veh.step(parent_time - d.t, Controls{});   // bring it to the instant the parent has reached
     attach(*child);
     if (d.stage >= 0 && static_cast<std::size_t>(d.stage) < kMaxStages) {
       spawn_mass_[static_cast<std::size_t>(d.stage)] = child->veh.mass();
