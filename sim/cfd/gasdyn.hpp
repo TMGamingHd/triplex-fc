@@ -6,6 +6,8 @@
 #include <array>
 #include <cmath>
 
+#include "eos.hpp"
+
 namespace sim::cfd::gd {
 
 constexpr double kPi = 3.14159265358979323846;
@@ -193,6 +195,53 @@ inline Cone cone_flow(double m1, double theta_c, double g) {
   return best;
 }
 
+// ---- expansions ----
+
+// The Prandtl-Meyer function nu(M): the angle (rad) through which a sonic flow turns to reach Mach M in an isentropic expansion.
+inline double prandtl_meyer(double m, double g) {
+  const double a = std::sqrt((g + 1.0) / (g - 1.0));
+  const double b = std::sqrt((m * m) - 1.0);
+  return (a * std::atan(b / a)) - std::atan(b);
+}
+// The Mach number with the Prandtl-Meyer angle nu (bisection).
+inline double mach_from_prandtl_meyer(double nu, double g) {
+  double lo = 1.0;
+  double hi = 200.0;
+  for (int k = 0; k < 200; ++k) {
+    const double mid = 0.5 * (lo + hi);
+    if (prandtl_meyer(mid, g) < nu) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return 0.5 * (lo + hi);
+}
+// The pressure ratio across an isentropic expansion that turns a flow of Mach m1 through theta (rad).
+inline double expansion_pressure_ratio(double m1, double theta, double g) {
+  const double m2 = mach_from_prandtl_meyer(prandtl_meyer(m1, g) + theta, g);
+  auto pt = [&](double m) { return std::pow(1.0 + (0.5 * (g - 1.0) * m * m), g / (g - 1.0)); };
+  return pt(m1) / pt(m2);
+}
+// A flat plate at angle of attack alpha (rad) in a flow of Mach m1, by shock-expansion theory (exact for the inviscid flow near its middle, away from the edges): the pressures over the free stream's
+// on the windward face (an oblique shock turning the flow through alpha) and on the leeward face (an expansion through alpha).
+struct Plate {
+  double p_windward = 0.0;
+  double p_leeward = 0.0;
+  bool attached = false;
+};
+inline Plate flat_plate(double m1, double alpha, double g) {
+  Plate out;
+  const double beta = weak_shock_angle(m1, alpha, g);
+  if (beta < 0.0) {
+    return out;
+  }
+  out.p_windward = oblique_shock(m1, beta, alpha, g).p2_p1;
+  out.p_leeward = expansion_pressure_ratio(m1, alpha, g);
+  out.attached = true;
+  return out;
+}
+
 // ---- the exact solution of a Riemann problem ----
 
 struct State1D {
@@ -291,5 +340,116 @@ struct Riemann {
     return {r.rho * std::pow(c / ar, 2.0 / (g - 1.0)), u, r.p * std::pow(c / ar, 2.0 * g / (g - 1.0))};
   }
 };
+
+// ---- a normal shock in the real gas ----
+
+// A steady normal shock into the gas at rest conditions rho = 1, p = 1 (so T = 1 and the cold gas has gamma 1.4) with the upstream speed u1 (in units of sqrt(R T1)), solved from the three conservation laws
+// with the equation of state of `air`: the density behind the shock is the root of the energy residual. Everything is non-dimensional (the free stream's density, pressure and temperature are 1).
+struct RealShock {
+  double rho2 = 0.0;
+  double p2 = 0.0;
+  double t2 = 0.0;
+  double u2 = 0.0;      // the speed behind it, in the frame of the shock
+  double alpha2 = 0.0;  // the dissociated fraction behind it
+  bool ok = false;
+};
+inline RealShock real_normal_shock(const RealAir& air, double u1) {
+  RealShock out;
+  const double h1 = 2.5 + 1.0 + (0.5 * u1 * u1);   // e1 + p1 / rho1 + u1^2 / 2 of the cold gas (e = 5/2 T)
+  auto resid = [&](double rho2, double& p2) {
+    const double u2 = u1 / rho2;
+    p2 = 1.0 + (u1 * u1 * (1.0 - (1.0 / rho2)));
+    return air.e_from_p(rho2, p2) + (p2 / rho2) + (0.5 * u2 * u2) - h1;
+  };
+  // scan upward from the cold gas's own jump (the energy residual is zero at no shock and at the shock): the first sign change after the weak root is the strong one
+  double a = 1.0001;
+  double pa = 0.0;
+  double fa = resid(a, pa);
+  double hi = 0.0;
+  for (double r = 1.05; r < 60.0; r *= 1.02) {
+    double pr = 0.0;
+    const double fr = resid(r, pr);
+    if (fa * fr < 0.0 && r > 1.5) {
+      a = r / 1.02;
+      hi = r;
+      break;
+    }
+    fa = fr;
+    a = r;
+  }
+  if (hi == 0.0) {
+    return out;
+  }
+  double lo = a;
+  double p = 0.0;
+  const double flo = resid(lo, p);
+  for (int k = 0; k < 100; ++k) {
+    const double mid = 0.5 * (lo + hi);
+    if (resid(mid, p) * flo > 0.0) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  out.rho2 = 0.5 * (lo + hi);
+  resid(out.rho2, out.p2);
+  out.u2 = u1 / out.rho2;
+  out.t2 = air.t_from_p(out.rho2, out.p2);
+  out.alpha2 = air.alpha(out.rho2, out.t2);
+  out.ok = true;
+  return out;
+}
+
+// The state of the gas at rest behind the shock that a gas of speed `u` (toward a wall, rho = p = 1) throws off the wall: the shock moves away at the speed W for which the gas behind it is at rest, that is,
+// the steady-shock relations with the upstream speed u + W give the downstream speed W.
+inline RealShock real_wall_shock(const RealAir& air, double u, double& w_shock) {
+  double lo = 0.0;
+  double hi = 2.0 * u;
+  RealShock best;
+  for (int k = 0; k < 80; ++k) {
+    const double w = 0.5 * (lo + hi);
+    const RealShock s = real_normal_shock(air, u + w);
+    if (!s.ok) {
+      hi = w;
+      continue;
+    }
+    // the gas behind the shock moves toward the wall at u2 relative to the shock; in the wall's frame it moves at w - u2 away from... at rest when u2 == w
+    if (s.u2 > w) {
+      lo = w;
+    } else {
+      hi = w;
+    }
+    best = s;
+    w_shock = w;
+  }
+  return best;
+}
+
+// The pressure at the stagnation point behind a normal shock in the real gas: the gas behind the shock, at rest in the shock's frame at u2, is brought to rest isentropically, so that its enthalpy rises by
+// u2^2 / 2. The isentrope's density follows the pressure by d rho / d p = 1 / a^2 (the equilibrium sound speed of the equation of state), integrated by Runge-Kutta in the pressure until the enthalpy
+// h = e + p / rho, which rises by dp / rho, has gained the kinetic energy.
+inline double real_stagnation_pressure(const RealAir& air, const RealShock& sh) {
+  double p = sh.p2;
+  double rho = sh.rho2;
+  const double gain = 0.5 * sh.u2 * sh.u2;
+  double dh = 0.0;
+  const double dp = 1e-3 * sh.p2;
+  auto drho = [&](double r, double pp) { return 1.0 / air.sound2(r, pp); };
+  while (dh < gain && p < 1e4 * sh.p2) {
+    double step = dp;
+    if (dh + (step / rho) > gain) {
+      step = (gain - dh) * rho;   // the last, partial step
+    }
+    const double k1 = drho(rho, p);
+    const double k2 = drho(rho + (0.5 * step * k1), p + (0.5 * step));
+    const double k3 = drho(rho + (0.5 * step * k2), p + (0.5 * step));
+    const double k4 = drho(rho + (step * k3), p + step);
+    const double rho_new = rho + (step / 6.0 * (k1 + (2.0 * k2) + (2.0 * k3) + k4));
+    dh += step * 0.5 * ((1.0 / rho) + (1.0 / rho_new));
+    rho = rho_new;
+    p += step;
+  }
+  return p;
+}
 
 }  // namespace sim::cfd::gd

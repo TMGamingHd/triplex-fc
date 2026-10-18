@@ -150,7 +150,7 @@ class Pool {
 enum class Bc : int { Farfield = 0, Symmetry = 1, Outflow = 2 };
 
 struct Config {
-  double gamma = 1.4;
+  Gas gas;                        // a perfect gas of gamma 1.4 unless it is given another gamma or the real-gas air
   double cfl = 0.6;
   Limiter limiter = Limiter::VanAlbada;
   double shock_ratio = 1.8;
@@ -166,6 +166,18 @@ struct Forces {
   V3 force;       // N, from the pressure over the free stream's (gauge pressure), the whole body (the mirror half added)
   V3 moment;      // N m about the reference point
   double area = 0.0;
+};
+
+// A region of the flow that is a lattice of thin cells, as a grid fin is (a frame of webs a few centimetres apart, `depth` deep along the cells' axis): too fine to be cut out of the grid, so it is a
+// porous medium. The air that goes along the cells loses momentum as `k_axial` dynamic pressures over the depth, the air that goes across them (the webs stop it) as `k_cross`, so a lattice at an angle
+// to the stream turns it toward its axis and the stream pushes on the lattice. The loss is a momentum sink of  -rho |u| (k_axial u_axial + k_cross u_cross) / depth  per unit volume, applied
+// implicitly (the cells' time step is far longer than the loss's time), and it does not change the total energy: the kinetic energy it takes becomes heat.
+struct Porous {
+  const Shape* region = nullptr;   // solid (negative distance) where the lattice is
+  V3 axis{1.0, 0.0, 0.0};          // the cells' axis, a unit vector
+  double k_axial = 0.3;
+  double k_cross = 20.0;
+  double depth = 1.0;              // m
 };
 
 class Euler3D {
@@ -219,6 +231,7 @@ class Euler3D {
   [[nodiscard]] double width(int axis, int i) const { return dx_[static_cast<std::size_t>(axis)][static_cast<std::size_t>(i + 2)]; }
   [[nodiscard]] std::size_t cell_count() const { return static_cast<std::size_t>(n_[0]) * static_cast<std::size_t>(n_[1]) * static_cast<std::size_t>(n_[2]); }
   [[nodiscard]] const Prim& free_stream() const { return inf_; }
+  [[nodiscard]] const Gas& gas() const { return cfg_.gas; }
   [[nodiscard]] std::size_t index(int i, int j, int k) const {
     return static_cast<std::size_t>(i + 2) + (stride_[1] * static_cast<std::size_t>(j + 2)) + (stride_[2] * static_cast<std::size_t>(k + 2));
   }
@@ -227,14 +240,14 @@ class Euler3D {
   void set_prim(int i, int j, int k, const Prim& s) {
     const std::size_t c = index(i, j, k);
     store_w(c, s);
-    u_[c] = to_cons(s, cfg_.gamma);
+    u_[c] = to_cons(s, cfg_.gas);
   }
 
   // Every cell at the free stream, the solid cells found from the shape, the ghost cells and their image points made.
   void initialise() {
     for (std::size_t c = 0; c < total_; ++c) {
       store_w(c, inf_);
-      u_[c] = to_cons(inf_, cfg_.gamma);
+      u_[c] = to_cons(inf_, cfg_.gas);
     }
     std::fill(kind_.begin(), kind_.end(), static_cast<std::uint8_t>(3));
     for (int k = 0; k < n_[2]; ++k) {
@@ -301,6 +314,60 @@ class Euler3D {
     time_ = 0.0;
     res0_ = 0.0;
     res_ = 0.0;
+  }
+
+  // The lattices: which fluid cells are in each (one lattice per cell at most).
+  void set_porous(const std::vector<Porous>& regions) {
+    porous_ = regions;
+    por_.assign(total_, 0U);
+    for (std::size_t r = 0; r < porous_.size(); ++r) {
+      for (int k = 0; k < n_[2]; ++k) {
+        for (int j = 0; j < n_[1]; ++j) {
+          for (int i = 0; i < n_[0]; ++i) {
+            const std::size_t c = index(i, j, k);
+            if (kind_[c] == 0 && por_[c] == 0U && porous_[r].region->phi(V3{centre(0, i), centre(1, j), centre(2, k)}) < 0.0) {
+              por_[c] = static_cast<std::uint8_t>(r + 1U);
+            }
+          }
+        }
+      }
+    }
+  }
+  // The force of the air on a lattice (the sum of what the loss takes from the momentum of the air in it, and the mirror image in z when `mirror`), and its moment about `ref`, from the state now.
+  Forces porous_force(std::size_t region, V3 ref, bool mirror = true) {
+    refresh_primitives();
+    Forces out;
+    const Porous& pr = porous_[region];
+    for (int k = 0; k < n_[2]; ++k) {
+      for (int j = 0; j < n_[1]; ++j) {
+        for (int i = 0; i < n_[0]; ++i) {
+          const std::size_t c = index(i, j, k);
+          if (por_[c] != region + 1U) {
+            continue;
+          }
+          const Prim s = load(c);
+          const V3 u{s.u, s.v, s.w};
+          const double sp = norm(u);
+          const V3 ua = pr.axis * dot(u, pr.axis);
+          const V3 uc = u - ua;
+          const double vol = width(0, i) * width(1, j) * width(2, k);
+          const V3 on_air = ((ua * pr.k_axial) + (uc * pr.k_cross)) * (-s.rho * sp / pr.depth * vol);   // the force on the air
+          const V3 pos{centre(0, i), centre(1, j), centre(2, k)};
+          out.force = out.force - on_air;
+          out.moment = out.moment - cross(pos - ref, on_air);
+          if (mirror) {
+            const V3 um{u.x, u.y, -u.z};
+            const V3 axm{pr.axis.x, pr.axis.y, -pr.axis.z};
+            const V3 uam = axm * dot(um, axm);
+            const V3 ucm = um - uam;
+            const V3 fm = ((uam * pr.k_axial) + (ucm * pr.k_cross)) * (-s.rho * sp / pr.depth * vol);
+            out.force = out.force - fm;
+            out.moment = out.moment - cross(V3{pos.x, pos.y, -pos.z} - ref, fm);
+          }
+        }
+      }
+    }
+    return out;
   }
 
   [[nodiscard]] std::size_t ghost_count() const { return ghosts_.size(); }
@@ -426,12 +493,12 @@ class Euler3D {
     return interpolate(pn.c + (pn.n * (cfg_.probe_cells * s)), a) ? a.p : inf_.p;
   }
 
-  // The force and the moment of the pressure over a set of panels and their mirror images in the plane z = 0 (the body is symmetric there); `part` >= 0 takes only the panels of that part.
+  // The force and the moment of the pressure over a set of panels and their mirror images in the plane z = 0 (the body is symmetric there); `part` >= 0 takes only the panels of that part, -2 all but the base.
   Forces integrate(const std::vector<Panel>& panels, V3 ref, bool mirror = true, int part = -1) {
     refresh_primitives();
     Forces out;
     for (const Panel& pn : panels) {
-      if (part >= 0 && pn.part != part) {
+      if ((part >= 0 && pn.part != part) || (part == -2 && pn.part == 1)) {   // part -2: everything but the base (the skin, the flaps)
         continue;
       }
       const double dp = wall_pressure(pn) - inf_.p;
@@ -610,7 +677,7 @@ class Euler3D {
             if (kind_[c] != 0) {
               continue;
             }
-            store_w(c, to_prim(u_[c], cfg_.gamma));
+            store_w(c, to_prim(u_[c], cfg_.gas));
           }
         }
       }
@@ -645,7 +712,7 @@ class Euler3D {
             const Prim in = load(cn);
             switch (cfg_.bc[face]) {
               case Bc::Farfield:
-                store_w(cg, farfield_state(in, inf_, static_cast<int>(a), sign, cfg_.gamma));
+                store_w(cg, farfield_state(in, inf_, static_cast<int>(a), sign, cfg_.gas));
                 break;
               case Bc::Symmetry: {
                 Prim m = in;
@@ -690,7 +757,7 @@ class Euler3D {
 
   [[nodiscard]] double cell_dt(int i, int j, int k) const {
     const Prim s = load(index(i, j, k));
-    const double c = sound(s, cfg_.gamma);
+    const double c = sound(s, cfg_.gas);
     const double rate = ((std::fabs(s.u) + c) / width(0, i)) + ((std::fabs(s.v) + c) / width(1, j)) + ((std::fabs(s.w) + c) / width(2, k));
     return cfg_.cfl / rate;
   }
@@ -796,7 +863,7 @@ class Euler3D {
               Prim l;
               Prim r;
               face_states(static_cast<int>(d), i, j, k, l, r);
-              const Cons fl = flux(l, r, static_cast<int>(d), cfg_.gamma, cfg_.shock_ratio);
+              const Cons fl = flux(l, r, static_cast<int>(d), cfg_.gas, cfg_.shock_ratio);
               f_[d][cb] = fl;
             }
           }
@@ -851,10 +918,21 @@ class Euler3D {
               floored_ = true;
             }
             const double ke = 0.5 * ((q[1] * q[1]) + (q[2] * q[2]) + (q[3] * q[3])) / q[0];
-            const double e_min = ke + (1e-6 * inf_.p / (cfg_.gamma - 1.0));
+            const double e_min = ke + (q[0] * cfg_.gas.e_from_p(q[0], 1e-6 * inf_.p));
             if (!(q[4] > e_min)) {
               q[4] = e_min;
               floored_ = true;
+            }
+            if (!por_.empty() && por_[c] != 0U) {   // in a lattice: the momentum relaxes toward what the cells let through
+              const Porous& pr = porous_[por_[c] - 1U];
+              const V3 m{q[1], q[2], q[3]};
+              const double sp = norm(m) / q[0];
+              const V3 ma = pr.axis * dot(m, pr.axis);
+              const V3 mc = m - ma;
+              const V3 mn = (ma * (1.0 / (1.0 + (pr.k_axial * sp * dt_[c] / pr.depth)))) + (mc * (1.0 / (1.0 + (pr.k_cross * sp * dt_[c] / pr.depth))));
+              q[1] = mn.x;
+              q[2] = mn.y;
+              q[3] = mn.z;
             }
             u_[c] = q;
           }
@@ -888,6 +966,8 @@ class Euler3D {
   std::vector<double> dt_;
   std::vector<std::uint8_t> kind_;   // 0 fluid, 1 ghost of the body, 2 solid, 3 outside the domain
   std::vector<Ghost> ghosts_;
+  std::vector<Porous> porous_;
+  std::vector<std::uint8_t> por_;   // 0, or the lattice (from 1) a fluid cell is in
   int iteration_ = 0;
   double time_ = 0.0;
   double res0_ = 0.0;
