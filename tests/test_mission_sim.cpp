@@ -114,6 +114,7 @@ static std::string two_stage_text() {
 })";
 }
 
+// Verifies: TFC-SIM-019
 TFC_TEST(missionfile_the_committed_missions_load_and_their_text_reads_back_the_same) {
   for (const char* name : {"missions/starship_return.json", "missions/starship_ship_return.json", "missions/rocket_recovery.json"}) {
     sim::VehicleFile v;
@@ -524,6 +525,11 @@ TFC_TEST(missionworld_a_stage_let_go_is_flown_on_by_computers_of_its_own_and_com
     }
     CHECK(w.body(1).veh.chute_open(0));
     CHECK(w.body(1).veh.chute_fill(0) > 0.0);   // the canopy is open
+    // the clearance of the separation was followed for its first 30 s: the closest gap is not above the last, and the stage has fallen away from the vehicle it left
+    {
+      const sim::Clearance& c = w.body(1).clearance;
+      CHECK(c.seen && c.cleared && c.t_clear_s >= 0.0 && c.min_gap_m <= c.gap_at_end_m + 1e-9 && c.gap_at_end_m > 1.0 && c.t_s >= c.t_clear_s && c.t_s <= 30.0);
+    }
     if (!ideal) {
       CHECK(w.body(1).av->computer(0).mission().phase() == 2U);
       CHECK(w.body(1).av->flight_frame() > 100U);
@@ -897,4 +903,50 @@ TFC_TEST(missionworld_the_demand_goes_to_the_surfaces_by_the_allocation_of_the_p
   pilot.begin_frame(7U, 0x07U);
   CHECK(!pilot.on_gnss_frame(tfc::pack_gnss(0U, raw, 3U)));   // (a late fix of an earlier frame)
   CHECK(!pilot.on_gnss_frame(tfc::pack_gnss(0U, raw, 7U)) && !pilot.on_gnss_frame(tfc::pack_gnss(1U, raw, 7U)) && pilot.on_gnss_frame(tfc::pack_gnss(2U, raw, 7U)));
+}
+
+TFC_TEST(missionworld_the_distance_between_two_segments_is_that_of_their_closest_points) {
+  using sim::V3;
+  const auto d = [](V3 p1, V3 q1, V3 p2, V3 q2) { return sim::segment_distance(p1, q1, p2, q2); };
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {0, 3, 0}, {10, 3, 0}), 3.0, 1e-12));          // parallel, side by side
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {5, -2, 1}, {5, 2, 1}), 1.0, 1e-12));          // crossing over, one metre apart
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {13, 4, 0}, {13, 8, 0}), 5.0, 1e-12));         // the end of one to the end of the other: (3, 4)
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {10, 0, 0}, {20, 0, 0}), 0.0, 1e-12));         // end to end on one line
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {14, 0, 0}, {20, 0, 0}), 4.0, 1e-12));         // collinear with a gap
+  CHECK(near_abs(d({0, 0, 0}, {0, 0, 0}, {3, 4, 0}, {3, 4, 0}), 5.0, 1e-12));            // two points
+  CHECK(near_abs(d({0, 0, 0}, {0, 0, 0}, {-2, 1, 0}, {2, 1, 0}), 1.0, 1e-12));           // a point and a segment
+  CHECK(near_abs(d({-2, 1, 0}, {2, 1, 0}, {0, 0, 0}, {0, 0, 0}), 1.0, 1e-12));           // and the other way
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {0, 0, 5}, {10, 5, 5}), 5.0, 1e-12));          // skew, diverging
+}
+
+TFC_TEST(missionfile_the_structure_limits_are_read_written_and_read_again_and_a_mission_over_them_says_so) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  const std::string mission = R"({"structure": {"source": "an assumed set, for the test", "min_separation_gap_m": 4.5,
+      "main": {"max_q_pa": 35000, "max_q_sin_alpha_pa": 4000, "max_axial_g": 4.5, "max_lateral_g": 1.0, "max_stagnation_w_m2": 2.0e6, "max_wall_k": 1800},
+      "stages": [{"max_q_pa": 60000, "max_axial_g": 6}]}, "main": [{"kind": "coast"}]})";
+  CHECK(reads(tiny(mission), v, errors));
+  CHECK(errors.empty());
+  const sim::MissionSpec m = v.mission;   // (a copy: the file is read again below)
+  CHECK(m.structure_source == "an assumed set, for the test" && near_abs(m.min_separation_gap_m, 4.5, 1e-12));
+  CHECK(near_abs(m.structure_main.max_q_pa, 35000.0, 1e-9) && near_abs(m.structure_main.max_q_sin_alpha_pa, 4000.0, 1e-9) && near_abs(m.structure_main.max_wall_k, 1800.0, 1e-9));
+  CHECK(near_abs(m.structure_stage[0].max_q_pa, 60000.0, 1e-9) && near_abs(m.structure_stage[0].max_axial_g, 6.0, 1e-12) && !m.structure_stage[1].any());
+  const std::string written = sim::write_vehicle(v);
+  sim::VehicleFile w;
+  CHECK(reads(written, w, errors));
+  CHECK(errors.empty() && sim::write_vehicle(w) == written);
+  CHECK(near_abs(w.mission.structure_stage[0].max_q_pa, 60000.0, 1e-9) && w.mission.structure_source == m.structure_source);
+  // a file with no limits writes none, and one with a name that is not one is refused
+  CHECK(reads(tiny(R"({"main": [{"kind": "coast"}]})"), v, errors) && sim::write_vehicle(v).find("structure") == std::string::npos);
+  CHECK(!reads(tiny(R"({"structure": {"main": {"max_speed": 3}}})"), v, errors) && mentions(errors, "max_speed"));
+  CHECK(!reads(tiny(R"({"structure": {"stages": 3}})"), v, errors) && mentions(errors, "stages"));
+  // what an envelope has over the limits
+  sim::Envelope e;
+  e.max_q_pa = 40000.0;
+  e.max_q_sin_alpha_pa = 3000.0;
+  e.max_axial_g = 5.0;
+  e.max_wall_k = 1000.0;
+  const std::vector<std::string> over = sim::envelope_violations(m.structure_main, e);
+  CHECK(over.size() == 2U && mentions(over, "max q 40.0 kPa is over the limit of 35.0 kPa") && mentions(over, "axial acceleration 5.0 g is over the limit of 4.5 g"));
+  CHECK(sim::envelope_violations(sim::LoadLimits{}, e).empty());
 }

@@ -24,6 +24,7 @@ def events(tm, kind=None):
 class GoNoGoIsTheChecklistsRule(unittest.TestCase):
     """The page shows GO or NO-GO from the console's own evaluation. It must agree with `tfc_peers launch`, the checklist the operator trusts, in every case."""
 
+    # Verifies: TFC-CON-002
     def test_the_two_agree_over_many_random_states(self):
         rnd = random.Random(7)
         for trial in range(400):

@@ -652,6 +652,7 @@ TFC_TEST(effectors_a_wheels_momentum_rides_along_and_precesses_the_body) {
   CHECK(near_abs(v.state().w.x, -0.3 / i_x * 1.0, 0.03 * 0.3 / i_x));
 }
 
+// Verifies: TFC-SIM-009
 TFC_TEST(general_parallel_stages_gimbal_separately_each_with_its_own_limit) {
   sim::Params p;
   p.ground_contact = false;
@@ -695,6 +696,7 @@ TFC_TEST(general_an_engine_that_starts_later_lights_later) {
   CHECK(close(v.current_loads().thrust, 40000.0, 1e-9));  // both
 }
 
+// Verifies: TFC-SIM-011
 TFC_TEST(design_the_adaptive_schedule_follows_the_derivative_gain_and_honours_the_proportional_ceiling) {
   // a vehicle whose divergence tracks its effectiveness so that kp is constant while kd = 2 zeta wn / b is not: the points must go where kd changes
   std::vector<sim::NominalPoint> nominal;

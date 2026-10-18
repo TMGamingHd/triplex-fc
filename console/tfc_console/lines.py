@@ -100,6 +100,8 @@ def parse_line(line: str) -> Parsed | None:
     up = body.upper()
     # (kind, level) by the words the firmware uses; the order matters: the most specific first
     rules = (
+        ("PREVIOUS RUN ENDED IN A FATAL FAULT", "previous-fault", "crit"), ("LOG IS DAMAGED", "previous-run-damaged", "warn"), ("PREVIOUS RUN", "previous-run", "info"),   # the flight log kept across a reset (core/include/tfc/flightlog.hpp)
+        ("IMAGE CRC32", "image-crc", "info"),
         ("CRITICAL", "critical", "crit"), ("RESET LOOP", "reset-loop", "crit"), ("SAFE REQUESTED", "safe-request", "crit"), ("WATCHDOG", "watchdog", "crit"),
         ("FAILED PROBATION", "probation-failed", "warn"), ("ON PROBATION", "probation", "info"), ("REINTEGRATED", "reintegrated", "ok"),
         ("LATCHED OUT", "latched-out", "warn"), ("DISABLED", "disabled", "warn"), ("JOINED THE BUS", "joined", "ok"),

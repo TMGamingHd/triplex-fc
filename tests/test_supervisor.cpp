@@ -351,6 +351,7 @@ TFC_TEST(sup_no_total_loss_while_one_flight_computer_still_kicks) {
   CHECK(w.resets_seen[2] == 0U && w.sup.state(Unit::C) == UnitState::Running);  // the one that works is never touched
 }
 
+// Verifies: TFC-SUP-006
 TFC_TEST(sup_the_operator_can_reset_cycle_hold_and_release_and_is_refused_when_it_makes_no_sense) {
   World w;
   w.run_ms(1500U);
@@ -404,6 +405,7 @@ TFC_TEST(sup_release_brings_back_a_dead_unit_with_a_clean_record) {
   CHECK(w.resets_seen[0] == resets_before + 1U && w.cycles_seen[0] == 2U && !w.sup.dead(Unit::A));
 }
 
+// Verifies: TFC-SUP-006
 TFC_TEST(sup_the_safe_line_follows_the_operator) {
   World w;
   w.run_ms(1500U);
@@ -569,6 +571,7 @@ TFC_TEST(sup_status_text_is_bounded_and_says_what_each_unit_is_doing) {
   CHECK(std::string(big).find("A DEAD resets=") == 0U);
 }
 
+// Verifies: TFC-SUP-010
 TFC_TEST(sup_a_unit_with_only_frames_or_only_kicks_is_adopted_but_judged_by_its_kicks) {
   World w;  // B sends FRAME pulses but never KICKs (it never completes a frame)
   w.u[1].no_kick = true;

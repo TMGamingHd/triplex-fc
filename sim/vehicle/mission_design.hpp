@@ -20,6 +20,7 @@ struct DesignReport {
   bool ok = false;
   double end_time_s = 0.0;
   uint32_t probes = 0U;
+  std::vector<AxisProbe> probe_list;   // the probes of the flight the gains were designed from (tfc_margins reads them)
   std::vector<std::string> notes;
 };
 
@@ -168,6 +169,22 @@ inline void fit_plan(const MissionSpec& ms, const VehicleSpec& spec, tfc::gnc::T
         pts.push_back(p);
       }
     }
+    // a probe taken while the engines have hardly any thrust (the first, on the pad at T-zero, while they start) measures a gimbal that moves nothing: the gains it gives are at their limit, and the track
+    // interpolates from them into the points that are right, so the first seconds of the climb flew on gains and a thrust scaling that belong to no vehicle (tfc_margins found the loop unstable there).
+    // Such probes are left out of a phase that has probes with real thrust.
+    double max_thrust = 0.0;
+    for (const AxisProbe* p : pts) {
+      max_thrust = std::max(max_thrust, p->thrust);
+    }
+    if (max_thrust > 0.0) {
+      std::vector<const AxisProbe*> strong;
+      for (const AxisProbe* p : pts) {
+        if (p->thrust >= 0.05 * max_thrust) {
+          strong.push_back(p);
+        }
+      }
+      pts.swap(strong);
+    }
     GainTrack& tr = tab.gains[ph];
     tr = GainTrack{};
     if (pts.empty()) {
@@ -302,6 +319,7 @@ inline DesignReport design_mission(const VehicleFile& f, BuiltMission& m, const 
     }
     rep.end_time_s = static_cast<double>(k) * 0.01;
     rep.probes = static_cast<uint32_t>(probes.size());
+    rep.probe_list = probes;
     for (const MissionWorld::Seed& sd : world.seeds()) {
       Phase& ph = tables_of(sd.stage).phase[sd.phase];
       for (std::size_t i = 0; i < tfc::peg::kUnknowns; ++i) {

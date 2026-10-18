@@ -189,6 +189,7 @@ TFC_TEST(platform_driver_limits_the_rate_a_step_becomes_a_ramp) {
   CHECK(near(d.output().x_deg, 27.0F, 1e-4F));
 }
 
+// Verifies: TFC-PLAT-002
 TFC_TEST(platform_driver_holds_after_100_ms_without_a_command_and_levels_after_a_second) {
   PlatformDriver d;
   for (int i = 0; i < 20; ++i) {

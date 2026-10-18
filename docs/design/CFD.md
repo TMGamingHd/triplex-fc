@@ -261,3 +261,21 @@ Seed 0: the ship reaches 231 by 256 km (the build-up's 235 by 259), the booster 
 The **ship's return** (the experimental `starship_ship_return.json`, which deorbits the ship and enters on its flaps) was flown once on seed 0: the ship crashes 131 km from the site where the build-up's crashes 26 km from it (neither is a landing: the guidance was tuned to the build-up's entry and the file says it is experimental; the booster is caught in both, 0.6 and 0.7 m). The two ships are in the same place at 60.6 km at the same time, and then the ship on the tables decelerates later (3,774 m/s at 30 km a hundred seconds after, against 2,738 m/s at 27 km): the solver's belly drag at 68 degrees is lower than the build-up's. The entry guidance (`alpha`, `beta`, the gains of `gen_starship_return.py`) would have to be tuned again for the new aerodynamics; that is not done.
 
 **What it does not cover.** The tables are the body alone; flaps and grid fins are the build-up's (section 12 says why the solver's are not used); Mach 1.4 and below is the build-up's; the real gas is in equilibrium at an assumed corridor; the pitch damping is the build-up's; the Mach 20 cases converge less than the others (the density residual of the table's cases falls 1.5 to 1.8 orders on average at Mach 20 and 2.0 to 2.6 at Mach 2 to 5, and as little as 0.4 to 0.9 in the worst cases, whose forces were steady to 0.2 % over the last iterations but whose wake is not); the grid is the one of section 6 (7 cells across the radius: CN-alpha to about 1 %, the centre of pressure to a metre or two).
+
+## 15. Grid convergence (18 Oct 2026)
+
+The tables the flight flies on were each run on one grid (0.7 m cells). `tools/cfd/gci.py` computes the **grid-convergence index** (Roache 1994 and 1998, Celik et al. 2008, from memory) of a result on three grids of cell size 0.35, 0.7 and 1.4 m (a ratio of 2): the observed order `p = ln((f3 - f2) / (f2 - f1)) / ln 2`, the Richardson extrapolation to a zero cell, and `GCI = 1.25 |(f2 - f1) / f1| / (2^p - 1)` of the fine grid. It refuses a result whose differences do not shrink. Tests: `sim/tests/test_gci.py` (a second-order and a first-order sequence of known limit, and three that are not in the asymptotic range).
+
+The whole stack, 0.35 m is 1.42 million cells (7 and 14 minutes on twelve cores; 6,000 iterations):
+
+| | Mach 3, 10 degrees | | | | Mach 8, 20 degrees, real gas | | | |
+|---|---|---|---|---|---|---|---|---|
+| | fine | extrapolated | order | GCI of fine | fine | extrapolated | order | GCI of fine |
+| C_N | 1.0142 | 1.0164 | 2.4 | 0.27 % | 2.9508 | 2.9765 | 1.6 | 1.1 % |
+| C_A (skin) | 0.2125 | 0.2189 | 1.2 | 3.8 % | 0.2353 | 0.2533 | 1.1 | 9.6 % |
+| C_m | -3.819 | -3.884 | 1.8 | 2.1 % | -5.069 | -5.237 | 1.6 | 4.1 % |
+| x CP (m) | 83.65 | 84.18 | 1.6 | 0.8 % | 65.22 | 65.57 | 1.8 | 0.7 % |
+
+**What it means for the tables** (the production grid is the medium one): against the extrapolated value, the table's C_N is low by 1.1 % (Mach 3) and 2.5 % (Mach 8), the centre of pressure by 1.9 %, the moment by 6 and 10 %, and **the axial force from the skin's pressure by 7 % (Mach 3) and 15 % (Mach 8)**: a shock-capturing scheme that is first order at the nose converges slowly in the pressure there. The normal force and the centre of pressure, which decide the stability, are good to a few percent; the drag is not, and the plant adds its own base law and friction on top (section 14). The dispersion of the drag coefficient in the Monte Carlo (`MONTE_CARLO.md` section 7: 10 %) covers it; a table from the fine grid, or the extrapolated value, would remove it (three hours become about fifteen).
+
+**Not done:** two conditions, not the table's 72 nodes; the flaps and grid fins (section 12: not converged); no comparison with data of a real flow (public cases exist: the blunt bodies and cones with published pressure and drag).

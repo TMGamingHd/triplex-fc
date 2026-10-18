@@ -79,17 +79,20 @@ class Access(Served):
         self.assertEqual(status, 200)
         self.assertIn("javascript", h["Content-Type"])
 
+    # Verifies: TFC-CON-007
     def test_the_api_needs_the_token(self):
         self.assertEqual(self.call("/api/config", token=None)[0], 401)
         self.assertEqual(self.call("/api/config", token="wrong")[0], 401)
         self.assertEqual(self.call("/api/config")[0], 200)
         self.assertEqual(self.call("/api/config?token=" + TOKEN, token=None)[0], 200)        # the event stream cannot send a header
 
+    # Verifies: TFC-CON-007
     def test_a_post_needs_the_token_too(self):
         self.assertEqual(self.call("/api/echo", {"a": 1}, token=None)[0], 401)
         status, body, _ = self.call("/api/echo", {"a": 1})
         self.assertEqual((status, json.loads(body)), (200, {"got": {"a": 1}}))
 
+    # Verifies: TFC-CON-007
     def test_a_request_with_another_host_is_refused(self):
         """DNS rebinding: a page on another name that resolves to 127.0.0.1 must not be able to read the console."""
         status, _b, _h = self.call("/api/config", headers={"Host": "evil.example:80"})

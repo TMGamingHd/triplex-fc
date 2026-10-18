@@ -195,6 +195,7 @@ TFC_TEST(dynamics_a_servo_with_dynamics_can_carry_both_a_second_order_response_a
 
 // ---- jet damping ----
 
+// Verifies: TFC-SIM-014
 TFC_TEST(dynamics_jet_damping_slows_a_turning_vehicle_by_the_exhaust_it_throws_off) {
   const double w0 = 0.05;  // rad/s about the pitch axis (body Z)
   const auto turned = [&](bool jet) {

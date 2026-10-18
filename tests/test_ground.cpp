@@ -76,6 +76,7 @@ TFC_TEST(ground_a_frame_tagged_with_another_key_is_refused) {
   CHECK(m2.state(1) == NodeState::Disabled);
 }
 
+// Verifies: TFC-FDIR-022
 TFC_TEST(ground_a_replayed_or_stale_command_is_refused_and_a_fresh_one_is_accepted) {
   RedundancyManager m;
   run_quiet(m, 0, 3);

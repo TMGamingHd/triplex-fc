@@ -160,6 +160,10 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
   t.mass0 = v.mass();
   t.ground_radius = v.ground_radius();
   t.site = tfc::dm::Vec3{v.ground_radius(), m.site_offset_y_m, m.site_offset_z_m};
+  // a planet that turns carries the pad round its axis (the pole of the launch site, the same one the plant turns the ground by) and the air with it: the guidance aims at where the pad will be
+  t.pole = tfc::dm::Vec3{v.pole().x, v.pole().y, v.pole().z};
+  t.planet_omega = pl.rotation_rate;
+  t.drag.omega = t.pole * pl.rotation_rate;
   t.plane_normal = tfc::dm::Vec3{0.0, 0.0, 1.0};
   t.limits.command_deg = static_cast<float>(m.command_limit_deg);
   t.limits.integrator_deg = static_cast<float>(m.integrator_limit_deg);

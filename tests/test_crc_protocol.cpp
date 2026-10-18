@@ -200,6 +200,7 @@ TFC_TEST(sync_any_single_bit_flip_is_detected) {
   }
 }
 
+// Verifies: TFC-IF-003
 TFC_TEST(arbitration_priority_order) {
   CHECK(id::kSync < id::kGyroBase);
   CHECK(id::kGyroBase < id::kCmdBase);

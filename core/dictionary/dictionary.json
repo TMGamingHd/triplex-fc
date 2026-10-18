@@ -1,0 +1,30 @@
+{
+  "format": "tfc-dictionary-1",
+  "note": "The one machine-readable list of the ground commands and the bus frames (TFC-IF-004). The C++ (core/include/tfc/protocol.hpp), the Python peers (sim/tfc_peers/protocol.py) and the console are checked against it by sim/tests/test_dictionary.py, so that a command added in one place and not another fails a test. Housekeeping channels and event records (TFC-IF-005, TFC-IF-006) are not here: they are not built.",
+  "commands": [
+    {"name": "reintegrate", "opcode": 1, "node": "a computer, 0 to 2", "arm": "never", "refused_when": ["the node is not latched", "the node is disabled (clear-disabled first)"], "doc": "start probation for a latched node: it must then prove itself by shadow vote", "requirements": ["TFC-FDIR-022"]},
+    {"name": "disable", "opcode": 2, "node": "a computer, 0 to 2", "arm": "when it would leave fewer than two healthy nodes", "refused_when": ["the node is already disabled"], "doc": "exclude a node for the rest of the run", "requirements": ["TFC-FDIR-007", "TFC-FDIR-022"]},
+    {"name": "clear-disabled", "opcode": 3, "node": "a computer, 0 to 2", "arm": "always", "refused_when": ["the node is not disabled"], "doc": "maintenance: bring a disabled node back to latched with its strikes cleared", "requirements": ["TFC-FDIR-007"]},
+    {"name": "clear-safe", "opcode": 4, "node": "ignored", "arm": "always", "refused_when": ["fewer than two nodes are voting", "a request is active while the votes are good"], "doc": "lift a sticky Safe request", "requirements": ["TFC-FDIR-008"]},
+    {"name": "launch", "opcode": 5, "node": "ignored", "arm": "always", "refused_when": ["the go/no-go is no-go", "the vehicle has been launched"], "doc": "start the countdown; the sync master acts", "requirements": ["TFC-LAUN-002"]},
+    {"name": "scrub", "opcode": 6, "node": "ignored", "arm": "never", "refused_when": ["after T-zero"], "doc": "back to the pad, before T-zero", "requirements": ["TFC-LAUN-003"]},
+    {"name": "phase", "opcode": 7, "node": "the phase number, 0 to 7", "arm": "never", "refused_when": ["fewer computers vote than the new phase needs", "the phase does not exist"], "doc": "change the mission phase", "requirements": ["TFC-PHASE-004"]},
+    {"name": "noop", "opcode": 8, "node": "ignored", "arm": "never", "refused_when": [], "doc": "changes nothing; answered like any command, to test the path end to end", "requirements": ["TFC-FDIR-043"]},
+    {"name": "warm", "opcode": 9, "node": "a computer, 0 to 2", "arm": "never", "refused_when": ["the node is not voting", "the interlock tier of the phase"], "doc": "rest a voting computer as WARM: shadow-voted but not voting; reintegrate promotes it again", "requirements": ["TFC-PHASE-002"]}
+  ],
+  "arm_flag": 128,
+  "phases": ["off", "power-up", "pre-launch", "ascent", "coast", "pre-burn", "burn", "safed"],
+  "frames": [
+    {"name": "sync", "id": 16, "count": 1, "direction": "sync master", "period_frames": 1, "doc": "frame number, mission time"},
+    {"name": "gyro", "id": 256, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: the computer's IMU rates"},
+    {"name": "accel", "id": 272, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: the IMU's specific force"},
+    {"name": "command", "id": 512, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: the command and the estimator digest"},
+    {"name": "propulsion", "id": 528, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: throttle, groups, events (a mission's computer; not sent by the firmware yet)"},
+    {"name": "surface", "id": 544, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: four surface deflections (a mission's computer; not sent by the firmware yet)"},
+    {"name": "act_output", "id": 768, "count": 1, "direction": "ACT", "period_frames": 1, "doc": "the voted output and the vote status"},
+    {"name": "heartbeat", "id": 1024, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: version, mode, role, view, reset count, release"},
+    {"name": "state_share", "id": 1040, "count": 3, "direction": "computer n", "period_frames": 100, "doc": "id + node: strike counts and the last accepted command counter"},
+    {"name": "resync", "id": 1056, "count": 12, "direction": "computer n", "period_frames": 100, "doc": "id + 4 n + chunk: a quarter of the replica's state, in the last frame of each period"},
+    {"name": "ground", "id": 1296, "count": 1, "direction": "operator", "period_frames": 0, "doc": "an authenticated ground command (sporadic)"}
+  ]
+}

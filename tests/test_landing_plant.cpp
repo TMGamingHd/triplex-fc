@@ -726,6 +726,7 @@ sim::Loads load_at(const sim::Params& p, double mach, double alpha_deg, double w
 }
 }  // namespace
 
+// Verifies: TFC-SIM-018
 TFC_TEST(aero_full_regime_off_changes_nothing_and_on_it_agrees_with_the_build_up_at_low_speed_without_turning) {
   const sim::Params off = shaped_body(false);
   const sim::Params on = shaped_body(true);

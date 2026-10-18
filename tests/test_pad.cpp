@@ -24,6 +24,7 @@ tfc::Vec3 vec(float x, float y, float z) {
 
 }  // namespace
 
+// Verifies: TFC-LAUN-001
 TFC_TEST(calibrator_finds_the_bias_of_a_platform_at_rest_and_subtracts_it) {
   tfc::ImuCalibrator c;
   sim::Lcg noise(9U);
@@ -170,6 +171,7 @@ TFC_TEST(flight_function_schedules_follow_the_flight_frame_not_the_sync_frame_nu
   CHECK(near_abs(static_cast<double>(strict.step().pitch_deg), 0.0, 0.05));
 }
 
+// Verifies: TFC-LAUN-006, TFC-LAUN-007
 TFC_TEST(runner_the_vehicle_stands_on_the_pad_at_rest_until_released_and_the_schedules_start_at_release) {
   for (const bool vehicle_true : {false, true}) {
     sim::RunnerConfig cfg;
@@ -249,6 +251,7 @@ TFC_TEST(runner_a_simulator_started_after_t_zero_joins_the_flight_in_progress) {
   CHECK(early.flight_frame() == 500U);
 }
 
+// Verifies: TFC-PLAT-004
 TFC_TEST(runner_a_tilt_beyond_the_platforms_travel_is_flagged_only_when_the_platform_is_the_sensor) {
   for (const bool vehicle_true : {false, true}) {
     sim::RunnerConfig cfg;

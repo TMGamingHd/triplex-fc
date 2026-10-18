@@ -66,6 +66,7 @@ Slope slope_of(const sim::AeroGeometry& g, double mach) {
 
 // ---- the components ----
 
+// Verifies: TFC-SIM-012
 TFC_TEST(aero_a_nose_has_the_slope_two_and_the_centre_of_pressure_of_its_shape) {
   const std::array<std::pair<sim::NoseShape, double>, 4> shapes{{{sim::NoseShape::Cone, 0.666}, {sim::NoseShape::TangentOgive, 0.466}, {sim::NoseShape::Parabola, 0.5}, {sim::NoseShape::Ellipse, 0.333}}};
   for (const auto& sh : shapes) {

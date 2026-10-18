@@ -273,6 +273,7 @@ class StartOrder(unittest.TestCase):
 
 
 class NothingIsLeftBehind(unittest.TestCase):
+    # Verifies: TFC-CON-010
     def test_children_die_with_a_console_that_is_killed(self):
         """PR_SET_PDEATHSIG: a console that is killed outright must not leave a rig running that nobody can see."""
         with tempfile.TemporaryDirectory() as d:

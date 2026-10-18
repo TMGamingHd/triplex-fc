@@ -101,6 +101,7 @@ class Avionics {
     for (tfc::FlightFunction& f : ff_) {
       f.set_attitude_state(est);
       f.set_navigation_state(tfc::nav::Navigator::State{tfc::dm::Vec3{v.state().r.x, v.state().r.y, v.state().r.z}, tfc::dm::Vec3{v.state().v.x, v.state().v.y, v.state().v.z}, true});
+      f.set_epoch(v.time());   // (a stage's computers count frames from here, and the planet has been turning since T-zero)
     }
   }
 

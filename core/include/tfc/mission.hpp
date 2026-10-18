@@ -218,7 +218,9 @@ struct Tables {
   att::Limits limits;
   double mass0 = 1.0e6;                          // kg at T-zero
   Vec3 plane_normal{0.0, 0.0, 1.0};              // the orbit plane (angular momentum direction), and the roll reference of the attitudes
-  Vec3 site{6378137.0, 0.0, 0.0};                // the pad (the landing site) on the ground, navigation frame
+  Vec3 site{6378137.0, 0.0, 0.0};                // the pad (the landing site) on the ground, navigation frame, as it is at T-zero
+  Vec3 pole{0.0, 0.0, 1.0};                      // the planet's axis of rotation (a unit vector), navigation frame
+  double planet_omega = 0.0;                     // rad/s: the planet turns about `pole` at this rate, and the site goes round with it (0: the planet stands still in this frame, the site is a fixed point)
   double ground_radius = 6378137.0;              // the sphere the ground is on
   descent::LandingTarget landing;                // the catch point is `site` raised by landing.point_height (see below)
   double landing_height = 0.0;                   // the centre of gravity's height above the ground when the pins are at the arms, with the vehicle at `landing_mass_ref`
@@ -239,6 +241,7 @@ struct Inputs {
   Quat q;                            // the attitude, body -> navigation
   Vec3 w;                            // the body rates, rad/s
   bool attitude_valid = true;
+  double epoch_s = 0.0;              // seconds since T-zero by the mission clock, whichever frame this stage's `frame` counts from: it says where a turning planet has carried the site (tables.planet_omega)
 };
 
 // What it gives back.
@@ -271,6 +274,7 @@ class Mission {
       return;
     }
     q_ref_ = in.q;
+    epoch_ = in.epoch_s;
     phase_ = 0U;
     enter(in);
     started_ = true;
@@ -286,6 +290,22 @@ class Mission {
   [[nodiscard]] bool started() const noexcept { return started_; }
   // The height of the centre of gravity above the ground at which the pins are at the arms, for the mass the vehicle has now.
   [[nodiscard]] double catch_height() const noexcept { return tab_->landing_height + (tab_->landing_height_slope * (mass_ - tab_->landing_mass_ref)); }
+  // The site `ahead_s` seconds from now: the pad is carried round the planet's axis at its rate (a vehicle that comes down in a quarter of an hour finds the pad a hundred kilometres east of where it was left).
+  [[nodiscard]] Vec3 site_at(double ahead_s) const noexcept {
+    if (!(tab_->planet_omega > 0.0)) {
+      return tab_->site;
+    }
+    const double a = tab_->planet_omega * (epoch_ + ahead_s);
+    const Vec3 k = tab_->pole;
+    return (tab_->site * dm::cos_(a)) + (dm::cross(k, tab_->site) * dm::sin_(a)) + (k * (dm::dot(k, tab_->site) * (1.0 - dm::cos_(a))));
+  }
+  // The catch point (the site raised by the height of the centre of gravity at the arms) `ahead_s` seconds from now.
+  [[nodiscard]] Vec3 catch_point_at(double ahead_s) const noexcept {
+    const Vec3 s = site_at(ahead_s);
+    return dm::unit(s, Vec3{1.0, 0.0, 0.0}) * (dm::norm(s) + catch_height());
+  }
+  // The velocity the ground has where the vehicle is (the planet's turn): what the landing is flown relative to.
+  [[nodiscard]] Vec3 ground_velocity(Vec3 at) const noexcept { return dm::cross(tab_->pole * tab_->planet_omega, at); }
   [[nodiscard]] uint8_t phase() const noexcept { return phase_; }
   [[nodiscard]] double phase_time_s() const noexcept { return static_cast<double>(in_phase_) * kDt; }
   [[nodiscard]] uint32_t phase_frames() const noexcept { return in_phase_; }   // frames since the phase began
@@ -359,6 +379,7 @@ class Mission {
   Vec3 travel_{};                  // the direction of the first miss of a boost-back (toward the site)
   double aoa_deg_ = 0.0;
   double tof_ = 0.0;
+  double epoch_ = 0.0;              // the mission clock now, from the inputs
   double flow_ = 0.0;               // the mass flow of this frame, kg/s
   Vec3 aoa_dir_{};
   uint8_t latched_events_ = 0U;
@@ -431,7 +452,7 @@ inline bool Mission::ended(const Inputs& in) const noexcept {
     return t >= 1.0 && dm::norm(att::error_vector(in.q, q_target_)) * dm::kRadToDeg <= ev;
   }
   if (p.end == end::kIgnition) {
-    const Vec3 pt = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0}) * (dm::norm(tab_->site) + catch_height());
+    const Vec3 pt = catch_point_at(0.0);
     const Vec3 upt = dm::unit(pt, Vec3{1.0, 0.0, 0.0});
     const double h = dm::dot(in.r - pt, upt);
     const double v_down = dm::max_(-dm::dot(in.v, upt), 0.0);
@@ -440,7 +461,7 @@ inline bool Mission::ended(const Inputs& in) const noexcept {
   }
   if (p.end == end::kTouchdown) {
     // (the burn aims `aim_below_m` under the catch point, so that the pins come down through the arms with the engines still holding the vehicle: the phase ends there, not at the catch point)
-    const Vec3 pt = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0}) * (dm::norm(tab_->site) + catch_height() - tab_->landing.aim_below_m);
+    const Vec3 pt = dm::unit(site_at(0.0), Vec3{1.0, 0.0, 0.0}) * (dm::norm(tab_->site) + catch_height() - tab_->landing.aim_below_m);
     return dm::dot(in.r - pt, dm::unit(pt, Vec3{1.0, 0.0, 0.0})) <= 0.1;
   }
   return false;
@@ -556,7 +577,7 @@ inline void Mission::step_boostback(const Inputs& in, Output& out) noexcept {
     const Vec3 v_cut = in.v + (dm::rotate(in.q, Vec3{1.0, 0.0, 0.0}) * (a_thrust * static_cast<double>(p.p[3])));   // (along the axis the engines really push along, not the one asked for)
     const descent::Impact imp = descent::descent_predict(in.r, v_cut, tab_->nav.gravity, tab_->drag, catch_radius, 1.0, 900U);
     if (imp.valid) {
-      const Vec3 target = dm::unit(tab_->site, up) * catch_radius;
+      const Vec3 target = dm::unit(site_at(imp.tof), up) * catch_radius;   // (where the site will be when the vehicle gets there, not where it is)
       Vec3 m = dm::perp(target - imp.point, up);
       if (dm::norm(travel_) < 0.5) {
         travel_ = dm::unit(m, Vec3{1.0, 0.0, 0.0});   // the direction from the first impact point to the site: the burn ends when the impact point has come that way as far as the aim point
@@ -588,20 +609,21 @@ inline void Mission::step_boostback(const Inputs& in, Output& out) noexcept {
 
 inline void Mission::step_glide(const Inputs& in, Output& out) noexcept {
   const Phase& p = ph();
-  const Vec3 up = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0});
-  const Vec3 vel = dm::unit(in.v, -up);
-  const Vec3 catch_pt = up * (dm::norm(tab_->site) + catch_height());
+  const Vec3 up = dm::unit(site_at(0.0), Vec3{1.0, 0.0, 0.0});
+  const Vec3 v_air = in.v - ground_velocity(in.r);   // (the air turns with the planet: the angle of attack, the dynamic pressure and the brake are on this, the prediction on the inertial velocity)
+  const Vec3 vel = dm::unit(v_air, -up);
+  const double catch_radius = dm::norm(tab_->site) + catch_height();
   if ((in_phase_ % kGlidePeriod) == 0U) {
-    const descent::Impact pred = descent::descent_predict(in.r, in.v, tab_->nav.gravity, tab_->drag, dm::norm(catch_pt), 1.0, 600U);
+    const descent::Impact pred = descent::descent_predict(in.r, in.v, tab_->nav.gravity, tab_->drag, catch_radius, 1.0, 600U);
     if (pred.valid) {
-      miss_ = dm::perp(catch_pt - pred.point, up);
+      miss_ = dm::perp(catch_point_at(pred.tof) - pred.point, up);
       tof_ = pred.tof;
     }
   }
   // Steer by lift, as a zero-effort miss: the angle of attack that, kept to the end of the fall, gives the sideways acceleration that cancels the miss across the path, a = 2 miss / t^2,
   // from the lift per degree the air at this dynamic pressure gives (p[3] square metres per degree of angle of attack, times q over the mass); a steady angle toward the site (p[2]) adds drag.
   const Vec3 across = dm::perp(miss_, vel);
-  const double speed = dm::norm(in.v);
+  const double speed = dm::norm(v_air);
   const double alt = altitude(in);
   const double rho = tab_->drag.rho0 * dm::exp_(-dm::max_(alt, 0.0) / tab_->drag.scale_height);
   const double q = 0.5 * rho * speed * speed;
@@ -613,7 +635,7 @@ inline void Mission::step_glide(const Inputs& in, Output& out) noexcept {
   const double rho_gate = tab_->drag.rho0 * dm::exp_(-static_cast<double>(p.p[5]) / tab_->drag.scale_height);
   const double v_ref = static_cast<double>(p.p[4]) * dm::sqrt_(rho_gate / dm::max_(rho, 1.0e-9));
   const double over = dm::clamp_((speed - v_ref) / dm::max_(v_ref, 1.0), 0.0, 1.0);
-  const Vec3 horiz = dm::perp(in.v, up);
+  const Vec3 horiz = dm::perp(v_air, up);
   const Vec3 back = dm::unit(dm::perp(-horiz, vel), Vec3{0.0, 1.0, 0.0});
   const Vec3 want = (a_need / a_per_deg) + (back * (over * static_cast<double>(p.p[6])));   // degrees
   const double alpha_deg = dm::min_(dm::norm(want), static_cast<double>(p.p[0]));
@@ -632,21 +654,22 @@ inline void Mission::step_glide(const Inputs& in, Output& out) noexcept {
 // a miss beyond it raises it, between p[1] and p[2] degrees about the nominal p[0]. The surfaces do the turning; there is no thrust.
 inline void Mission::step_belly(const Inputs& in, Output& out) noexcept {
   const Phase& p = ph();
-  const Vec3 up = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0});
-  const Vec3 vel = dm::unit(in.v, -up);
-  const Vec3 catch_pt = up * (dm::norm(tab_->site) + catch_height());
+  const Vec3 up = dm::unit(site_at(0.0), Vec3{1.0, 0.0, 0.0});
+  const Vec3 v_air = in.v - ground_velocity(in.r);
+  const Vec3 vel = dm::unit(v_air, -up);
+  const double catch_radius = dm::norm(tab_->site) + catch_height();
   if ((in_phase_ % kGlidePeriod) == 0U) {
     descent::DragModel drag = tab_->drag;
     if (p.p[4] > 0.0F) {
       drag.beta = static_cast<double>(p.p[4]);
     }
-    const descent::Impact pred = descent::descent_predict(in.r, in.v, tab_->nav.gravity, drag, dm::norm(catch_pt), 1.0, 900U);
+    const descent::Impact pred = descent::descent_predict(in.r, in.v, tab_->nav.gravity, drag, catch_radius, 1.0, 900U);
     if (pred.valid) {
-      miss_ = dm::perp(catch_pt - pred.point, up);
+      miss_ = dm::perp(catch_point_at(pred.tof) - pred.point, up);
       tof_ = pred.tof;
     }
   }
-  const Vec3 horiz = dm::unit(dm::perp(in.v, up), vel);
+  const Vec3 horiz = dm::unit(dm::perp(v_air, up), vel);
   const double along = dm::dot(miss_, horiz);   // positive: the site is beyond where it would come down
   const double alpha_deg = dm::clamp_(static_cast<double>(p.p[0]) - (static_cast<double>(p.p[3]) * along), static_cast<double>(p.p[1]), static_cast<double>(p.p[2]));
   aoa_deg_ = alpha_deg;
@@ -666,10 +689,10 @@ inline void Mission::step_belly(const Inputs& in, Output& out) noexcept {
 
 inline void Mission::step_landing(const Inputs& in, Output& out) noexcept {
   const Phase& p = ph();
-  const Vec3 up = dm::unit(tab_->site, Vec3{1.0, 0.0, 0.0});
   descent::LandingTarget tgt = tab_->landing;
-  tgt.point = up * (dm::norm(tab_->site) + catch_height());
-  land_out_ = descent_.update(in.r, in.v, mass_, tgt, tab_->engines, tab_->nav.gravity, tab_->ignition_margin, burning_);
+  tgt.point = catch_point_at(0.0);
+  // (the landing is flown relative to the ground: the pad moves at the planet's turn, hundreds of metres a second at the equator)
+  land_out_ = descent_.update(in.r, in.v - ground_velocity(in.r), mass_, tgt, tab_->engines, tab_->nav.gravity, tab_->ignition_margin, burning_);
   burning_ = burning_ || land_out_.ignite;
   miss_ = land_out_.miss;
   reference_toward(land_out_.direction);
@@ -706,6 +729,7 @@ inline Output Mission::step(const Inputs& in) noexcept {
   if (!started_ || !configured()) {
     return out;
   }
+  epoch_ = in.epoch_s;
   if (ended(in) && static_cast<unsigned>(phase_) + 1U < tab_->n_phases) {
     ++phase_;
     enter(in);

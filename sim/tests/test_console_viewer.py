@@ -111,6 +111,7 @@ class ViewerHubTests(unittest.TestCase):
         self.assertIn('"tt":19.98', got[-1])               # the newest is there
         self.assertNotIn('"tt":0.0,', got[0])              # the oldest is gone
 
+    # Verifies: TFC-VIEW-004
     def test_a_seek_shows_only_where_it_ended(self):
         """A replay that seeks feeds the model from the start: a page must not be sent every pose on the way."""
         v = ViewerHub()
@@ -448,6 +449,7 @@ class Served(unittest.TestCase):
         self.assertEqual(status, 301)
         self.assertEqual(h["Location"], "/viewer/?token=abc&x=1")
 
+    # Verifies: TFC-VIEW-003
     def test_the_pose_stream_needs_the_token_and_starts_with_what_there_is(self):
         self.assertEqual(self.call("/api/pose-stream", token=None)[0], 401)
         self.hub.viewer.ingest(spec_line("served"))

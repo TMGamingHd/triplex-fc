@@ -33,6 +33,7 @@ bool same_state(const sim::State& a, const sim::State& b) {
 
 // ---- the ground ----
 
+// Verifies: TFC-SIM-007
 TFC_TEST(ground_a_vehicle_with_less_than_one_g_of_thrust_stands_on_the_pad_and_rises_when_it_is_light_enough) {
   sim::Params p;
   p.thrust_scale = 0.70;  // 261 kN against a 294 kN weight: it cannot lift off (found 6 Oct 2026: the model had no ground and the vehicle sank through the pad)
@@ -347,6 +348,7 @@ TFC_TEST(imu_model_stale_samples_happen_with_the_probability_given) {
 
 // ---- the runner's flags ----
 
+// Verifies: TFC-SIM-006, TFC-SAFE-008
 TFC_TEST(runner_publishes_the_safed_flag_once_acts_state_is_safe_and_not_before) {
   sim::SimRunner runner;
   (void)runner.start(0U);

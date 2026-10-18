@@ -10,12 +10,14 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "avionics.hpp"
+#include "mission_spec.hpp"
 #include "vehicle6.hpp"
 #include "tfc/mission.hpp"
 #include "tfc/peg.hpp"
@@ -77,6 +79,75 @@ struct Envelope {
   }
 };
 
+// What an envelope has over the limits of a body (an empty list: within them, or no limits given).
+inline std::vector<std::string> envelope_violations(const LoadLimits& lim, const Envelope& e) {
+  std::vector<std::string> v;
+  const auto over = [&v](double limit, double got, const char* what, double scale, const char* unit) {
+    if (limit > 0.0 && got > limit) {
+      char buf[160];
+      std::snprintf(buf, sizeof buf, "%s %.1f %s is over the limit of %.1f %s", what, got / scale, unit, limit / scale, unit);
+      v.emplace_back(buf);
+    }
+  };
+  over(lim.max_q_pa, e.max_q_pa, "max q", 1000.0, "kPa");
+  over(lim.max_q_sin_alpha_pa, e.max_q_sin_alpha_pa, "max q sin(alpha)", 1000.0, "kPa");
+  over(lim.max_axial_g, e.max_axial_g, "axial acceleration", 1.0, "g");
+  over(lim.max_lateral_g, e.max_lateral_g, "lateral acceleration", 1.0, "g");
+  over(lim.max_stagnation_w_m2, e.max_stagnation_w_m2, "nose heat flux", 1000.0, "kW/m2");
+  over(lim.max_wall_k, e.max_wall_k, "skin temperature", 1.0, "K");
+  return v;
+}
+
+// The smallest distance between two line segments (the axes of two bodies), by the closest points of the two lines clamped to the segments (Ericson, Real-Time Collision Detection, 5.1.9, from memory).
+inline double segment_distance(const V3& p1, const V3& q1, const V3& p2, const V3& q2) {
+  const V3 d1 = q1 - p1;
+  const V3 d2 = q2 - p2;
+  const V3 r = p1 - p2;
+  const double a = dot(d1, d1);
+  const double e = dot(d2, d2);
+  const double f = dot(d2, r);
+  double s = 0.0;
+  double t = 0.0;
+  const auto clamp01 = [](double x) { return std::fmin(1.0, std::fmax(0.0, x)); };
+  if (a <= 1e-12 && e <= 1e-12) {
+    return norm(r);
+  }
+  if (a <= 1e-12) {
+    t = clamp01(f / e);
+  } else {
+    const double c = dot(d1, r);
+    if (e <= 1e-12) {
+      s = clamp01(-c / a);
+    } else {
+      const double b = dot(d1, d2);
+      const double denom = (a * e) - (b * b);
+      s = denom > 1e-12 ? clamp01(((b * f) - (c * e)) / denom) : 0.0;
+      t = ((b * s) + f) / e;
+      if (t < 0.0) {
+        t = 0.0;
+        s = clamp01(-c / a);
+      } else if (t > 1.0) {
+        t = 1.0;
+        s = clamp01((b - c) / a);
+      }
+    }
+  }
+  return norm((p1 + (d1 * s)) - (p2 + (d2 * t)));
+}
+
+// How close a stage that has been let go came to the vehicle it left, in the first seconds after: the gap between their surfaces (the distance between the two axes' segments less the two radii, which is a
+// cylinder's idea of a body: the plume of the one on the other, and the nozzles and the flaps, are not in it), with the time and the speed at which they closed.
+struct Clearance {
+  bool cleared = false;             // the surfaces have come apart: the gap has been above zero (before that the two are one stack, with the nozzles of the upper stage inside the interstage of the lower)
+  double t_clear_s = 0.0;           // seconds after the separation at which they cleared
+  double min_gap_m = 1e9;           // the closest the gap came after that
+  double t_s = 0.0;                 // seconds after the separation at the closest
+  double closing_ms = 0.0;          // the rate at which the gap was shrinking at the closest
+  double gap_at_end_m = 0.0;        // at the end of the window (30 s)
+  double last_gap = 0.0;
+  bool seen = false;
+};
+
 // What a design run measures at a point of the flight: the aerodynamic stiffness of the three axes and the effect of one degree of each effector on the angular acceleration (rad/s^2, body axes x y z = roll, yaw,
 // pitch): the gimbal in the pitch plane, the gimbal in the yaw plane, the roll thrusters, and each of the four surface channels.
 struct AxisProbe {
@@ -120,6 +191,7 @@ class MissionWorld {
     uint8_t last_phase = 0U;
     uint32_t seeded = 0U;                 // the phases whose PEG solution has been recorded
     Envelope env;                         // the extremes of its loads so far
+    Clearance clearance;                  // for a stage that was let go: how close it came to the main body
     double drag_num = 0.0;                // sums for the ballistic coefficient the glide measured (see drag_beta)
     double drag_den = 0.0;
     Body(const Params& p, const Scenario& s) : veh(p, s) {}
@@ -157,6 +229,9 @@ class MissionWorld {
       for (const Detached& d : bodies_[i]->veh.take_detached()) {
         spawn(bodies_[i]->veh.time(), d);
       }
+    }
+    for (std::size_t i = 1; i < bodies_.size(); ++i) {
+      note_clearance(*bodies_[0], *bodies_[i]);
     }
     ++frame_;
   }
@@ -204,6 +279,63 @@ class MissionWorld {
   }
 
  private:
+  // The two ends of a body's axis in the inertial frame (the aft end of what is on it, and the forward end) and the largest radius.
+  static void axis_of_body(const Vehicle6& v, V3& tail, V3& nose, double& radius) {
+    const VehicleSpec& g = v.spec();
+    double x0 = 1e30;
+    double x1 = -1e30;
+    radius = 0.0;
+    for (std::size_t s = 0; s < g.stages.size(); ++s) {
+      if (!v.stage_active(s)) {
+        continue;
+      }
+      x0 = std::fmin(x0, g.stages[s].x_start);
+      x1 = std::fmax(x1, g.stages[s].x_start + g.stages[s].length);
+      radius = std::fmax(radius, g.stages[s].radius);
+    }
+    if (!(x1 > x0)) {
+      x0 = 0.0;
+      x1 = 0.0;
+    }
+    const double x_cg = v.mass_props(v.mass()).x_cg;
+    const V3 axis = rotate(v.state().q, V3{1.0, 0.0, 0.0});
+    tail = v.state().r + (axis * (x0 - x_cg));
+    nose = v.state().r + (axis * (x1 - x_cg));
+  }
+
+  // At every tenth frame for the first 30 s after a stage is let go: the gap to the main body.
+  void note_clearance(const Body& main, Body& child) {
+    constexpr double kWindowS = 30.0;
+    const uint32_t age = frame_ - child.born;
+    if (age % kEnvelopeEvery != 0U || static_cast<double>(age) * 0.01 > kWindowS) {
+      return;
+    }
+    V3 t1;
+    V3 n1;
+    V3 t2;
+    V3 n2;
+    double r1 = 0.0;
+    double r2 = 0.0;
+    axis_of_body(main.veh, t1, n1, r1);
+    axis_of_body(child.veh, t2, n2, r2);
+    const double gap = segment_distance(t1, n1, t2, n2) - r1 - r2;
+    Clearance& c = child.clearance;
+    const double t = static_cast<double>(age) * 0.01;
+    if (!c.cleared && gap > 0.0) {
+      c.cleared = true;
+      c.t_clear_s = t;
+      c.min_gap_m = gap;
+      c.t_s = t;
+    } else if (c.cleared && gap < c.min_gap_m) {
+      c.closing_ms = (c.last_gap - gap) / (kEnvelopeEvery * 0.01);
+      c.min_gap_m = gap;
+      c.t_s = t;
+    }
+    c.last_gap = gap;
+    c.gap_at_end_m = gap;
+    c.seen = true;
+  }
+
   void attach(Body& b) {
     if (cfg_.ideal) {
       if (b.tables != nullptr) {
@@ -230,6 +362,7 @@ class MissionWorld {
     in.specific_force = norm(l.f_thrust + l.f_aero) / std::max(s.m, 1.0);
     in.q = tfc::dm::Quat{s.q.w, s.q.x, s.q.y, s.q.z};
     in.w = dm_of(s.w);
+    in.epoch_s = b.veh.time();
     return in;
   }
 

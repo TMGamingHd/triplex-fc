@@ -747,6 +747,34 @@ inline void read_mission(const Json& j, MissionSpec& m, std::vector<std::string>
     lr.num("slew_deg_per_frame", m.slew_deg_per_frame);
     lr.finish();
   }
+  if (const Json* st = o.get("structure")) {
+    ObjectReader sr(*st, "mission.structure", errors);
+    sr.str("source", m.structure_source);
+    sr.num("min_separation_gap_m", m.min_separation_gap_m);
+    const auto read_limits = [&errors](const Json& obj, const std::string& what, LoadLimits& l) {
+      ObjectReader lr(obj, what, errors);
+      lr.num("max_q_pa", l.max_q_pa);
+      lr.num("max_q_sin_alpha_pa", l.max_q_sin_alpha_pa);
+      lr.num("max_axial_g", l.max_axial_g);
+      lr.num("max_lateral_g", l.max_lateral_g);
+      lr.num("max_stagnation_w_m2", l.max_stagnation_w_m2);
+      lr.num("max_wall_k", l.max_wall_k);
+      lr.finish();
+    };
+    if (const Json* mj = sr.get("main")) {
+      read_limits(*mj, "mission.structure.main", m.structure_main);
+    }
+    if (const Json* arr = sr.get("stages")) {
+      if (arr->type != Json::Type::Array || arr->items.size() > kMaxStages) {
+        errors.push_back("mission.structure.stages: a list of at most " + std::to_string(kMaxStages) + " objects, by stage index");
+      } else {
+        for (std::size_t i = 0; i < arr->items.size(); ++i) {
+          read_limits(arr->items[i], item("mission.structure", "stages", i), m.structure_stage[i]);
+        }
+      }
+    }
+    sr.finish();
+  }
   if (const Json* d = o.get("design")) {
     ObjectReader dr(*d, "mission.design", errors);
     dr.num("wn", m.wn);
@@ -1255,6 +1283,29 @@ inline std::string mission_text(const MissionSpec& m) {
          (m.mixers[i].trim_deg == std::array<double, 4>{} ? std::string() : ", \"trim_deg\": [" + num_text(m.mixers[i].trim_deg[0]) + ", " + num_text(m.mixers[i].trim_deg[1]) + ", " + num_text(m.mixers[i].trim_deg[2]) + ", " + num_text(m.mixers[i].trim_deg[3]) + "]") + "}";
   }
   o += "]";
+  {
+    bool any = m.structure_main.any() || m.min_separation_gap_m > 0.0;
+    for (const LoadLimits& l : m.structure_stage) {
+      any = any || l.any();
+    }
+    if (any) {
+      const auto limits = [](const LoadLimits& l) {
+        return std::string("{\"max_q_pa\": ") + num_text(l.max_q_pa) + ", \"max_q_sin_alpha_pa\": " + num_text(l.max_q_sin_alpha_pa) + ", \"max_axial_g\": " + num_text(l.max_axial_g) + ", \"max_lateral_g\": " +
+               num_text(l.max_lateral_g) + ", \"max_stagnation_w_m2\": " + num_text(l.max_stagnation_w_m2) + ", \"max_wall_k\": " + num_text(l.max_wall_k) + "}";
+      };
+      o += ",\n    \"structure\": {\"source\": " + quoted(m.structure_source) + ", \"min_separation_gap_m\": " + num_text(m.min_separation_gap_m) + ", \"main\": " + limits(m.structure_main) + ", \"stages\": [";
+      std::size_t last = 0U;
+      for (std::size_t i = 0; i < m.structure_stage.size(); ++i) {
+        if (m.structure_stage[i].any()) {
+          last = i + 1U;
+        }
+      }
+      for (std::size_t i = 0; i < last; ++i) {
+        o += std::string(i == 0U ? "" : ", ") + limits(m.structure_stage[i]);
+      }
+      o += "]}";
+    }
+  }
   const auto plan = [&o](const char* key, const std::vector<PhaseSpec>& v) {
     if (v.empty()) {
       return;

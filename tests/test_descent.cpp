@@ -94,6 +94,23 @@ TFC_TEST(descent_the_predictor_with_air_agrees_with_the_coast_without_it_and_fal
   CHECK(!d.valid);
 }
 
+// Verifies: TFC-SIM-020
+TFC_TEST(descent_the_air_turns_with_the_planet_so_a_vehicle_carried_along_with_it_meets_no_wind) {
+  const double R = 6378137.0;
+  const double w = 7.2921159e-5;
+  const tfc::nav::Gravity g;
+  const Vec3 r{R + 10000.0, 0.0, 0.0};
+  const Vec3 v{0.0, w * (R + 10000.0), 0.0};   // at rest relative to the ground
+  tfc::descent::DragModel still;
+  still.beta = 3000.0;
+  tfc::descent::DragModel turning = still;
+  turning.omega = Vec3{0.0, 0.0, w};
+  const tfc::descent::Impact a = tfc::descent::descent_predict(r, v, g, still, R, 0.5, 4000U);
+  const tfc::descent::Impact b = tfc::descent::descent_predict(r, v, g, turning, R, 0.5, 4000U);
+  // (in the one the air stands still, so a body moving at 465 m/s is braked hard; in the other it is carried round with the air and falls on a gravity orbit)
+  CHECK(a.valid && b.valid && norm(b.point - r) > norm(a.point - r) + 1000.0);
+}
+
 namespace {
 struct Landing {
   Vec3 r;
@@ -110,7 +127,7 @@ struct Landing {
 };
 
 // The booster in a point-mass model: 3 engines of 2.45 MN, mass flow from an exhaust speed of 3250 m/s, thrust along the commanded direction at once.
-Landing land(Vec3 offset_h, double h0, double v_down, Vec3 v_h, double mass) {
+Landing land(Vec3 offset_h, double h0, double v_down, Vec3 v_h, double mass, double thrust_gain = 1.0) {
   const tfc::nav::Gravity g;
   tfc::descent::LandingTarget tgt;
   tgt.point = Vec3{g.radius + 60.0, 0.0, 0.0};
@@ -130,7 +147,7 @@ Landing land(Vec3 offset_h, double h0, double v_down, Vec3 v_h, double mass) {
     burning = burning || o.ignite;
     Vec3 acc = g.at(L.r);
     if (burning) {
-      const double thrust = o.throttle * eng.thrust_each * static_cast<double>(o.engines);
+      const double thrust = o.throttle * eng.thrust_each * static_cast<double>(o.engines) * thrust_gain;   // (the engines give `thrust_gain` times what the guidance thinks they do)
       acc = acc + (o.direction * (thrust / L.mass));
       L.mass -= thrust / 3250.0 * dt;
       const double tilt = std::acos(dot(o.direction, up)) * tfc::dm::kRadToDeg;
@@ -174,6 +191,19 @@ TFC_TEST(descent_the_powered_descent_puts_the_booster_over_the_catch_point_slowl
     CHECK(L.tilt_deg < 4.0);
     CHECK(L.max_tilt_deg < 15.5);
     CHECK(L.mass > 100000.0);
+  }
+}
+
+TFC_TEST(descent_the_burn_arrives_at_its_sink_speed_whatever_the_engines_give_within_a_few_percent_of_what_it_thinks) {
+  // The guidance turns the acceleration it wants into a throttle with the thrust it believes the engines have: a thrust five percent off is five percent of the weight, and a proportional loop on the speed
+  // alone settles at that error over its gain (0.6 per second: a metre per second and more), which at the end of the approach is the whole of the speed it is meant to arrive at (0.5): the integral on the
+  // speed error takes it out. The booster of the whole mission, which arrived at 10.9 m/s with its thrust one percent high and hovered above the arms with it one percent low, is the case.
+  for (const double gain : {0.95, 0.98, 1.0, 1.02, 1.05}) {
+    const Landing L = land(Vec3{0.0, 60.0, -40.0}, 2500.0, 270.0, Vec3{0.0, -8.0, 5.0}, 285000.0, gain);
+    CHECK(L.landed);
+    CHECK(L.miss < 1.5);
+    CHECK(L.sink > 0.0 && L.sink < 1.3);
+    CHECK(L.t < 60.0);    // (and it comes down: a hover above the point never reaches it)
   }
 }
 

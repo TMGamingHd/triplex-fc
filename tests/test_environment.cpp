@@ -45,6 +45,7 @@ sim::PlanetSpec preset(const char* name) {
 
 // ---- the planets and their rotation ----
 
+// Verifies: TFC-SIM-013
 TFC_TEST(environment_the_presets_are_the_planets_and_an_unknown_name_is_refused) {
   CHECK(close(preset("earth").mu / (preset("earth").radius * preset("earth").radius), 9.798, 1e-3));   // surface gravity
   CHECK(close(preset("moon").mu / (preset("moon").radius * preset("moon").radius), 1.624, 5e-3));

@@ -158,3 +158,14 @@ A vehicle file that has a `mission` block says what the flight computers fly; `t
   * a `chute`: `drogue_altitude_m`, `main_altitude_m`.
 
 A phase's parameters become the table's `p[]` (`GNC.md` section 7); the thrust and the mass flow come from the engines of its groups. The file's mistakes are refused with their place (`mission.main[2].kind: unknown "teleport"`), and a mission of more than 16 phases is refused when the tables are built.
+
+### 9a. The structure's limits (`mission.structure`, ADR-054)
+
+An optional block of the mission: what a body's structure and skin may meet, checked against the envelope the mission flew (`tfc_mission` prints `LIMIT EXCEEDED` for each limit crossed and, with `--enforce-limits`, exits 4). Every number is zero (no limit) unless given, and the block **says where the numbers came from**: a file with limits that have no source is worse than none.
+
+```json
+"structure": {"source": "where the numbers are from", "min_separation_gap_m": 4.5,
+              "main": {"max_q_pa": 35000, "max_q_sin_alpha_pa": 4000, "max_axial_g": 4.5, "max_lateral_g": 1.0, "max_stagnation_w_m2": 2.0e6, "max_wall_k": 1800},
+              "stages": [{"max_q_pa": 60000, "max_axial_g": 6}]}
+```
+`stages` is by the stage's index. A file with none writes none (the committed missions have none: the project has no allowables, `LIMITATIONS.md` 11). Read, written and read again, refused for an unknown name, in `tests/test_mission_sim.cpp`.

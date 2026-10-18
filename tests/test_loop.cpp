@@ -179,6 +179,7 @@ TFC_TEST(estimator_finds_a_static_tilt_from_gravity) {
   CHECK(near(a.rate_x_dps, 0.0F, 0.2F) && near(a.rate_y_dps, 0.0F, 0.2F));
 }
 
+// Verifies: TFC-LOOP-006
 TFC_TEST(estimator_aligns_from_the_first_good_gravity_reading) {
   AttitudeEstimator est;
   est.update(input(Vec3{}, gravity_for(-12.0F, 7.0F)), 0.01F);  // one step: no waiting for a filter to converge
@@ -269,6 +270,7 @@ TFC_TEST(estimator_ignores_an_accelerometer_outside_the_gate_and_one_that_is_not
   CHECK(near(est.attitude().tilt_x_deg, 0.0F, 0.01F));
 }
 
+// Verifies: TFC-LOOP-004
 TFC_TEST(estimator_holds_the_last_rates_without_a_trustworthy_gyro_and_says_so) {
   AttitudeEstimator est;
   est.update(input(Vec3{{5.0F, 0.0F, 0.0F}}, gravity_for(0.0F, 0.0F)), 0.01F);
@@ -295,6 +297,7 @@ TFC_TEST(estimator_digest_is_the_same_for_the_same_updates_and_differs_otherwise
   CHECK(a.digest() != c.digest());
 }
 
+// Verifies: TFC-LOOP-005
 TFC_TEST(estimator_treats_a_non_finite_gyro_as_untrustworthy_and_its_state_stays_finite) {
   AttitudeEstimator est;
   est.update(input(Vec3{{2.0F, 0.0F, 0.0F}}, gravity_for(3.0F, 0.0F)), 0.01F);
@@ -376,6 +379,7 @@ TFC_TEST(controller_damps_with_the_rate) {
   CHECK(moving.pitch_deg < 0.0F);
 }
 
+// Verifies: TFC-LOOP-006
 TFC_TEST(controller_never_exceeds_the_gimbal_limit_or_the_slew_limit) {
   Controller c;
   float last = 0.0F;
@@ -589,6 +593,7 @@ void pitch_program(Rig& rig) {
 
 }  // namespace
 
+// Verifies: TFC-LOOP-002
 TFC_TEST(loop_holds_the_vehicle_on_its_pitch_program) {
   Rig rig;
   pitch_program(rig);
@@ -633,6 +638,7 @@ TFC_TEST(loop_survives_an_engine_out) {
   CHECK(std::fabs(rig.veh.yaw_plane_deg()) < 1.0);
 }
 
+// Verifies: TFC-LOOP-003
 TFC_TEST(loop_masks_a_sensor_with_a_large_gyro_bias) {
   Rig clean;
   pitch_program(clean);
@@ -648,6 +654,7 @@ TFC_TEST(loop_masks_a_sensor_with_a_large_gyro_bias) {
   CHECK(faulty.max_pitch_err < 1.0);
 }
 
+// Verifies: TFC-LOOP-003
 TFC_TEST(loop_masks_a_frozen_sensor) {
   Rig rig;
   pitch_program(rig);
@@ -669,6 +676,7 @@ TFC_TEST(loop_with_the_sensor_of_a_latched_node_excluded_still_flies_on_two) {
   CHECK(rig.max_pitch_err < 1.0);
 }
 
+// Verifies: TFC-LOOP-004
 TFC_TEST(loop_without_a_trustworthy_gyro_holds_its_command_and_does_not_invent_one) {
   Rig rig;
   pitch_program(rig);
@@ -686,6 +694,7 @@ TFC_TEST(loop_without_a_trustworthy_gyro_holds_its_command_and_does_not_invent_o
   CHECK(std::fabs(rig.veh.pitch_plane_deg() - program_deg(rig.k)) < 1.0);
 }
 
+// Verifies: TFC-SIM-001
 TFC_TEST(loop_is_deterministic_run_to_run) {
   Rig a;
   Rig b;

@@ -96,6 +96,7 @@ struct Loop {
   bool sensor_fault_b = false;               // node B's gyro reads 15 dps too much
   float frame_loss_prob = 0.0F;              // the chance that a receiver does not get a given sensor frame of another computer in a frame (a late or lost frame): TS-16
   uint32_t loss_seed = 77U;
+  double gnss_sigma_m = 0.0;                 // the GNSS receiver's position noise, for a mission (tfc_mission_mc); the ascent loop has no receiver and ignores it; 0: the mission's own
   uint32_t noise_seed = 0U;                  // mixed into the seeds of the three IMU models: another value is another realisation of the sensor noise and the constant errors (0: the firmware's seeds, as before)
   uint32_t resync_period = 0U;               // the replicas exchange their state in the last frame of every period and adopt the vote (TS-16 option C); 0: never
   tfc::resync::Config resync;

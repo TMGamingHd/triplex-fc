@@ -51,6 +51,7 @@ class TestCorrelator(unittest.TestCase):
             c2.add(*osc.pair(t * 0.5))      # eight pairs in 3.5 s: too short a baseline to fit a drift
         self.assertFalse(c2.ok())
 
+    # Verifies: TFC-SUP-012
     def test_a_20_ppm_oscillator_is_measured_to_under_a_ppm_from_an_hour_of_noisy_pairs(self):
         for seed in range(5):
             osc = Oscillator(ppm=20.0, seed=seed)

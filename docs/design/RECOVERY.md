@@ -96,3 +96,21 @@ The rig's flight computers are real processes with a pitch program and no missio
 * **The ship in the rig does not reach an orbit**: the firmware measures the tilt as a pitch angle, which is singular at 90 degrees from the vertical, and the mission's PEG goes to 111; held under 89 the ship reaches 7.7 km/s with a perigee of about 64 km and an apogee of about 650 km (`tfc_fly`, measured).
 * **Stage 0 only**, and only on the host: a real firmware path for the stage's plan is not built.
 
+## 9. The landing's vertical channel has an integral, and what the whole-mission Monte Carlo showed (ADR-054, 18 Oct 2026)
+
+The first whole-mission Monte Carlo (`MONTE_CARLO.md` section 7) lost the catch to a thrust one percent high or low. The cause, from the landing trace: the vertical channel of the powered descent (`descent.hpp`) turns the acceleration it wants into a throttle with the thrust and the mass it believes, and corrects the speed against its profile with a **proportional term alone** (0.6 per second). A thrust (or a mass) a few percent off settles at that error over the gain, a quarter to a metre per second at the end of the approach, where the speed it is meant to arrive at is 0.5: with the thrust one percent high the stage hovered 7 m above the arms at 0.2 m/s, burnt its propellant and fell; one percent low it arrived at 2.9 m/s (the arms take 2.0).
+
+**The change:** an integral of the speed error, `0.25 m/s^2` per metre of accumulated error, bounded to 1 m/s^2, built only while the burn runs and **only near the profile** (at full rate on it and not at all 3 m/s off it: the start of the burn and a step of the engine count do not wind it up) and **frozen in the last 25 m** (what it holds is kept; a late change would be the arrival speed). A test (`descent_the_burn_arrives_at_its_sink_speed_whatever_the_engines_give_within_a_few_percent_of_what_it_thinks`) lands the point-mass booster with the engines giving 95 to 105 % of what the guidance thinks: the sink speed arrives between 0 and 1.3 m/s and the burn comes down in under a minute; without the integral it fails.
+
+**Measured** (22 single dispersions at about one standard deviation, `tfc_mission_mc`; and the 40 GNSS seeds):
+
+| | before | after |
+|---|---|---|
+| single dispersions that lose the catch (of 22) | 6 (thrust +-1 %, propellant +0.5 and +1 %, twice the wind, a 3 m receiver) | 1 (twice the wind, at 1.5 m against 1.5 m) |
+| the catch with the receiver's noise only, 40 flights | 39 of 40 | 38 of 40 (95 %) |
+| the 40 GNSS seeds of `tfc_mission` | 40 of 40 (after the probe fix of `CONTROL_LOOP.md` section 7) | 38 of 40 (median miss 0.6 m, largest 1.1) |
+| a dispersion of everything at once, 100 flights | 0 | 0 |
+
+So the integral buys robustness to a **systematic** error and costs two catches in forty under noise alone (the two that failed arrived at 2.1 to 2.9 m/s against 2.0: the margin of the arms was thin and is a little thinner). It is a trade and it is recorded as one. What it does not do is the larger part of the problem: with everything dispersed the stage arrives at the landing gate 3 to 5 km from the site, which no landing guidance can recover.
+
+**Also from this round:** `tfc_mission` prints each body's envelope (ADR-053), the state of the pins as they passed the arms (how far from the site, how fast down and across, how far from upright), and the separation clearance (the gap between the two bodies' surfaces, a cylinder's idea of them, from the moment they cleared: 1.1 s after the separation, 0.9 m at first, growing after).

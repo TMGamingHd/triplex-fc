@@ -480,10 +480,27 @@ class Vehicle6 {
   [[nodiscard]] bool landed() const { return landed_; }   // touched down upright and slowly: held on the ground
   [[nodiscard]] bool caught() const { return caught_; }   // held in the tower's arms
   [[nodiscard]] bool catch_missed() const { return catch_missed_; }   // the pins came down through the arms' height outside what the arms can take
+  // The state of the pins as they came down through the arms' height (caught or not): how far from the site, how fast down and across, how far from upright. `valid` once they have.
+  struct CatchPass {
+    bool valid = false;
+    double miss_m = 0.0;
+    double sink_ms = 0.0;
+    double lateral_ms = 0.0;
+    double tilt_deg = 0.0;
+  };
+  [[nodiscard]] const CatchPass& catch_pass() const { return catch_pass_; }
   [[nodiscard]] bool launched() const { return launched_; }
   [[nodiscard]] bool engine_on_command(std::size_t e) const { return e < g_.engines.size() && eng_on_[e]; }
   [[nodiscard]] int engine_starts(std::size_t e) const { return e < g_.engines.size() ? starts_[e] : 0; }
   [[nodiscard]] double ground_radius() const { return ground_radius_; }
+  // A point (inertial frame) in the pad's own axes now, minus the pad's place: x up, y downrange, z crossrange. A planet that turns carries the pad away from where it was at T-zero; this is where the point is from the pad.
+  [[nodiscard]] V3 pad_offset(const V3& r) const {
+    V3 up;
+    V3 down;
+    V3 cross_r;
+    pad_frame(up, down, cross_r);
+    return V3{dot(r, up) - ground_radius_, dot(r, down), dot(r, cross_r)};
+  }
   [[nodiscard]] const Controls& controls() const { return ctrl_; }
   // The height of the lowest point of the vehicle above the ground, m (the base, or the foot of the legs, or an end of a body lying down); the pins' height above the ground for a catch.
   [[nodiscard]] double base_height() const { return lowest_point_height(); }
@@ -1569,6 +1586,7 @@ class Vehicle6 {
           const double sink = -dot(v_rel, up_pad);
           const double lat = norm(v_rel + (up_pad * sink));
           const double tilt = std::acos(std::clamp(dot(rotate(s_.q, V3{1.0, 0.0, 0.0}), up_pad), -1.0, 1.0)) * kRad2Deg;
+          catch_pass_ = CatchPass{true, miss, sink, lat, tilt};
           if (miss <= sc_.tower.capture_radius_m && sink >= 0.0 && sink <= sc_.tower.max_sink_ms && lat <= sc_.tower.max_lateral_ms && tilt <= sc_.tower.max_tilt_deg) {
             caught_ = true;
             s_.r = s_.r + (up_pad * (sc_.tower.height_m - hp));
@@ -2319,6 +2337,7 @@ class Vehicle6 {
   bool landed_ = false;
   bool caught_ = false;
   bool catch_missed_ = false;
+  CatchPass catch_pass_{};
   double ground_radius_ = 0.0;
   double prev_pin_h_ = 1.0e30;
   NewtonTable newton_;

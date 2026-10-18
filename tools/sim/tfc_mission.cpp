@@ -2,7 +2,7 @@
 // Fly a vehicle's MISSION: read a vehicle description that has a `mission` block (docs/design/GNC.md, docs/design/RECOVERY.md), design the mission on its nominal flight (the gains of the attitude loop, the
 // allocation to the surfaces, the guidance's starting solutions, the drag of the way down), then fly it for real: every body (the stack, then the stages that are let go) on three flight computers with
 // their sensor models, a GNSS receiver, the navigation filter, the guidance and the voted commands, in the vehicle simulator. Reports what happened to each body and what the mission was meant to do.
-//   tfc_mission VEHICLE.json [--ideal] [--seed N] [--gnss-sigma M] [--pad FRAMES] [--max-time S] [--min-time S] [--design-only] [--expect-catch] [--expect-orbit] [--expect-landing]
+//   tfc_mission VEHICLE.json [--ideal] [--seed N] [--gnss-sigma M] [--pad FRAMES] [--max-time S] [--min-time S] [--design-only] [--expect-catch] [--expect-orbit] [--enforce-limits] [--expect-landing]
 //                            [--csv FILE] [--every S] [--pose FILE] [--pose-body N] [--pose-hz N] [--pose-others]
 // --ideal: the attitude of every body is forced to the one its mission asks for (the guidance and the plant without the sensors and the loop). --expect-*: exit 3 unless the stated outcome happened
 // (a booster caught by the tower, a ship in an orbit with its perigee above 100 km, a stage on its legs or its parachute at a speed the legs and the parachute can take).
@@ -26,6 +26,7 @@ struct Options {
   bool expect_catch = false;
   bool expect_orbit = false;
   bool expect_landing = false;
+  bool enforce_limits = false;    // exit 4 when a body's loads cross the limits the mission file gives (mission.structure)
   uint32_t seed = 0U;
   double gnss_sigma = 2.0;
   uint32_t pad_frames = 1500U;
@@ -41,7 +42,7 @@ struct Options {
 
 void usage() {
   std::fprintf(stderr,
-               "usage: tfc_mission VEHICLE.json [--ideal] [--seed N] [--gnss-sigma M] [--pad FRAMES] [--max-time S] [--min-time S] [--design-only] [--expect-catch] [--expect-orbit] [--expect-landing]\n"
+               "usage: tfc_mission VEHICLE.json [--ideal] [--seed N] [--gnss-sigma M] [--pad FRAMES] [--max-time S] [--min-time S] [--design-only] [--expect-catch] [--expect-orbit] [--enforce-limits] [--expect-landing]\n"
                "                                [--csv FILE] [--every S] [--pose FILE] [--pose-body N] [--pose-hz N] [--pose-others]\n");
 }
 
@@ -63,6 +64,8 @@ bool parse(int argc, char** argv, Options& o) {
       o.expect_orbit = true;
     } else if (a == "--expect-landing") {
       o.expect_landing = true;
+    } else if (a == "--enforce-limits") {
+      o.enforce_limits = true;
     } else if (a == "--seed" && more) {
       o.seed = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
     } else if (a == "--gnss-sigma" && more) {
@@ -333,6 +336,7 @@ int main(int argc, char** argv) {
   bool caught = false;
   bool orbit_ok = false;
   bool landing_ok = false;
+  bool limits_exceeded = false;
   for (std::size_t i = 0; i < world.bodies(); ++i) {
     const sim::MissionWorld::Body& b = world.body(i);
     const sim::State& s = b.veh.state();
@@ -340,7 +344,7 @@ int main(int argc, char** argv) {
     std::printf("%s: %s", b.name.c_str(), ending(b.veh));
     if (b.veh.caught() || b.veh.landed() || b.veh.crashed()) {
       const sim::V3 site{0.0, 0.0, ms.site_offset_z_m};
-      const sim::V3 p = s.r - sim::V3{b.veh.ground_radius(), 0.0, 0.0};
+      const sim::V3 p = b.veh.pad_offset(s.r);
       std::printf(", %.1f m from the site, %.0f kg left", std::hypot(p.y - site.y, p.z - site.z), b.veh.mass());
     } else if (orb.bound) {
       std::printf(", in orbit: perigee %.1f km, apogee %.1f km, speed %.1f m/s", orb.perigee_km, orb.apogee_km, orb.speed);
@@ -354,11 +358,40 @@ int main(int argc, char** argv) {
                 e.t_max_q_sin_alpha, e.max_alpha_rad * kDeg, e.max_normal_force_n / 1000.0);
     std::printf("         axial %.2f g, lateral %.2f g; Mach %.1f; nose flux %.0f kW/m2 at T+%.0f s, skin %.0f K; aero moment up to %.1f MN m\n", e.max_axial_g, e.max_lateral_g, e.max_mach, e.max_stagnation_w_m2 / 1000.0, e.t_max_heat,
                 e.max_wall_k, e.max_aero_moment_nm / 1e6);
+    if (b.veh.catch_pass().valid) {
+      const sim::Vehicle6::CatchPass& cp = b.veh.catch_pass();
+      std::printf("  at the arms' height: %.1f m from the site, %.2f m/s down, %.2f m/s across, %.1f degrees from upright\n", cp.miss_m, cp.sink_ms, cp.lateral_ms, cp.tilt_deg);
+    }
+    if (b.clearance.seen) {
+      if (b.clearance.cleared) {
+        std::printf("  separation: the surfaces cleared %.1f s after the stage was let go; the closest they came after that was %.1f m (%.1f s after, closing at %.2f m/s); %.1f m apart 30 s after\n", b.clearance.t_clear_s,
+                    b.clearance.min_gap_m, b.clearance.t_s, b.clearance.closing_ms, b.clearance.gap_at_end_m);
+      } else {
+        std::printf("  separation: the surfaces had not cleared 30 s after the stage was let go (%.1f m between them)\n", b.clearance.gap_at_end_m);
+      }
+    }
+    {
+      const sim::LoadLimits& lim = b.stage < 0 ? ms.structure_main : ms.structure_stage[static_cast<std::size_t>(b.stage)];
+      std::vector<std::string> over = sim::envelope_violations(lim, e);
+      if (b.clearance.seen && ms.min_separation_gap_m > 0.0 && (!b.clearance.cleared || b.clearance.min_gap_m < ms.min_separation_gap_m)) {
+        char buf[120];
+        std::snprintf(buf, sizeof buf, "separation gap %.1f m is under the limit of %.1f m", b.clearance.min_gap_m, ms.min_separation_gap_m);
+        over.emplace_back(buf);
+      }
+      for (const std::string& w : over) {
+        std::printf("  LIMIT EXCEEDED (%s): %s\n", ms.structure_source.empty() ? "no source given" : ms.structure_source.c_str(), w.c_str());
+        limits_exceeded = true;
+      }
+    }
     caught = caught || b.veh.caught();
     orbit_ok = orbit_ok || (!b.veh.caught() && !b.veh.landed() && !b.veh.crashed() && orb.bound && orb.perigee_km > 100.0);
     landing_ok = landing_ok || b.veh.landed() || b.veh.caught();
   }
   int rc = 0;
+  if (limits_exceeded && opt.enforce_limits) {
+    std::printf("LIMITS EXCEEDED\n");
+    rc = 4;
+  }
   if ((opt.expect_catch && !caught) || (opt.expect_orbit && !orbit_ok) || (opt.expect_landing && !landing_ok)) {
     std::printf("EXPECTATION NOT MET%s%s%s\n", opt.expect_catch && !caught ? ": no booster was caught" : "", opt.expect_orbit && !orbit_ok ? ": no body is in an orbit above 100 km" : "",
                 opt.expect_landing && !landing_ok ? ": nothing landed" : "");

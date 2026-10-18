@@ -161,6 +161,7 @@ class FaultLabLive(unittest.TestCase):
         self.c = Console()
         self.addCleanup(self.c.close)
 
+    # Verifies: TFC-CON-008
     def test_a_fault_is_injected_detected_measured_cleared_and_the_node_readmitted(self):
         c = self.c
         c.rig.start_profile("fault-lab")

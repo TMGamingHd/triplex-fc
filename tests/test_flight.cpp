@@ -91,6 +91,7 @@ TFC_TEST(flight_function_gives_the_bits_of_the_stages_composed_by_hand) {
   CHECK(std::fabs(ff.estimator().attitude().tilt_y_deg) > 1.0F);  // it followed the tilt
 }
 
+// Verifies: TFC-LOOP-001
 TFC_TEST(flight_function_replicas_fed_the_same_frames_stay_bit_identical) {
   std::array<tfc::FlightFunction, 3> ff{tfc::FlightFunction(gains(), guidance()), tfc::FlightFunction(gains(), guidance()),
                                         tfc::FlightFunction(gains(), guidance())};

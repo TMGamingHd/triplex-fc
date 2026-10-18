@@ -72,6 +72,18 @@ struct MixerSpec {
   std::array<double, 4> trim_deg{};  // the deflection of each channel at zero demand (a flap held at 60 degrees in a belly flop steers about that, not about 0): the demands are deflections about it
 };
 
+// What a body's structure and skin are allowed to meet: the limits a mission is checked against (the envelope of mission_world.hpp is what it met). Zero is no limit. The numbers are the vehicle's and are not
+// made up here: a file that has none is not checked, and a file that has them says where they came from.
+struct LoadLimits {
+  double max_q_pa = 0.0;
+  double max_q_sin_alpha_pa = 0.0;
+  double max_axial_g = 0.0;
+  double max_lateral_g = 0.0;
+  double max_stagnation_w_m2 = 0.0;
+  double max_wall_k = 0.0;
+  [[nodiscard]] bool any() const { return max_q_pa > 0.0 || max_q_sin_alpha_pa > 0.0 || max_axial_g > 0.0 || max_lateral_g > 0.0 || max_stagnation_w_m2 > 0.0 || max_wall_k > 0.0; }
+};
+
 struct MissionSpec {
   bool present = false;
   // the catch tower and the landing site, relative to the launch point
@@ -109,6 +121,10 @@ struct MissionSpec {
   double sample_s = 1.0;
   double max_time_s = 3000.0;       // the design run stops here at the latest
   double tail_s = 60.0;             // and this long after every body has reached its last phase
+  LoadLimits structure_main;                                    // the limits of the main body ("structure": {"main": {...}})
+  std::array<LoadLimits, kMaxStages> structure_stage{};          // and of each stage let go, by the stage's index ("stages": [{...}, ...])
+  double min_separation_gap_m = 0.0;                            // the smallest gap a stage may come to the vehicle it leaves
+  std::string structure_source;                                  // where the numbers came from (said in the file, repeated in the report)
   std::vector<MixerSpec> mixers;
   std::vector<PhaseSpec> main;                                  // the computers that fly the whole vehicle
   std::array<std::vector<PhaseSpec>, kMaxStages> stage;         // the computers of a stage that has been let go, by the stage's index

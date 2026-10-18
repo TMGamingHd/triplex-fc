@@ -188,6 +188,8 @@ TFC_TEST(mc_every_dispersion_sets_the_field_it_names) {
   set("thrust_misalign_pitch_deg", 0.3, lp);
   set("thrust_misalign_yaw_deg", -0.2, lp);
   set("gimbal_lag_s", 0.04, lp);
+  set("gnss_sigma_m", 1.7, lp);
+  CHECK(near_abs(lp.gnss_sigma_m, 1.7, 1e-12));
   set("dry_mass_scale", 1.1, lp);
   set("propellant_scale", 0.9, lp);
   set("isp_scale", 0.95, lp);
@@ -338,6 +340,7 @@ TFC_TEST(mc_a_run_with_nothing_dispersed_flies_the_nominal_flight_with_only_its_
   CHECK(differ);  // and not the same flight as the nominal
 }
 
+// Verifies: TFC-SIM-015
 TFC_TEST(mc_a_flight_can_be_flown_again_by_itself_and_the_threads_change_nothing) {
   sim::mc::Config c = small(6U);
   c.dispersions.push_back(sim::mc::Dispersion{"thrust_scale", sim::mc::Kind::Normal, 1.0, 0.03, 3.0});

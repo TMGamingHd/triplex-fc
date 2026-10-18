@@ -84,6 +84,7 @@ TFC_TEST(manager_healthy_triplex_has_no_flags) {
   CHECK(c.crc_bad == 0U && c.seq_bad == 0U && c.missing == 0U && c.vote_disagreements == 0U);
 }
 
+// Verifies: TFC-FDIR-005
 TFC_TEST(manager_bias_latches_in_exactly_m_frames_and_vote_ignores_it) {
   for (unsigned bad = 0; bad < 3; ++bad) {
     RedundancyManager m;
@@ -147,6 +148,7 @@ TFC_TEST(manager_two_separate_corrupt_frames_in_the_window_do_not_latch) {
   }
 }
 
+// Verifies: TFC-FDIR-046
 TFC_TEST(manager_digest_mismatch_alone_latches_and_is_labelled) {
   RedundancyManager m;
   uint8_t why = 0;
@@ -832,6 +834,7 @@ TFC_TEST(life_cycle_only_one_node_is_on_probation_at_a_time) {
   CHECK(m.last_report().mode == Mode::Triplex);
 }
 
+// Verifies: TFC-FDIR-022
 TFC_TEST(life_cycle_ground_command_frames_drive_the_same_state_machine) {
   RedundancyManager m;
   uint8_t seq = 0;

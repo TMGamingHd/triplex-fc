@@ -40,7 +40,9 @@
 | [RECOVERY.md](design/RECOVERY.md) | Bringing a stage back: the plant (engines the computers drive, surfaces, parachutes, separation, ground and tower), the Starship V3 class vehicle with its numbers and where each comes from, the mission phase by phase, a single stage under parachutes, what the tuning taught |
 | [VEHICLE_SPEC.md](design/VEHICLE_SPEC.md) | Describing any vehicle (stages, tanks, engines, effectors) as a file; the tools; the examples; what the flight computers can do with it |
 | [SIM_FIDELITY.md](design/SIM_FIDELITY.md) | How close the simulator is to real life, measured |
-| [FUTURE_WORK.md](design/FUTURE_WORK.md) | Designs written down and not built, with their triggers |
+| [FUTURE_WORK.md](design/FUTURE_WORK.md) | Designs written down and not built, with their triggers; the review against the practice of the field |
+| [CONOPS.md](design/CONOPS.md) | The concept of operations: who does what from power-up to the end of a run, what the operator decides and never decides |
+| [RANGE_SAFETY.md](design/RANGE_SAFETY.md) | Abort and range safety: what a real vehicle has, what this project does and does not do |
 
 ## Decisions: why (`decisions/`)
 | Page | Covers |
@@ -57,6 +59,10 @@
 | [FAULT_CAMPAIGN.md](verification/FAULT_CAMPAIGN.md) | The systematic fault campaign: the numbers (generated), the edge cases found and what was done |
 | [CODING_STANDARD.md](verification/CODING_STANDARD.md) | The flight-code rules and the tool that enforces each |
 | [PICO_TESTS.md](verification/PICO_TESTS.md) | Every way to test the Pico, and the recommended order |
+| [HAZARDS.md](verification/HAZARDS.md) | The hazard analysis (STPA style): losses, hazards and 25 unsafe control actions, with what controls each and the gaps |
+| [RISKS.md](verification/RISKS.md) | The risk register: what could stop the project or the claim, ranked |
+| [SAFETY_CASE.md](verification/SAFETY_CASE.md) | The argument that joins the evidence into one claim, and what it leaves out |
+| [VALIDATION.md](verification/VALIDATION.md) | How far the models are from anything real, and the public data that would close the gap |
 | [VERIFICATION_PROCEDURE_TEMPLATE.md](verification/VERIFICATION_PROCEDURE_TEMPLATE.md) | The template every hardware procedure copies |
 
 ## Hardware: what to buy and build (`hardware/`)

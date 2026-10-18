@@ -65,3 +65,27 @@ The gains are designed from the local `a(t)` and `b(t)` of the nominal flight, `
 
 ## 6. Requirements and tests
 TFC-LOOP-001 to 007 (`../verification/REQUIREMENTS.md`). Tests: `consensus_*`, `estimator_*`, `controller_*`, `guidance_*`, `atan2_*`, `loop_*` in `tests/test_loop.cpp`.
+
+## 7. Stability margins along a mission (`tfc_margins`, 18 Oct 2026)
+
+Until now the loop was judged in the time domain (`tfc_sens`: how far each departure goes before the flight is lost; `tfc_mc`: the share of good flights). The field also asks for the **frequency-domain margins**: how much gain, phase and delay the loop can lose before it is unstable, at each point of the flight. `sim/vehicle/margins.hpp` and `tools/sim/tfc_margins.cpp` compute them from what the gain design already measures.
+
+**The loop of one axis:** `theta'' = a theta + b delta` (the design probe's aerodynamic stiffness `a`, 1/s^2 per radian, positive when the air turns the vehicle away from the wind, and the effectiveness `b` of one degree of the effector in rad/s^2), a PID `57.3 (kp + kd s + ki / s)` with the gains the flight computers carry at that point of the phase (the table's own, interpolated between its points, with the allocation to the surfaces and the gimbal's thrust scaling of `flight.hpp`), the servo (the stage's first-order lag, or the second-order servo of the file; a surface's own lag) and the delay of the frame (15 ms by default: the sample, the vote and the zero-order hold of a 100 Hz loop; an **assumption**, `--delay`). Stability is decided on the characteristic polynomial by the Routh-Hurwitz test (the delay a third-order Pade), so the lower and upper gain margins and the delay margin are the factors and the extra delay at which the closed loop really becomes unstable, found by bisection; the phase margin is at the highest frequency where |L| crosses 1. A launcher is unstable in the air (`a > 0`), so it has a **lower** gain margin (how far the gain can fall before the vehicle falls over) as well as an upper one.
+
+**Checked** (`tests/test_margins.cpp`, five tests): the Routh test against polynomials whose roots are known; the lower gain margin of an unstable body with a PD and no lag against `a / (57.3 b kp)` worked by hand (1 %); the upper gain margin against the loop's gain at its phase crossover **by the frequency response, which shares no code with the polynomial test** (within 0.4 dB); the delay margin from the polynomial against the one from the phase margin; a loop made worse by delay has less margin, and is unstable just past its delay margin.
+
+**What it found on the Starship mission** (801 probes of the nominal flight; limits of 6 dB and 30 degrees from memory of the usual ask, to be replaced by the programme's own):
+
+| | phase margin | lower gain margin | upper gain margin | smallest delay margin |
+|---|---|---|---|---|
+| pitch and yaw, the stack's ascent | 38 to 64 degrees | 7.7 to 18 dB | 38 dB | 1.1 s |
+| pitch and yaw, the booster's landing burn | 50 degrees | 22 to 24 dB | 24 dB | 0.18 to 0.24 s |
+| **roll, the ship, from separation to the entry** | **6 degrees** | **2.9 dB** | 39 to 53 dB | 0.27 s |
+| roll at lift-off | 10.7 degrees | 5.1 dB | 45 dB | 0.42 s |
+| pitch and yaw of the ship at the flaps' hand-over | 24 degrees | 9.4 dB | 46 dB | 0.8 s |
+
+**Roll is the weak loop**, and the cause is in the table: the roll effector's effectiveness is 0.002 rad/s^2 a degree, so the design's gains (`kp = (wn^2 + a) / b`) come out above the cap `kp_max` = 80 degrees per radian and are held there (the detail option prints `kp = kd = 1.3963`, which is 80 per radian in the loop's units): the loop has the authority it can get and its damping is 0.2. The pitch and yaw loops, the ones that decide the flight, have healthy margins. What the margins say about the roll loop is not a verdict on the flight (the roll of a coasting ship is held loosely on purpose) but it would not pass the usual ask.
+
+**Two things it found in the design** (the second changed the flight): (1) the loop is not meaningful where the engines have no thrust (on the pad at T-zero, and in a coast): the tool leaves those probes out and says so; (2) **the first gain point of the ascent had been designed from a probe taken on the pad at T-zero, with no thrust**: its gains were at their limit and the track interpolated from them into the points that are right, so the first seconds of the climb flew on gains and a thrust scaling that belonged to no vehicle (the loop was unstable there by this analysis). `fit_plan` now leaves out the probes whose thrust is under 5 % of the phase's largest. The 40-seed catch over GNSS noise goes from 39 to 40 of 40 (median miss 0.5 m) with that alone.
+
+**Not in the loop:** the slosh and the bending of the structure (they are in the vehicle file and in the time-domain plant: a bending mode close to the crossover needs a notch, and this analysis would show a margin the real vehicle does not have), the servo's rate limit and travel, the controller's slew limit (they cost margin at large amplitude), the frame's jitter, and the aerodynamic stiffness's change within a second. It is a first look, and the Monte Carlo (`MONTE_CARLO.md` section 7) is the second.

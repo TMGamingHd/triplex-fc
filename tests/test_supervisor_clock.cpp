@@ -128,6 +128,7 @@ TFC_TEST(sup_watch_agrees_with_an_exact_node_and_says_nothing_before_t0) {
   CHECK(!w.flagged() && w.last() == sup::Verdict::Ok);
 }
 
+// Verifies: TFC-SUP-009
 TFC_TEST(sup_watch_flags_a_node_that_is_behind_or_ahead_only_after_it_persists) {
   sup::MissionClock c;
   (void)c.latch_t0(0U, 0U);

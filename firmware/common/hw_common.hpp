@@ -16,8 +16,35 @@
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/drivers/watchdog.h>
 #include <zephyr/kernel.h>
+#include <zephyr/linker/linker-defs.h>
 
 namespace fc::hw {
+
+// ---------------------------------------------------------------- the image
+
+// A CRC-32 (IEEE 802.3, reflected, the one zlib computes) over the flash image from the start of the ROM region to its end, computed at boot and reported on the console: two computers that run the same release
+// print the same number, and a flash that has a bit changed prints another. On the board only; the host build has no flash image and reports 0. It is a report and not yet a gate: a gate needs the expected
+// value inside the image, which is written after linking (docs/design/FUTURE_WORK.md 6b item 12).
+#if defined(CONFIG_ARM)
+inline uint32_t image_crc32(uint32_t& bytes) {
+  const uint8_t* p = reinterpret_cast<const uint8_t*>(__rom_region_start);
+  const uint8_t* end = reinterpret_cast<const uint8_t*>(__rom_region_end);
+  bytes = static_cast<uint32_t>(end - p);
+  uint32_t crc = 0xFFFFFFFFU;
+  for (const uint8_t* q = p; q < end; ++q) {
+    crc ^= *q;
+    for (int b = 0; b < 8; ++b) {
+      crc = (crc & 1U) != 0U ? ((crc >> 1U) ^ 0xEDB88320U) : (crc >> 1U);
+    }
+  }
+  return ~crc;
+}
+#else
+inline uint32_t image_crc32(uint32_t& bytes) {
+  bytes = 0U;
+  return 0U;
+}
+#endif
 
 // ---------------------------------------------------------------- watchdog
 

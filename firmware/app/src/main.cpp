@@ -28,6 +28,7 @@
 #endif
 #include "tfc/act.hpp"
 #include "tfc/flight.hpp"
+#include "tfc/flightlog.hpp"
 #include "tfc/imu_calibration.hpp"
 #include "tfc/launch_gate.hpp"
 #include "tfc/progress.hpp"
@@ -95,6 +96,20 @@ void can_state_changed(const struct device*, enum can_state state, struct can_bu
 
 // Survives a reset (no-init RAM, kept intact because the record has no constructor): how often and why this node reset.
 tfc::ResetRecord g_reset_record __noinit;
+// The last frames this computer ran and what a fatal fault knew: also in no-init RAM (core/include/tfc/flightlog.hpp), read out at the next boot.
+constexpr std::size_t kFlightLogFrames = 128;
+tfc::FlightLogStore<kFlightLogFrames> g_flight_log __noinit;
+volatile uint32_t g_frame_now = 0U;   // the frame the computer has reached, for the fault record
+
+#if defined(CONFIG_ARM)
+// A fatal fault (a stack overflow caught by the MPU, a hard fault, an assertion): say what it was, and then do what Zephyr's own handler does, stop, so that the watchdog resets the computer.
+extern "C" FUNC_NORETURN void arch_system_halt(unsigned int reason);
+extern "C" void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf* esf) {
+  tfc::FlightLog<kFlightLogFrames> log(g_flight_log);
+  log.record_fault(reason, esf != nullptr ? esf->basic.pc : 0U, esf != nullptr ? esf->basic.lr : 0U, g_frame_now);
+  arch_system_halt(reason);
+}
+#endif
 CAN_MSGQ_DEFINE(rx_msgq, 32);      // the three schedule slots (gyro, accel, command of every node)
 CAN_MSGQ_DEFINE(rx_all_msgq, 64);  // everything: only used to see what is NOT in the schedule (babbling)
 CAN_MSGQ_DEFINE(rx_sync_msgq, 4);  // SYNC, for the nodes that follow it (and for a master to see another's)
@@ -282,6 +297,32 @@ int main() {
   resets.boot(fc::hw::reset_cause());
   printk("boot %u since power-on, last reset cause %u (1 power-on, 2 pin, 3 watchdog, 4 software, 5 brown-out, 6 fault), %u short boots in a row\n",
          static_cast<unsigned>(resets.boots()), static_cast<unsigned>(resets.last_cause()), static_cast<unsigned>(resets.short_boots()));
+  {  // what the flash holds, and what the last run was doing when it stopped
+    uint32_t image_bytes = 0U;
+    const uint32_t image_crc = fc::hw::image_crc32(image_bytes);
+    printk("image crc32 %08x over %u bytes (0 on the host)\n", static_cast<unsigned>(image_crc), static_cast<unsigned>(image_bytes));
+    tfc::FlightLog<kFlightLogFrames> flight_log(g_flight_log);
+    if (flight_log.boot() && (flight_log.size() > 0U || flight_log.has_fault())) {
+      if (flight_log.has_fault()) {
+        const tfc::FaultRecord f = flight_log.fault();
+        printk("PREVIOUS RUN ENDED IN A FATAL FAULT: reason %u at pc 0x%08x (lr 0x%08x) in frame %u\n", static_cast<unsigned>(f.reason), static_cast<unsigned>(f.pc), static_cast<unsigned>(f.lr),
+               static_cast<unsigned>(f.frame));
+        flight_log.clear_fault();
+      }
+      for (std::size_t age = 0; age < 5U && age < flight_log.size(); ++age) {
+        bool ok = false;
+        const tfc::FlightRecord r = flight_log.get(age, ok);
+        if (ok) {
+          printk("previous run, frame %u: mode %u, voted 0x%02x, out 0x%02x, flags 0x%x, output %d, command %d / %d (hundredths)\n", static_cast<unsigned>(r.frame), static_cast<unsigned>(r.mode),
+                 static_cast<unsigned>(r.valid_mask), static_cast<unsigned>(r.latched_mask), static_cast<unsigned>(r.flags), static_cast<int>(r.output), static_cast<int>(r.cmd_pitch),
+                 static_cast<int>(r.cmd_yaw));
+        } else {
+          printk("previous run: a record of the log is damaged and is skipped\n");
+        }
+      }
+    }
+  }
+  tfc::FlightLog<kFlightLogFrames> flight_log(g_flight_log);
   const bool quarantined = IS_ENABLED(CONFIG_TFC_QUARANTINE_ON_RESET_LOOP) && resets.loop_detected();
   tfc::ProgressMonitor progress(kProgressRequired);
   constexpr int64_t kPeriodUs = fc::sim::kFrameUs;
@@ -440,6 +481,7 @@ int main() {
     if (cycle % kStatusEveryFrames == 0U) {
       resets.running(cycle);  // how long this boot has lasted, for the next boot's loop check
     }
+    g_frame_now = k;
     const uint8_t seq = static_cast<uint8_t>(k);
     drop_peers = kDropFrames != 0U && k >= kDropFirst && k - kDropFirst < kDropFrames;
     mgr.begin_frame(k);  // SYNC's frame number: the number every node stamps its frames with (ADR-018)
@@ -574,6 +616,9 @@ int main() {
     const uint32_t cycles_vote = k_cycle_get_32();
     const tfc::FrameReport& rep = mgr.end_frame();
     wcet_vote_us = std::max(wcet_vote_us, k_cyc_to_us_floor32(k_cycle_get_32() - cycles_vote));
+    flight_log.push(k, static_cast<uint8_t>(rep.mode), rep.valid_mask, rep.latched_mask,
+                    static_cast<uint8_t>((rep.safe_request ? tfc::kLogSafeRequest : 0U) | (rep.bus_alarm ? tfc::kLogBusAlarm : 0U) | (rep.unresolved ? tfc::kLogUnresolved : 0U) | ((rep.held_mask & 1U) != 0U ? tfc::kLogHeld : 0U)),
+                    rep.output[0], cmd.pitch_deg, cmd.yaw_deg);
     usable_nodes = static_cast<uint8_t>(~rep.sensor_latched_mask & 0x07U);  // next frame's flight function uses only the IMUs that are in the consensus (with the split, a computer that is out of the command vote still contributes its IMU)
     progress.report(kTaskVote);
     {  // the heartbeat: what ACT and the supervisor need to know (protocol v2): mode, Safe request, bus alarm, how this node sees the three

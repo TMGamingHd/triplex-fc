@@ -827,3 +827,100 @@ TFC_TEST(sequencer_a_program_phase_rolls_a_little_out_and_back_when_it_is_asked_
   CHECK(near_abs(roll_at(600.0, 20.0, 1.0, 4.0), 0.0, 1e-3));     // and back, with nothing left of it
   CHECK(near_abs(roll_at(300.0, 20.0, 1.0, 0.0), 0.0, 1e-3));     // no duration: no roll
 }
+
+// Verifies: TFC-SIM-020
+TFC_TEST(sequencer_a_turning_planet_carries_the_site_and_the_guidance_aims_at_where_it_will_be) {
+  const tfc::nav::Gravity g;
+  const double w = 7.2921159e-5;
+  const auto belly = [&g, w](double omega) {
+    Tables t = plain(1);
+    t.nav.gravity = g;
+    t.site = Vec3{kR, 0.0, 0.0};
+    t.ground_radius = kR;
+    t.pole = Vec3{0.0, 0.0, 1.0};
+    t.planet_omega = omega;
+    t.drag.omega = t.pole * omega;
+    t.phase[0].kind = kind::kBelly;
+    t.phase[0].p[0] = 70.0F;
+    t.phase[0].p[1] = 50.0F;
+    t.phase[0].p[2] = 88.0F;
+    (void)w;
+    return t;
+  };
+  // the site goes round the pole at the planet's rate, and keeps its distance from the centre; a planet that stands still leaves it where it is
+  {
+    const Tables t = belly(w);
+    Mission m;
+    m.configure(&t);
+    Inputs in = inputs_at(30000.0, Vec3{-50.0, 100.0, 0.0});
+    in.epoch_s = 1000.0;
+    m.start(in);
+    const Vec3 s = m.site_at(0.0);
+    const double a = w * 1000.0;
+    CHECK(near_abs(s.x, kR * std::cos(a), 1.0e-3) && near_abs(s.y, kR * std::sin(a), 1.0e-3) && near_abs(s.z, 0.0, 1.0e-6));
+    const Vec3 later = m.site_at(500.0);
+    CHECK(near_abs(norm(later), kR, 1.0e-3) && near_abs(later.y, kR * std::sin(w * 1500.0), 1.0e-3));
+    // the ground moves at the planet's turn where the vehicle is: east at 465 m/s at the equator
+    const Vec3 gv = m.ground_velocity(Vec3{kR, 0.0, 0.0});
+    CHECK(near_abs(gv.y, w * kR, 1.0e-6) && near_abs(gv.x, 0.0, 1.0e-9));
+    // the catch point is the site raised by the centre of gravity's height
+    const Tables h = [&belly] { Tables x = belly(7.2921159e-5); x.landing_height = 30.0; return x; }();
+    Mission mh;
+    mh.configure(&h);
+    mh.start(in);
+    CHECK(near_abs(norm(mh.catch_point_at(0.0)), kR + 30.0, 1.0e-6));
+    const Tables still = belly(0.0);
+    Mission ms;
+    ms.configure(&still);
+    ms.start(in);
+    CHECK(norm(ms.site_at(500.0) - still.site) == 0.0);
+    CHECK(norm(ms.ground_velocity(Vec3{kR, 0.0, 0.0})) == 0.0);
+  }
+  // a fall that ends a few minutes from now is aimed at the place the pad will be then, hundreds of kilometres from where it is: the miss moves by the pad's travel
+  {
+    const auto miss_y = [](const Tables& t) {
+      Inputs in = inputs_at(30000.0, Vec3{-50.0, 100.0, 0.0});
+      Mission m;
+      m.configure(&t);
+      m.start(in);
+      (void)m.step(in);
+      return m.miss().y;
+    };
+    const double fixed = miss_y(belly(0.0));
+    const double turning = miss_y(belly(w));
+    CHECK(turning > fixed + 1.0e4 && turning < fixed + 3.0e5);   // (a pad that moves east, with the vehicle's fall going east: the site is farther on)
+  }
+  // flown relative to the ground: a landing over the pad with the pad's own velocity is the landing over a pad that stands still
+  {
+    const auto land = [&g](double omega) {
+      Tables t = plain(1);
+      t.nav.gravity = g;
+      t.site = Vec3{kR, 0.0, 0.0};
+      t.ground_radius = kR;
+      t.landing_height = 30.0;
+      t.engines.counts = {1U, 2U, 3U, 3U};
+      t.pole = Vec3{0.0, 0.0, 1.0};
+      t.planet_omega = omega;
+      t.phase[0].kind = kind::kLanding;
+      t.phase[0].p[0] = 1.0F;
+      t.phase[0].p[1] = 1.0F;
+      t.phase[0].p[2] = 1.0F;
+      t.phase[0].p[3] = 1.0F;
+      return t;
+    };
+    const Tables still = land(0.0);
+    const Tables turning = land(w);
+    Inputs a = inputs_at(400.0, Vec3{-80.0, 20.0, 0.0});
+    Inputs b = a;
+    b.v = b.v + Vec3{0.0, w * (kR + 400.0), 0.0};
+    Mission ma;
+    ma.configure(&still);
+    ma.start(a);
+    (void)ma.step(a);
+    Mission mb;
+    mb.configure(&turning);
+    mb.start(b);
+    (void)mb.step(b);
+    CHECK(norm(ma.landing_out().direction - mb.landing_out().direction) < 1.0e-9 && near_abs(ma.landing_out().throttle, mb.landing_out().throttle, 1.0e-9));
+  }
+}

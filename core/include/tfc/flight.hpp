@@ -116,6 +116,8 @@ class FlightFunction {
   // Put the computer in the state of a vehicle already in flight (a stage that has been let go, whose computers have navigated since lift-off), or restore a restarted computer from a peer.
   void set_attitude_state(const AttitudeEstimator::State& s) noexcept { estimator_.set_state(s); }
   void set_navigation_state(const nav::Navigator::State& s) noexcept { nav_.set_state(s); }
+  // The mission clock at this function's first flight frame, seconds since T-zero (0 for the stack): a stage that is let go is started in the middle of the flight, and a turning planet has carried the site on by then.
+  void set_epoch(double seconds_since_t_zero) noexcept { epoch0_s_ = seconds_since_t_zero; }
   [[nodiscard]] AttitudeEstimator::State attitude_state() const noexcept { return estimator_.state(); }
 
   [[nodiscard]] const AttitudeEstimator& estimator() const noexcept { return estimator_; }
@@ -165,6 +167,7 @@ class FlightFunction {
     mi.q = att::body_to_nav(estimator_.quaternion());
     mi.w = att::body_rates_rad(estimator_.body_rates_dps());
     mi.attitude_valid = estimator_.attitude().valid;
+    mi.epoch_s = epoch0_s_ + (static_cast<double>(mi.frame) * static_cast<double>(kFramePeriodS));
     return mi;
   }
 
@@ -232,6 +235,7 @@ class FlightFunction {
   double cmd_pitch_ = 0.0;
   double cmd_yaw_ = 0.0;
   uint32_t t0_frame_ = 0U;
+  double epoch0_s_ = 0.0;
   bool gnc_started_ = false;
   bool fix_pending_ = false;
 };
