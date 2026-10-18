@@ -15,17 +15,25 @@ import { puffTexture } from './models/common.js';
 
 /* ------------------------------------------------------------------------------------------------------------------------------ the pressure on the skin */
 const CP_VERT = /* glsl */`
-varying vec3 vN; varying vec3 vP;
-void main() { vN = normalize(mat3(modelMatrix) * normal); vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+varying vec3 vN; varying vec3 vP; varying vec3 vM;
+uniform mat4 uRootInv;            // the world to the lens's frame (the vehicle's own: y along the axis from the tail)
+void main() { vN = normalize(mat3(modelMatrix) * normal); vP = position; vM = (uRootInv * modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 const CP_FRAG = /* glsl */`
 precision highp float;
 ${COLORMAP_GLSL}
-varying vec3 vN; varying vec3 vP;
+varying vec3 vN; varying vec3 vP; varying vec3 vM;
 uniform vec3 uF; uniform float uMach, uCpMax, uMode, uOpacity, uQ, uT, uT0, uTime, uBands;
+uniform sampler2D uCfd; uniform float uCfdOn, uCfdX0, uCfdX1, uPhi;   // the solver's pressure on the skin: along the body's length and round it from the windward side, and the turn of the plane of the angle of attack
 void main() {
   vec3 n = normalize(vN);
   float c = -dot(n, uF);                                  // 1 where the surface faces the wind
   float cp = c > 0.0 ? uCpMax * c * c : -0.05 - 0.3 / (1.0 + 0.5 * uMach * uMach) * (1.0 - c * c * 0.0) * min(1.0, -c * 2.0 + 0.3);
+  if (uCfdOn > 0.5) {                                     // the Euler solver's Cp: the body's x is the frame's y, its lateral axes are the frame's z (the plane of the case's angle of attack) and x
+    float cs = cos(uPhi), sn = sin(uPhi);
+    float ya = vM.z * cs + vM.x * sn, za = -vM.z * sn + vM.x * cs;
+    float th = atan(abs(za), ya);
+    cp = texture2D(uCfd, vec2(clamp((vM.y - uCfdX0) / (uCfdX1 - uCfdX0), 0.0, 1.0), th / 3.14159265)).r;
+  }
   float t;
   if (uMode < 1.5) { t = cp < 0.0 ? 0.5 - 0.5 * pow(clamp(-cp / 0.3, 0.0, 1.0), 0.6) : 0.5 + 0.5 * pow(clamp(cp / (0.35 * max(uCpMax, 0.5)), 0.0, 1.0), 0.6); }   // a stretch (a power of 0.6) so that the small differences over most of the skin show as colours: the ends are the stagnation and the suction
   else { float f = c > 0.0 ? sqrt(c) : 0.0; float Tw = uT + (uT0 - uT) * (0.9 * f + 0.08); t = (Tw - uT) / max(uT0 - uT, 1.0) * 0.5 + 0.5 * step(0.0, uT0 - uT - 1.0) * (Tw - uT) / max(uT0 - uT, 1.0); }
@@ -43,7 +51,7 @@ export class CpSurface {
     this.model = model;
     this.mat = new THREE.ShaderMaterial({
       vertexShader: CP_VERT, fragmentShader: CP_FRAG, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-      uniforms: { uF: { value: new THREE.Vector3(0, -1, 0) }, uMach: { value: 0 }, uCpMax: { value: 1 }, uMode: { value: 0 }, uOpacity: { value: 0.85 }, uQ: { value: 0 }, uT: { value: 250 }, uT0: { value: 300 }, uTime: { value: 0 }, uBands: { value: 1 } },
+      uniforms: { uRootInv: { value: new THREE.Matrix4() }, uCfd: { value: null }, uCfdOn: { value: 0 }, uCfdX0: { value: 0 }, uCfdX1: { value: 1 }, uPhi: { value: 0 }, uF: { value: new THREE.Vector3(0, -1, 0) }, uMach: { value: 0 }, uCpMax: { value: 1 }, uMode: { value: 0 }, uOpacity: { value: 0.85 }, uQ: { value: 0 }, uT: { value: 250 }, uT0: { value: 300 }, uTime: { value: 0 }, uBands: { value: 1 } },
     });
     // an overlay on every surface of the vehicle (the body, the tiles, the fins, a model that was imported), as a child of the surface, so that it has the same place; it reads the normals in the world's axes
     this.meshes = [];
@@ -56,9 +64,17 @@ export class CpSurface {
     this.setVisible(false);
   }
   setVisible(v) { for (const m of this.meshes) m.visible = v; this.visible = v; }
+  /** The frame the solver's pressure is looked up in: the lens's group (the vehicle's own axes). */
+  setFrame(group) { this.frame = group; }
+  /** The solver's pressure coefficient on the skin (a texture from cfd.js) in place of the Newtonian estimate, or the estimate again with `tex` null. `phi` is the turn (rad) of the case's plane of the angle of attack. */
+  setCfd(tex, x0, x1, phi) {
+    const u = this.mat.uniforms;
+    u.uCfdOn.value = tex ? 1 : 0; if (tex) { u.uCfd.value = tex; u.uCfdX0.value = x0; u.uCfdX1.value = x1; u.uPhi.value = phi; }
+  }
   /** mode 0: pressure coefficient, 1: the same as static pressure (the legend says kPa), 2: recovery temperature */
   update(d, mode, opacity) {
     const u = this.mat.uniforms;
+    if (this.frame) { this.frame.updateWorldMatrix(true, false); u.uRootInv.value.copy(this.frame.matrixWorld).invert(); }
     this.model.root.updateWorldMatrix(true, false);
     u.uF.value.set(d.fhat[2], d.fhat[0], d.fhat[1]).transformDirection(this.model.root.matrixWorld);   // the body frame's (x, y, z) in the model's axes, then in the world's
     u.uMach.value = d.M; u.uCpMax.value = d.cpMax; u.uMode.value = mode; u.uOpacity.value = opacity; u.uQ.value = d.q; u.uT.value = d.T; u.uT0.value = d.T0;

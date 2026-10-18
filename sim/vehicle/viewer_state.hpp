@@ -142,8 +142,9 @@ inline std::string viewer_spec_json(const VehicleFile& vf, const Vehicle6& veh, 
   o.key("air");  // the profile: arrays by altitude
   o.open('{');
   o.kv("step_m", step_m, 1);
-  const std::string keys[5] = {"temperature_k", "pressure_pa", "density", "sound_ms", "wind_ms"};
-  std::vector<double> cols[5];
+  // the wind also in the launch frame: along the launch direction (positive: a tailwind) and across it (positive: toward the Z axis, to the right of a vehicle flying downrange), as the vehicle meets it
+  const std::string keys[7] = {"temperature_k", "pressure_pa", "density", "sound_ms", "wind_ms", "wind_down_ms", "wind_cross_ms"};
+  std::vector<double> cols[7];
   for (double h = 0.0; h <= top_m + 0.5; h += step_m) {
     const Air a = veh.atmosphere(h);
     cols[0].push_back(a.temperature);
@@ -151,8 +152,11 @@ inline std::string viewer_spec_json(const VehicleFile& vf, const Vehicle6& veh, 
     cols[2].push_back(a.density);
     cols[3].push_back(a.sound);
     cols[4].push_back(veh.mean_wind_ms(h));
+    const V3 w = veh.mean_wind_vec(h) * veh.air_presence(h);
+    cols[5].push_back(w.y);
+    cols[6].push_back(w.z);
   }
-  for (int c = 0; c < 5; ++c) {
+  for (int c = 0; c < 7; ++c) {
     o.key(keys[c].c_str());
     o.open('[');
     for (const double v : cols[c]) {

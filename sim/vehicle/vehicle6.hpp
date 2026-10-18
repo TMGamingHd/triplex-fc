@@ -139,6 +139,9 @@ struct Scenario {
   Site site;
   Turbulence turbulence;
   std::vector<std::array<double, 2>> wind_profile;  // (altitude m, mean wind speed m/s), linear between points: replaces the built-in profile when given
+  // (altitude m, wind toward the east m/s, wind toward the north m/s) at the launch site, linear between points: a real day's wind, which turns with height. It is taken over `wind_profile` and
+  // `wind_dir` when given, and read in the local east and north of the site: the launch direction (`site.azimuth_deg`) puts it in the launch frame, so a crosswind is whatever of it lies across the azimuth.
+  std::vector<std::array<double, 3>> wind_enu;
   std::vector<Gust> gusts;
   V3 wind_dir{0.0, 0.0, 1.0};   // direction of the mean wind (inertial), crossrange by default
   double wind_scale = 1.0;      // multiplies the mean wind profile
@@ -843,8 +846,9 @@ class Vehicle6 {
   }
 
   // The mean wind (the scenario's profile, or the built-in one), the gusts and the turbulence, inertial frame, m/s.
+  // Wind is the air's own motion, so it is only where there is air: all of it is multiplied by `air_presence`, which is 1 in the lower atmosphere and 0 where the air is gone.
   [[nodiscard]] V3 wind_at(double altitude, double t) const {
-    V3 w = normalized(sc_.wind_dir) * (sc_.wind_scale * mean_wind_speed(altitude));
+    V3 w = mean_wind_vec(altitude);
     for (const Gust& g : sc_.gusts) {
       if (t >= g.t0 && t <= g.t0 + g.duration && g.duration > 0.0) {
         w = w + (g.peak * (0.5 * (1.0 - std::cos(2.0 * kPi * (t - g.t0) / g.duration))));
@@ -853,11 +857,56 @@ class Vehicle6 {
     if (sc_.turbulence.sigma_ms > 0.0) {
       w = w + turb_;
     }
-    return w;
+    return w * air_presence(altitude);
   }
 
-  // The speed of the mean wind (the profile times the scenario's scale) at an altitude, m/s: for the viewer's picture of the atmosphere.
-  [[nodiscard]] double mean_wind_ms(double altitude) const { return sc_.wind_scale * mean_wind_speed(altitude); }
+  // The mean wind (the profile times the scenario's scale) at an altitude, inertial frame, m/s, before the air's thinning: from the east/north profile when the scenario has one.
+  [[nodiscard]] V3 mean_wind_vec(double altitude) const {
+    if (!sc_.wind_enu.empty()) {
+      const std::vector<std::array<double, 3>>& pr = sc_.wind_enu;
+      double e = pr.back()[1];
+      double n = pr.back()[2];
+      if (altitude <= pr.front()[0]) {
+        e = pr.front()[1];
+        n = pr.front()[2];
+      } else {
+        for (std::size_t i = 1; i < pr.size(); ++i) {
+          if (altitude <= pr[i][0]) {
+            const double f = (altitude - pr[i - 1][0]) / (pr[i][0] - pr[i - 1][0]);
+            e = pr[i - 1][1] + (f * (pr[i][1] - pr[i - 1][1]));
+            n = pr[i - 1][2] + (f * (pr[i][2] - pr[i - 1][2]));
+            break;
+          }
+        }
+      }
+      e *= sc_.wind_scale;
+      n *= sc_.wind_scale;
+      const double azi = sc_.site.azimuth_deg * kDeg2Rad;   // Y downrange is cos(az) north + sin(az) east; Z crossrange (X x Y, X up) is sin(az) north - cos(az) east
+      return V3{0.0, (n * std::cos(azi)) + (e * std::sin(azi)), (n * std::sin(azi)) - (e * std::cos(azi))};
+    }
+    return normalized(sc_.wind_dir) * (sc_.wind_scale * mean_wind_speed(altitude));
+  }
+
+  // The speed of the mean wind at an altitude, m/s, as the vehicle meets it: for the viewer's picture of the atmosphere.
+  [[nodiscard]] double mean_wind_ms(double altitude) const { return norm(mean_wind_vec(altitude)) * air_presence(altitude); }
+
+  // How much of the lower atmosphere's wind there is at an altitude: 1 where the density is above 1% of the surface's, 0 where it is under 0.01%, a smooth step in the logarithm between
+  // (32 km to 67 km for the Earth), and 0 on a planet without air. A wind blowing in the vacuum would push a vehicle through no air at all and read as a speed in the viewer.
+  [[nodiscard]] double air_presence(double altitude) const {
+    const double rho0 = atmosphere(0.0).density;
+    if (!(rho0 > 0.0)) {
+      return 0.0;
+    }
+    const double ratio = atmosphere(altitude).density / rho0;
+    if (ratio >= 1e-2) {
+      return 1.0;
+    }
+    if (ratio <= 1e-4) {
+      return 0.0;
+    }
+    const double x = (std::log10(ratio) + 4.0) / 2.0;
+    return x * x * (3.0 - (2.0 * x));
+  }
 
   // The air at an altitude: the planet's atmosphere (the 1976 standard, an exponential one, or none) with the scenario's dispersions of density and temperature.
   [[nodiscard]] Air atmosphere(double alt) const {

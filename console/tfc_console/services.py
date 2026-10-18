@@ -49,7 +49,7 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
     hub.extra["rigbuild"] = lambda: builder.status(vehicles.active["name"], vehicles.active["knobs"])
     hub.extra["rig"] = rig_svc.snapshot if rig_svc else (lambda: {"disabled": True})
     hub.extra["faults"] = lab.snapshot if lab else (lambda: {"available": False, "table": [], "disabled": True})
-    app.hello_extra = lambda: {"config": {**config_payload(), "commands": catalog(), "knobs": vehicles.knob_table(), "expect": {k: list(v) for k, v in EXPECT.items()}, "truth_port": truth.port, "pose_port": pose.port if pose is not None else None}, "vehicles": vehicles.listing()}
+    app.hello_extra = lambda: {"config": {**config_payload(), "commands": catalog(), "knobs": vehicles.knob_table(), "weather": vehicles.weather_list(), "expect": {k: list(v) for k, v in EXPECT.items()}, "truth_port": truth.port, "pose_port": pose.port if pose is not None else None}, "vehicles": vehicles.listing()}
     app.on_close.append(hardware.shutdown)
     if rig_svc:
         app.on_close.insert(0, rig_svc.shutdown)
@@ -167,7 +167,7 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
     # ---------------------------------------------------------------- the vehicle
     @app.route("GET", "/api/vehicles")
     def _vehicles(req: Request):
-        return 200, {"vehicles": vehicles.listing(), "knobs": vehicles.knob_table()}
+        return 200, {"vehicles": vehicles.listing(), "knobs": vehicles.knob_table(), "weather": vehicles.weather_list()}
 
     @app.route("GET", "/api/vehicle")
     def _vehicle(req: Request):
@@ -328,6 +328,18 @@ def install(app: App, hub: Hub, mgr, truth, repo: Path, rig: bool = True, state_
     def _viewer_imagery_file(req: Request):
         try:
             body, ctype = viewer.imagery.file_bytes(req.arg("name", "") or "")
+        except ValueError as e:
+            raise ApiError(404, str(e)) from e
+        return 200, Raw(body, ctype)
+
+    @app.route("GET", "/api/viewer/cfd")
+    def _viewer_cfd(req: Request):
+        return 200, viewer.cfd.manifest()
+
+    @app.route("GET", "/api/viewer/cfd/file")
+    def _viewer_cfd_file(req: Request):
+        try:
+            body, ctype = viewer.cfd.file_bytes(req.arg("name", "") or "")
         except ValueError as e:
             raise ApiError(404, str(e)) from e
         return 200, Raw(body, ctype)

@@ -95,6 +95,30 @@ export async function run(app, lenses, setLens, world) {
       check(app.spec === app.data.spec, 'following the main vehicle again');
     }
   }
+  // the Aerodynamics lens's four views, and in the CFD one the flow the solver computed and the live solver: no error, the cards have numbers, the live solver has run
+  {
+    setLens('aero'); await settle(300);
+    const aero = lenses.find((l) => l.id === 'aero'), S = aero.s, was = S.opts.view;
+    for (const v of ['flow', 'pressure', 'stability', 'cfd']) {
+      const before = errors.length;
+      S.opts.view = v; aero.applyView(app, false); await settle(500);
+      check(errors.length === before, `aerodynamics view ${v}: no error`);
+    }
+    // at a Mach number with air and a case near it, and no more than this: the checks do not need a library, only that what is there works
+    S.opts.view = 'cfd'; S.opts.live = true; S.opts.csec = true; aero.applyView(app, false); await settle(900);
+    const cases = S.cfdState.list.length;
+    check(S.cfdState.list !== undefined, `the CFD view asked the server for flow fields (${cases} listed)`);
+    if (app.d && app.d.air && app.d.M > 1.25) {
+      check(!!S.live && (S.live.ok === false || S.live.iterations > 0), `the live solver ${S.live && S.live.ok ? 'ran ' + S.live.iterations + ' iterations at Mach ' + S.live.mach.toFixed(2) : 'is not available here'}`);
+      if (S.live && S.live.ok) {
+        const d = S.live.read(); const finite = d.every((x) => Number.isFinite(x)); const rho = []; for (let i = 0; i < d.length; i += 4) rho.push(d[i]);
+        check(finite && Math.min(...rho) > 0, 'the live solver\'s state is finite and its density positive everywhere');
+      }
+    }
+    const first = (() => { const m = app.pose.stg ?? 255; for (let i = 0; i < 8; i++) if (m & (1 << i)) return i; return 0; })();
+    if (S.cfdState.list.some((c) => (!c.vehicle || c.vehicle === app.spec.name) && (c.stage_from == null || c.stage_from === first))) { await settle(1500); check(!!S.cfd.cfd, `a flow field was loaded (${S.cfd.name})`); check(S.cfdStats.cells.el === undefined || /[0-9]/.test(app.left.querySelector('#v-aero-cfdcard')?.textContent || ''), 'the solver card has numbers'); }
+    S.opts.view = was; aero.applyView(app, false); await settle(300);
+  }
   // a card folds when its header is clicked, and unfolds again
   setLens('aero'); await settle(300);
   const cardEl = app.right.querySelector('.v-card'); const was = cardEl.classList.contains('collapsed');
@@ -114,5 +138,6 @@ export async function run(app, lenses, setLens, world) {
   const pre = document.createElement('pre');
   pre.id = 'selftest'; pre.style.cssText = 'position:fixed;left:360px;top:60px;z-index:80;margin:0;padding:12px;background:rgba(0,0,0,.88);color:#cfe;font:12px/1.35 monospace;max-height:calc(100vh - 80px);overflow:hidden;border:1px solid #3a6;border-radius:8px;pointer-events:none';
   pre.textContent = text; document.body.append(pre); document.title = fails ? 'selftest FAILED' : 'selftest ok';
+  if (window.__dbg) window.__dbg('selftest', fails ? 'FAILED' : 'ok', `${out.length - fails} of ${out.length}`, out.filter((l) => l.startsWith('FAIL')).join(' | '), out.slice(-8).join(' | '));      // with ?debug=1 the server's log has the verdict too
   return { fails, text };
 }
