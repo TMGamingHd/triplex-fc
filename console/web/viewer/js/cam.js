@@ -10,6 +10,7 @@ export const CAMERAS = [
   { id: 'nose', label: 'Nose', hint: 'On the vehicle, looking where it points' },
   { id: 'earth', label: 'Earth', hint: 'From the vehicle, looking down at the planet it is leaving' },
   { id: 'ground', label: 'Ground', hint: 'A person standing near the pad, looking at the vehicle: drag to look around, wheel to zoom, double-click to look at it again' },
+  { id: 'tunnel', label: 'Tunnel', hint: 'Fixed to the vehicle, looking at the section through the flow with the air coming from the left, as a CFD picture is drawn: the nose is the left and the angle of attack is the angle of the vehicle to the air' },
   { id: 'wide', label: 'Wide', hint: 'From the side, far enough back to see the pad and the vehicle together, the whole flight so far' },
 ];
 
@@ -28,6 +29,7 @@ export class CameraRig {
     this.gpos = [150, 1.8, -350];                                // the observer, from the pad: metres to the left of downrange, up, and along downrange (negative: uprange of the pad)
     this.gaz = 0; this.gel = 0; this.gzoom = 1;                  // what the user added to the look at the vehicle: radians to the left and up, and the zoom
     this.lastCg = null; this.settle = 0;
+    this.tunnel = null;                                          // the Aerodynamics lens's section, in the model's axes: {n: its normal, r: the way the air moves in it}; none: the side of the vehicle, nose to the left
     this.focus = null;                                           // a lens can ask the camera to look at a point of the vehicle: {x: metres along the body, d: distance in m}
   }
   set(mode) { if (this.mode !== mode) { this.mode = mode; this.firstFrame = true; } }
@@ -105,6 +107,14 @@ export class CameraRig {
         const R = Math.max(L * 1.2, 60);                                                      // the vehicle and its plume
         fov = THREE.MathUtils.clamp(Math.max(2 * Math.atan(R / d) * 180 / Math.PI, 1.0) * this.gzoom, 0.25, 100); subject = d;
         if (Math.abs(dir.dot(up)) > 0.96) upv = h.clone();                                    // looking straight up: the top of the picture is downrange
+        break;
+      }
+      case 'tunnel': {                              // a camera on the vehicle, looking along the section's normal: right on the screen is the way the air goes, up is the section's other axis
+        const n0 = this.tunnel ? this.tunnel.n : [1, 0, 0], r0 = this.tunnel ? this.tunnel.r : [0, -1, 0];
+        const n = new THREE.Vector3(n0[0], n0[1], n0[2]).applyQuaternion(ctx.quat).normalize(), r = new THREE.Vector3(r0[0], r0[1], r0[2]).applyQuaternion(ctx.quat).normalize();
+        const aim = at(Math.min(1, Math.max(0, this.anchor))).addScaledVector(axis, this.slide);
+        pos = aim.clone().addScaledVector(n, this.dist * L); look = aim;
+        upv = new THREE.Vector3().crossVectors(n, r).normalize(); fov = 40; subject = this.dist * L;
         break;
       }
       case 'wide': {                                // the whole flight so far: from the side, looking at the middle of the line from the pad to the vehicle, far enough back for both to be in the picture

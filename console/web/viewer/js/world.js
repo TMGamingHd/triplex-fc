@@ -11,6 +11,7 @@ import { VehicleModel, STYLES } from './models/vehicle.js';
 import { Pad } from './pad.js';
 import { Plumes, Trail, PadSmoke, Debris } from './fx.js';
 import { toScene, quatToScene } from './data.js';
+import { localFrame } from './gyro.js';
 
 const _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _m3 = new THREE.Matrix3(), _m4 = new THREE.Matrix4();
 
@@ -63,7 +64,8 @@ export class World {
     this.envMat = null; this.envTimer = 1e9; this.envTex = null;
     this.buildEnvSky();
     this.time = { wall: 0 };
-    this.rS = [0, 6.371e6, 0]; this.tt = 0; this.qs = new THREE.Quaternion();
+    this.rS = [0, 6.371e6, 0]; this.tt = 0; this.qs = new THREE.Quaternion(); this.localQ = new THREE.Quaternion();     // localQ: the local horizon's frame at the vehicle (x across the range, y up, z downrange)
+    this.insets = [];                                                         // drawn over the canvas after the world, each called with the renderer (the gyro instrument)
     this.size = { w: 1, h: 1 };
     this.resize();
   }
@@ -159,6 +161,7 @@ export class World {
     const rS = toScene(pose.r); this.rS = rS; this.tt = pose.tt;
     const qs = new THREE.Quaternion(...quatToScene(pose.q)).normalize(); this.qs = qs;
     const pole = new THREE.Vector3(...toScene(spec.planet.pole)).normalize();
+    localFrame(rS, pole, spec.planet.rotation, pose.tt, this.localQ);
     const earthAngle = spec.planet.rotation * pose.tt;
     const padQ = new THREE.Quaternion().setFromAxisAngle(pole, earthAngle);
     const up0 = new THREE.Vector3(0, 1, 0), down0 = new THREE.Vector3(0, 0, 1);
@@ -327,6 +330,7 @@ export class World {
     if (!this.skip?.sky) r.render(this.sky.scene, this.sky.cam);
     r.clearDepth();
     if (!this.skip?.near) r.render(this.nearScene, this.camera);
+    for (const draw of this.insets) draw(r);
   }
   /** a PNG of what is on the canvas now (for the page's screenshot button, and for tests: a headless browser does not composite a WebGL canvas into its own screenshots) */
   snapshot() { this.render(); return this.canvas.toDataURL('image/png'); }

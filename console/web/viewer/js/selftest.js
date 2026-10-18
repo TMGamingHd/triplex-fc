@@ -4,6 +4,11 @@
 import { CAMERAS } from './cam.js';
 import { STYLES } from './models/vehicle.js';
 import * as THREE from '../vendor/three.module.js';
+import { sameVehicle } from './cfd.js';
+import { gimbalAngles } from './gyro.js';
+import { Director } from './director.js';
+import { callName } from './lenses/broadcast.js';
+import { sampleTable, tableFor } from './cfdui.js';
 
 export async function run(app, lenses, setLens, world) {
   const out = []; let fails = 0;
@@ -20,6 +25,14 @@ export async function run(app, lenses, setLens, world) {
     const before = errors.length;
     setLens(l.id); await settle();
     check(errors.length === before, `lens ${l.id}: no error while it mounts and draws`);
+    if (l.id === 'cast') {                                                                  // the broadcast has no docks: its readouts are the stage blocks and the clock
+      const nums = [...document.querySelectorAll('#cast .cast-v b')].filter((e) => /[0-9]/.test(e.textContent)).length;
+      check(!!document.getElementById('cast') && nums >= 2, `lens ${l.id}: the stage blocks show ${nums} numbers`);
+      check(/^T[+−] \d\d:\d\d:\d\d$/.test(document.querySelector('#cast .cast-clock').textContent), `lens ${l.id}: the clock reads ${document.querySelector('#cast .cast-clock').textContent}`);
+      check([...document.querySelectorAll('#cast')].every((e) => !/NaN|Infinity|undefined/.test(e.textContent)), `lens ${l.id}: no NaN, Infinity or undefined on the screen`);
+      if (app.auto) { app.setAuto(false); const b = document.querySelector('#v-follow button[data-id="main"]'); if (b) b.click(); await settle(500); }      // (the first visit to the broadcast turns the director on: the checks that follow are about the main body)
+      continue;
+    }
     check(app.left.textContent.length > 60 && app.right.textContent.length > 60, `lens ${l.id}: both docks have text`);
     const nums = [...app.left.querySelectorAll('.stat .v')].filter((e) => /[0-9]/.test(e.textContent)).length;
     check(nums >= 4, `lens ${l.id}: ${nums} readouts have a number`);
@@ -116,8 +129,48 @@ export async function run(app, lenses, setLens, world) {
       }
     }
     const first = (() => { const m = app.pose.stg ?? 255; for (let i = 0; i < 8; i++) if (m & (1 << i)) return i; return 0; })();
-    if (S.cfdState.list.some((c) => (!c.vehicle || c.vehicle === app.spec.name) && (c.stage_from == null || c.stage_from === first))) { await settle(1500); check(!!S.cfd.cfd, `a flow field was loaded (${S.cfd.name})`); check(S.cfdStats.cells.el === undefined || /[0-9]/.test(app.left.querySelector('#v-aero-cfdcard')?.textContent || ''), 'the solver card has numbers'); }
+    if (S.cfdState.list.some((c) => sameVehicle(app.spec.name, c.vehicle) && (c.stage_from == null || c.stage_from === first))) { await settle(1500); check(!!S.cfd.cfd, `a flow field was loaded (${S.cfd.name})`); check(S.cfdStats.cells.el === undefined || /[0-9]/.test(app.left.querySelector('#v-aero-cfdcard')?.textContent || ''), 'the solver card has numbers'); }
     S.opts.view = was; aero.applyView(app, false); await settle(300);
+  }
+  // the gyro: the three angles of the gimbal set rebuild the attitude they were taken from (for attitudes all round, the vertical included), and agree with the simulator's own tilt
+  {
+    let worst = 0, seed = 7; const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+    for (let i = 0; i < 300; i++) {
+      const q = new THREE.Quaternion(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5, rnd() - 0.5 + 1e-3).normalize();
+      const a = gimbalAngles(q, 0), back = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), a.lean).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), a.tilt)).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), a.roll));
+      worst = Math.max(worst, 1 - Math.abs(back.dot(q)));
+    }
+    check(worst < 1e-9, `gimbalAngles: 300 attitudes rebuilt from lean, tilt and roll (worst 1 - |q.q'| = ${worst.toExponential(1)})`);
+    const vert = gimbalAngles(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.7), 1.2);
+    check(Math.abs(vert.tilt) < 1e-9 && Math.abs(vert.lean - 1.2) < 1e-12 && Math.abs(vert.lean + vert.roll - 0.7) < 1e-9, 'gimbalAngles: a vehicle standing up keeps its last lean, and the lean and the roll together are its turn about the vertical');
+    if (app.pose && !app.pose.truthOnly && app.pose.tilt) {
+      const { world } = app, q = world.localQ.clone().invert().multiply(world.qs), a = gimbalAngles(q, 0), tp = app.pose.tilt[0] * Math.PI / 180, ty = app.pose.tilt[1] * Math.PI / 180;
+      const sim = Math.acos(Math.cos(tp) * Math.cos(ty)) * 180 / Math.PI, mine = a.tilt * 180 / Math.PI, curve = Math.abs(app.pose.rng || 0) / app.spec.planet.radius * 180 / Math.PI;
+      check(Math.abs(sim - mine) <= curve + 0.7, `the gyro's tilt (${mine.toFixed(1)} deg from the local vertical) agrees with the simulator's (${sim.toFixed(1)} deg from the launch vertical) within the planet's curvature over the range (${curve.toFixed(1)} deg)`);
+    }
+  }
+  // the director: the pad, the climb, the separation and the stage coming home each get their shot, and a shot is held
+  {
+    const D = new Director(), P = (o) => ({ t: 0, alt: 0, thr: 1, clamp: 0, stg: 3, others: [], ...o });
+    check(D.shot(P({ t: -5, clamp: 1 })).cam === 'ground', 'director: the pad is the ground camera');
+    check(D.shot(P({ t: 30, alt: 8000 })).cam === 'track', 'director: the climb is the tracking camera');
+    D.shot(P({ t: 120, alt: 60000, stg: 2, others: [{ name: 'booster', stage: 0, pose: { alt: 62000, thr: 1 } }] }));
+    check(D.shot(P({ t: 121, alt: 60000, stg: 2, others: [{ name: 'booster', stage: 0, pose: { alt: 62000, thr: 1 } }] })).cam === 'chase', 'director: just after a separation it is a chase view');
+    const hold = D.shot(P({ t: 123, alt: 61000, stg: 2, others: [{ name: 'booster', stage: 0, pose: { alt: 5000, thr: 0 } }] }));
+    check(hold.cam === 'chase' && !hold.cut, 'director: a shot is held for a few seconds, whatever the numbers do');
+    const home = D.shot(P({ t: 300, alt: 150000, stg: 2, others: [{ name: 'booster', stage: 0, pose: { alt: 900, thr: 1 } }] }));
+    check(home.cam === 'ground' && home.focus === 'booster' && home.cut, 'director: the stage in its last kilometre is watched from the ground');
+  }
+  check(callName('lift-off') === 'LIFTOFF' && callName('booster separated') === 'BOOSTER SEPARATION' && callName('max-Q passed: 28.1 kPa at T+72.0 s') === 'MAX Q' && callName('ship ignited') === 'SHIP IGNITION' && callName('booster caught') === 'BOOSTER CAUGHT', 'the events are called by their names on the broadcast');
+  {                                                       // the table map reads a table the way the plant does: at a node it is the node, between two it is between
+    const tb = tableFor(app.spec.vehicle && app.spec.vehicle.aero && app.spec.vehicle.aero.cfd, 3);
+    if (tb) {
+      const m = tb.mach, a = tb.alpha_deg;
+      check(Math.abs(sampleTable(tb, 'cn', m[1], a[2]) - tb.cn[1][2]) < 1e-12, 'the table map: at a node it is the node\'s value');
+      const mid = sampleTable(tb, 'cn', 0.5 * (m[1] + m[2]), a[2]), lo = Math.min(tb.cn[1][2], tb.cn[2][2]), hi = Math.max(tb.cn[1][2], tb.cn[2][2]);
+      check(mid >= lo - 1e-12 && mid <= hi + 1e-12 && Math.abs(mid - 0.5 * (tb.cn[1][2] + tb.cn[2][2])) < 1e-12, 'the table map: halfway between two Mach nodes it is halfway between their values');
+      check(sampleTable(tb, 'cn', 0.5, a[2]) === tb.cn[0][2] && sampleTable(tb, 'cn', 99, a[2]) === tb.cn[m.length - 1][2], 'the table map: held at the first and last Mach number, as the plant holds it');
+    }
   }
   // a card folds when its header is clicked, and unfolds again
   setLens('aero'); await settle(300);

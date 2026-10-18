@@ -36,10 +36,14 @@ export async function loadCase(name) {
 }
 
 /** The case nearest a flight condition among those of a vehicle (and of the stages it still has): the Mach number in its logarithm and the angle of attack in tenths of a degree count the same. */
+/** Whether a case was made for a vehicle: the same name, once a mission's name ("starship-v3-class-return") and a stage's ("starship-v3-class: booster") are taken back to the vehicle's own. */
+export const baseName = (n) => String(n || '').split(':')[0].replace(/-(ship-)?return$/, '');
+export const sameVehicle = (spec, caseVehicle) => !caseVehicle || baseName(spec) === baseName(caseVehicle);
+
 export function nearest(cases, vehicle, stageFrom, mach, alphaDeg) {
   let best = null, bd = Infinity;
   for (const c of cases) {
-    if (vehicle && c.vehicle && c.vehicle !== vehicle) continue;
+    if (vehicle && !sameVehicle(vehicle, c.vehicle)) continue;
     if (c.stage_from != null && stageFrom != null && c.stage_from !== stageFrom) continue;
     const d = Math.abs(Math.log(Math.max(mach, 0.3) / Math.max(c.mach, 0.3))) * 3 + Math.abs(Math.abs(alphaDeg) - c.alpha_deg) / 6;
     if (d < bd) { bd = d; best = c; }
@@ -99,45 +103,25 @@ const SKIN_TEX = (cfd, bins = 512) => {
   return t;
 };
 
-export class CfdView {
-  constructor(group) {
-    this.group = group;                                     // the lens's group, in the vehicle's own frame (y along the axis from the tail, z across the plane of the pitch, x the other way)
-    this.cfd = null; this.name = ''; this.mode = 0; this.opacity = 0.9; this.k = 0;
-    this.tex = new THREE.DataTexture(new Uint8Array(4), 1, 1); this.tex.needsUpdate = true;
-    this.mat = new THREE.ShaderMaterial({
-      vertexShader: SLICE_VERT, fragmentShader: SLICE_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-      uniforms: { uTex: { value: this.tex }, uTexel: { value: new THREE.Vector2(1, 1) }, uLogP: { value: new THREE.Vector2(-3, 8) }, uLogRho: { value: new THREE.Vector2(-3, 6) }, uMachHi: { value: 5 }, uMode: { value: 0 }, uOpacity: { value: 0.9 }, uH: { value: 1 }, uMach0: { value: 3 } },
-    });
-    this.quad = new THREE.Mesh(new THREE.BufferGeometry(), this.mat); this.quad.frustumCulled = false; this.quad.renderOrder = 3; this.quad.visible = false;
-    this.pivot = new THREE.Group(); this.pivot.add(this.quad); group.add(this.pivot);
-    this.skinTex = null;
-  }
-
-  setVisible(v) { this.pivot.visible = v; }
-  get nz() { return this.cfd ? this.cfd.head.volume.nz : 1; }
-
-  /** Makes a case the one that is shown. */
-  set(cfd, name) {
-    this.cfd = cfd; this.name = name;
+/** One flow field on the screen: its section (a quad with its own texture and its own opacity). A field that is replaced by another fades out while the new one fades in, so that the picture never jumps when the case nearest the flight changes. */
+class Layer {
+  constructor(group, cfd, name, base) {
+    this.cfd = cfd; this.name = name; this.fade = 0; this.target = 1; this.k = 0; this.tex = new THREE.DataTexture(new Uint8Array(4), 1, 1); this.tex.needsUpdate = true;
+    this.mat = new THREE.ShaderMaterial({ vertexShader: SLICE_VERT, fragmentShader: SLICE_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide, uniforms: { uTex: { value: this.tex }, uTexel: { value: new THREE.Vector2(1, 1) }, uLogP: { value: new THREE.Vector2(-3, 8) }, uLogRho: { value: new THREE.Vector2(-3, 6) }, uMachHi: { value: 5 }, uMode: { value: 0 }, uOpacity: { value: 0 }, uH: { value: 1 }, uMach0: { value: 3 } } });
     const v = cfd.head.volume;
     // the quad: in the vehicle's frame the section is the plane through the axis (model y) and the pitch direction (model z): x = 0
-    const x0 = v.x0, x1 = v.x0 + v.nx * v.h, y0 = v.y0, y1 = v.y0 + v.ny * v.h;
-    const g = new THREE.BufferGeometry();
+    const x0 = v.x0, x1 = v.x0 + v.nx * v.h, y0 = v.y0, y1 = v.y0 + v.ny * v.h, g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute([0, x0, y0, 0, x1, y0, 0, x1, y1, 0, x0, y1], 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
     g.setIndex([0, 1, 2, 0, 2, 3]);
-    this.quad.geometry.dispose(); this.quad.geometry = g;
+    this.quad = new THREE.Mesh(g, this.mat); this.quad.frustumCulled = false; this.quad.renderOrder = 3; this.quad.visible = false;
+    this.pivot = new THREE.Group(); this.pivot.add(this.quad); group.add(this.pivot);
     const u = this.mat.uniforms;
-    u.uLogP.value.set(v.log2_p[0], v.log2_p[1]); u.uLogRho.value.set(v.log2_rho[0], v.log2_rho[1]); u.uMachHi.value = v.mach[1]; u.uH.value = v.h; u.uMach0.value = cfd.head.mach;
-    u.uTexel.value.set(1 / v.nx, 1 / v.ny);
-    if (this.skinTex) this.skinTex.dispose();
+    u.uLogP.value.set(v.log2_p[0], v.log2_p[1]); u.uLogRho.value.set(v.log2_rho[0], v.log2_rho[1]); u.uMachHi.value = v.mach[1]; u.uH.value = v.h; u.uMach0.value = cfd.head.mach; u.uTexel.value.set(1 / v.nx, 1 / v.ny);
     this.skinTex = SKIN_TEX(cfd);
-    this.slice(0);
   }
-
   /** The texture of the section at depth `k` (cells from the plane of symmetry). Cells inside the body take the colour of the fluid beside them so that the filtering does not darken the edge of the body. */
   slice(k) {
-    if (!this.cfd) return;
     const v = this.cfd.head.volume, { vol } = this.cfd, nx = v.nx, ny = v.ny;
     this.k = Math.max(0, Math.min(v.nz - 1, Math.round(k)));
     const base = this.k * nx * ny, d = new Float32Array(nx * ny * 4);
@@ -159,13 +143,39 @@ export class CfdView {
     this.tex = t; this.mat.uniforms.uTex.value = t;
     this.quad.visible = true;
   }
-
-  /** Per frame: the mode and opacity, and the turn of the section into the plane the flight's angle of attack is in (the case's windward side is its +y). */
-  update({ mode, opacity, phiDeg }) {
-    const u = this.mat.uniforms;
-    u.uMode.value = mode; u.uOpacity.value = opacity;
-    this.pivot.rotation.y = (phiDeg || 0) * Math.PI / 180;      // model y is the axis: from the pitch direction (z) toward the other lateral one (x)
-  }
-
   dispose() { this.pivot.removeFromParent(); this.mat.dispose(); this.quad.geometry.dispose(); if (this.tex) this.tex.dispose(); if (this.skinTex) this.skinTex.dispose(); }
+}
+
+export class CfdView {
+  constructor(group) {
+    this.group = group;                                     // the lens's group, in the vehicle's own frame (y along the axis from the tail, z across the plane of the pitch, x the other way)
+    this.layers = []; this.visible = false; this.mix = 1;   // mix: the share of the opacity this view gets (the lens trades it against the live solver's)
+  }
+  get cur() { return this.layers.length ? this.layers[this.layers.length - 1] : null; }
+  get cfd() { return this.cur ? this.cur.cfd : null; }
+  get name() { return this.cur ? this.cur.name : ''; }
+  get skinTex() { return this.cur ? this.cur.skinTex : null; }
+  get nz() { return this.cfd ? this.cfd.head.volume.nz : 1; }
+  setVisible(v) { this.visible = !!v; }
+
+  /** Makes a case the one that is shown: it fades in over the one before, which fades out. */
+  set(cfd, name) {
+    for (const l of this.layers) l.target = 0;
+    const l = new Layer(this.group, cfd, name); this.layers.push(l); l.slice(0);
+  }
+  slice(k) { if (this.cur) this.cur.slice(k); }
+
+  /** Per frame: the mode and opacity, the fades, and the turn of the section into the plane the flight's angle of attack is in (the case's windward side is its +y). */
+  update({ mode, opacity, phiDeg, dt = 0.016 }) {
+    const f = 1 - Math.exp(-dt * 6);
+    for (let i = this.layers.length - 1; i >= 0; i--) {
+      const l = this.layers[i];
+      l.fade += (l.target - l.fade) * f;
+      if (l.target === 0 && l.fade < 0.02) { l.dispose(); this.layers.splice(i, 1); continue; }
+      const u = l.mat.uniforms; u.uMode.value = mode; u.uOpacity.value = opacity * l.fade * this.mix;
+      l.pivot.visible = this.visible && l.fade * this.mix > 0.01;
+      l.pivot.rotation.y = (phiDeg || 0) * Math.PI / 180;      // model y is the axis: from the pitch direction (z) toward the other lateral one (x)
+    }
+  }
+  dispose() { for (const l of this.layers) l.dispose(); this.layers.length = 0; }
 }

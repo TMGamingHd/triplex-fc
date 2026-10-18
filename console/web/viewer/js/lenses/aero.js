@@ -3,10 +3,11 @@
 import * as THREE from '../../vendor/three.module.js';
 import { Chart, legend } from '../../../js/charts.js';
 import { h, stat, statGrid, card, seg, toggle, slider, provenance, fmt, store } from '../ui.js';
-import { Label, Arrow, mark, line, setLine, legendCanvas, declutter } from '../gfx.js';
+import { Label, Arrow, mark, line, setLine, legendCanvas, declutter, colormap } from '../gfx.js';
 import { CpSurface, Streamlines, Shock, Condensation } from '../flow.js';
-import { CfdView, listCases, loadCase, nearest } from '../cfd.js';
+import { CfdView, listCases, loadCase, nearest, sameVehicle } from '../cfd.js';
 import { GpuFlow, GpuSection } from '../gpuflow.js';
+import { AeroMap, FlowLegend, tableFor } from '../cfdui.js';
 import { RAD } from '../physics.js';
 
 const bodyToModel = (v) => new THREE.Vector3(v[2], v[0], v[1]);
@@ -28,6 +29,8 @@ export default {
     const mk = (id, colour, text) => { const a = new Arrow(colour), l = new Label({ text, color: '#' + colour.toString(16).padStart(6, '0'), size: 0.026 }); l.setAnchor(0, 0.5); g.add(a.object, l.object); S.arrows[id] = { a, l }; };
     mk('wind', 0x7ee0d0, 'WIND'); mk('aero', 0xff7eb6, 'AERO'); mk('drag', 0xffb454, 'DRAG'); mk('lift', 0xc58bff, 'LIFT'); mk('thrust', 0xff5d73, 'THRUST'); mk('weight', 0xdbe3f1, 'WEIGHT');
     S.arc = line([new THREE.Vector3(), new THREE.Vector3()], 0xffffff); g.add(S.arc); S.arcL = new Label({ text: 'α', color: '#ffffff' }); g.add(S.arcL.object);
+    S.legend = new FlowLegend(colormap); document.getElementById('ui').append(S.legend.el);
+    S.mixLive = 0; S.mixCase = 0;                                         // the share of the picture each flow has: they fade into one another
     S.cpSurf = new CpSurface(vehicle); S.cpSurf.setFrame(g); S.cfd = new CfdView(g); S.live = null; S.liveSec = null; S.cfdState = { list: [], loading: '', failed: '' }; listCases().then((m) => { S.cfdState.list = m.cases || []; this.fillCases && this.fillCases(); });
     S.streams = new Streamlines(vehicle); S.shock = new Shock(vehicle); S.cond = new Condensation(world);
     S.charts = {};
@@ -56,14 +59,20 @@ export default {
     S.verdict = h('div', { class: 'v-verdict' });
     left.push(card('Stability: centre of pressure and centre of mass', [statGrid(2, S.stab.margin, S.stab.gap, S.stab.xcg, S.stab.xcp), S.diagram, S.verdict,
       h('p', { class: 'note' }, 'The centre of pressure is where the sum of the air\'s forces acts; the centre of mass is where the vehicle balances. Behind it (positive margin) the air turns the vehicle back into the wind; ahead of it the air turns it further away and the gimbals must hold it: that is normal for a launcher.')]));
-    S.cfdStats = { case: stat('Case', '', 'The Mach number and the angle of attack the solver was run at, which are not the flight\'s'), cells: stat('Cells', '', 'The grid the solver used'), ca: stat('C_A (skin)', '', 'Axial force coefficient from the pressure on the skin; the base of an Euler solution has no wake, so it is left out'), cn: stat('C_N', '', 'Normal-force coefficient of the case'),
-      cna: stat('C_N alpha', '/rad', 'The slope of the normal force with the angle of attack, from this case'), xcp: stat('x CP', 'm', 'The solver\'s centre of pressure, from the tail, by the moment about the nose'), simcp: stat('x CP, build-up', 'm', 'What the simulator\'s engineering model puts the centre of pressure at, now'), simcna: stat('C_N alpha, build-up', '/rad', 'The simulator\'s normal-force slope now') };
-    S.cfdCard = card('What the solver says', [statGrid(2, S.cfdStats.case, S.cfdStats.cells, S.cfdStats.ca, S.cfdStats.cn, S.cfdStats.cna, S.cfdStats.xcp, S.cfdStats.simcna, S.cfdStats.simcp), S.cfdNote = h('p', { class: 'note' }, ''),
-      provenance('measured', 'a computed flow (the Euler equations of a perfect gas on this vehicle\'s own outline, tfc_cfd, ADR-050). The simulator\'s flight does not use it: the forces it flies are the engineering build-up in the last two numbers.')]);
-    S.cfdCard.id = 'v-aero-cfdcard'; left.push(S.cfdCard);
+    S.cfdStats = { case: stat('Case', '', 'The Mach number and the angle of attack the solver was run at, which are not the flight\'s'), cells: stat('Cells', '', 'The grid the solver used'), ca: stat('C_A (skin)', '', 'Axial force coefficient from the pressure on the skin; an Euler solution has no wake, so the base is left out here and added by the plant from a law'), cn: stat('C_N', '', 'Normal-force coefficient of the case'),
+      cna: stat('C_N alpha', '/rad', 'The slope of the normal force with the angle of attack, from this case'), xcp: stat('x CP', 'm', 'The solver\'s centre of pressure, from the tail, by the moment about the nose'), simcp: stat('x CP, flight', 'm', 'The centre of pressure the flight has now (the plant: the solver\'s tables from Mach 1.4 up, the engineering build-up below)'), simcna: stat('C_N alpha, flight', '/rad', 'The normal-force slope the flight has now') };
+    S.cfdCard = card('The solver\'s case', [statGrid(2, S.cfdStats.case, S.cfdStats.cells, S.cfdStats.ca, S.cfdStats.cn, S.cfdStats.cna, S.cfdStats.xcp, S.cfdStats.simcna, S.cfdStats.simcp), S.cfdNote = h('p', { class: 'note' }, '')]);
+    S.cfdCard.id = 'v-aero-cfdcard';
+    S.map = new AeroMap();
+    S.mapCard = card('What the flight flies', [S.map.el, h('p', { class: 'note' }, 'The flight reads these tables from Mach 1.4 up (the engineering build-up flies below, fading into the table). The section in the picture is a case of its own, at its own Mach number and angle.'),
+      provenance('derived', 'the tables: the Euler solver on this vehicle\'s outline, one run for each node (tools/cfd/make_aerodb.py); the plant adds friction and a base law (CFD.md section 14).')]);
+    S.mapCard.id = 'v-aero-mapcard';
+    S.chartCards = [];
+    S.plantCards = left.slice(0, 3);                                          // flight condition, coefficients, stability: the plant\'s, folded away in the CFD view
+    left.push(S.mapCard, S.cfdCard);
     this.fillCases = () => {
       const cur = o.ccase, name = app.spec.name;
-      S.cfdPick.replaceChildren(h('option', { value: 'auto' }, 'The case nearest the flight'), ...S.cfdState.list.filter((c) => !c.vehicle || c.vehicle === name).map((c) => h('option', { value: c.name }, `Mach ${+c.mach.toFixed(2)}, ${+c.alpha_deg.toFixed(1)}°`)));
+      S.cfdPick.replaceChildren(h('option', { value: 'auto' }, 'The case nearest the flight'), ...S.cfdState.list.filter((c) => sameVehicle(name, c.vehicle)).map((c) => h('option', { value: c.name }, `Mach ${+c.mach.toFixed(2)}, ${+c.alpha_deg.toFixed(1)}°`)));
       S.cfdPick.value = [...S.cfdPick.options].some((x) => x.value === cur) ? cur : 'auto';
     };
     app.left.replaceChildren(...left);
@@ -80,20 +89,20 @@ export default {
       grp('v-aero-pressure', h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Pressure on the skin'), pmode), slider('Opacity', 0, 1, 0.05, o.opacity, (v) => { o.opacity = v; save(); }, (v) => Math.round(v * 100) + ' %'),
         toggle('Contour lines', o.contours, (v) => { o.contours = v; save(); S.cpSurf.mat.uniforms.uBands.value = v ? 1 : 0; }),
         h('div', { class: 'v-legend' }, legendCanvas(), h('div', { class: 'v-legend-ends' }, h('span', { text: 'suction' }), h('span', { text: 'ambient' }), h('span', { text: 'stagnation' })))),
-      grp('v-aero-cfd', toggle('Live solver (zero angle of attack)', o.live, (v) => set('live', v), 'Solves the axisymmetric Euler equations on the graphics card as you watch, at the Mach number of the flight: a flow that settles in a second or two and follows the speed. The computed case below has the angle of attack and the 3D flow; this has the time.'),
-        toggle('Section through the flow', o.csec, (v) => set('csec', v), 'A plane through the axis, in the plane of the angle of attack'), toggle('The solver\'s pressure on the skin', o.cskin, (v) => set('cskin', v)),
+      grp('v-aero-cfd',
         h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Show'), seg([[0, 'Mach', 'The Mach number of the flow'], [1, 'Pressure', 'The pressure over the free stream\'s, logarithmic'], [2, 'Schlieren', 'The density\'s gradient: shocks and expansions as a shadowgraph shows them']], o.cmode, (v) => { o.cmode = +v; save(); }, 'quantity')),
-        S.cfdDepth = slider('Section depth', 0, 1, 1, 0, (v) => S.cfd.slice(v), (v) => `${(v * (S.cfd.cfd ? S.cfd.cfd.head.volume.h : 0)).toFixed(1)} m off the plane`), slider('Opacity', 0.1, 1, 0.05, o.copac, (v) => { o.copac = v; save(); }, (v) => Math.round(v * 100) + ' %'),
-        S.cfdPick = h('select', { 'aria-label': 'case', onchange: (e) => { o.ccase = e.target.value; save(); } }, h('option', { value: 'auto' }, 'The case nearest the flight')),
-        h('div', { class: 'v-legend' }, legendCanvas(), h('div', { class: 'v-legend-ends' }, h('span', { text: 'slow / low' }), h('span', { text: '' }), h('span', { text: 'fast / high' })))),
+        h('div', { class: 'v-row' }, h('span', { class: 'v-lbl' }, 'Flow from'), seg([[1, 'Live', 'Solved on the graphics card as you watch, axisymmetric, at the Mach number of the flight: it settles in a second or two and follows the speed'], [0, 'Computed case', 'The 3D flow the offline solver computed for the case nearest the flight, with its angle of attack']], o.live ? 1 : 0, (v) => set('live', !!+v), 'source')),
+        toggle('Section through the flow', o.csec, (v) => set('csec', v), 'A plane through the axis, in the plane of the angle of attack'), toggle('The solver\'s pressure on the skin', o.cskin, (v) => set('cskin', v)),
+        S.cfdDepth = slider('Section depth', 0, 1, 1, 0, (v) => S.cfd.slice(v), (v) => `${(v * (S.cfd.cfd ? S.cfd.cfd.head.volume.h : 0)).toFixed(1)} m`), slider('Opacity', 0.1, 1, 0.05, o.copac, (v) => { o.copac = v; save(); }, (v) => Math.round(v * 100) + ' %'),
+        S.cfdPick = h('select', { 'aria-label': 'case', onchange: (e) => { o.ccase = e.target.value; save(); } }, h('option', { value: 'auto' }, 'The case nearest the flight'))),
       grp('v-aero-stability', toggle('Centre of pressure and centre of mass', o.cgcp, (v) => set('cgcp', v)), toggle('Forces: thrust, weight, aerodynamic, drag, lift', o.forces, (v) => set('forces', v))),
       grp('v-aero-extra', h('div', { class: 'v-lbl', style: { margin: '8px 0 2px' } }, 'Also draw, in this view'), toggle('Centre of pressure and centre of mass', o.xcgcp, (v) => set('xcgcp', v)), toggle('Forces', o.xforces, (v) => set('xforces', v))),
     ];
-    S.says = { flow: 'The air going round the vehicle: streamlines, the shock, the airflow (the velocity of the vehicle through the air) and the angle of attack.', pressure: 'The pressure on the skin.', stability: 'Where the forces act and whether the air turns the vehicle back into the airflow.', cfd: 'The flow a solver computed (the Euler equations, tfc_cfd) for the case nearest this flight: the shock the nose makes, the expansion at its shoulder, the pressure on the skin. Not made up and not live: a computed case, at its Mach number and angle of attack.' };
+    S.says = { flow: 'The air going round the vehicle: streamlines, the shock, the airflow (the velocity of the vehicle through the air) and the angle of attack.', pressure: 'The pressure on the skin.', stability: 'Where the forces act and whether the air turns the vehicle back into the airflow.', cfd: 'The flow the Euler solver computes round this vehicle: the shock at the nose, the expansion at its shoulder, the pressure on the skin. Live on the graphics card, or a computed 3D case.' };
     const mkChart = (series, opt = {}) => { const c = new Chart(h('canvas'), { height: 110, window: 60, series, ...opt }); return c; };
     S.charts = { alpha: mkChart([{ key: 'alpha', label: 'α °', color: 'var(--accent)' }], { zero: true }), q: mkChart([{ key: 'q', label: 'q Pa', color: 'var(--warn)' }]), mach: mkChart([{ key: 'mach', label: 'Mach', color: 'var(--ok)' }]),
       margin: mkChart([{ key: 'static_margin', label: 'static margin (cal)', color: 'var(--nC)' }], { zero: true }), pos: mkChart([{ key: 'cg', label: 'x CG m', color: 'var(--ok)' }, { key: 'cp', label: 'x CP m', color: 'var(--accent)' }]) };
-    let chN = 0; const ch = (t, c) => card(t, [c.c, legend(c.o.series)], null, { open: chN++ === 0 });
+    let chN = 0; const ch = (t, c) => { const el = card(t, [c.c, legend(c.o.series)], null, { open: chN++ === 0 }); S.chartCards.push(el); return el; };
     app.right.replaceChildren(
       card('What to draw', rows),
       card('Where the numbers come from', [provenance('measured', 'Mach, angle of attack, the air, the forces, the centre of mass and the centre of pressure: the simulator\'s own state.'),
@@ -107,18 +116,20 @@ export default {
 
   applyView(app, camera = false) {
     const S = this.s, o = S.opts, v = o.view;
-    S.streams.setVisible(o.streams && v === 'flow'); S.shock.setVisible(o.shock && v === 'flow'); S.cpSurf.setVisible(v === 'pressure' || (v === 'cfd' && o.cskin)); S.cfd.setVisible(v === 'cfd' && o.csec && !(o.live && S.live && S.live.ok)); if (S.liveSec) S.liveSec.setVisible(v === 'cfd' && o.csec && o.live); if (v !== 'cfd') S.cpSurf.setCfd(null);
+    S.streams.setVisible(o.streams && v === 'flow'); S.shock.setVisible(o.shock && v === 'flow'); S.cpSurf.setVisible(v === 'pressure' || (v === 'cfd' && o.cskin)); S.cfd.setVisible(v === 'cfd' && o.csec); if (S.liveSec) S.liveSec.setVisible(v === 'cfd' && o.csec && o.live); if (v !== 'cfd') S.cpSurf.setCfd(null);
+    for (const c of [...S.plantCards, ...S.chartCards]) c.style.display = v === 'cfd' ? 'none' : '';
+    S.mapCard.style.display = S.cfdCard.style.display = v === 'cfd' ? '' : 'none'; S.legend.show(v === 'cfd' && o.csec);
     S.showMarks = v === 'stability' ? o.cgcp : o.xcgcp;                        // the markers and the dimension line
     S.showForces = v === 'stability' ? o.forces : o.xforces;
     S.showWind = v === 'flow' && o.wind; S.showArc = v === 'flow' && o.arc; S.showCond = v === 'flow' && o.cond;
     const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
-    show('v-aero-flow', v === 'flow'); show('v-aero-pressure', v === 'pressure'); show('v-aero-stability', v === 'stability'); show('v-aero-extra', v !== 'stability' && v !== 'cfd'); show('v-aero-cfd', v === 'cfd'); show('v-aero-cfdcard', v === 'cfd');
+    show('v-aero-flow', v === 'flow'); show('v-aero-pressure', v === 'pressure'); show('v-aero-stability', v === 'stability'); show('v-aero-extra', v !== 'stability' && v !== 'cfd'); show('v-aero-cfd', v === 'cfd'); 
     const says = document.getElementById('v-aero-says'); if (says) says.textContent = S.says[v] || '';
     if (camera) {
       const r = app.world.rig;
       if (v === 'stability') { r.set('orbit'); r.yaw = Math.PI / 2; r.pitch = 0.0; r.dist = 1.95; r.anchor = 0.5; }
       else if (v === 'flow') { r.set('orbit'); r.yaw = 0.9; r.pitch = 0.12; r.dist = 1.5; r.anchor = 0.55; }
-      else if (v === 'cfd') { r.set('orbit'); r.yaw = Math.PI / 2; r.pitch = 0.05; r.dist = 1.35; r.anchor = 0.78; }
+      else if (v === 'cfd') { r.set('tunnel'); r.dist = 0.78; r.anchor = 0.78; r.slide = 0; app.syncCam && app.syncCam(); }
       else { r.set('orbit'); r.yaw = 0.7; r.pitch = 0.15; r.dist = 1.1; r.anchor = 0.6; }
     }
   },
@@ -202,14 +213,20 @@ export default {
     // the solver's flow: the case nearest this flight, loaded when it changes
     if (view === 'cfd') {
       const cs = S.cfdState, stageFrom = (() => { const m = pose.stg ?? 255; for (let i = 0; i < 8; i++) if (m & (1 << i)) return i; return 0; })();
-      const want = o.ccase !== 'auto' ? cs.list.find((c) => c.name === o.ccase) : nearest(cs.list.filter((c) => !c.vehicle || c.vehicle === spec.name), spec.name, stageFrom, d.M, d.alpha);
+      const want = o.ccase !== 'auto' ? cs.list.find((c) => c.name === o.ccase) : nearest(cs.list.filter((c) => sameVehicle(spec.name, c.vehicle)), spec.name, stageFrom, d.M, d.alpha);
       if (want && want.name !== S.cfd.name && cs.loading !== want.name && cs.failed !== want.name) {
         cs.loading = want.name;
         loadCase(want.name).then((c) => { if (this.s !== S) return; S.cfd.set(c, want.name); S.cfdDepth.input.max = String(S.cfd.nz - 1); S.cfdDepth.input.value = '0'; cs.loading = ''; }).catch(() => { cs.failed = want.name; cs.loading = ''; });
       }
       const cf = S.cfd.cfd;
-      S.cfd.update({ mode: o.cmode, opacity: o.copac, phiDeg: d.phi });
-      this.liveStep(app, pose, d, dt);
+      { const ph = (d.phi || 0) * Math.PI / 180, n = [Math.cos(ph), 0, -Math.sin(ph)], f = d.fhat, a = [f[2], f[0], f[1]];                // the section's normal, and the air's direction (model axes), projected into the section
+        const k = a[0] * n[0] + a[1] * n[1] + a[2] * n[2], r = [a[0] - k * n[0], a[1] - k * n[1], a[2] - k * n[2]], m = Math.hypot(...r);
+        app.world.rig.tunnel = d.V > 5 && m > 1e-6 ? { n, r: r.map((x) => x / m) } : null; }
+      this.liveStep(app, pose, d, dt);                                  // (first: it sets how much of the picture the computed case gets)
+      S.cfd.update({ mode: o.cmode, opacity: o.copac, phiDeg: d.phi, dt });
+      S.map.draw(tableFor(app.spec.vehicle && app.spec.vehicle.aero && app.spec.vehicle.aero.cfd, pose.stg ?? 255), d, app.data.hist, performance.now());
+      { const hi = S.liveShown && S.live ? Math.max(2, 1.5 * S.live.mach) : cf ? cf.head.volume.mach[1] : 5; S.legend.set(['mach', 'pressure', 'schlieren'][o.cmode] || 'mach', hi);
+        S.legend.badge.textContent = S.liveShown ? `LIVE SOLVER · MACH ${S.live.mach.toFixed(1)} · AXISYMMETRIC` : cf ? `COMPUTED CASE · MACH ${cf.head.mach.toFixed(1)} · ${cf.head.alpha_deg.toFixed(0)}° · 3D` : (cs.loading ? 'LOADING…' : 'NO FLOW'); }
       S.cpSurf.setCfd(cf && o.cskin ? S.cfd.skinTex : null, cf ? cf.head.body.x0 : 0, cf ? cf.head.body.x1 : 1, (d.phi || 0) * Math.PI / 180);
       const st = S.cfdStats;
       if (cf) {
@@ -217,7 +234,7 @@ export default {
         st.case.set(`M ${H.mach.toFixed(1)}, ${a.toFixed(0)}°`); st.cells.set(H.cells >= 1e6 ? (H.cells / 1e6).toFixed(2) + 'M' : Math.round(H.cells / 1e3) + 'k');
         st.ca.set(H.ca_skin.toFixed(3)); st.cn.set(H.cn.toFixed(3)); st.cna.set(a > 0 ? (H.cn / (a * Math.PI / 180)).toFixed(2) : '—'); st.xcp.set(a > 0 ? H.x_cp_m.toFixed(1) : '—');
         st.simcna.set((pose.cna ?? 0).toFixed(2)); st.simcp.set((pose.cp ?? 0).toFixed(1));
-        S.cfdNote.textContent = `Flight: Mach ${d.M.toFixed(2)}, ${d.alpha.toFixed(1)}°. Solver: Mach ${H.mach.toFixed(2)}, ${a.toFixed(1)}° (${H.iterations} iterations, residual down ${H.residual_drop.toFixed(1)} orders, ${H.h_m} m cells). ${S.liveShown ? `The section is the live solver\'s, axisymmetric at no angle of attack, at Mach ${S.live.mach.toFixed(2)}; the skin pressure and these numbers are the computed case\'s.` : 'The section is the computed case\'s.'}`;
+        S.cfdNote.textContent = `Flight: Mach ${d.M.toFixed(2)}, ${d.alpha.toFixed(1)}°. This case: Mach ${H.mach.toFixed(2)}, ${a.toFixed(1)}°; ${H.iterations} iterations, the residual down ${H.residual_drop.toFixed(1)} orders, ${H.h_m} m cells.${S.liveShown ? ' The section is the live solver\'s; the skin pressure and these numbers are this case\'s.' : ''}`;
       } else {
         st.case.set('none'); S.cfdNote.textContent = cs.list.length ? (cs.loading ? 'Loading the flow field…' : 'No case for this vehicle and these stages.') : 'No flow fields on the server: make some with tools/cfd/make_library.py (console/cfd/README.md).';
       }
@@ -275,10 +292,10 @@ export default {
 
   /** The live solver: made when it is first wanted, rebuilt when the stages on the vehicle change, run for a few iterations a frame at the flight's Mach number, and drawn as the section. */
   liveStep(app, pose, d, dt) {
-    const S = this.s, o = S.opts, { world, spec } = app;
-    const want = o.live && o.csec;
+    const S = this.s, o = S.opts, { world, spec } = app, f = 1 - Math.exp(-dt * 6);
     S.liveShown = false;
-    if (!want) { if (S.liveSec) S.liveSec.setVisible(false); S.cfd.setVisible(o.csec); return; }
+    const fade = (target) => { S.mixLive += (target - S.mixLive) * f; S.cfd.mix = 1 - S.mixLive; S.cfd.setVisible(o.csec); if (S.liveSec) { S.liveSec.setVisible(o.csec && S.mixLive > 0.01); S.liveSec.update({ mode: o.cmode, opacity: o.copac * S.mixLive, phiDeg: d.phi }); } };
+    if (!(o.live && o.csec)) { fade(0); return; }
     const mask = pose.stg ?? 255;
     if (S.live && S.liveMask !== mask) { S.liveSec.dispose(); S.live.dispose(); S.live = null; S.liveSec = null; }     // a stage has gone: another body
     if (!S.live) {
@@ -288,27 +305,25 @@ export default {
       prof.sort((a, b) => a.x - b.x);
       S.live = new GpuFlow(world.renderer, { nx, nr, h, x0: ext.x0 - D });
       S.liveMask = mask;
-      if (!S.live.ok) { S.liveNote = 'This browser cannot render to float textures: no live solver.'; return; }
+      if (!S.live.ok) { S.liveNote = 'This browser cannot render to float textures: no live solver.'; fade(0); return; }
       S.live.setBody(prof, ext.x0 - D);
       S.liveSec = new GpuSection(S.group, S.live);
-      S.liveSec.setVisible(true);
+      S.liveSec.setVisible(false);
     }
-    if (!S.live.ok) return;
+    if (!S.live.ok) { fade(0); return; }
     const supersonic = d.air && d.M > 1.25;
-    S.liveShown = supersonic;
-    S.liveSec.setVisible(supersonic);
-    S.cfd.setVisible(!supersonic && o.csec);
-    if (!supersonic) return;
+    S.liveShown = supersonic && S.mixLive > 0.5;
+    if (!supersonic) { fade(0); return; }
     const m = Math.min(d.M, 25);
     if (Math.abs(m - S.live.mach) > 0.01 * S.live.mach) { if (Math.abs(m / S.live.mach - 1) > 0.5) S.live.reset(); S.live.setMach(m); }
     S.liveIts = Math.max(8, Math.min(120, (S.liveIts || 40) * (dt > 0.03 ? 0.8 : 1.05)));         // as many iterations a frame as the frame can take
     S.live.step(Math.round(S.liveIts));
-    S.liveSec.update({ mode: o.cmode, opacity: o.copac, phiDeg: d.phi });
+    fade(1);
   },
 
   unmount(app) {
     const S = this.s; if (!S) return;
-    if (S.liveSec) S.liveSec.dispose(); if (S.live) S.live.dispose(); S.cpSurf.dispose(); S.cfd.dispose(); S.streams.dispose(); S.shock.dispose(); S.cond.dispose();
+    S.legend.el.remove(); if (S.liveSec) S.liveSec.dispose(); if (S.live) S.live.dispose(); S.cpSurf.dispose(); S.cfd.dispose(); S.streams.dispose(); S.shock.dispose(); S.cond.dispose();
     S.group.removeFromParent();
     this.s = null;
   },

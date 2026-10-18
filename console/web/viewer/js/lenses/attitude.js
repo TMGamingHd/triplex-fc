@@ -5,6 +5,7 @@ import { Chart, legend } from '../../../js/charts.js';
 import { h, stat, statGrid, card, toggle, provenance, fmt, store } from '../ui.js';
 import { Arrow, Label, line, setLine, declutter } from '../gfx.js';
 import { quatToScene } from '../data.js';
+import { createGyroBox } from '../gyro.js';
 
 const RAD = Math.PI / 180, DEG = 180 / Math.PI;
 const ACT = ['Standby', 'Nominal', 'Safe'];
@@ -35,7 +36,9 @@ export default {
     const s = S.st;
     S.nodes = h('div', { class: 'v-nodes' });
     S.diagram = h('canvas', { class: 'v-diagram', width: 300, height: 240 });
-    app.left.replaceChildren(card('Attitude against the program', statGrid(3, s.tp, s.rp, s.ep, s.ty, s.ry, s.ey)), card('Rates and gimbals', statGrid(3, s.w2, s.w1, s.w0, s.gp, s.gy, s.err, s.cp, s.cy, s.act)),
+    S.gyro = createGyroBox(app, h, { full: true });
+    const gcard = card('Gyro', [S.gyro.el, h('p', { class: 'note' }, 'The attitude as a gyroscope\'s three frames. Green: the outer ring, which turns about the vertical, by the direction the vehicle leans toward (from downrange). Blue: the middle ring, about the horizontal axis it is hinged on, by how far it leans. Amber: the inner ring and the vehicle, about the vehicle\'s own axis: the roll. The bars are the turn rates about the axis and across it, full scale 20 °/s.')]); gcard.classList.add('has-gyro');         // (the card has no backdrop of its own: the instrument is drawn on the canvas behind it)
+    app.left.replaceChildren(gcard, card('Attitude against the program', statGrid(3, s.tp, s.rp, s.ep, s.ty, s.ry, s.ey)), card('Rates and gimbals', statGrid(3, s.w2, s.w1, s.w0, s.gp, s.gy, s.err, s.cp, s.cy, s.act)),
       card('The pitch plane', [S.diagram, h('p', { class: 'note' }, 'Dashed: the local vertical. The vehicle\'s axis, the program, the velocity and the thrust, in the plane that contains the long axis and the vertical.')]));
     S.charts = {
       err: new Chart(h('canvas'), { height: 110, window: 120, series: [{ key: 'err_p', label: 'pitch error °', color: 'var(--nA)' }, { key: 'err_y', label: 'yaw error °', color: 'var(--nC)' }], zero: true }),
@@ -59,6 +62,7 @@ export default {
   },
   update(app, pose, d, dt) {
     const S = this.s, s = S.st, spec = app.spec, ext = spec.extent(pose.stg, pose.pay), L = ext.length, R = ext.diameter / 2;
+    S.gyro.update(pose);
     const tilt = pose.tilt || [0, 0], ref = pose.ref || [0, 0];
     const ep = tilt[0] - ref[0], ey = tilt[1] - ref[1];
     // the attitude error as an angle between two axes
@@ -140,5 +144,5 @@ export default {
     ray(tilt[0] - gp, Lr * 0.45, css('--crit'), 'thrust', [2, 3]);                  // the thrust is the axis turned by the gimbal angle, toward the tail's side
     ctx.fillStyle = css('--muted'); ctx.textAlign = 'left'; ctx.fillText(`gimbal ${gp.toFixed(2)}°`, 8, 14);
   },
-  unmount(app) { const S = this.s; if (!S) return; S.group.removeFromParent(); this.s = null; },
+  unmount(app) { const S = this.s; if (!S) return; S.gyro.dispose(); S.group.removeFromParent(); this.s = null; },
 };
