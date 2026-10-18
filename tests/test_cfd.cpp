@@ -249,6 +249,18 @@ TFC_TEST(cfd_the_surface_elements_add_up_to_the_areas_of_the_shapes_and_a_consta
     CHECK(near_abs(sim::norm(p.n), 1.0, 1e-12) && cone.phi(p.c + (p.n * 1e-3)) > 0.0 && cone.phi(p.c - (p.n * 1e-3)) < 0.0);   // the normal points out of the body
   }
   CHECK(near_rel(ac, 0.5 * 3.14159265358979 * ((3.0 * 5.0) + (3.0 * 3.0)), 2e-3) && near_rel(base, 0.5 * 3.14159265358979 * 9.0, 1e-3));
+  // a cylinder with a flat end each side (a booster without the ship): the aft end is part 1, the forward end part 2, and the force of a pressure on each is the pressure times the disc, along its normal
+  const cfd::Revolution can({{0.0, 3.0}, {6.0, 3.0}});
+  std::vector<cfd::Panel> pk;
+  can.panels(0.1, pk);
+  double aft = 0.0;
+  double fore = 0.0;
+  double wall = 0.0;
+  for (const cfd::Panel& p : pk) {
+    (p.part == 1 ? aft : (p.part == 2 ? fore : wall)) += p.area;
+    CHECK(p.part == 0 || (p.part == 1 && p.n.x < -0.99) || (p.part == 2 && p.n.x > 0.99));
+  }
+  CHECK(near_rel(aft, 0.5 * 3.14159265358979 * 9.0, 1e-3) && near_rel(fore, aft, 1e-12) && near_rel(wall, 3.14159265358979 * 3.0 * 6.0, 2e-3));
   // the signed distance of the cone: on the axis inside, a point 1 above the middle of the side, one beyond the base
   CHECK(cone.phi(V3{2.0, 0.0, 0.0}) < -1.0 && cone.phi(V3{4.5, 0.0, 0.0}) > 0.49 && cone.phi(V3{4.5, 0.0, 0.0}) < 0.51);
   CHECK(near_abs(cone.phi(V3{2.0, 1.5 + (0.8 * 1.0), 0.6 * 1.0}), std::sqrt(((1.5 + 0.8) * (1.5 + 0.8)) + 0.36) - 1.5, 0.2));   // a point off the side (in the meridian plane it is the distance to the line)
@@ -324,6 +336,23 @@ TFC_TEST(cfd_the_real_gas_is_a_perfect_gas_when_cold_and_obeys_the_conservation_
   CHECK(near_abs(air.e_from_p_exact(sh.rho2, sh.p2) + (sh.p2 / sh.rho2) + (0.5 * u2 * u2), air.e_from_p_exact(1.0, 1.0) + 1.0 + (0.5 * u1 * u1), 1e-9 * u1 * u1));
   const gd::Normal pg = gd::normal_shock(15.0, 1.4);
   CHECK(sh.rho2 > 1.8 * pg.rho2_rho1 && sh.t2 < 0.5 * (pg.p2_p1 / pg.rho2_rho1) && sh.alpha2 > 0.1);
+}
+
+TFC_TEST(cfd_the_temperature_solve_finds_a_root_in_the_thin_dissociating_gas_of_a_wake) {
+  // 68 km: the density of the wake behind a base at Mach 20 is a thousandth of the free stream's, where the dissociation sets in over a few per cent of the temperature. Newton's method alone jumped from one
+  // shoulder of it to the other and back and returned, after eighty steps, a temperature that is no root (the sound speed squared then came out at -1200, and the flux was not a number).
+  const cfd::RealAir air(3000.0 / 225.065202, 59500.0 / 225.065202, 150000.0 / 1.09169e-4, false);
+  double worst = 0.0;
+  bool sound_positive = true;
+  for (const double rho : {1e-4, 3e-4, 8.1033147453591302e-4, 2e-3}) {
+    for (const double p : {1e-4, 1e-3, 9.0412095340830622e-3, 5e-2}) {
+      worst = std::fmax(worst, std::fabs(air.pressure_rt(rho, air.t_from_p(rho, p)) / p - 1.0));
+      const double e = air.e_from_p_exact(rho, p);
+      worst = std::fmax(worst, std::fabs(air.energy_rt(rho, air.t_from_e(rho, e)) / e - 1.0));
+      sound_positive = sound_positive && air.sound2_exact(rho, p) > 0.0;
+    }
+  }
+  CHECK(worst < 1e-10 && sound_positive);
 }
 
 TFC_TEST(cfd_the_solver_finds_the_real_gas_shock_the_equation_of_state_gives) {

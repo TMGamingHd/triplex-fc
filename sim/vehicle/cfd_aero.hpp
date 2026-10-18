@@ -15,6 +15,8 @@ struct Coeffs {
   double ca_base = 0.0;
   double cn = 0.0;
   double cm = 0.0;
+  double ca_fore = 0.0;   // a flat forward end alone (0 when the table has none)
+  double cm_fore = 0.0;
 };
 
 // Where `x` falls on an ascending grid: the cell and the fraction in it (held at the ends).
@@ -46,13 +48,28 @@ inline Coeffs lookup(const CfdAeroDb& db, double mach, double alpha_deg) {
     const double b = (t[((i + 1U) * na) + j] * (1.0 - fa)) + (t[((i + 1U) * na) + j + 1U] * fa);
     return (a * (1.0 - fm)) + (b * fm);
   };
-  return Coeffs{at(db.ca), at(db.ca_base), at(db.cn), at(db.cm)};
+  Coeffs out{at(db.ca), at(db.ca_base), at(db.cn), at(db.cm), 0.0, 0.0};
+  if (!db.ca_fore.empty()) {
+    out.ca_fore = at(db.ca_fore);
+    out.cm_fore = at(db.cm_fore);
+  }
+  return out;
+}
+
+// How much of the table there is at a Mach number: 1 from the table's lowest Mach number up, falling to 0 over 0.6 below it (the transonic and subsonic flow, which an Euler solution does not do well, is
+// the build-up's).
+inline double weight(const CfdAeroDb& db, double mach) {
+  const double x = std::clamp((mach - (db.mach.front() - 0.6)) / 0.6, 0.0, 1.0);
+  return x * x * (3.0 - (2.0 * x));
 }
 
 // The table for the stages that are on the vehicle, or null.
 inline const CfdAeroDb* select(const std::vector<CfdAeroDb>& dbs, const std::vector<bool>& stage_active) {
   for (const CfdAeroDb& db : dbs) {
     bool same = true;
+    for (const int x : db.stages) {
+      same = same && x >= 0 && static_cast<std::size_t>(x) < stage_active.size();   // a table that names a stage this vehicle does not have is for another one
+    }
     for (std::size_t s = 0; s < stage_active.size(); ++s) {
       bool listed = false;
       for (const int x : db.stages) {
@@ -73,7 +90,7 @@ inline void slopes(const CfdAeroDb& db, double mach, double x_cg, double& cn_alp
   const Coeffs c = lookup(db, mach, a1);
   const double a1r = a1 * 3.14159265358979323846 / 180.0;
   cn_alpha = c.cn / a1r;
-  moment_slope = ((-c.cm * db.d_ref) + ((db.x_ref - x_cg) * c.cn)) / a1r;
+  moment_slope = ((-(c.cm + c.cm_fore) * db.d_ref) + ((db.x_ref - x_cg) * c.cn)) / a1r;
 }
 
 }  // namespace sim::cfdaero

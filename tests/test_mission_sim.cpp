@@ -379,6 +379,39 @@ TFC_TEST(missiondesign_gains_come_from_the_probes_with_the_allocation_of_each_po
   CHECK(near_abs(static_cast<double>(other.gains[0].gains[0].pitch.kp), (4.0 + 3.0) / 0.4 / sim::kRad2Deg, 1e-4));
 }
 
+TFC_TEST(missionworld_a_body_held_at_rest_is_not_probed_so_the_gains_of_its_last_phase_are_those_of_the_flight) {
+  // A body that has landed (or is held by the arms) goes on running its phase for as long as the rest of the mission is flown, and a design that kept probing it would spread the sixteen points of its gain
+  // track over those thousands of seconds, leaving the landing burn that came before with one or none (the booster's catch was designed from points 210 s apart: docs/design/CFD.md section 14).
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(sim::load_vehicle_file(repo_root() + "vehicles/missions/rocket_recovery.json", v, errors) && errors.empty());
+  sim::BuiltMission bm;
+  CHECK(sim::build_mission(v, bm, errors));
+  const sim::DesignReport rep = sim::design_mission(v, bm);
+  CHECK(rep.ok);
+  sim::WorldConfig wc;
+  wc.params = v.params;
+  wc.scenario = v.scenario;
+  wc.main_tables = &bm.main;
+  wc.ideal = true;
+  wc.probe_every = 100U;
+  sim::MissionWorld w(wc);
+  double last_probe = -1.0;
+  w.set_probe([&last_probe](const sim::AxisProbe& p) { last_probe = p.t; });
+  double t_rest = -1.0;
+  for (int k = 0; k < 40000; ++k) {
+    w.step();
+    const sim::Vehicle6& veh = w.body(0).veh;
+    if (t_rest < 0.0 && (veh.landed() || veh.caught() || veh.crashed())) {
+      t_rest = static_cast<double>(k) * 0.01;
+    }
+    if (t_rest >= 0.0 && static_cast<double>(k) * 0.01 > t_rest + 30.0) {
+      break;
+    }
+  }
+  CHECK(t_rest > 10.0 && last_probe > 0.0 && last_probe <= t_rest + 0.011);   // probes up to the touchdown and none in the 30 s after it
+}
+
 TFC_TEST(missionworld_a_rocket_flown_ideally_and_on_its_three_computers_comes_down_under_its_parachutes) {
   sim::VehicleFile v;
   std::vector<std::string> errors;
@@ -403,13 +436,26 @@ TFC_TEST(missionworld_a_rocket_flown_ideally_and_on_its_three_computers_comes_do
   {
     sim::MissionWorld w(world_config(true));
     double apogee = 0.0;
+    // the envelope is the extremes of the loads at every tenth frame: the same samples taken here from the outside must give the same extremes
+    sim::Envelope check_env;
+    uint32_t samples = 0U;
     for (int k = 0; k < 60000 && !(w.body(0).veh.landed() || w.body(0).veh.crashed()); ++k) {
       w.step();
       apogee = std::fmax(apogee, w.body(0).veh.altitude());
+      if (k % 10 == 0) {
+        check_env.note(w.body(0).veh.time(), w.body(0).veh.current_loads(), w.body(0).veh.mass(), w.body(0).veh.heating());
+        ++samples;
+      }
     }
     CHECK(w.body(0).veh.landed() && !w.body(0).veh.crashed());
     CHECK(apogee > 15000.0);
     CHECK(w.bodies() == 1U && w.finished());
+    const sim::Envelope& env = w.body(0).env;
+    CHECK(env.samples == samples && env.samples > 1000U);
+    CHECK(env.max_q_pa == check_env.max_q_pa && env.max_q_sin_alpha_pa == check_env.max_q_sin_alpha_pa && env.max_normal_force_n == check_env.max_normal_force_n && env.max_axial_g == check_env.max_axial_g && env.max_stagnation_w_m2 == check_env.max_stagnation_w_m2);
+    CHECK(env.max_q_pa > 1000.0 && env.max_mach > 0.5 && env.max_axial_g > 1.0 && env.t_max_q > 5.0 && env.t_max_q < 120.0);
+    CHECK(env.max_q_sin_alpha_pa >= 0.0 && env.max_q_sin_alpha_pa <= env.max_q_pa);   // (sin alpha is at most 1)
+    CHECK(env.max_wall_k > 250.0 && env.max_aero_moment_nm >= 0.0 && env.max_alpha_rad >= 0.0);
   }
   // on the computers: through the burn and the start of the coast, and the three agree
   {

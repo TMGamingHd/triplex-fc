@@ -897,6 +897,8 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
         c.matrix("ca_base", db.ca_base);
         c.matrix("cn", db.cn);
         c.matrix("cm", db.cm);
+        c.matrix("ca_fore", db.ca_fore);
+        c.matrix("cm_fore", db.cm_fore);
         c.finish();
         a.cfd.push_back(db);
       }
@@ -1317,7 +1319,8 @@ inline std::string write_vehicle(const VehicleFile& v) {
       }
       o += std::string(i == 0U ? "" : ", ") + "{\"stages\": " + row_text(st) + ", \"x_ref_m\": " + num_text(db.x_ref) + ", \"s_ref_m2\": " + num_text(db.s_ref) + ", \"d_ref_m\": " + num_text(db.d_ref) +
            ", \"mach\": " + row_text(db.mach) + ", \"alpha_deg\": " + row_text(db.alpha_deg) + ",\n      \"ca\": " + matrix_text(db.ca, db.alpha_deg.size()) + ",\n      \"ca_base\": " +
-           matrix_text(db.ca_base, db.alpha_deg.size()) + ",\n      \"cn\": " + matrix_text(db.cn, db.alpha_deg.size()) + ",\n      \"cm\": " + matrix_text(db.cm, db.alpha_deg.size()) + "}";
+           matrix_text(db.ca_base, db.alpha_deg.size()) + ",\n      \"cn\": " + matrix_text(db.cn, db.alpha_deg.size()) + ",\n      \"cm\": " + matrix_text(db.cm, db.alpha_deg.size()) +
+           (db.ca_fore.empty() ? "" : ",\n      \"ca_fore\": " + matrix_text(db.ca_fore, db.alpha_deg.size()) + ",\n      \"cm_fore\": " + matrix_text(db.cm_fore, db.alpha_deg.size())) + "}";
     }
     o += "]";
   }

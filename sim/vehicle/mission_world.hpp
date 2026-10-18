@@ -31,6 +31,52 @@ struct BodyLog {
   double mass = 0.0;
 };
 
+// The extremes of what a body flew through, sampled at 10 Hz: what a trajectory design review asks for first. The dynamic pressure and, above all, its product with the angle of attack (q alpha, which sets the
+// bending moment the structure carries on the way up, taken as q sin(alpha) so that it is zero flying tail-first as well as nose-first), the accelerations along the axis and across it, the Mach number, and the heating of the nose and the skin it comes to. The times are the body's own flight times.
+struct Envelope {
+  double max_q_pa = 0.0;
+  double t_max_q = 0.0;
+  double max_q_sin_alpha_pa = 0.0;  // q sin(alpha): q alpha for the small angles of an ascent, and zero at 0 and at 180 degrees (a stage coming down on its engines is not loaded across)
+  double t_max_q_sin_alpha = 0.0;
+  double max_normal_force_n = 0.0;  // the aerodynamic force across the axis
+  double max_alpha_rad = 0.0;       // only where the air has something to say: above 1 kPa
+  double max_axial_g = 0.0;         // the thrust and the aerodynamic force along the axis, over the weight at the sea
+  double max_lateral_g = 0.0;       // and across it
+  double max_mach = 0.0;
+  double max_stagnation_w_m2 = 0.0;
+  double t_max_heat = 0.0;
+  double max_wall_k = 0.0;          // the skin's radiative equilibrium under the belly flux
+  double max_aero_moment_nm = 0.0;  // the aerodynamic moment about the centre of mass
+  uint32_t samples = 0U;
+
+  void note(double t, const Loads& l, double mass, const Vehicle6::Heating& h) {
+    ++samples;
+    if (l.dynamic_pressure > max_q_pa) {
+      max_q_pa = l.dynamic_pressure;
+      t_max_q = t;
+    }
+    const double qa = l.dynamic_pressure * std::sin(l.alpha);
+    if (qa > max_q_sin_alpha_pa) {
+      max_q_sin_alpha_pa = qa;
+      t_max_q_sin_alpha = t;
+    }
+    max_normal_force_n = std::fmax(max_normal_force_n, std::hypot(l.f_aero.y, l.f_aero.z));
+    if (l.dynamic_pressure > 1000.0) {
+      max_alpha_rad = std::fmax(max_alpha_rad, l.alpha);
+    }
+    const double m = std::fmax(mass, 1.0);
+    max_axial_g = std::fmax(max_axial_g, std::fabs(l.f_thrust.x + l.f_aero.x) / (m * kG0));
+    max_lateral_g = std::fmax(max_lateral_g, std::hypot(l.f_thrust.y + l.f_aero.y, l.f_thrust.z + l.f_aero.z) / (m * kG0));
+    max_mach = std::fmax(max_mach, l.mach);
+    if (h.stagnation_w_m2 > max_stagnation_w_m2) {
+      max_stagnation_w_m2 = h.stagnation_w_m2;
+      t_max_heat = t;
+    }
+    max_wall_k = std::fmax(max_wall_k, h.wall_k);
+    max_aero_moment_nm = std::fmax(max_aero_moment_nm, norm(l.m_aero));
+  }
+};
+
 // What a design run measures at a point of the flight: the aerodynamic stiffness of the three axes and the effect of one degree of each effector on the angular acceleration (rad/s^2, body axes x y z = roll, yaw,
 // pitch): the gimbal in the pitch plane, the gimbal in the yaw plane, the roll thrusters, and each of the four surface channels.
 struct AxisProbe {
@@ -60,6 +106,7 @@ struct WorldConfig {
 
 class MissionWorld {
  public:
+  static constexpr uint32_t kEnvelopeEvery = 10U;   // frames between the samples of a body's envelope
   struct Body {
     std::string name;
     int stage = -1;                       // the stage index it was let go from; -1 the main body
@@ -72,6 +119,7 @@ class MissionWorld {
     bool control_off = false;
     uint8_t last_phase = 0U;
     uint32_t seeded = 0U;                 // the phases whose PEG solution has been recorded
+    Envelope env;                         // the extremes of its loads so far
     double drag_num = 0.0;                // sums for the ballistic coefficient the glide measured (see drag_beta)
     double drag_den = 0.0;
     Body(const Params& p, const Scenario& s) : veh(p, s) {}
@@ -197,6 +245,9 @@ class MissionWorld {
       return;   // the main body stands clamped
     }
     b.veh.step(0.01, b.ctl);
+    if (body_frame % kEnvelopeEvery == 0U) {
+      b.env.note(b.veh.time(), b.veh.current_loads(), b.veh.mass(), b.veh.heating());
+    }
     if (b.ideal != nullptr && b.tables != nullptr && b.tables->phase[b.last_phase].kind == tfc::gnc::kind::kGlide) {
       sample_drag(b);
     }
@@ -240,7 +291,9 @@ class MissionWorld {
     if (mo.control) {   // (under a parachute nothing holds the attitude: the canopy does)
       b.veh.set_attitude(Q4{mo.q_ref.w, mo.q_ref.x, mo.q_ref.y, mo.q_ref.z}, V3{mo.w_ref.x, mo.w_ref.y, mo.w_ref.z});
     }
-    if (probe_ && cfg_.probe_every != 0U && frame_ % cfg_.probe_every == 0U) {
+    // (not for a body that is held at rest, by the arms or the ground: its phase goes on running while the rest of the mission is flown, and a gain track of sixteen points spread over those thousands of seconds
+    // has none left for the landing burn that came before: the booster's burn was designed from points 210 s apart in a mission whose ship coasts for an hour)
+    if (probe_ && cfg_.probe_every != 0U && frame_ % cfg_.probe_every == 0U && !b.veh.caught() && !b.veh.landed() && !b.veh.crashed()) {
       emit_probe(b, mo, ff);
     }
   }

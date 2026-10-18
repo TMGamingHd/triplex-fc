@@ -525,7 +525,7 @@ class Euler3D {
     refresh_primitives();
     Forces out;
     for (const Panel& pn : panels) {
-      if ((part >= 0 && pn.part != part) || (part == -2 && pn.part == 1)) {   // part -2: everything but the base (the skin, the flaps)
+      if ((part >= 0 && pn.part != part) || (part == -2 && (pn.part == 1 || pn.part == 2))) {   // part -2: everything but the flat ends (the skin, the flaps)
         continue;
       }
       const double dp = wall_pressure(pn) - inf_.p;

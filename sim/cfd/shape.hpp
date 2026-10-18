@@ -17,7 +17,7 @@ struct Panel {
   V3 c;
   V3 n;
   double area = 0.0;
-  int part = 0;   // 0: the skin; 1: a flat end (the base of a stack, where an Euler solution has no wake and its pressure means little)
+  int part = 0;   // 0: the skin; 1: the flat aft end (the base of a stack, where an Euler solution has no wake and its pressure means little); 2: a flat forward end (a booster after the ship has left: a real windward face when the stage flies nose first)
 };
 
 class Shape {
@@ -350,7 +350,7 @@ class Revolution final : public Shape {
       band(std::make_pair(pr_.front().first, 0.0), pr_.front(), 1);
     }
     if (pr_.back().second > 0.0) {
-      band(pr_.back(), std::make_pair(pr_.back().first, 0.0), 1);
+      band(pr_.back(), std::make_pair(pr_.back().first, 0.0), 2);
     }
   }
 

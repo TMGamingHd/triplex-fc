@@ -94,6 +94,8 @@ struct CfdAeroDb {
   std::vector<double> ca_base;
   std::vector<double> cn;
   std::vector<double> cm;
+  std::vector<double> ca_fore;        // optional (empty, or the size of ca): the pressure force of a flat forward end alone (a booster without the ship), a windward face when the body flies nose first
+  std::vector<double> cm_fore;        // and its moment, with the same size as ca_fore
 };
 
 struct AeroSpec {
@@ -540,7 +542,7 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
       const CfdAeroDb& db = a.cfd[k];
       const std::string at = "aero.cfd[" + std::to_string(k) + "]";
       const std::size_t n = db.mach.size() * db.alpha_deg.size();
-      bool ok = db.mach.size() >= 2U && db.alpha_deg.size() >= 2U && db.ca.size() == n && db.ca_base.size() == n && db.cn.size() == n && db.cm.size() == n && db.s_ref > 0.0 && db.d_ref > 0.0 && !db.stages.empty();
+      bool ok = db.mach.size() >= 2U && db.alpha_deg.size() >= 2U && db.ca.size() == n && db.ca_base.size() == n && db.cn.size() == n && db.cm.size() == n && (db.ca_fore.empty() || db.ca_fore.size() == n) && db.cm_fore.size() == db.ca_fore.size() && db.s_ref > 0.0 && db.d_ref > 0.0 && !db.stages.empty();
       for (std::size_t i = 1; ok && i < db.mach.size(); ++i) {
         ok = db.mach[i] > db.mach[i - 1U];
       }
@@ -549,7 +551,7 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
       }
       ok = ok && db.alpha_deg.front() == 0.0 && db.alpha_deg.back() <= 180.0;
       for (std::size_t i = 0; ok && i < n; ++i) {
-        ok = std::isfinite(db.ca[i]) && std::isfinite(db.ca_base[i]) && std::isfinite(db.cn[i]) && std::isfinite(db.cm[i]);
+        ok = std::isfinite(db.ca[i]) && std::isfinite(db.ca_base[i]) && std::isfinite(db.cn[i]) && std::isfinite(db.cm[i]) && (db.ca_fore.empty() || (std::isfinite(db.ca_fore[i]) && std::isfinite(db.cm_fore[i])));
       }
       if (!ok) {
         fail(at + ": two or more increasing Mach numbers and angles of attack from 0 (to 180 at most), the four tables of mach x alpha finite numbers, positive s_ref_m2 and d_ref_m, and the stages it is for");

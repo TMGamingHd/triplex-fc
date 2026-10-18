@@ -348,6 +348,12 @@ int main(int argc, char** argv) {
       std::printf(", altitude %.1f km, speed %.1f m/s", b.veh.altitude() / 1000.0, b.veh.speed());
     }
     std::printf("\n");
+    const sim::Envelope& e = b.env;
+    constexpr double kDeg = 57.29577951308232;
+    std::printf("  loads: max q %.1f kPa at T+%.0f s; max q sin(alpha) %.1f kPa at T+%.0f s (alpha up to %.1f deg where q > 1 kPa); aero normal force up to %.0f kN\n", e.max_q_pa / 1000.0, e.t_max_q, e.max_q_sin_alpha_pa / 1000.0,
+                e.t_max_q_sin_alpha, e.max_alpha_rad * kDeg, e.max_normal_force_n / 1000.0);
+    std::printf("         axial %.2f g, lateral %.2f g; Mach %.1f; nose flux %.0f kW/m2 at T+%.0f s, skin %.0f K; aero moment up to %.1f MN m\n", e.max_axial_g, e.max_lateral_g, e.max_mach, e.max_stagnation_w_m2 / 1000.0, e.t_max_heat,
+                e.max_wall_k, e.max_aero_moment_nm / 1e6);
     caught = caught || b.veh.caught();
     orbit_ok = orbit_ok || (!b.veh.caught() && !b.veh.landed() && !b.veh.crashed() && orb.bound && orb.perigee_km > 100.0);
     landing_ok = landing_ok || b.veh.landed() || b.veh.caught();

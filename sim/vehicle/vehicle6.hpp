@@ -557,8 +557,20 @@ class Vehicle6 {
     const double area = kPi * 0.25 * p_.diameter * p_.diameter;
     if (shaped_) {
       if (v_abs > 1.0) {
-        if (cfd_ != nullptr && geo_.ready()) {
-          shape_forces_cfd(l, air, vrel, v_abs, mp, s.w);
+        const CfdAeroDb* const tab = geo_.ready() ? cfd_ : nullptr;
+        const double wc = tab != nullptr ? cfdaero::weight(*tab, l.mach) : 0.0;
+        if (tab != nullptr && wc >= 1.0) {
+          shape_forces_cfd(*tab, l, air, vrel, v_abs, mp, s.w);
+        } else if (tab != nullptr && wc > 0.0) {   // below the table's lowest Mach number the build-up fades in
+          Loads lc = l;
+          shape_forces_cfd(*tab, lc, air, vrel, v_abs, mp, s.w);
+          if (g_.aero.full_regime) {
+            shape_forces_full(l, air, vrel, v_abs, mp, s.w);
+          } else {
+            shape_forces(l, air, vrel, v_abs, mp);
+          }
+          l.f_aero = (lc.f_aero * wc) + (l.f_aero * (1.0 - wc));
+          l.m_aero = (lc.m_aero * wc) + (l.m_aero * (1.0 - wc));
         } else if (g_.aero.full_regime && geo_.ready()) {
           shape_forces_full(l, air, vrel, v_abs, mp, s.w);
         } else {
@@ -816,10 +828,18 @@ class Vehicle6 {
       double moment_slope = 0.0;
       double ca = 0.0;
       double s_ref = kPi * 0.25 * p_.diameter * p_.diameter;
-      if (cfd_ != nullptr) {
+      if (cfd_ != nullptr && cfdaero::weight(*cfd_, l.mach) >= 1.0) {
         s_ref = cfd_->s_ref;
         cfdaero::slopes(*cfd_, l.mach, mp.x_cg, cn_alpha, moment_slope);
         moment_slope *= p_.cn_scale;
+      } else if (cfd_ != nullptr && geo_.ready()) {   // fading in: the mean of the two, on the build-up's reference area
+        s_ref = geo_.reference_area();
+        double c1 = 0.0;
+        double m1 = 0.0;
+        cfdaero::slopes(*cfd_, l.mach, mp.x_cg, c1, m1);
+        geo_.slopes(l.mach, mp.x_cg, cn_alpha, moment_slope);
+        const double wc = cfdaero::weight(*cfd_, l.mach);
+        moment_slope = (wc * m1 * p_.cn_scale * cfd_->s_ref / s_ref) + ((1.0 - wc) * moment_slope);
       } else if (geo_.ready()) {
         s_ref = geo_.reference_area();
         geo_.slopes(l.mach, mp.x_cg, cn_alpha, moment_slope);
@@ -834,12 +854,27 @@ class Vehicle6 {
 
   // The aerodynamics of the vehicle as it is now, at Mach `mach`: the slope of the normal force (per radian, on `s_ref`), where its centre of pressure is (m from the aft end) and the
   // axial coefficient flying nose first at sea-level density and 1e7 Reynolds. For the reference model's fixed numbers, those. For tools that describe a vehicle and for the tests.
+  // With a flow-solver table (aero.cfd) the axial coefficient is the table's pressure part plus the plant's friction and base drag at sea-level air and the speed of that Mach number (in flight they depend on the
+  // density and the speed), and below the table's lowest Mach number the build-up's numbers fade in.
   void aero_summary(double mach, double& cn_alpha, double& x_cp, double& ca, double& s_ref) const {
     double moment_slope = 0.0;
     if (cfd_ != nullptr) {
       s_ref = cfd_->s_ref;
       cfdaero::slopes(*cfd_, mach, 0.0, cn_alpha, moment_slope);
-      ca = cfdaero::lookup(*cfd_, mach, 0.0).ca;
+      const Air sea = atmosphere(0.0);   // (the build-up's own figure is at sea-level density and 1e7 Reynolds; this one is at sea-level air and the speed of the Mach number)
+      ca = cfdaero::lookup(*cfd_, mach, 0.0).ca + (geo_.ready() ? cfd_friction_ca(sea, mach * sea.sound, mach, s_ref) + cfd_base_ca(mach, s_ref) : 0.0);
+      const double wc = cfdaero::weight(*cfd_, mach);
+      if (wc < 1.0 && geo_.ready()) {   // below the table's lowest Mach number the build-up fades in, as it does in the loads
+        double cn2 = 0.0;
+        double ms2 = 0.0;
+        geo_.slopes(mach, 0.0, cn2, ms2);
+        const double s2 = geo_.reference_area();
+        const double ca2 = geo_.axial(mach, 1.0e7, power_fraction(), g_.aero) * p_.cd_scale;
+        cn_alpha = (wc * cn_alpha * s_ref / s2) + ((1.0 - wc) * cn2);
+        moment_slope = (wc * moment_slope * s_ref / s2) + ((1.0 - wc) * ms2);
+        ca = (wc * ca * s_ref / s2) + ((1.0 - wc) * ca2);
+        s_ref = s2;
+      }
       x_cp = cn_alpha != 0.0 ? moment_slope / cn_alpha : 0.0;
     } else if (geo_.ready()) {
       s_ref = geo_.reference_area();
@@ -1616,6 +1651,13 @@ class Vehicle6 {
     VehicleSpec v;
     v.planet = g_.planet;
     v.aero = g_.aero;
+    v.aero.cfd.clear();   // the flow solver's tables are by the stages on the vehicle: the one of this stage alone, renumbered (it is stage 0 of the vehicle it now is)
+    for (const CfdAeroDb& db : g_.aero.cfd) {
+      if (db.stages.size() == 1U && db.stages[0] == static_cast<int>(s)) {
+        v.aero.cfd.push_back(db);
+        v.aero.cfd.back().stages = {0};
+      }
+    }
     v.actuator = g_.actuator;
     v.jet_damping = g_.jet_damping;
     StageSpec st = g_.stages[s];
@@ -1717,32 +1759,40 @@ class Vehicle6 {
   // The body's force and moment from the flow solver's tables (aero.cfd): the pressure forces at the Mach number and the angle of attack, to which the plant adds what an Euler solution does not have: the skin
   // friction (the viscous layer's reference-temperature law, viscous.hpp, on the free stream's state, the wall at a radiative-equilibrium-like temperature), and the base drag (the build-up's law, less with the engines
   // on) where the base is not facing the stream; where it does (the angle of attack past 90 degrees) the solver's own pressure on the base. The body's turning is the build-up's.
-  void shape_forces_cfd(Loads& l, const Air& air, const V3& vrel, double v_abs, const MassProps& mp, const V3& w) const {
-    const AeroSpec& a = g_.aero;
-    const double lat = std::hypot(vrel.y, vrel.z);
-    const double alpha = std::atan2(lat, vrel.x);
-    l.alpha = alpha;
-    const double alpha_deg = alpha / kDeg2Rad;
-    const cfdaero::Coeffs c = cfdaero::lookup(*cfd_, l.mach, alpha_deg);
-    const double s_ref = cfd_->s_ref;
-    const double q_s = l.dynamic_pressure * s_ref;
-    // the skin friction: the mean coefficient over the body's length, on the wetted area
+  // What the plant adds to the flow solver's table (which is the pressure on the skin of an Euler solution). The skin friction: the viscous layer's mean coefficient over the body's length at the free stream's state,
+  // the wall at 80 % of the recovery temperature up to 1,500 K, times the wetted area over the reference area and the file's roughness factor. The base drag: the build-up's law on the area of the base, less with
+  // the engines running.
+  [[nodiscard]] double cfd_friction_ca(const Air& air, double v_abs, double mach, double s_ref) const {
     cfd::visc::Edge e;
     e.rho = air.density;
     e.p = air.pressure;
     e.t = air.temperature;
     e.u = v_abs;
-    const double t_aw = air.temperature * (1.0 + (0.9 * 0.2 * l.mach * l.mach));
+    const double t_aw = air.temperature * (1.0 + (0.9 * 0.2 * mach * mach));
     const double t_wall = std::min(0.8 * t_aw, 1500.0);
-    const double cf = cfd::visc::average_cf(e, geo_.length(), t_wall, 1.0e6) * a.wetted_roughness;
-    const double ca_fric = cf * geo_.wetted_area() / s_ref;
+    return cfd::visc::average_cf(e, geo_.length(), t_wall, 1.0e6) * g_.aero.wetted_roughness * geo_.wetted_area() / s_ref;
+  }
+  [[nodiscard]] double cfd_base_ca(double mach, double s_ref) const {
+    const double cd_base = mach < 1.0 ? 0.12 + (0.13 * mach * mach) : 0.25 / mach;
+    return cd_base * (geo_.base_area() / s_ref) * (1.0 - (g_.aero.power_on_base * std::clamp(power_fraction(), 0.0, 1.0)));
+  }
+
+  void shape_forces_cfd(const CfdAeroDb& db, Loads& l, const Air& air, const V3& vrel, double v_abs, const MassProps& mp, const V3& w) const {
+    const AeroSpec& a = g_.aero;
+    const double lat = std::hypot(vrel.y, vrel.z);
+    const double alpha = std::atan2(lat, vrel.x);
+    l.alpha = alpha;
+    const double alpha_deg = alpha / kDeg2Rad;
+    const cfdaero::Coeffs c = cfdaero::lookup(db, l.mach, alpha_deg);
+    const double s_ref = db.s_ref;
+    const double q_s = l.dynamic_pressure * s_ref;
     const double cos_a = std::cos(alpha);
+    const double ca_fric = cfd_friction_ca(air, v_abs, l.mach, s_ref);
     const double toward_base = aero::smoothstep(80.0, 100.0, alpha_deg);   // 0 flying nose first, 1 with the base to the stream
-    const double cd_base = l.mach < 1.0 ? 0.12 + (0.13 * l.mach * l.mach) : 0.25 / l.mach;
-    const double base_law = cd_base * (geo_.base_area() / s_ref) * (1.0 - (a.power_on_base * std::clamp(power_fraction(), 0.0, 1.0))) * std::max(cos_a, 0.0);
-    const double ca_total = c.ca + (ca_fric * cos_a) + ((1.0 - toward_base) * base_law) + (toward_base * c.ca_base);
+    const double base_law = cfd_base_ca(l.mach, s_ref) * std::max(cos_a, 0.0);
+    const double ca_total = c.ca + (ca_fric * cos_a) + ((1.0 - toward_base) * (base_law + c.ca_fore)) + (toward_base * c.ca_base);   // (a flat forward end is a windward face until the base is to the stream: ca_base has it then)
     const double n_total = p_.cn_scale * c.cn;
-    const double arm = p_.cn_scale * ((-c.cm * cfd_->d_ref) + ((cfd_->x_ref - mp.x_cg) * c.cn));   // N times the distance from the centre of mass to where it acts, m
+    const double arm = p_.cn_scale * ((-(c.cm + ((1.0 - toward_base) * c.cm_fore)) * db.d_ref) + ((db.x_ref - mp.x_cg) * c.cn));   // N times the distance from the centre of mass to where it acts, m
     l.f_aero.x = -q_s * p_.cd_scale * ca_total;
     if (lat > 1e-9) {
       const V3 n{0.0, vrel.y / lat, vrel.z / lat};

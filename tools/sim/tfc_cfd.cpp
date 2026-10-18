@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // tfc_cfd: the Euler flow solver (sim/cfd, docs/design/CFD.md) on a vehicle's body, and its validation against the exact solutions.
 //
-//   tfc_cfd --validate [--quick] [--only sod|wedge|cone|sphere|gas] [--threads N]   the solver against Sod's tube, a wedge, cones and a sphere, with the errors and a verdict
+//   tfc_cfd --validate [--quick] [--only sod|wedge|cone|sphere|gas|viscous] [--threads N]   the solver against Sod's tube, a wedge, cones and a sphere, with the errors and a verdict
 //   tfc_cfd VEHICLE.json --mach M [--alpha DEG] ...     one flow: the forces on the body of the vehicle (its stages from --stage-from on) as coefficients
 //   tfc_cfd VEHICLE.json --machs 2,3,5 --alpha 4 --table OUT.json   a table of CA, CN-alpha and the centre of pressure by Mach number, in the form of `aero.table`
 //
@@ -76,7 +76,9 @@ struct FlowResult {
   bool ok = false;
   double ca_skin = 0.0;         // axial force coefficient, drag positive, of the skin (the body without its base)
   double ca_base = 0.0;         // the base's own part: the base-drag law's, or (--base euler) the Euler solution's pressure behind the body
-  double ca_base_euler = 0.0;   // what the Euler solution itself has there, which has no wake and means little
+  double ca_base_euler = 0.0;   // what the Euler solution itself has there, which has no wake and means little (both flat ends)
+  double ca_fore = 0.0;         // the pressure force on a flat forward end alone, when the body has one (the booster without the ship): windward at a small angle of attack
+  double cm_fore = 0.0;         // and its moment
   double ca_friction = 0.0;     // the skin friction's axial coefficient (zero without --viscous)
   double cn_friction = 0.0;
   double heat_peak_kw = 0.0;    // the highest heat flux into the skin, kW/m^2 (the stagnation region excluded: its flat-plate law is not good there)
@@ -100,6 +102,7 @@ struct FlowResult {
   double seconds = 0.0;
   double s_ref = 0.0;
   double d_ref = 0.0;
+  double x_ref = 0.0;
 };
 
 // The grid for a body between x0 and x1 with a maximum radius r: fine over the body and a little beyond it, growing outward to the domain's edges.
@@ -375,6 +378,7 @@ FlowResult run_body(const cfd::Shape& body, double x0, double x1, double r_max, 
   out.d_ref = d_ref;
   out.s_ref = 3.14159265358979 * 0.25 * d_ref * d_ref;
   const double x_ref = c.x_ref >= 0.0 ? c.x_ref : x0 + (0.4 * (x1 - x0));
+  out.x_ref = x_ref;
   const double t0 = now_s();
   std::vector<std::array<double, 3>> hist;
   int it = 0;
@@ -420,7 +424,9 @@ FlowResult run_body(const cfd::Shape& body, double x0, double x1, double r_max, 
     }
   }
   cfd::Forces fs = s.integrate(panels, V3{x_ref, 0, 0}, true, -2);
-  const cfd::Forces fb = s.integrate(panels, V3{x_ref, 0, 0}, true, 1);
+  const cfd::Forces fb1 = s.integrate(panels, V3{x_ref, 0, 0}, true, 1);
+  const cfd::Forces fb2 = s.integrate(panels, V3{x_ref, 0, 0}, true, 2);
+  const cfd::Forces fb{fb1.force + fb2.force, fb1.moment + fb2.moment, fb1.area + fb2.area};
   for (std::size_t l = 0; l < c.lattices.size(); ++l) {
     const cfd::Forces fl = s.porous_force(l, V3{x_ref, 0, 0}, true);
     fs.force = fs.force + fl.force;
@@ -429,10 +435,15 @@ FlowResult run_body(const cfd::Shape& body, double x0, double x1, double r_max, 
   }
   for (std::size_t k = 0; k < c.part_ids.size(); ++k) {
     const cfd::Forces fp = s.integrate(panels, V3{x_ref, 0, 0}, true, c.part_ids[k]);
-    out.parts.push_back({c.part_names[k], -fp.force.x / (q * out.s_ref), -fp.force.y / (q * out.s_ref), fp.moment.z / (q * out.s_ref * d_ref)});
+    if (fp.area <= 0.0) {
+      continue;   // a flap on the z < 0 side: its force is counted with its mirror image, the one at z > 0
+    }
+    out.parts.push_back({c.part_names[k] + " + its mirror", -fp.force.x / (q * out.s_ref), -fp.force.y / (q * out.s_ref), fp.moment.z / (q * out.s_ref * d_ref)});
   }
   out.ca_skin = -fs.force.x / (q * out.s_ref);
   out.ca_base_euler = -fb.force.x / (q * out.s_ref);
+  out.ca_fore = -fb2.force.x / (q * out.s_ref);
+  out.cm_fore = fb2.moment.z / (q * out.s_ref * d_ref);
   out.ca_base = out.ca_base_euler;
   if (c.base_model) {   // the base drag of the build-up's law, on the area of the aft-facing base, less with the engines on (aero.hpp): an Euler solution has no wake
     double a_base = 0.0;
@@ -482,8 +493,8 @@ struct Body {
   double d_ref = 0.0;
 };
 
-bool make_body(const sim::VehicleFile& vf, std::size_t stage_from, Body& b) {
-  b.profile = cfd::body_profile(vf.params.spec, stage_from, 16);
+bool make_body(const sim::VehicleFile& vf, std::size_t stage_from, std::size_t stage_to, Body& b) {
+  b.profile = cfd::body_profile(vf.params.spec, stage_from, 16, stage_to);
   if (b.profile.size() < 2U) {
     std::fprintf(stderr, "the vehicle has no outer body (sections) from stage %zu on\n", stage_from);
     return false;
@@ -766,6 +777,50 @@ void validate_gas(int threads, bool quick) {
   std::printf("    (the shock's stand-off, %.2f radii perfect and %.2f real, is under two cells at this grid and is not checked)\n", standoff[0], standoff[1]);
 }
 
+// The viscous layer against its exact laminar solution and against Van Driest (no flow grid: the layer is a function of the edge state). The laminar flat plate in the reference-temperature method of viscous.hpp
+// against the similarity solution of the compressible boundary layer (Levy-Lees, solved in gasdyn.hpp as a boundary-value problem; at Mach 0 it is Blasius's 0.664); the turbulent average friction of a long
+// plate against Van Driest's second method; a cone against the plate by Mangler's length.
+void validate_viscous() {
+  std::printf("\n6. The viscous layer (CFD.md section 13): friction of a flat plate and a cone, laminar and turbulent\n");
+  const double te = 220.0;
+  auto edge = [&](double m) {
+    cfd::visc::Edge e;
+    e.t = te;
+    e.p = 1000.0;
+    e.rho = e.p / (cfd::visc::kGasConstant * te);
+    e.u = m * std::sqrt(1.4 * cfd::visc::kGasConstant * te);
+    return e;
+  };
+  const char* lam_names[] = {"Mach 0.01 laminar plate: Cf sqrt(Re_x), Blasius 0.664", "Mach 2 insulated laminar plate: Cf sqrt(Re_x)", "Mach 5 insulated laminar plate: Cf sqrt(Re_x)"};
+  int k = 0;
+  for (const double m : {0.01, 2.0, 5.0}) {
+    const gd::Laminar ex = gd::laminar_flat_plate(m, -1.0, te);
+    const cfd::visc::Layer ly = cfd::visc::local_layer(edge(m), 1.0, te * ex.t_wall_ratio, 1e30);
+    verdict(lam_names[k++], ly.cf * std::sqrt(ly.re_x), ex.cf_sqrt_re, 0.04);
+  }
+  const char* turb_names[] = {"Mach 2 turbulent plate (100 m): average Cf, Van Driest II", "Mach 5 turbulent plate (100 m): average Cf, Van Driest II", "Mach 8 turbulent plate (100 m): average Cf, Van Driest II"};
+  k = 0;
+  for (const double m : {2.0, 5.0, 8.0}) {
+    const cfd::visc::Edge e = edge(m);
+    const double tw = te * (1.0 + (0.5 * 0.4 * m * m * std::cbrt(0.71)));
+    const double len = 100.0;
+    double sum = 0.0;
+    for (int i = 0; i < 4000; ++i) {
+      sum += cfd::visc::local_layer(e, len * (i + 0.5) / 4000.0, tw, 1e-9).cf * len / 4000.0;
+    }
+    const double re_l = e.rho * e.u * len / cfd::visc::sutherland(te);
+    verdict(turb_names[k++], sum / len, gd::van_driest_ii(m, -1.0, te, re_l), 0.20);   // the band is the method's: the layer is a reference-temperature one, Van Driest's is a theory
+  }
+  std::vector<double> s(301);
+  std::vector<double> rc(301);
+  for (std::size_t i = 0; i < s.size(); ++i) {
+    s[i] = 0.01 * static_cast<double>(i);
+    rc[i] = 0.1 * s[i];
+  }
+  const std::vector<double> ml = cfd::visc::mangler_length(s, rc);
+  verdict("cone: Mangler's length at two thirds of the way, 2/3", ml[200], 2.0 / 3.0, 0.01);
+}
+
 int validate(bool quick, int threads, const std::string& only) {
   std::printf("tfc_cfd --validate%s%s: the Euler solver against the exact solutions (gamma 1.4)\n", quick ? " --quick" : "", only.empty() ? "" : (" --only " + only).c_str());
   const double t0 = now_s();
@@ -785,6 +840,9 @@ int validate(bool quick, int threads, const std::string& only) {
   }
   if (want("gas")) {
     validate_gas(threads, quick);
+  }
+  if (want("viscous")) {
+    validate_viscous();
   }
   int bad = 0;
   for (const Check& c : g_checks) {
@@ -814,6 +872,9 @@ void print_result(const FlowResult& r, const FlowCase& c, const Body& b) {
   std::printf("\nMach %.2f, angle of attack %.1f deg, %zu cells, %d iterations (residual down %.2f orders), %.0f s\n", c.mach, c.alpha_deg, r.cells, r.iterations, r.residual_drop, r.seconds);
   std::printf("  reference diameter %.2f m, area %.2f m^2, body from %.1f to %.1f m (%.1f m)\n", r.d_ref, r.s_ref, b.x0, b.x1, b.x1 - b.x0);
   std::printf("  axial force coefficient CA  %.4f (pressure on the skin)  %+.4f (base: %s; the Euler solution's own is %+.4f)\n", r.ca_skin, r.ca_base, c.base_model ? "the base-drag law" : "the Euler solution's", r.ca_base_euler);
+  if (std::fabs(r.ca_fore) > 1e-9 || std::fabs(r.cm_fore) > 1e-9) {
+    std::printf("    of the Euler solution's own, the flat forward end: CA %+.4f, Cm %+.4f (a real face when the body flies nose first; the table keeps it apart)\n", r.ca_fore, r.cm_fore);
+  }
   if (c.viscous) {
     std::printf("  skin friction: CA %+.4f, CN %+.4f (total CA %.4f); the layer is %.0f %% laminar\n", r.ca_friction, r.cn_friction, r.ca_skin + r.ca_friction + r.ca_base, 100.0 * r.laminar_fraction);
     std::printf("  heating: the highest flux off the nose %.0f kW/m^2, %.1f MW into the whole skin, the wall at %.0f K at most and %.0f K on average (%s)\n", r.heat_peak_kw, r.heat_total_mw, r.t_wall_max_k, r.t_wall_mean_k,
@@ -832,7 +893,7 @@ void print_result(const FlowResult& r, const FlowCase& c, const Body& b) {
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::fprintf(stderr, "usage: tfc_cfd --validate [--quick] [--only sod|wedge|cone|sphere|gas] [--threads N]\n       tfc_cfd VEHICLE.json --mach M [--alpha DEG] [--h M] [--iters N] [--orders R] [--threads N] [--xref M] [--stage-from K] [--probe extrap|CELLS] [--json FILE] [--field FILE] [--gas real] [--altitude KM] [--surfaces stowed|deployed] [--deflect NAME=DEG,...]\n"
+    std::fprintf(stderr, "usage: tfc_cfd --validate [--quick] [--only sod|wedge|cone|sphere|gas|viscous] [--threads N]\n       tfc_cfd VEHICLE.json --mach M [--alpha DEG] [--h M] [--iters N] [--orders R] [--threads N] [--xref M] [--stage-from K] [--probe extrap|CELLS] [--json FILE] [--field FILE] [--gas real] [--altitude KM] [--surfaces stowed|deployed] [--deflect NAME=DEG,...]\n"
                          "       tfc_cfd VEHICLE.json --machs 2,3,5 --alpha 4 [options] --table OUT.json\n");
     return 2;
   }
@@ -842,6 +903,7 @@ int main(int argc, char** argv) {
   std::string table_out;
   std::vector<double> machs;
   std::size_t stage_from = 0U;
+  std::size_t stage_to = 1000U;
   bool do_validate = false;
   bool real_gas = false;
   std::string surfaces_mode = "none";   // none | stowed | deployed: the flaps and the grid fins of the file on the body
@@ -902,6 +964,8 @@ int main(int argc, char** argv) {
       c.base_model = std::strcmp(next(), "euler") != 0;
     } else if (a == "--power") {
       c.power = std::atof(next());
+    } else if (a == "--stage-to") {
+      stage_to = static_cast<std::size_t>(std::atoi(next()));
     } else if (a == "--stage-from") {
       stage_from = static_cast<std::size_t>(std::atoi(next()));
     } else if (a == "--probe") {
@@ -937,7 +1001,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   Body b;
-  if (!make_body(vf, stage_from, b)) {
+  if (!make_body(vf, stage_from, stage_to, b)) {
     return 1;
   }
   const cfd::Revolution body(b.profile);
@@ -1002,8 +1066,10 @@ int main(int argc, char** argv) {
       if (f == nullptr) {
         return 1;
       }
-      std::fprintf(f, "{\"mach\": %g, \"alpha_deg\": %g, \"ca_skin\": %.6f, \"ca_base\": %.6f, \"cn\": %.6f, \"cm\": %.6f, \"x_cp_m\": %.4f, \"cells\": %zu, \"iterations\": %d, \"residual_drop\": %.2f}\n", c.mach,
-                   c.alpha_deg, r.ca_skin, r.ca_base, r.cn, r.cm, r.x_cp, r.cells, r.iterations, r.residual_drop);
+      std::fprintf(f,
+                   "{\"mach\": %g, \"alpha_deg\": %g, \"ca_skin\": %.6f, \"ca_base\": %.6f, \"ca_base_euler\": %.6f, \"ca_fore\": %.6f, \"cm_fore\": %.6f, \"ca_friction\": %.6f, \"cn\": %.6f, \"cm\": %.6f, \"x_cp_m\": %.4f, \"x_ref_m\": %.4f, "
+                   "\"s_ref_m2\": %.6f, \"d_ref_m\": %.4f, \"cells\": %zu, \"iterations\": %d, \"residual_drop\": %.2f, \"heat_peak_kw_m2\": %.2f, \"t_wall_max_k\": %.1f}\n",
+                   c.mach, c.alpha_deg, r.ca_skin, r.ca_base, r.ca_base_euler, r.ca_fore, r.cm_fore, r.ca_friction, r.cn, r.cm, r.x_cp, r.x_ref, r.s_ref, r.d_ref, r.cells, r.iterations, r.residual_drop, r.heat_peak_kw, r.t_wall_max_k);
       std::fclose(f);
     }
     return 0;

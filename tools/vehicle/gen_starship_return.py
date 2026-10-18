@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Writes vehicles/missions/starship_return.json: the Starship V3 class stack with a MISSION in the file (docs/design/GNC.md): the flight computers fly the whole of it, the booster comes back and is caught by the tower.
 
-    python3 tools/vehicle/gen_starship_return.py [--out vehicles/missions/starship_return.json]
+    python3 tools/vehicle/gen_starship_return.py [--out vehicles/missions/starship_return.json] [--aerodb vehicles/aerodb | --no-aerodb]
 
 The engines are listed one by one (a file with a hundred lines of engines is not a file anyone edits), so the file is generated; the numbers are in this script, with where each comes from. The file is a design
 of mine from PUBLICLY REPORTED numbers, not SpaceX data (the header of the file says so; docs/design/RECOVERY.md section 2 lists every number and its source).
@@ -37,6 +37,11 @@ SHIP = {
     "roll_deg": 12.0,           # the small roll of the climb: out to this many degrees and back (starting at 10 s, over 40 s); my estimate: launchers roll to their azimuth after the tower, nothing Starship-specific was found
 }
 
+# The bandwidth of the booster's attitude loop in its landing burn (rad/s). 1.0 until 18 Oct 2026, 2.0 since: the gains are designed from probes of the plant along the nominal flight, and the probes used to go on
+# after the stage was caught (a body held at rest by the arms kept being probed for the rest of the mission), which diluted the average control effectiveness the allocation is made from; with the probes stopped at the
+# catch (mission_world.hpp) the same loop at 1.0 rad/s catches the booster 33 times in 40 and at 1.5 to 3.0 rad/s 19 times in 20 (docs/design/CFD.md section 14).
+BOOSTER_LANDING_WN = 2.0
+
 # ---- the vehicle ----
 # Sources (read 9-10 Oct 2026): the SpaceX Starship page and Wikipedia (Super Heavy, Raptor, Starship flight 12); Flight 12 (22 May 2026): max-Q 0:45, MECO 2:22, hot staging 2:24, boost-back 2:30, ship cut-off
 # 8:11 (planned), apogee about 195 km. Super Heavy: 72.3 m, 9 m, 33 Raptor 3 of 2.449 MN at sea level (80.8 MN), 3,650 t of propellant. The ship: three sea-level and three vacuum Raptor, 1,600 t.
@@ -59,6 +64,20 @@ def engine(stage, yz, spec, group, gimbal=True, x=0.0):
 
 def thruster(stage, x, control, yz, direction, thrust):
     return {"stage": stage, "position_m": [x, yz[0], yz[1]], "thrust_vac_n": thrust, "exit_area_m2": 0.0, "isp_vac_s": 80, "gimbal": False, "direction": list(direction), "control": control, "full_cmd_deg": 2.0}
+
+
+# the flow solver's tables (tools/cfd/make_aerodb.py), inlined into the plant's `aero.cfd` when --aerodb names the directory that holds them: the stack's, the ship's and the booster's
+AERODB: list = []
+
+
+def load_aerodb(directory: str) -> list:
+    """The tables in `directory` (starship_stack.json, starship_ship.json, starship_booster.json, those that exist), in the order the plant looks for them."""
+    out = []
+    for name in ("stack", "ship", "booster"):
+        f = Path(directory) / f"starship_{name}.json"
+        if f.exists():
+            out.append(json.loads(f.read_text())["cfd"])
+    return out
 
 
 def plant():
@@ -98,7 +117,7 @@ def plant():
     return {"name": "starship-v3-class-return",
             "description": "Starship V3 class stack that flies its whole mission on the flight computers: ascent, hot staging, orbital insertion of the ship (PEG), and the booster's flip, boost-back, grid-fin entry, landing burn and catch.",
             "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "ideal_roll_control": False, "landing_model": True, "max_substep_s": 0.004},
-            "aero": {"diameter_m": 9.0, "roughness": 1.2, "full_regime": True, "nose_radius_m": 0.4},
+            "aero": {"diameter_m": 9.0, "roughness": 1.2, "full_regime": True, "nose_radius_m": 0.4, **({"cfd": AERODB} if AERODB else {})},
             "stages": [booster, ship], "engines": engines, "payloads": [{"name": "payload", "mass_kg": 37500, "x_m": 112}], "surfaces": surfaces}
 
 
@@ -198,7 +217,7 @@ def mission():
             {"name": "boostback", "kind": "boostback", "end": {"cutoff": True}, "groups": [0, 1, 2, 3], "mixer": 0, "throttle": 1.0, "bias_m": 625, "reserve_mass_kg": 330000, "slew_dps": 8, "events": ["deploy_surfaces"]},
             {"name": "coast", "kind": "coast", "hold": "radial", "end": {"altitude_below_m": 70000}, "groups": [], "mixer": 3, "slew_dps": 8},
             {"name": "entry", "kind": "glide", "end": {"ignition_below_m": 6000}, "groups": [], "mixer": 3, "alpha_max_deg": 12, "gain_deg_per_km": 2.0, "slew_dps": 10, "alpha_brake_deg": 0, "brake_max_deg": 0, "lift_area_per_deg_m2": 3.5},
-            {"name": "landing burn", "kind": "landing", "end": {"touchdown": True}, "groups": [0, 1, 2], "mixer": 3, "landing_groups": {"one": [0, 1, 2], "two": [0, 1, 2], "three": [0, 1, 2], "many": [0, 1, 2, 3]}, "slew_dps": 25, "wn_rad_s": 1.0},
+            {"name": "landing burn", "kind": "landing", "end": {"touchdown": True}, "groups": [0, 1, 2], "mixer": 3, "landing_groups": {"one": [0, 1, 2], "two": [0, 1, 2], "three": [0, 1, 2], "many": [0, 1, 2, 3]}, "slew_dps": 25, "wn_rad_s": BOOSTER_LANDING_WN},
             {"name": "done", "kind": "done", "end": {"time_s": 100000}, "groups": [], "mixer": 3}],
     }
 
@@ -252,7 +271,11 @@ def main() -> int:
     ap.add_argument("--ship-out", default=str(ROOT / "vehicles" / "missions" / "starship_ship_return.json"), help="the experimental mission in which the ship also deorbits and enters (empty: not written)")
     ap.add_argument("--rig-out", default=str(ROOT / "vehicles" / "starship.json"), help="the vehicle the rig and tfc_fly fly (empty: not written)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="override a number of the ship's return (SHIP in this script), for scanning")
+    ap.add_argument("--aerodb", metavar="DIR", default=str(ROOT / "vehicles" / "aerodb"), help="inline the flow solver's tables found in DIR as the plant's aero.cfd, so that the flight uses them (tools/cfd/make_aerodb.py makes them)")
+    ap.add_argument("--no-aerodb", action="store_true", help="leave them out: the plant flies the engineering build-up of AERODYNAMICS.md alone")
     args = ap.parse_args()
+    if not args.no_aerodb:
+        AERODB[:] = load_aerodb(args.aerodb)
     for kv in args.set:
         k, _, val = kv.partition("=")
         if k not in SHIP:

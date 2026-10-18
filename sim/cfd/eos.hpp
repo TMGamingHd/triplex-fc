@@ -163,7 +163,9 @@ class RealAir {
     double t = pressure ? target / rho : target / 2.5;   // the cold perfect gas's answer is the first guess
     double lo = 0.0;
     double hi = 1e30;
-    for (int it = 0; it < 80; ++it) {
+    double dx = 0.0;
+    double dx_old = 0.0;
+    for (int it = 0; it < 200; ++it) {
       const double v = f(t) - target;
       if (v > 0.0) {
         hi = std::min(hi, t);
@@ -175,10 +177,15 @@ class RealAir {
       }
       const double dt = 1e-6 * t;
       const double d = (f(t + dt) - f(t - dt)) / (2.0 * dt);
+      const bool closed = hi < 1e29;
       double tn = d > 0.0 ? t - (v / d) : t * (v > 0.0 ? 0.5 : 2.0);
-      if (!(tn > lo) || !(tn < hi)) {   // out of the bracket: bisect (or double while it is open above)
-        tn = hi < 1e29 ? 0.5 * (lo + hi) : 2.0 * t;
+      // Newton's step is used while it stays inside the bracket and takes the bracket down fast enough; otherwise bisect (or double while the bracket is open above). Without the second condition Newton
+      // can jump from one shoulder of the dissociation to the other and back, closing the bracket by a percent a step: the answer after 80 steps was not a root.
+      if (!(tn > lo) || !(tn < hi) || (closed && !(std::fabs(tn - t) <= 0.5 * std::fabs(dx_old)) && it > 1)) {
+        tn = closed ? 0.5 * (lo + hi) : 2.0 * t;
       }
+      dx_old = dx;
+      dx = tn - t;
       t = tn;
     }
     return t;
