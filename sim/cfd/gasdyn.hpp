@@ -355,11 +355,11 @@ struct RealShock {
 };
 inline RealShock real_normal_shock(const RealAir& air, double u1) {
   RealShock out;
-  const double h1 = 2.5 + 1.0 + (0.5 * u1 * u1);   // e1 + p1 / rho1 + u1^2 / 2 of the cold gas (e = 5/2 T)
+  const double h1 = air.e_from_p_exact(1.0, 1.0) + 1.0 + (0.5 * u1 * u1);   // e1 + p1 / rho1 + u1^2 / 2 of the gas ahead
   auto resid = [&](double rho2, double& p2) {
     const double u2 = u1 / rho2;
     p2 = 1.0 + (u1 * u1 * (1.0 - (1.0 / rho2)));
-    return air.e_from_p(rho2, p2) + (p2 / rho2) + (0.5 * u2 * u2) - h1;
+    return air.e_from_p_exact(rho2, p2) + (p2 / rho2) + (0.5 * u2 * u2) - h1;
   };
   // scan upward from the cold gas's own jump (the energy residual is zero at no shock and at the shock): the first sign change after the weak root is the strong one
   double a = 1.0001;
@@ -450,6 +450,133 @@ inline double real_stagnation_pressure(const RealAir& air, const RealShock& sh) 
     p += step;
   }
   return p;
+}
+
+// ---- the laminar boundary layer on a flat plate (the exact similarity solution) ----
+
+// The compressible laminar boundary layer on a flat plate, solved as the similarity (Levy-Lees) boundary-value problem with Sutherland's viscosity and a constant Prandtl number, by shooting:
+//   (C f'')' + f f'' = 0,   (C theta' / Pr)' + f theta' + C (gamma - 1) M^2 f''^2 = 0,   C = (mu / mu_e) (T_e / T),   theta = T / T_e,
+// f(0) = f'(0) = 0, f'(inf) = 1, theta(inf) = 1, and at the wall either theta'(0) = 0 (an insulated wall: `t_wall_ratio` <= 0) or theta(0) = t_wall_ratio. The friction coefficient on the edge's dynamic
+// pressure is  Cf = sqrt(2) C_w f''(0) / sqrt(Re_x). `t_edge` (K) sets Sutherland's constant against the temperature. It is the answer the reference-temperature method of viscous.hpp is checked against.
+struct Laminar {
+  double cf_sqrt_re = 0.0;   // Cf sqrt(Re_x)
+  double t_wall_ratio = 0.0; // T_w / T_e (the recovery ratio when the wall is insulated)
+  double stanton_sqrt_re = 0.0;
+  bool ok = false;
+};
+inline Laminar laminar_flat_plate(double mach, double t_wall_ratio, double t_edge, double g = 1.4, double pr = 0.71) {
+  auto c_of = [&](double th) { return std::sqrt(th) * (t_edge + 110.4) / ((th * t_edge) + 110.4); };
+  auto dc = [&](double th) { return (c_of(th * 1.000001) - c_of(th / 1.000001)) / (th * 2e-6); };
+  const bool adiabatic = t_wall_ratio <= 0.0;
+  const double diss = (g - 1.0) * mach * mach;
+  auto integrate = [&](double a, double b, double& f1_end, double& th_end, double& th_wall_dot) {
+    // y = f, f', f'', theta, theta'
+    double y[5] = {0.0, 0.0, a, adiabatic ? b : t_wall_ratio, adiabatic ? 0.0 : b};
+    th_wall_dot = y[4];
+    auto rhs = [&](const double* q, double* d) {
+      const double th = std::max(q[3], 1e-3);
+      const double c = c_of(th);
+      const double cp = dc(th) * q[4];
+      d[0] = q[1];
+      d[1] = q[2];
+      d[2] = -((q[0] * q[2]) + (cp * q[2])) / c;
+      d[3] = q[4];
+      d[4] = -((pr * ((q[0] * q[4]) + (c * diss * q[2] * q[2]))) + (cp * q[4])) / c;
+    };
+    const double h = 0.01;
+    for (int i = 0; i < 1500; ++i) {
+      double k1[5];
+      double k2[5];
+      double k3[5];
+      double k4[5];
+      double t[5];
+      rhs(y, k1);
+      for (int j = 0; j < 5; ++j) {
+        t[j] = y[j] + (0.5 * h * k1[j]);
+      }
+      rhs(t, k2);
+      for (int j = 0; j < 5; ++j) {
+        t[j] = y[j] + (0.5 * h * k2[j]);
+      }
+      rhs(t, k3);
+      for (int j = 0; j < 5; ++j) {
+        t[j] = y[j] + (h * k3[j]);
+      }
+      rhs(t, k4);
+      for (int j = 0; j < 5; ++j) {
+        y[j] += h / 6.0 * (k1[j] + (2.0 * k2[j]) + (2.0 * k3[j]) + k4[j]);
+      }
+    }
+    f1_end = y[1];
+    th_end = y[3];
+  };
+  double a = 0.47;
+  const double taw_est = 1.0 + (0.85 * 0.5 * diss);
+  double b = adiabatic ? taw_est : 0.33 * (taw_est - t_wall_ratio);   // the insulated wall's temperature, or the wall's temperature gradient (rising away from a wall colder than the recovery temperature)
+  Laminar out;
+  for (int it = 0; it < 60; ++it) {
+    double f1 = 0.0;
+    double th = 0.0;
+    double wd = 0.0;
+    integrate(a, b, f1, th, wd);
+    const double r1 = f1 - 1.0;
+    const double r2 = th - 1.0;
+    if (std::fabs(r1) < 1e-9 && std::fabs(r2) < 1e-9) {
+      const double tw = adiabatic ? b : t_wall_ratio;
+      out.cf_sqrt_re = std::sqrt(2.0) * c_of(tw) * a;
+      out.t_wall_ratio = tw;
+      out.stanton_sqrt_re = adiabatic ? 0.0 : -wd * c_of(tw) / (std::sqrt(2.0) * pr * (1.0 + (0.5 * diss) * 0.85 - tw));
+      out.ok = true;
+      return out;
+    }
+    const double da = 1e-6 * std::max(std::fabs(a), 1e-3);
+    const double db = 1e-6 * std::max(std::fabs(b), 1e-3);
+    double f1a = 0.0;
+    double tha = 0.0;
+    double f1b = 0.0;
+    double thb = 0.0;
+    integrate(a + da, b, f1a, tha, wd);
+    integrate(a, b + db, f1b, thb, wd);
+    const double j11 = (f1a - f1) / da;
+    const double j12 = (f1b - f1) / db;
+    const double j21 = (tha - th) / da;
+    const double j22 = (thb - th) / db;
+    const double det = (j11 * j22) - (j12 * j21);
+    if (!(std::fabs(det) > 1e-14)) {
+      break;
+    }
+    double dA = ((-r1 * j22) + (r2 * j12)) / det;
+    double dB = ((-r2 * j11) + (r1 * j21)) / det;
+    const double lim = 0.3;
+    dA = std::max(-lim * std::fabs(a), std::min(lim * std::fabs(a), dA));
+    dB = std::max(-lim * std::max(std::fabs(b), 0.1), std::min(lim * std::max(std::fabs(b), 0.1), dB));
+    a += dA;
+    b += dB;
+  }
+  return out;
+}
+
+// Van Driest's second method for the average friction coefficient of a turbulent boundary layer on a flat plate at Mach `mach` with the wall at t_wall_ratio times the edge temperature (<= 0: insulated):
+// the Karman-Schoenherr incompressible law, 0.242 / sqrt(Cf) = log10(Re Cf), at a Reynolds number and with a coefficient transformed by the factors Fc and F_Re. `t_edge` fixes Sutherland's law.
+inline double van_driest_ii(double mach, double t_wall_ratio, double t_edge, double re_x, double g = 1.4) {
+  const double r = std::cbrt(0.71);
+  const double rise = r * 0.5 * (g - 1.0) * mach * mach;
+  const double taw = 1.0 + rise;
+  const double tw = t_wall_ratio > 0.0 ? t_wall_ratio : taw;
+  const double a2 = rise / tw;
+  const double b = (1.0 + rise) / tw - 1.0;
+  const double den = std::sqrt((b * b) + (4.0 * a2));
+  const double alpha = (2.0 * a2 - b) / den;
+  const double beta = b / den;
+  const double fc = (taw - 1.0) / std::pow(std::asin(alpha) + std::asin(beta), 2.0);
+  auto mu = [&](double th) { return std::pow(th, 1.5) * (t_edge + 110.4) / ((th * t_edge) + 110.4); };
+  const double f_re = 1.0 / mu(tw);   // mu_e / mu_w
+  const double re = re_x * f_re;
+  double cf = 0.005;
+  for (int k = 0; k < 100; ++k) {   // Karman-Schoenherr: 0.242 / sqrt(Cf) = log10(Re Cf), by fixed-point iteration
+    cf = std::pow(0.242 / std::log10(re * cf), 2.0);
+  }
+  return cf / fc;
 }
 
 }  // namespace sim::cfd::gd

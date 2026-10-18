@@ -26,12 +26,14 @@
 #include "atmosphere.hpp"
 #include "vehicle_body.hpp"
 #include "vehicle_surfaces.hpp"
+#include "viscous.hpp"
 
 namespace {
 
 using sim::V3;
 namespace cfd = sim::cfd;
 namespace gd = sim::cfd::gd;
+namespace visc = sim::cfd::visc;
 constexpr double kDeg = 3.14159265358979323846 / 180.0;
 constexpr double kGamma = 1.4;
 
@@ -53,7 +55,14 @@ struct FlowCase {
   bool verbose = true;
   int report_every = 250;
   std::string field_path;       // where to write the flow field for the viewer (empty: none)
-  double altitude_km = -1.0;    // >= 0: the real gas (vibrating, dissociating air in equilibrium) at that altitude of the standard atmosphere; negative: the perfect gas
+  double fs_km = 30.0;          // the altitude of the free stream (the standard atmosphere) for everything that needs a temperature and a density: the viscous layer, the heating, the real gas
+  bool viscous = false;         // add the boundary layer's friction and heating (viscous.hpp) to the Euler solution
+  double wall_k = -1.0;         // the wall temperature, K; negative: radiative equilibrium at `emissivity`
+  double emissivity = 0.85;
+  double re_transition = 1.0e6; // the edge Reynolds number (on the running length) at which the layer begins to turn turbulent
+  bool base_model = true;       // true: the base drag of the build-up's law (0.25 / M, less with the engines on) in place of the Euler solution's, which has no wake
+  double power = 0.0;           // the fraction of the engines' thrust that is running (the plume fills the wake)
+  bool real = false;            // the real gas: vibrating, dissociating air in equilibrium, at the free stream's altitude; otherwise the perfect gas
   std::vector<cfd::Porous> lattices;            // the grid fins, as porous boxes
   std::vector<std::string> lattice_names;
   std::vector<std::string> part_names;          // by part number: 0 the skin, 1 the base, 10 + i the surface i of the file
@@ -66,7 +75,15 @@ struct FlowCase {
 struct FlowResult {
   bool ok = false;
   double ca_skin = 0.0;         // axial force coefficient, drag positive, of the skin (the body without its base)
-  double ca_base = 0.0;         // the base's own part, from the pressure the Euler solution has behind the body
+  double ca_base = 0.0;         // the base's own part: the base-drag law's, or (--base euler) the Euler solution's pressure behind the body
+  double ca_base_euler = 0.0;   // what the Euler solution itself has there, which has no wake and means little
+  double ca_friction = 0.0;     // the skin friction's axial coefficient (zero without --viscous)
+  double cn_friction = 0.0;
+  double heat_peak_kw = 0.0;    // the highest heat flux into the skin, kW/m^2 (the stagnation region excluded: its flat-plate law is not good there)
+  double heat_total_mw = 0.0;   // the heat rate into the whole skin, MW
+  double t_wall_max_k = 0.0;
+  double t_wall_mean_k = 0.0;
+  double laminar_fraction = 0.0;
   struct Part {
     std::string name;
     double ca = 0.0;
@@ -222,18 +239,120 @@ bool write_field(const std::string& path, cfd::Euler3D& s, const cfd::Shape& bod
   return true;
 }
 
+// The boundary layer over the skin of the body (viscous.hpp): at every surface element the inviscid wall state is the layer's edge, the running length is the meridian's (Mangler's for a laminar layer) blended
+// into the length round the body where the flow goes across it, and the friction and the heat follow from the reference-temperature laws. Dimensional, at the free stream's altitude.
+void add_viscous(cfd::Euler3D& s, const std::vector<cfd::Panel>& panels, const std::vector<std::pair<double, double>>& profile, const FlowCase& c, double x_ref, double d_ref, FlowResult& out) {
+  const sim::Air at = sim::air_at(c.fs_km * 1000.0);
+  const double rgas = visc::kGasConstant;
+  const double a_inf = std::sqrt(kGamma * rgas * at.temperature);
+  const double v_inf = c.mach * a_inf;
+  const double q_inf = 0.5 * at.density * v_inf * v_inf;
+  const double u_ref = std::sqrt(rgas * at.temperature);
+  const double p_ref = at.density * rgas * at.temperature;
+  // the meridian from the nose: arc length, radius and Mangler's length at each station of the outline
+  std::vector<double> xs;
+  std::vector<double> rs;
+  std::vector<double> sm;
+  for (std::size_t i = profile.size(); i-- > 0U;) {
+    if (!xs.empty() && std::fabs(profile[i].first - xs.back()) < 1e-9 && std::fabs(profile[i].second - rs.back()) < 1e-9) {
+      continue;
+    }
+    sm.push_back(xs.empty() ? 0.0 : sm.back() + std::hypot(profile[i].first - xs.back(), profile[i].second - rs.back()));
+    xs.push_back(profile[i].first);
+    rs.push_back(profile[i].second);
+  }
+  const std::vector<double> mang = visc::mangler_length(sm, rs);
+  s.prepare_sampling();
+  double fx = 0.0;
+  double fy = 0.0;
+  double mz = 0.0;
+  double area = 0.0;
+  double lam_area = 0.0;
+  double heat = 0.0;
+  double t_sum = 0.0;
+  double t_max = 0.0;
+  double q_peak = 0.0;
+  const double nose_x = xs.front();
+  const double length = std::fabs(nose_x - xs.back());
+  for (const cfd::Panel& pn : panels) {
+    if (pn.part != 0) {
+      continue;
+    }
+    const cfd::Prim w = s.wall_state(pn);
+    V3 u{w.u, w.v, w.w};
+    u = u - (pn.n * dot(u, pn.n));
+    const double ut = norm(u) * u_ref;
+    if (ut < 5.0) {
+      continue;
+    }
+    // the station: the first outline point at or past the panel's x, counting from the nose
+    std::size_t k = 0;
+    while (k + 1U < xs.size() && xs[k + 1U] > pn.c.x) {
+      ++k;
+    }
+    const double f = (xs[k] - pn.c.x) / std::max(xs[k] - xs[std::min(k + 1U, xs.size() - 1U)], 1e-9);
+    const double x_mang = mang[k] + (f * (mang[std::min(k + 1U, xs.size() - 1U)] - mang[k]));
+    const double r = std::hypot(pn.c.y, pn.c.z);
+    const double theta = std::atan2(pn.c.z, pn.c.y);
+    const double dxm = xs[std::min(k + 1U, xs.size() - 1U)] - xs[k];
+    const double drm = rs[std::min(k + 1U, xs.size() - 1U)] - rs[k];
+    const V3 mer = normalized(V3{dxm, drm * std::cos(theta), drm * std::sin(theta)});
+    const double cm = std::fabs(dot(normalized(u), mer));
+    const double x_eff = std::max(1e-3, (cm * x_mang) + ((1.0 - cm) * std::max(r * theta, 0.02 * length)));
+    visc::Edge e;
+    e.rho = w.rho * at.density;
+    e.p = w.p * p_ref;
+    e.u = ut;
+    if (s.gas().air != nullptr) {
+      e.t = s.gas().air->t_from_p(w.rho, w.p) * at.temperature;
+      e.gamma = s.gas().gamma_eff(w.rho, w.p);
+    } else {
+      e.t = e.p / (e.rho * rgas);
+    }
+    double t_wall = c.wall_k;
+    if (!(t_wall > 0.0)) {
+      t_wall = visc::radiative_equilibrium([&](double tw) { return visc::heat_flux(e, visc::local_layer(e, x_eff, tw, c.re_transition), tw); }, c.emissivity);
+    }
+    const visc::Layer ly = visc::local_layer(e, x_eff, t_wall, c.re_transition);
+    const double tau = ly.cf * 0.5 * e.rho * e.u * e.u;
+    const V3 t = normalized(u);
+    const double a2 = 2.0 * pn.area;   // the mirror image counts too
+    fx += tau * t.x * a2;
+    fy += tau * t.y * a2;
+    mz += ((pn.c.x - x_ref) * tau * t.y - (pn.c.y * tau * t.x)) * a2;
+    const double q = visc::heat_flux(e, ly, t_wall);
+    area += a2;
+    lam_area += (1.0 - ly.turbulence) * a2;
+    heat += q * a2;
+    t_sum += t_wall * a2;
+    t_max = std::max(t_max, t_wall);
+    if (std::fabs(pn.c.x - nose_x) > 0.03 * length) {
+      q_peak = std::max(q_peak, q);
+    }
+  }
+  const double s_ref = out.s_ref;
+  out.ca_friction = -fx / (q_inf * s_ref);
+  out.cn_friction = -fy / (q_inf * s_ref);
+  out.cm += mz / (q_inf * s_ref * d_ref);
+  out.heat_peak_kw = q_peak / 1000.0;
+  out.heat_total_mw = heat / 1.0e6;
+  out.t_wall_max_k = t_max;
+  out.t_wall_mean_k = area > 0.0 ? t_sum / area : 0.0;
+  out.laminar_fraction = area > 0.0 ? lam_area / area : 0.0;
+}
+
 FlowResult run_body(const cfd::Shape& body, double x0, double x1, double r_max, double d_ref, FlowCase c, const std::vector<std::pair<double, double>>* profile = nullptr) {
   FlowResult out;
   const double h = c.h > 0.0 ? c.h : r_max / 6.0;
   c.cfg.threads = c.threads > 0 ? c.threads : static_cast<int>(std::max(1U, std::thread::hardware_concurrency()));
   // the real gas: the temperature and density of the free stream make the characteristic temperatures non-dimensional
   std::unique_ptr<cfd::RealAir> real;
-  if (c.altitude_km >= 0.0) {
-    const sim::Air at = sim::air_at(c.altitude_km * 1000.0);
+  if (c.real) {
+    const sim::Air at = sim::air_at(c.fs_km * 1000.0);
     real = std::make_unique<cfd::RealAir>(3000.0 / at.temperature, 59500.0 / at.temperature, 150000.0 / at.density);
     c.cfg.gas = cfd::Gas(kGamma, real.get());
     if (c.verbose) {
-      std::printf("  real gas: air in equilibrium at %.0f km (%.0f K, %.3g kg/m^3), vibrating and dissociating (CFD.md section 11)\n", c.altitude_km, at.temperature, at.density);
+      std::printf("  real gas: air in equilibrium at %.0f km (%.0f K, %.3g kg/m^3), vibrating and dissociating (CFD.md section 11)\n", c.fs_km, at.temperature, at.density);
     }
   } else {
     c.cfg.gas = cfd::Gas(kGamma);
@@ -313,10 +432,24 @@ FlowResult run_body(const cfd::Shape& body, double x0, double x1, double r_max, 
     out.parts.push_back({c.part_names[k], -fp.force.x / (q * out.s_ref), -fp.force.y / (q * out.s_ref), fp.moment.z / (q * out.s_ref * d_ref)});
   }
   out.ca_skin = -fs.force.x / (q * out.s_ref);
-  out.ca_base = -fb.force.x / (q * out.s_ref);
+  out.ca_base_euler = -fb.force.x / (q * out.s_ref);
+  out.ca_base = out.ca_base_euler;
+  if (c.base_model) {   // the base drag of the build-up's law, on the area of the aft-facing base, less with the engines on (aero.hpp): an Euler solution has no wake
+    double a_base = 0.0;
+    for (const cfd::Panel& pn : panels) {
+      if (pn.part == 1 && pn.n.x < -0.9) {
+        a_base += 2.0 * pn.area;
+      }
+    }
+    const double cdb = c.mach < 1.0 ? 0.12 + (0.13 * c.mach * c.mach) : 0.25 / c.mach;
+    out.ca_base = cdb * a_base / out.s_ref * (1.0 - (0.7 * std::min(std::max(c.power, 0.0), 1.0)));
+  }
   out.cn = -fs.force.y / (q * out.s_ref);
   out.cm = fs.moment.z / (q * out.s_ref * d_ref);
   out.x_cp = std::fabs(fs.force.y) > 1e-9 * q * out.s_ref ? x_ref + (fs.moment.z / fs.force.y) : 0.0;
+  if (c.viscous && profile != nullptr) {
+    add_viscous(s, panels, *profile, c, x_ref, d_ref, out);
+  }
   out.residual_drop = s.residual_drop();
   out.iterations = s.iteration();
   out.seconds = now_s() - t0;
@@ -680,7 +813,12 @@ std::vector<double> parse_list(const char* s) {
 void print_result(const FlowResult& r, const FlowCase& c, const Body& b) {
   std::printf("\nMach %.2f, angle of attack %.1f deg, %zu cells, %d iterations (residual down %.2f orders), %.0f s\n", c.mach, c.alpha_deg, r.cells, r.iterations, r.residual_drop, r.seconds);
   std::printf("  reference diameter %.2f m, area %.2f m^2, body from %.1f to %.1f m (%.1f m)\n", r.d_ref, r.s_ref, b.x0, b.x1, b.x1 - b.x0);
-  std::printf("  axial force coefficient CA  %.4f (skin)  %+.4f (base, as the Euler solution has it)\n", r.ca_skin, r.ca_base);
+  std::printf("  axial force coefficient CA  %.4f (pressure on the skin)  %+.4f (base: %s; the Euler solution's own is %+.4f)\n", r.ca_skin, r.ca_base, c.base_model ? "the base-drag law" : "the Euler solution's", r.ca_base_euler);
+  if (c.viscous) {
+    std::printf("  skin friction: CA %+.4f, CN %+.4f (total CA %.4f); the layer is %.0f %% laminar\n", r.ca_friction, r.cn_friction, r.ca_skin + r.ca_friction + r.ca_base, 100.0 * r.laminar_fraction);
+    std::printf("  heating: the highest flux off the nose %.0f kW/m^2, %.1f MW into the whole skin, the wall at %.0f K at most and %.0f K on average (%s)\n", r.heat_peak_kw, r.heat_total_mw, r.t_wall_max_k, r.t_wall_mean_k,
+                c.wall_k > 0.0 ? "fixed" : "radiative equilibrium");
+  }
   std::printf("  normal force coefficient CN %.4f%s\n", r.cn, c.alpha_deg > 0.0 ? "" : " (zero at no angle of attack)");
   for (const FlowResult::Part& p : r.parts) {
     std::printf("    of which %-28s CA %+.4f  CN %+.4f  Cm %+.4f\n", p.name.c_str(), p.ca, p.cn, p.cm);
@@ -751,7 +889,19 @@ int main(int argc, char** argv) {
     } else if (a == "--gas") {
       real_gas = std::strcmp(next(), "real") == 0;
     } else if (a == "--altitude") {
-      c.altitude_km = std::atof(next());
+      c.fs_km = std::atof(next());
+    } else if (a == "--viscous") {
+      c.viscous = true;
+    } else if (a == "--wall-temp") {
+      c.wall_k = std::atof(next());
+    } else if (a == "--emissivity") {
+      c.emissivity = std::atof(next());
+    } else if (a == "--transition") {
+      c.re_transition = std::atof(next());
+    } else if (a == "--base") {
+      c.base_model = std::strcmp(next(), "euler") != 0;
+    } else if (a == "--power") {
+      c.power = std::atof(next());
     } else if (a == "--stage-from") {
       stage_from = static_cast<std::size_t>(std::atoi(next()));
     } else if (a == "--probe") {
@@ -773,12 +923,7 @@ int main(int argc, char** argv) {
       file = a;
     }
   }
-  if (real_gas && c.altitude_km < 0.0) {
-    c.altitude_km = 40.0;   // the real gas needs the air's temperature and density: 40 km unless --altitude says
-  }
-  if (!real_gas) {
-    c.altitude_km = -1.0;
-  }
+  c.real = real_gas;
   const int threads = c.threads > 0 ? c.threads : static_cast<int>(std::max(1U, std::thread::hardware_concurrency()));
   if (do_validate) {
     return validate(quick, threads, only);

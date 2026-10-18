@@ -486,11 +486,38 @@ class Euler3D {
       const bool ok1 = interpolate(pn.c + (pn.n * (0.5 * s)), a);
       const bool ok2 = interpolate(pn.c + (pn.n * (1.0 * s)), b);
       if (ok1 && ok2) {
-        return std::max(1e-6 * inf_.p, (2.0 * a.p) - b.p);
+        const double extrapolated = (2.0 * a.p) - b.p;
+        if (std::fabs(extrapolated - a.p) > 0.1 * a.p) {   // the pressure changes by more than a tenth in half a cell: a shock is in the layer being read (a thin shock layer on a blunt nose), and a line through it means nothing
+          return a.p;
+        }
+        return std::max(1e-6 * inf_.p, extrapolated);
       }
       return ok1 ? a.p : inf_.p;
     }
     return interpolate(pn.c + (pn.n * (cfg_.probe_cells * s)), a) ? a.p : inf_.p;
+  }
+
+  // The whole state at the surface under a panel (what a boundary layer's edge sees): each variable read at 0.5 and 1 cell off the surface and extrapolated, with the pressure's guard against a shock in the
+  // layer being read (then the 0.5-cell reading).
+  [[nodiscard]] Prim wall_state(const Panel& pn) {
+    const double s = std::max({local_width(0, pn.c.x), local_width(1, pn.c.y), local_width(2, pn.c.z)});
+    Prim a;
+    Prim b;
+    const bool ok1 = interpolate(pn.c + (pn.n * (0.5 * s)), a);
+    const bool ok2 = interpolate(pn.c + (pn.n * (1.0 * s)), b);
+    if (!ok1) {
+      return inf_;
+    }
+    if (!ok2 || std::fabs((2.0 * a.p) - b.p - a.p) > 0.1 * a.p) {
+      return a;
+    }
+    Prim w;
+    w.rho = std::max(1e-6 * inf_.rho, (2.0 * a.rho) - b.rho);
+    w.u = (2.0 * a.u) - b.u;
+    w.v = (2.0 * a.v) - b.v;
+    w.w = (2.0 * a.w) - b.w;
+    w.p = std::max(1e-6 * inf_.p, (2.0 * a.p) - b.p);
+    return w;
   }
 
   // The force and the moment of the pressure over a set of panels and their mirror images in the plane z = 0 (the body is symmetric there); `part` >= 0 takes only the panels of that part, -2 all but the base.
