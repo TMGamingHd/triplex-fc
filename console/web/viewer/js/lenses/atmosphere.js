@@ -17,12 +17,13 @@ export default {
   mount(app) {
     const S = (this.s = { q: store.get('atm.q', 'p'), shells: store.get('atm.shells', true) }), { world, spec } = app;
     const k = (l, u, hint) => stat(l, u, hint);
-    S.st = { p: k('Pressure', 'Pa'), rho: k('Density', 'kg/m³'), T: k('Temperature', 'K'), a: k('Speed of sound', 'm/s'), wind: k('Mean wind', 'm/s', 'The simulator\'s mean wind profile at this altitude, times the scenario\'s wind scale'), mu: k('Viscosity', 'µPa·s'),
+    S.st = { p: k('Pressure', 'Pa'), rho: k('Density', 'kg/m³'), T: k('Temperature', 'K'), a: k('Speed of sound', 'm/s'), wind: k('Mean wind', 'm/s', 'The air\'s own motion over the ground at this altitude: the scenario\'s wind profile (a real day\'s balloon sounding when one is chosen), times its wind scale, thinned out with the air. Zero where there is no air.'),
+      tail: k('Tailwind', 'm/s', 'The part of the wind along the launch direction: positive pushes the vehicle downrange, negative is a headwind'), cross: k('Crosswind', 'm/s', 'The part of the wind across the launch direction: positive blows toward the right of a vehicle flying downrange (the Z axis of the launch frame)'), mu: k('Viscosity', 'µPa·s'),
       lam: k('Mean free path', 'm', 'λ = (μ / p) √(π R T / 2): how far a molecule goes between collisions'), kn: k('Knudsen number', '', 'λ / vehicle diameter: below 0.01 the air is a continuum, above 10 it is free molecules'), H: k('Scale height', 'km', 'R T / g: the height over which the pressure falls by e'),
       pr: k('p / sea level', '%'), dev: k('Density vs standard', '%', 'The simulator\'s density against the 1976 standard atmosphere at this altitude: a dispersion shows here'), dT: k('Temperature vs standard', 'K') };
     const s = S.st;
     S.layer = h('div', { class: 'v-regime' }); S.regime = h('div', { class: 'v-verdict' });
-    const left = [card('The air here', [statGrid(2, s.p, s.rho, s.T, s.a, s.wind, s.mu), S.layer]), card('How thin is it?', [statGrid(2, s.lam, s.kn, s.H, s.pr), S.regime]),
+    const left = [card('The air here', [statGrid(2, s.p, s.rho, s.T, s.a, s.wind, s.mu, s.tail, s.cross), S.layer]), card('How thin is it?', [statGrid(2, s.lam, s.kn, s.H, s.pr), S.regime]),
       card('Against the standard atmosphere', statGrid(2, s.dev, s.dT))];
     app.left.replaceChildren(...left);
     S.canvas = h('canvas', { class: 'v-profile', width: 320, height: 420 });
@@ -38,9 +39,9 @@ export default {
   },
   update(app, pose, d, dt) {
     const S = this.s, s = S.st, { spec, world } = app, air = pose.air || us1976(pose.alt), [T, p, rho, a] = air;
-    const wind = spec.airAt(pose.alt)[4], std = us1976(pose.alt);
+    const aa = spec.airAt(pose.alt), wind = aa[4], std = us1976(pose.alt);
     const mu = viscosity(T), lam = mu / p * Math.sqrt(Math.PI * 287.053 * T / 2), kn = lam / spec.extent(pose.stg, pose.pay).diameter, H = 287.053 * T / 9.80665;
-    s.p.set(p >= 100 ? p.toFixed(0) : p >= 1 ? p.toFixed(1) : p.toExponential(1)); s.rho.set(rho >= 0.01 ? rho.toFixed(4) : rho.toExponential(2)); s.T.set(T.toFixed(1)); s.a.set(a.toFixed(0)); s.wind.set(wind.toFixed(1)); s.mu.set((mu * 1e6).toFixed(2));
+    s.p.set(p >= 100 ? p.toFixed(0) : p >= 1 ? p.toFixed(1) : p.toExponential(1)); s.rho.set(rho >= 0.01 ? rho.toFixed(4) : rho.toExponential(2)); s.T.set(T.toFixed(1)); s.a.set(a.toFixed(0)); s.wind.set(wind.toFixed(1)); s.tail.set((aa[5] ?? 0).toFixed(1)); s.cross.set((aa[6] ?? 0).toFixed(1)); s.mu.set((mu * 1e6).toFixed(2));
     s.lam.set(lam < 0.01 ? lam.toExponential(1) : lam.toFixed(lam < 1 ? 3 : 1)); s.kn.set(kn < 0.001 ? kn.toExponential(1) : kn.toFixed(kn < 1 ? 3 : 1)); s.H.set((H / 1000).toFixed(1)); s.pr.set((100 * p / 101325).toFixed(p / 101325 < 0.01 ? 4 : 2));
     const drho = 100 * (rho / std[2] - 1), dT = T - std[0];
     s.dev.set((drho >= 0 ? '+' : '') + drho.toFixed(1), Math.abs(drho) > 5 ? 'warn' : ''); s.dT.set((dT >= 0 ? '+' : '') + dT.toFixed(1), Math.abs(dT) > 5 ? 'warn' : '');

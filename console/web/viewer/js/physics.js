@@ -103,8 +103,10 @@ export function derive(pose, spec) {
   const heat = 1.7415e-4 * Math.sqrt(rho / nose) * V * V * V;                // Sutton-Graves: stagnation-point convective heat flux, W/m^2, for an assumed nose radius
   const Re = rho * V * ((spec.extent ? spec.extent(pose.stg, pose.pay).length : spec.length) || 1) / viscosity(T);
   const dc = pose.dref || spec.diameter;
+  const lam = viscosity(T) / Math.max(p, 1e-12) * Math.sqrt(Math.PI * 287.053 * T / 2), kn = lam / (spec.extent ? spec.extent(pose.stg, pose.pay).diameter : dc) || 0;   // mean free path and Knudsen number: the same relations as the atmosphere lens
   return {
-    T, p, rho, a, V, q, M, S, D, L, alpha, phi, N, T0, heat, Re,
+    T, p, rho, a, V, q, M, S, D, L, alpha, phi, N, T0, heat, Re, kn,
+    air: kn < 1,                                                            // false: the molecules are further apart than the vehicle is wide; there is no flow round it, no shock and no streamline, only a speed through nothing
     cn: q > 1 ? N / (q * S) : 0, ca: q > 1 ? -fae[0] / (q * S) : 0, cd: q > 1 ? D / (q * S) : 0, cl: q > 1 ? L / (q * S) : 0, ld: D > 1 ? L / D : 0,
     margin: dc ? (pose.cg - pose.cp) / dc : 0,                              // static margin in calibres: positive when the centre of pressure is behind the centre of gravity (the air turns the vehicle back into the wind: stable); negative: unstable, the controller holds it
     cpMax: cpStagnation(M), mu: M > 1 ? Math.asin(1 / M) * DEG : null, regime: machRegime(M), layer: layerOf(pose.alt || 0),

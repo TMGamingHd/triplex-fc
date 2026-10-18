@@ -283,6 +283,81 @@ TFC_TEST(environment_a_denser_or_a_hotter_day_changes_the_air_as_the_gas_law_say
 
 // ---- the wind ----
 
+TFC_TEST(environment_wind_exists_only_where_there_is_air_and_never_on_a_planet_without_any) {
+  sim::Params p = body(preset("earth"));
+  sim::Scenario sc;
+  sc.turbulence.sigma_ms = 5.0;
+  sc.gusts.push_back(sim::Gust{0.0, 100.0, sim::V3{0.0, 9.0, 0.0}});
+  sim::Vehicle6 v(p, sc);
+  for (int k = 0; k < 200; ++k) {
+    v.step(0.01, 0.0, 0.0);
+  }
+  CHECK(v.air_presence(0.0) == 1.0 && v.air_presence(20000.0) == 1.0 && v.air_presence(100000.0) == 0.0 && v.air_presence(400000.0) == 0.0);
+  const double mid = v.air_presence(45000.0);
+  CHECK(mid > 0.0 && mid < 1.0 && v.air_presence(40000.0) > mid && mid > v.air_presence(50000.0));   // thins smoothly between
+  for (const double h : {70000.0, 100000.0, 250000.0}) {
+    const sim::V3 w = v.wind_at(h, 50.0);
+    CHECK(w.x == 0.0 && w.y == 0.0 && w.z == 0.0);   // the 9 m/s gust and the 5 m/s turbulence are gone with the air
+  }
+  const sim::V3 low = v.wind_at(5000.0, 50.0);
+  CHECK(std::fabs(low.y) > 1.0);                      // and are there in the lower air
+  // no air at all: the Moon has no wind, whatever the scenario says
+  sim::Vehicle6 moon(body(preset("moon")), sc);
+  CHECK(moon.air_presence(0.0) == 0.0 && moon.wind_at(0.0, 50.0).y == 0.0 && moon.mean_wind_ms(12000.0) == 0.0);
+}
+
+TFC_TEST(environment_an_east_north_wind_profile_is_put_in_the_launch_frame_by_the_azimuth_and_crosswind_is_what_lies_across_it) {
+  sim::Params p = body(preset("reference"));
+  sim::Scenario sc;
+  sc.wind_enu = {{0.0, 0.0, 0.0}, {2000.0, 10.0, 0.0}, {4000.0, 10.0, 20.0}};   // 10 m/s toward the east at 2 km, then 20 m/s toward the north too at 4 km
+  sc.site.azimuth_deg = 90.0;   // launching east: Y downrange is east, Z crossrange is north
+  {
+    const sim::Vehicle6 v(p, sc);
+    CHECK(near_abs(v.wind_at(2000.0, 0.0).y, 10.0, 1e-12) && near_abs(v.wind_at(2000.0, 0.0).z, 0.0, 1e-12) && v.wind_at(2000.0, 0.0).x == 0.0);   // an east wind is a tailwind
+    CHECK(near_abs(v.wind_at(4000.0, 0.0).y, 10.0, 1e-12) && near_abs(v.wind_at(4000.0, 0.0).z, 20.0, 1e-12));
+    CHECK(near_abs(v.wind_at(3000.0, 0.0).z, 10.0, 1e-12));                                                                                      // linear between the points
+    CHECK(near_abs(v.wind_at(-50.0, 0.0).y, 0.0, 1e-12) && near_abs(v.wind_at(9000.0, 0.0).z, 20.0, 1e-12));                                       // held below the first altitude and above the last
+  }
+  sc.site.azimuth_deg = 0.0;    // launching north: Y downrange is north, Z crossrange is west
+  {
+    const sim::Vehicle6 v(p, sc);
+    CHECK(near_abs(v.wind_at(2000.0, 0.0).y, 0.0, 1e-12) && near_abs(v.wind_at(2000.0, 0.0).z, -10.0, 1e-12));   // the east wind now comes from the right: toward -Z
+    CHECK(near_abs(v.wind_at(4000.0, 0.0).y, 20.0, 1e-12) && near_abs(v.wind_at(4000.0, 0.0).z, -10.0, 1e-12));
+  }
+  sc.site.azimuth_deg = 45.0;   // a tailwind and a crosswind of the same size from a wind to the east
+  sc.wind_enu = {{0.0, 10.0, 0.0}};
+  {
+    const sim::Vehicle6 v(p, sc);
+    const sim::V3 w = v.wind_at(500.0, 0.0);
+    CHECK(near_abs(w.y, 10.0 * std::sqrt(0.5), 1e-12) && near_abs(w.z, -10.0 * std::sqrt(0.5), 1e-12));
+    CHECK(near_abs(std::sqrt((w.y * w.y) + (w.z * w.z)), 10.0, 1e-12));   // the turn keeps the speed
+    CHECK(near_abs(v.mean_wind_ms(500.0), 10.0, 1e-12));
+  }
+  // the wind scale scales it and the profile is read and written back; altitudes that do not increase are refused
+  const std::string text = R"({
+    "stages": [{"dry_mass_kg": 100, "length_m": 2, "radius_m": 0.2}],
+    "scenario": {"site": {"latitude_deg": 26, "azimuth_deg": 100}, "wind_scale": 2, "wind_profile_enu": [[0, -4.1, 0.1], [3000, -4.4, -0.3], [10000, -4.5, -5]]}
+  })";
+  sim::VehicleFile f;
+  std::vector<std::string> errors;
+  CHECK(sim::read_vehicle(text, f, errors) && errors.empty() && f.scenario.wind_enu.size() == 3U && f.scenario.wind_enu[2][2] == -5.0);
+  const std::string once = sim::write_vehicle(f);
+  sim::VehicleFile g;
+  CHECK(sim::read_vehicle(once, g, errors) && errors.empty() && sim::write_vehicle(g) == once && g.scenario.wind_enu == f.scenario.wind_enu);
+  std::string bad = text;
+  bad.replace(bad.find("[3000,"), 6, "[0,");
+  errors.clear();
+  CHECK(!sim::read_vehicle(bad, f, errors) && !errors.empty() && errors[0].find("must increase") != std::string::npos);
+  bad = text;
+  bad.replace(bad.find("[3000, -4.4, -0.3]"), 18, "[3000, -4.4]");
+  errors.clear();
+  CHECK(!sim::read_vehicle(bad, f, errors) && !errors.empty());
+  bad = text;
+  bad.replace(bad.find("[[0, -4.1, 0.1], [3000, -4.4, -0.3], [10000, -4.5, -5]]"), 55, "5");
+  errors.clear();
+  CHECK(!sim::read_vehicle(bad, f, errors) && !errors.empty() && errors[0].find("expected a list of [altitude, east, north] triples") != std::string::npos);
+}
+
 TFC_TEST(environment_a_wind_profile_replaces_the_built_in_one_and_is_held_beyond_its_ends) {
   sim::Params p = body(preset("reference"));
   sim::Scenario sc;
@@ -332,8 +407,9 @@ TFC_TEST(environment_turbulence_has_the_variance_and_the_correlation_length_give
   }
   cov /= (n - lag);
   CHECK(std::fabs((cov / var) - std::exp(-1.0)) < 0.1);  // at a lag of L / V the correlation is 1/e
-  // the wind the vehicle feels includes it
-  CHECK(near_abs(v.wind_at(100000.0, 0.0).y - v.turbulence().y, 0.0, 1e-9));
+  // the wind the vehicle feels includes it, where there is air to blow
+  CHECK(near_abs(v.wind_at(10000.0, 0.0).y - v.turbulence().y, 0.0, 1e-9));
+  CHECK(v.wind_at(100000.0, 0.0).x == 0.0 && v.wind_at(100000.0, 0.0).y == 0.0 && v.wind_at(100000.0, 0.0).z == 0.0);   // and none in space
   // the same seed gives the same wind, another seed another one, none gives none
   sim::Vehicle6 w(p, sc);
   for (int k = 0; k < 1000; ++k) {

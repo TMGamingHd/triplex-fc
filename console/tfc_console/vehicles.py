@@ -185,10 +185,40 @@ class Vehicles:
     def knob_table(self) -> list[dict]:
         return [{"path": p, "label": l, "unit": u, "step": st, "min": lo, "max": hi, "doc": d, "default": df} for p, l, u, st, lo, hi, d, df in KNOBS]
 
+    def weather_list(self) -> list[dict]:
+        """The days of wind the repository holds (`vehicles/weather/*.json`, written by tools/weather/fetch_sounding.py): a real balloon's measurements, to fly the vehicle through."""
+        out = []
+        for p in sorted((self.dir / "weather").glob("*.json")) if (self.dir / "weather").is_dir() else []:
+            try:
+                w = json.loads(p.read_text())
+                out.append({"name": p.stem, "site": w.get("site_name", ""), "time_utc": w.get("time_utc", ""), "top_km": round(w.get("top_altitude_m", 0.0) / 1000.0, 1), "max_wind_ms": w.get("max_wind_ms", 0.0), "station": w.get("station_note", "")})
+            except (OSError, ValueError):
+                continue
+        return out
+
+    def apply_weather(self, data: dict, name: str) -> None:
+        """Puts a day's wind profile (east and north by altitude) in the vehicle's scenario, in place of its wind profile."""
+        if not _NAME.match(name):
+            raise ValueError(f"{name!r} is not a weather name")
+        p = self.dir / "weather" / f"{name}.json"
+        try:
+            w = json.loads(p.read_text())
+        except (OSError, ValueError) as e:
+            raise ValueError(f"no weather called {name!r} (vehicles/weather/{name}.json)") from e
+        if not w.get("wind_profile_enu"):
+            raise ValueError(f"vehicles/weather/{name}.json has no wind_profile_enu")
+        sc = data.setdefault("scenario", {})
+        sc.pop("wind_profile", None)
+        sc["wind_profile_enu"] = w["wind_profile_enu"]
+
     def apply_knobs(self, data: dict, knobs: dict) -> dict:
         out = copy.deepcopy(data)
         allowed = {k[0]: k for k in KNOBS}
         for path, value in knobs.items():
+            if path == "scenario.weather":      # not a number: the name of a day of wind (it changes the plant only, so the flight computers are not rebuilt for it)
+                if value not in (None, ""):
+                    self.apply_weather(out, str(value))
+                continue
             if path not in allowed:
                 raise ValueError(f"{path!r} is not a knob")
             if value is None or value == "":

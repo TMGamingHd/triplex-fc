@@ -23,6 +23,7 @@ import threading
 import time
 from pathlib import Path
 
+from .cfdlib import CfdLibrary
 from .imagery import ImageryPack
 from .recorder import open_text
 
@@ -284,6 +285,7 @@ class ViewerService:
         self.vehicles = vehicles
         self.scratch = state_dir / "viewer"
         self.models = models_dir or repo / "console" / "models"
+        self.cfd = CfdLibrary(repo / "console" / "cfd", repo / "console" / "demo")             # the flow fields tfc_cfd wrote, if any (cfdlib.py)
         self.imagery = ImageryPack(repo / "console" / "imagery")        # the Earth pictures tfc-imagery downloaded, if it did (imagery.py)
         self.player: PoseReplay | None = None
         self.lock = threading.RLock()

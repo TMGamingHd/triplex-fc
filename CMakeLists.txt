@@ -56,6 +56,7 @@ add_executable(tfc_tests
   tests/test_mission_sim.cpp
   tests/test_vehicle_refusals.cpp
   tests/test_environment.cpp
+  tests/test_cfd.cpp
   tests/test_dynamics.cpp
   tests/test_slosh.cpp
   tests/test_flex.cpp
@@ -71,7 +72,8 @@ add_executable(tfc_tests
   tests/test_phases.cpp
   tests/test_state_share.cpp)
 target_link_libraries(tfc_tests PRIVATE tfc_core)
-target_include_directories(tfc_tests PRIVATE tests tools/vehicle sim/vehicle firmware/app/src supervisor/include)
+target_include_directories(tfc_tests PRIVATE tests tools/vehicle sim/vehicle sim/cfd firmware/app/src supervisor/include)
+set_source_files_properties(tests/test_cfd.cpp PROPERTIES COMPILE_OPTIONS "-O2")  # the flow solver's tests are about a hundred times too slow without it, in the Debug build too
 target_compile_definitions(tfc_tests PRIVATE TFC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")  # the vehicle description tests read vehicles/*.json
 target_compile_options(tfc_tests PRIVATE
   -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror
@@ -124,6 +126,12 @@ target_link_libraries(tfc_fly PRIVATE tfc_core)
 target_include_directories(tfc_fly PRIVATE sim/vehicle)
 target_compile_options(tfc_fly PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
 
+# The Euler flow solver on a vehicle's body and its validation (tools/sim/tfc_cfd.cpp, sim/cfd, docs/design/CFD.md); optimised in every build type, since a flow takes minutes.
+add_executable(tfc_cfd tools/sim/tfc_cfd.cpp)
+target_link_libraries(tfc_cfd PRIVATE tfc_core Threads::Threads)
+target_include_directories(tfc_cfd PRIVATE sim/vehicle sim/cfd)
+target_compile_options(tfc_cfd PRIVATE -O3 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
+
 # Fly a vehicle's mission (guidance and navigation, orbital insertion, a stage's return; tools/sim/tfc_mission.cpp, docs/design/GNC.md).
 add_executable(tfc_mission tools/sim/tfc_mission.cpp)
 target_link_libraries(tfc_mission PRIVATE tfc_core)
@@ -163,6 +171,14 @@ target_compile_options(tfc_bench PRIVATE -O2 -fno-exceptions -fno-rtti -Wall -We
 
 enable_testing()
 add_test(NAME tfc_tests COMMAND tfc_tests)
+
+# The flow solver against the exact solutions (the quick set: about 90 s on twelve cores, but the CI build has the sanitizers on, which makes it far slower than the job's time limit allows): on request,
+# cmake -DTFC_CFD_VALIDATE=ON, or run `tfc_cfd --validate` by hand.
+option(TFC_CFD_VALIDATE "Register the flow solver's validation (tfc_cfd --validate --quick) as a test" OFF)
+if(TFC_CFD_VALIDATE)
+  add_test(NAME cfd_validate_quick COMMAND tfc_cfd --validate --quick)
+  set_tests_properties(cfd_validate_quick PROPERTIES PASS_REGULAR_EXPRESSION "[0-9]+ checks, 0 out of band" TIMEOUT 3000)
+endif()
 
 # The Monte Carlo tool runs end to end: a handful of short flights with the shipped dispersions, a report, and one flight flown again by itself (the tool is a command line; its logic is tested in
 # tests/test_montecarlo.cpp).

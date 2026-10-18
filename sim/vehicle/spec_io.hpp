@@ -165,6 +165,31 @@ class ObjectReader {
     }
     return true;
   }
+  // an array of [a, b, c] triples (a wind profile: altitude, east, north)
+  bool triples(const std::string& key, std::vector<std::array<double, 3>>& out) {
+    const Json* v = get(key);
+    if (v == nullptr) {
+      return false;
+    }
+    if (v->type != Json::Type::Array) {
+      error(*v, key, "expected a list of [altitude, east, north] triples");
+      return false;
+    }
+    out.clear();
+    for (std::size_t i = 0; i < v->items.size(); ++i) {
+      const Json& it = v->items[i];
+      if (it.type != Json::Type::Array || it.items.size() != 3U || it.items[0].type != Json::Type::Number || it.items[1].type != Json::Type::Number || it.items[2].type != Json::Type::Number) {
+        error(it, key + "[" + std::to_string(i) + "]", "expected three numbers [altitude, east, north]");
+        return false;
+      }
+      if (i > 0U && !(it.items[0].number > v->items[i - 1U].items[0].number)) {
+        error(it, key + "[" + std::to_string(i) + "]", "the altitudes must increase");
+        return false;
+      }
+      out.push_back({it.items[0].number, it.items[1].number, it.items[2].number});
+    }
+    return true;
+  }
   // an array of objects: the elements, each as a reader with its own path
   bool list(const std::string& key, std::vector<const Json*>& out) {
     const Json* v = get(key);
@@ -981,6 +1006,7 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
       sc.start_seed = static_cast<uint32_t>(start_seed);
     }
     o.pairs("wind_profile", sc.wind_profile);
+    o.triples("wind_profile_enu", sc.wind_enu);
     std::vector<const Json*> gl;
     if (o.list("gusts", gl)) {
       for (std::size_t i = 0; i < gl.size(); ++i) {
@@ -1091,6 +1117,13 @@ inline std::string pairs_text(const std::vector<std::array<double, 2>>& t) {
   std::string s = "[";
   for (std::size_t i = 0; i < t.size(); ++i) {
     s += (i == 0U ? "" : ", ") + std::string("[") + num_text(t[i][0]) + ", " + num_text(t[i][1]) + "]";
+  }
+  return s + "]";
+}
+inline std::string triples_text(const std::vector<std::array<double, 3>>& t) {
+  std::string s = "[";
+  for (std::size_t i = 0; i < t.size(); ++i) {
+    s += (i == 0U ? "" : ", ") + std::string("[") + num_text(t[i][0]) + ", " + num_text(t[i][1]) + ", " + num_text(t[i][2]) + "]";
   }
   return s + "]";
 }
@@ -1337,7 +1370,8 @@ inline std::string write_vehicle(const VehicleFile& v) {
   o += ",\n  \"scenario\": {\"wind_scale\": " + num_text(sc.wind_scale) + ", \"wind_direction\": " + vec_text(sc.wind_dir) + ", \"dry_cg_shift_m\": " + num_text(sc.dry_cg_shift) +
        ", \"site\": {\"latitude_deg\": " + num_text(sc.site.latitude_deg) + ", \"azimuth_deg\": " + num_text(sc.site.azimuth_deg) + "}, \"turbulence\": {\"sigma_ms\": " + num_text(sc.turbulence.sigma_ms) +
        ", \"scale_length_m\": " + num_text(sc.turbulence.scale_length_m) + ", \"seed\": " + std::to_string(sc.turbulence.seed) + "}" +
-       (sc.wind_profile.empty() ? std::string() : ", \"wind_profile\": " + pairs_text(sc.wind_profile)) + ", \"gusts\": [";
+       (sc.wind_profile.empty() ? std::string() : ", \"wind_profile\": " + pairs_text(sc.wind_profile)) +
+       (sc.wind_enu.empty() ? std::string() : ", \"wind_profile_enu\": " + triples_text(sc.wind_enu)) + ", \"gusts\": [";
   for (std::size_t i = 0; i < sc.gusts.size(); ++i) {
     o += std::string(i == 0U ? "" : ", ") + "{\"t0_s\": " + num_text(sc.gusts[i].t0) + ", \"duration_s\": " + num_text(sc.gusts[i].duration) + ", \"peak_ms\": " + vec_text(sc.gusts[i].peak) + "}";
   }

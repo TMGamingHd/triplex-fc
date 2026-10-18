@@ -17,6 +17,14 @@ async function load(name, S) {
 
 function knobRows(S) {
   clear(R.sheet);
+  const days = S.cfg.weather || [];
+  if (days.length) {      // a real day's wind (a balloon sounding), in place of the file's wind profile; the plant only, so no flight computer is rebuilt for it
+    const sel = h('select', { 'aria-label': 'Weather', style: { maxWidth: '100%' }, onchange: () => { if (sel.value) R.knobs['scenario.weather'] = sel.value; else delete R.knobs['scenario.weather']; setText(R.nmod, Object.keys(R.knobs).length ? `${Object.keys(R.knobs).length} changed` : 'no knob changed'); } },
+      h('option', { value: '' }, 'The file’s own wind'), ...days.map((d) => h('option', { value: d.name }, `${d.site} · ${d.time_utc} · to ${d.top_km} km, up to ${d.max_wind_ms} m/s`)));
+    sel.value = R.knobs['scenario.weather'] || '';
+    R.sheet.append(h('div', { style: { padding: '6px 0', borderBottom: '1px solid var(--line)' } }, h('b', { style: { fontSize: '13px' } }, 'Weather'), ' ', sel,
+      h('div', { class: 'note' }, 'A real balloon sounding (NOAA radiosonde) for the launch site: the wind’s speed and direction at every height, so there is a crosswind where the day has one. Fetch more with tools/weather/fetch_sounding.py. Wind scale still scales it; there is none above the air.')));
+  }
   for (const k of S.cfg.knobs) {
     const base = R.base[k.path] ?? k.default;
     const cur = R.knobs[k.path] ?? base;

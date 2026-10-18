@@ -87,11 +87,11 @@ export class Spec {
     if (!a || !a.density) { const r = us1976(alt); return [r[0], r[1], r[2], r[3], 0]; }
     const step = a.step_m, n = a.density.length;
     const x = Math.max(0, alt) / step, i = Math.min(n - 2, Math.floor(x)), f = Math.min(1, x - i);
-    if (x >= n - 1) { const k = n - 1, sc = Math.exp(-(alt - k * step) / 6000); return [a.temperature_k[k], a.pressure_pa[k] * sc, a.density[k] * sc, a.sound_ms[k], a.wind_ms[k]]; }
+    if (x >= n - 1) { const k = n - 1, sc = Math.exp(-(alt - k * step) / 6000); return [a.temperature_k[k], a.pressure_pa[k] * sc, a.density[k] * sc, a.sound_ms[k], a.wind_ms[k], a.wind_down_ms ? a.wind_down_ms[k] : 0, a.wind_cross_ms ? a.wind_cross_ms[k] : 0]; }
     const L = (arr) => arr[i] + (arr[i + 1] - arr[i]) * f;
     // density and pressure fall exponentially: interpolate their logarithms
     const LL = (arr) => Math.exp(Math.log(arr[i]) + (Math.log(arr[i + 1]) - Math.log(arr[i])) * f);
-    return [L(a.temperature_k), LL(a.pressure_pa), LL(a.density), L(a.sound_ms), L(a.wind_ms)];
+    return [L(a.temperature_k), LL(a.pressure_pa), LL(a.density), L(a.sound_ms), L(a.wind_ms), a.wind_down_ms ? L(a.wind_down_ms) : 0, a.wind_cross_ms ? L(a.wind_cross_ms) : 0];   // [4] the speed of the wind, [5] along the launch direction, [6] across it
   }
 }
 
