@@ -592,3 +592,88 @@ TFC_TEST(aero_the_scale_factors_the_running_engines_the_table_and_the_fairing_ac
   fv.aero_summary(0.9, tcn, tcp, tca, ts);
   CHECK(near_abs(tcn, 0.0, 1e-12));  // without it: a bare tube has none
 }
+
+// ---- the flow solver's tables in the plant ----
+
+namespace {
+// A table for the body of shaped_body(): the normal force 1.5 sin(a) cos(a), the axial force 0.30 at every angle (drag; -0.9 from behind), the moment of a centre of pressure at x = 1.4 about x_ref = 0.8.
+sim::CfdAeroDb synthetic_table(const sim::Params& p) {
+  sim::CfdAeroDb db;
+  db.stages = {0};
+  db.x_ref = 0.8;
+  db.s_ref = sim::kPi * 0.25 * 0.01;
+  db.d_ref = 0.1;
+  db.mach = {0.5, 8.0};
+  db.alpha_deg = {0.0, 10.0, 45.0, 90.0, 135.0, 180.0};
+  for (std::size_t i = 0; i < db.mach.size(); ++i) {
+    for (const double a : db.alpha_deg) {
+      const double r = a * sim::kDeg2Rad;
+      const double cn = 1.5 * std::sin(r) * std::cos(r);
+      db.ca.push_back(a < 100.0 ? 0.30 : -0.9);
+      db.ca_base.push_back(a < 100.0 ? 0.0 : -0.2);
+      db.cn.push_back(cn);
+      db.cm.push_back(-cn * (1.4 - 0.8) / db.d_ref);
+    }
+  }
+  (void)p;
+  return db;
+}
+}  // namespace
+
+TFC_TEST(aero_cfd_a_table_from_the_flow_solver_sets_the_body_force_and_moment_in_the_conventions_of_the_build_up) {
+  sim::Params p = shaped_body();
+  p.spec.aero.cfd.push_back(synthetic_table(p));
+  const double a = 10.0 * sim::kDeg2Rad;
+  const sim::Vehicle6 v(p, at_speed(sim::V3{150.0 * std::cos(a), 150.0 * std::sin(a), 0.0}, 5000.0));
+  const sim::Loads l = v.current_loads();
+  const double q_s = l.dynamic_pressure * p.spec.aero.cfd[0].s_ref;
+  const double cn = 1.5 * std::sin(a) * std::cos(a);
+  CHECK(near_abs(-l.f_aero.y, q_s * cn, 1e-9 * q_s) && near_abs(l.f_aero.z, 0.0, 1e-9));                        // opposing the lateral velocity, the table's CN
+  CHECK(-l.f_aero.x > q_s * 0.30 && -l.f_aero.x < q_s * 0.90);                                                   // the table's axial force and the plant's friction (this slender body has eighty times its frontal area in skin) and base drag on top of it
+  // the moment about the centre of gravity: the normal force at x = 1.4 from a centre of mass at x_cg: -q S CN (x_cp - x_cg) about z for a vehicle moving toward +Y
+  const double x_cg = v.mass_props().x_cg;
+  CHECK(near_abs(l.m_aero.z, -q_s * cn * (1.4 - x_cg), 1e-6 * q_s * cn));
+  // the design quantities follow the table: the divergence at the slope of its first positive angle, the summary
+  double cna = 0.0;
+  double xcp = 0.0;
+  double ca = 0.0;
+  double sref = 0.0;
+  v.aero_summary(0.5, cna, xcp, ca, sref);
+  CHECK(near_abs(cna, 1.5 * std::sin(a) * std::cos(a) / a, 1e-9) && near_abs(xcp, 1.4, 1e-9) && near_abs(ca, 0.30, 1e-9) && near_abs(sref, p.spec.aero.cfd[0].s_ref, 1e-12));
+  CHECK(v.divergence() > 0.0);   // the centre of pressure is ahead of the centre of mass: unstable
+  // a body with the base to the stream: the table's base pressure and axial force (the air comes from behind: the force pushes forward)
+  const sim::Vehicle6 back(p, at_speed(sim::V3{-150.0, 0.0, 0.0}, 5000.0));
+  CHECK(back.current_loads().f_aero.x > 0.0);
+  // a stage that has left has no table: the build-up takes over
+  sim::Params q = p;
+  q.spec.aero.cfd[0].stages = {1};
+  const sim::Vehicle6 other(q, at_speed(sim::V3{150.0 * std::cos(a), 150.0 * std::sin(a), 0.0}, 5000.0));
+  CHECK(!near_abs(-other.current_loads().f_aero.y, q_s * cn, 1e-3 * q_s));
+  // the plant's scale factors apply to it
+  sim::Params s = p;
+  s.cn_scale = 2.0;
+  const sim::Vehicle6 doubled(s, at_speed(sim::V3{150.0 * std::cos(a), 150.0 * std::sin(a), 0.0}, 5000.0));
+  CHECK(near_abs(-doubled.current_loads().f_aero.y, 2.0 * q_s * cn, 1e-9 * q_s));
+}
+
+TFC_TEST(aero_cfd_the_table_is_read_and_written_and_a_bad_one_is_refused) {
+  const std::string text = R"({
+    "stages": [{"dry_mass_kg": 100, "length_m": 2, "radius_m": 0.2, "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 2, "d_aft_m": 0.4, "d_fore_m": 0.4}]}],
+    "aero": {"cfd": [{"stages": [0], "x_ref_m": 1, "s_ref_m2": 0.12, "d_ref_m": 0.4, "mach": [1, 3], "alpha_deg": [0, 90],
+      "ca": [[0.3, 0], [0.2, 0]], "ca_base": [[0, 0], [0, 0]], "cn": [[0, 1], [0, 1.1]], "cm": [[0, -2], [0, -2.2]]}]}
+  })";
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(sim::read_vehicle(text, v, errors) && errors.empty() && v.params.spec.aero.cfd.size() == 1U && v.params.spec.aero.cfd[0].cn.size() == 4U);
+  const std::string once = sim::write_vehicle(v);
+  sim::VehicleFile w;
+  CHECK(sim::read_vehicle(once, w, errors) && errors.empty() && sim::write_vehicle(w) == once && w.params.spec.aero.cfd[0].cm[3] == -2.2);
+  std::string bad = text;
+  bad.replace(bad.find("[[0.3, 0], [0.2, 0]]"), 20, "[[0.3, 0]]");
+  errors.clear();
+  CHECK(!sim::read_vehicle(bad, v, errors) && !errors.empty() && errors[0].find("aero.cfd[0]") != std::string::npos);
+  bad = text;
+  bad.replace(bad.find("\"alpha_deg\": [0, 90]"), 20, "\"alpha_deg\": [5, 90]");
+  errors.clear();
+  CHECK(!sim::read_vehicle(bad, v, errors));
+}

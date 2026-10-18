@@ -165,6 +165,52 @@ class ObjectReader {
     }
     return true;
   }
+  // an array of numbers, and an array of arrays of numbers (a table row by row)
+  bool numbers(const std::string& key, std::vector<double>& out) {
+    const Json* v = get(key);
+    if (v == nullptr) {
+      return false;
+    }
+    if (v->type != Json::Type::Array) {
+      error(*v, key, "expected a list of numbers");
+      return false;
+    }
+    out.clear();
+    for (std::size_t i = 0; i < v->items.size(); ++i) {
+      if (v->items[i].type != Json::Type::Number) {
+        error(v->items[i], key + "[" + std::to_string(i) + "]", "expected a number");
+        return false;
+      }
+      out.push_back(v->items[i].number);
+    }
+    return true;
+  }
+  bool matrix(const std::string& key, std::vector<double>& out) {
+    const Json* v = get(key);
+    if (v == nullptr) {
+      return false;
+    }
+    if (v->type != Json::Type::Array) {
+      error(*v, key, "expected a list of rows of numbers");
+      return false;
+    }
+    out.clear();
+    for (std::size_t r = 0; r < v->items.size(); ++r) {
+      const Json& row = v->items[r];
+      if (row.type != Json::Type::Array) {
+        error(row, key + "[" + std::to_string(r) + "]", "expected a row of numbers");
+        return false;
+      }
+      for (std::size_t c = 0; c < row.items.size(); ++c) {
+        if (row.items[c].type != Json::Type::Number) {
+          error(row.items[c], key + "[" + std::to_string(r) + "][" + std::to_string(c) + "]", "expected a number");
+          return false;
+        }
+        out.push_back(row.items[c].number);
+      }
+    }
+    return true;
+  }
   // an array of [a, b, c] triples (a wind profile: altitude, east, north)
   bool triples(const std::string& key, std::vector<std::array<double, 3>>& out) {
     const Json* v = get(key);
@@ -832,6 +878,29 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
         }
       }
     }
+    std::vector<const Json*> cl;
+    if (o.list("cfd", cl)) {   // the flow solver's tables, one object per configuration
+      for (std::size_t i = 0; i < cl.size(); ++i) {
+        ObjectReader c(*cl[i], item("aero", "cfd", i), errors);
+        CfdAeroDb db;
+        std::vector<double> st;
+        c.numbers("stages", st);
+        for (const double x : st) {
+          db.stages.push_back(static_cast<int>(x));
+        }
+        c.num("x_ref_m", db.x_ref);
+        c.num("s_ref_m2", db.s_ref);
+        c.num("d_ref_m", db.d_ref);
+        c.numbers("mach", db.mach);
+        c.numbers("alpha_deg", db.alpha_deg);
+        c.matrix("ca", db.ca);
+        c.matrix("ca_base", db.ca_base);
+        c.matrix("cn", db.cn);
+        c.matrix("cm", db.cm);
+        c.finish();
+        a.cfd.push_back(db);
+      }
+    }
     o.finish();
   }
   if (const Json* v = top.get("planet")) {  // a preset ("earth", "moon", "mars", "reference") and any field overriding it
@@ -1223,6 +1292,34 @@ inline std::string write_vehicle(const VehicleFile& v) {
   if (g.aero.full_regime) {
     o += ", \"full_regime\": true, \"newtonian_from_mach\": " + num_text(g.aero.newtonian_from_mach) + ", \"newtonian_to_mach\": " + num_text(g.aero.newtonian_to_mach) + ", \"nose_radius_m\": " +
          num_text(g.aero.nose_radius_m) + ", \"belly_heat_factor\": " + num_text(g.aero.belly_heat_factor) + ", \"emissivity\": " + num_text(g.aero.emissivity);
+  }
+  if (!g.aero.cfd.empty()) {
+    o += ", \"cfd\": [";
+    auto row_text = [](const std::vector<double>& xs) {
+      std::string t = "[";
+      for (std::size_t i = 0; i < xs.size(); ++i) {
+        t += (i == 0U ? "" : ", ") + num_text(xs[i]);
+      }
+      return t + "]";
+    };
+    auto matrix_text = [&](const std::vector<double>& xs, std::size_t cols) {
+      std::string t = "[";
+      for (std::size_t r = 0; r * cols < xs.size(); ++r) {
+        t += std::string(r == 0U ? "" : ",\n       ") + row_text(std::vector<double>(xs.begin() + static_cast<std::ptrdiff_t>(r * cols), xs.begin() + static_cast<std::ptrdiff_t>((r + 1U) * cols)));
+      }
+      return t + "]";
+    };
+    for (std::size_t i = 0; i < g.aero.cfd.size(); ++i) {
+      const CfdAeroDb& db = g.aero.cfd[i];
+      std::vector<double> st;
+      for (const int x : db.stages) {
+        st.push_back(static_cast<double>(x));
+      }
+      o += std::string(i == 0U ? "" : ", ") + "{\"stages\": " + row_text(st) + ", \"x_ref_m\": " + num_text(db.x_ref) + ", \"s_ref_m2\": " + num_text(db.s_ref) + ", \"d_ref_m\": " + num_text(db.d_ref) +
+           ", \"mach\": " + row_text(db.mach) + ", \"alpha_deg\": " + row_text(db.alpha_deg) + ",\n      \"ca\": " + matrix_text(db.ca, db.alpha_deg.size()) + ",\n      \"ca_base\": " +
+           matrix_text(db.ca_base, db.alpha_deg.size()) + ",\n      \"cn\": " + matrix_text(db.cn, db.alpha_deg.size()) + ",\n      \"cm\": " + matrix_text(db.cm, db.alpha_deg.size()) + "}";
+    }
+    o += "]";
   }
   if (!g.aero.table.empty()) {
     o += ", \"table\": [";

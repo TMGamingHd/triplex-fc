@@ -21,7 +21,9 @@
 #include <cstdlib>
 #include <vector>
 
+#include "../cfd/viscous.hpp"
 #include "aero.hpp"
+#include "cfd_aero.hpp"
 #include "atmosphere.hpp"
 #include "math3.hpp"
 #include "newtonian.hpp"
@@ -555,7 +557,9 @@ class Vehicle6 {
     const double area = kPi * 0.25 * p_.diameter * p_.diameter;
     if (shaped_) {
       if (v_abs > 1.0) {
-        if (g_.aero.full_regime && geo_.ready()) {
+        if (cfd_ != nullptr && geo_.ready()) {
+          shape_forces_cfd(l, air, vrel, v_abs, mp, s.w);
+        } else if (g_.aero.full_regime && geo_.ready()) {
           shape_forces_full(l, air, vrel, v_abs, mp, s.w);
         } else {
           shape_forces(l, air, vrel, v_abs, mp);
@@ -812,7 +816,11 @@ class Vehicle6 {
       double moment_slope = 0.0;
       double ca = 0.0;
       double s_ref = kPi * 0.25 * p_.diameter * p_.diameter;
-      if (geo_.ready()) {
+      if (cfd_ != nullptr) {
+        s_ref = cfd_->s_ref;
+        cfdaero::slopes(*cfd_, l.mach, mp.x_cg, cn_alpha, moment_slope);
+        moment_slope *= p_.cn_scale;
+      } else if (geo_.ready()) {
         s_ref = geo_.reference_area();
         geo_.slopes(l.mach, mp.x_cg, cn_alpha, moment_slope);
       } else {
@@ -828,7 +836,12 @@ class Vehicle6 {
   // axial coefficient flying nose first at sea-level density and 1e7 Reynolds. For the reference model's fixed numbers, those. For tools that describe a vehicle and for the tests.
   void aero_summary(double mach, double& cn_alpha, double& x_cp, double& ca, double& s_ref) const {
     double moment_slope = 0.0;
-    if (geo_.ready()) {
+    if (cfd_ != nullptr) {
+      s_ref = cfd_->s_ref;
+      cfdaero::slopes(*cfd_, mach, 0.0, cn_alpha, moment_slope);
+      ca = cfdaero::lookup(*cfd_, mach, 0.0).ca;
+      x_cp = cn_alpha != 0.0 ? moment_slope / cn_alpha : 0.0;
+    } else if (geo_.ready()) {
       s_ref = geo_.reference_area();
       geo_.slopes(mach, 0.0, cn_alpha, moment_slope);
       ca = geo_.axial(mach, 1.0e7, power_fraction(), g_.aero) * p_.cd_scale;
@@ -1701,6 +1714,51 @@ class Vehicle6 {
     }
   }
 
+  // The body's force and moment from the flow solver's tables (aero.cfd): the pressure forces at the Mach number and the angle of attack, to which the plant adds what an Euler solution does not have: the skin
+  // friction (the viscous layer's reference-temperature law, viscous.hpp, on the free stream's state, the wall at a radiative-equilibrium-like temperature), and the base drag (the build-up's law, less with the engines
+  // on) where the base is not facing the stream; where it does (the angle of attack past 90 degrees) the solver's own pressure on the base. The body's turning is the build-up's.
+  void shape_forces_cfd(Loads& l, const Air& air, const V3& vrel, double v_abs, const MassProps& mp, const V3& w) const {
+    const AeroSpec& a = g_.aero;
+    const double lat = std::hypot(vrel.y, vrel.z);
+    const double alpha = std::atan2(lat, vrel.x);
+    l.alpha = alpha;
+    const double alpha_deg = alpha / kDeg2Rad;
+    const cfdaero::Coeffs c = cfdaero::lookup(*cfd_, l.mach, alpha_deg);
+    const double s_ref = cfd_->s_ref;
+    const double q_s = l.dynamic_pressure * s_ref;
+    // the skin friction: the mean coefficient over the body's length, on the wetted area
+    cfd::visc::Edge e;
+    e.rho = air.density;
+    e.p = air.pressure;
+    e.t = air.temperature;
+    e.u = v_abs;
+    const double t_aw = air.temperature * (1.0 + (0.9 * 0.2 * l.mach * l.mach));
+    const double t_wall = std::min(0.8 * t_aw, 1500.0);
+    const double cf = cfd::visc::average_cf(e, geo_.length(), t_wall, 1.0e6) * a.wetted_roughness;
+    const double ca_fric = cf * geo_.wetted_area() / s_ref;
+    const double cos_a = std::cos(alpha);
+    const double toward_base = aero::smoothstep(80.0, 100.0, alpha_deg);   // 0 flying nose first, 1 with the base to the stream
+    const double cd_base = l.mach < 1.0 ? 0.12 + (0.13 * l.mach * l.mach) : 0.25 / l.mach;
+    const double base_law = cd_base * (geo_.base_area() / s_ref) * (1.0 - (a.power_on_base * std::clamp(power_fraction(), 0.0, 1.0))) * std::max(cos_a, 0.0);
+    const double ca_total = c.ca + (ca_fric * cos_a) + ((1.0 - toward_base) * base_law) + (toward_base * c.ca_base);
+    const double n_total = p_.cn_scale * c.cn;
+    const double arm = p_.cn_scale * ((-c.cm * cfd_->d_ref) + ((cfd_->x_ref - mp.x_cg) * c.cn));   // N times the distance from the centre of mass to where it acts, m
+    l.f_aero.x = -q_s * p_.cd_scale * ca_total;
+    if (lat > 1e-9) {
+      const V3 n{0.0, vrel.y / lat, vrel.z / lat};
+      l.f_aero.y = -q_s * n_total * n.y;
+      l.f_aero.z = -q_s * n_total * n.z;
+      l.m_aero = cross(V3{-q_s * arm, 0.0, 0.0}, n);
+    }
+    if (w.y != 0.0 || w.z != 0.0) {
+      V3 df;
+      V3 dm;
+      geo_.rotation_increment(l.mach, air.sound, air.density, vrel, w, mp.x_cg, a, p_.cn_scale, df, dm);
+      l.f_aero = l.f_aero + df;
+      l.m_aero = l.m_aero + dm;
+    }
+  }
+
   // The aerodynamic force and moment over the whole speed range and at any angle of attack (aero.full_regime): the slender-body build-up and the cross-flow of the body at the Mach number of the flow across
   // it, blended from Mach 3 to 6 into the Newtonian impact theory of the body in the stream (newtonian.hpp), and, added to either, what the body's own turning adds (the damping of its parts and of the
   // strips of its body in the local flow). The angle of attack runs the full circle; flying tail first the base and the engines face the stream.
@@ -1819,6 +1877,11 @@ class Vehicle6 {
       }
     }
     geo_.build(sections, fins, g_.aero.reference_diameter_m);
+    std::vector<bool> on(g_.stages.size(), false);
+    for (std::size_t k = 0; k < on.size(); ++k) {
+      on[k] = active_[k];
+    }
+    cfd_ = g_.aero.cfd.empty() ? nullptr : cfdaero::select(g_.aero.cfd, on);
     shaped_ = geo_.ready() || !g_.aero.table.empty();
     if (g_.aero.full_regime && geo_.ready()) {
       newton_.build(sections, fins, geo_.reference_area());
@@ -2157,6 +2220,7 @@ class Vehicle6 {
   V3 omega_{};
   bool rotating_ = false;
   V3 turb_{};
+  const CfdAeroDb* cfd_ = nullptr;   // the flow solver's table for the stages that are on the vehicle (aero.cfd), if there is one
   uint64_t rng_ = 1U;
   AeroGeometry geo_;
   bool shaped_ = false;  // the aerodynamics follow the shape (or a table), not the reference model's fixed numbers

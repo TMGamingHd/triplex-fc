@@ -76,6 +76,26 @@ struct AeroTablePoint {
   double x_cp = 0.0;      // m, centre of pressure
 };
 
+// A table of aerodynamic coefficients computed by the flow solver (tfc_cfd, docs/design/CFD.md section 14) for one configuration of the vehicle (the stages that are on it), by Mach number and angle of attack
+// (0 to 180 degrees; the flow in the vehicle's plane of symmetry). The coefficients are on `s_ref` and `d_ref`, the moment about `x_ref`:
+//   ca      the axial force from the pressure on the skin and the control surfaces, drag positive (negative when the air comes from behind), the base left out
+//   ca_base the axial force from the pressure the solver has on the base (it has no wake: used only where the base faces the stream)
+//   cn      the normal force toward the side the vehicle moves to... opposing the lateral velocity (positive in the usual case of the lift of the nose)
+//   cm      the moment about the axis across the plane of symmetry, on q S d_ref, positive nose up, about x_ref
+// Friction and the base drag are not in it: the plant adds them from the viscous layer's laws and the base-drag law.
+struct CfdAeroDb {
+  std::vector<int> stages;            // the stages on the vehicle in this configuration (indices into the vehicle's stages)
+  double x_ref = 0.0;                 // m from the aft end of the first stage
+  double s_ref = 0.0;                 // m^2
+  double d_ref = 0.0;                 // m
+  std::vector<double> mach;           // ascending
+  std::vector<double> alpha_deg;      // ascending, from 0
+  std::vector<double> ca;             // [mach][alpha] row by row
+  std::vector<double> ca_base;
+  std::vector<double> cn;
+  std::vector<double> cm;
+};
+
 struct AeroSpec {
   double reference_diameter_m = 0.0;  // 0: the largest body diameter of the sections
   double crossflow_cd = 1.2;          // drag coefficient of a circular cylinder in cross-flow
@@ -93,6 +113,7 @@ struct AeroSpec {
   double belly_heat_factor = 0.3;     // the heat flux over the lower surface as a fraction of the stagnation flux (a flat-plate estimate at the angle of attack of an entry)
   double emissivity = 0.85;           // of the heat shield, for the radiative-equilibrium temperature
   std::vector<AeroTablePoint> table;  // a table by Mach instead of the build-up (used when `sections` of every stage are empty)
+  std::vector<CfdAeroDb> cfd;         // the flow solver's tables, one per configuration: the body's force in place of the build-up's and the Newtonian model's (see CfdAeroDb)
 };
 
 struct StageSpec {
@@ -513,6 +534,25 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
       if (!(a.table[k].mach > a.table[k - 1U].mach)) {
         fail("aero.table: the Mach numbers must increase");
         break;
+      }
+    }
+    for (std::size_t k = 0; k < a.cfd.size(); ++k) {
+      const CfdAeroDb& db = a.cfd[k];
+      const std::string at = "aero.cfd[" + std::to_string(k) + "]";
+      const std::size_t n = db.mach.size() * db.alpha_deg.size();
+      bool ok = db.mach.size() >= 2U && db.alpha_deg.size() >= 2U && db.ca.size() == n && db.ca_base.size() == n && db.cn.size() == n && db.cm.size() == n && db.s_ref > 0.0 && db.d_ref > 0.0 && !db.stages.empty();
+      for (std::size_t i = 1; ok && i < db.mach.size(); ++i) {
+        ok = db.mach[i] > db.mach[i - 1U];
+      }
+      for (std::size_t i = 1; ok && i < db.alpha_deg.size(); ++i) {
+        ok = db.alpha_deg[i] > db.alpha_deg[i - 1U];
+      }
+      ok = ok && db.alpha_deg.front() == 0.0 && db.alpha_deg.back() <= 180.0;
+      for (std::size_t i = 0; ok && i < n; ++i) {
+        ok = std::isfinite(db.ca[i]) && std::isfinite(db.ca_base[i]) && std::isfinite(db.cn[i]) && std::isfinite(db.cm[i]);
+      }
+      if (!ok) {
+        fail(at + ": two or more increasing Mach numbers and angles of attack from 0 (to 180 at most), the four tables of mach x alpha finite numbers, positive s_ref_m2 and d_ref_m, and the stages it is for");
       }
     }
     bool any_section = false;

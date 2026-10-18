@@ -80,6 +80,19 @@ inline Layer local_layer(const Edge& e, double x, double t_wall, double re_trans
 }
 inline Layer local_layer(const Edge& e, double x, double t_wall, double re_transition) { return local_layer(e, x, t_wall, re_transition, [](double t) { return sutherland(t); }); }
 
+// The skin friction of a body of length `length` in a stream (the flat plate's, from the nose to the length, averaged over it): the mean of the local coefficient (on the free stream's dynamic pressure)
+// along the length, for a wall at `t_wall`. The integral is taken in the variable t, x = L t^3, which resolves the 1/sqrt(x) of a laminar layer at the nose. Times the wetted area over the reference area
+// it is the friction's axial force coefficient.
+inline double average_cf(const Edge& e, double length, double t_wall, double re_transition) {
+  constexpr int kN = 24;
+  double sum = 0.0;
+  for (int i = 0; i < kN; ++i) {
+    const double t = (i + 0.5) / kN;
+    sum += local_layer(e, length * t * t * t, t_wall, re_transition).cf * 3.0 * t * t / kN;
+  }
+  return sum;
+}
+
 // The heat flux into the wall, W/m^2, for a perfect-gas enthalpy (c_p = gamma R / (gamma - 1)).
 inline double heat_flux(const Edge& e, const Layer& l, double t_wall) {
   const double cp = e.gamma * kGasConstant / (e.gamma - 1.0);
