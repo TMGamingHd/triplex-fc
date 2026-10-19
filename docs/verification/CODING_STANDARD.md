@@ -49,7 +49,7 @@
 | Mutation: campaign | The same bugs against the campaign's oracles | `python3 -m campaign.mutate` | monthly and on demand |
 | Documentation | Every number a current page quotes is the repository's, and the FMECA covers every row of the fault matrix and every fault kind | `python3 tools/docs/metrics.py check`, `python3 tools/fmeca/fmeca.py check` | every PR |
 | Structural coverage: simulator | Which lines and branches of `sim/vehicle` the tests execute (a model, so the gate is lower than the flight code's: it holds guards that no test can reach, such as a non-finite state) | `python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 90` | every PR |
-| Mutation: simulator | <!--m:mutants_sim-->493<!--/m--> simulator mutants: deliberate bugs in the vehicle dynamics, atmosphere, ground, platform, IMU model, runner and the design of the flight tables; each must be killed by the C++ tests (the five equivalent mutants are listed with the reason) | `python3 tools/mutation/run_sim.py` | monthly and on demand |
+| Mutation: simulator | <!--m:mutants_sim-->494<!--/m--> simulator mutants: deliberate bugs in the vehicle dynamics, atmosphere, ground, platform, IMU model, runner and the design of the flight tables; each must be killed by the C++ tests (the five equivalent mutants are listed with the reason) | `python3 tools/mutation/run_sim.py` | monthly and on demand |
 
 Mutation testing is the check on the checks: a test suite that cannot tell a deliberately broken core from the real one is not
 testing that behaviour. It found real gaps in this project (a Safe flag that was not sticky, a probation that could not fail, a

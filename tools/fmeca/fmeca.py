@@ -83,10 +83,10 @@ def fault_kinds() -> set[str]:
     return set(r.stdout.split())
 
 
-def evidence_of(modes_faults: tuple[str, ...], rows: dict[str, FaultRow], scope: str) -> str:
+def evidence_of(modes_faults: tuple[str, ...], rows: dict[str, FaultRow], scope: str, comp: str = "") -> str:
     if scope == "out of v1":
         return "out of v1"
-    if not modes_faults:
+    if not modes_faults or comp.lower().startswith("none"):   # (a mode whose compensation is "none" has none, whatever partial defence a test exercises)
         return "none"
     classes = []
     for f in modes_faults:
@@ -172,9 +172,9 @@ def check_data() -> list[str]:
             used_recs.add(r)
             if r not in rec_ids:
                 errors.append(f"{m.id}: {r} is not a recommendation")
-        if critical(m) and evidence_of(m.faults, rows, m.scope) in ("none",) and not m.recs:
+        if critical(m) and evidence_of(m.faults, rows, m.scope, m.comp) in ("none",) and not m.recs:
             errors.append(f"{m.id}: a critical item with nothing that exercises its compensation needs a recommendation that says what is missing")
-        if critical(m) and not m.scope and evidence_of(m.faults, rows, m.scope) == "none" and not any(
+        if critical(m) and not m.scope and evidence_of(m.faults, rows, m.scope, m.comp) == "none" and not any(
                 next(r for r in D.RECS if r.id == x).status in ("open", "accepted") for x in m.recs if x in rec_ids):
             errors.append(f"{m.id}: a critical item with no test must point at an open or accepted recommendation")
     for f in sorted(set(rows) - covered_faults):
@@ -238,7 +238,7 @@ def render() -> str:
     rows = fault_rows()
     camp, _groups = campaign()
     modes = list(D.MODES)
-    ev = {m.id: evidence_of(m.faults, rows, m.scope) for m in modes}
+    ev = {m.id: evidence_of(m.faults, rows, m.scope, m.comp) for m in modes}
     crit = [m for m in modes if critical(m)]
     sp = [m for m in modes if m.suffix == "SP"]
     recs_open = [r for r in D.RECS if r.status == "open"]
@@ -293,6 +293,8 @@ def render() -> str:
     w("")
     w("**Evidence** is what stands behind the compensation, from the fault matrix: *verified on the host* (a test passes, on the host, the virtual rig or the real firmware on `vcan0`); *host, rig pending* (the software side passes, the hardware side waits for the rig); *rig pending*; *none* (nothing exercises it: the row carries a recommendation); *out of v1*. **Measured** gives the campaign's own figures for the fault kinds of the row: how many detectable scenarios were isolated, the 95th percentile and the maximum latency in 10 ms frames, and how many scenarios that must be left alone were isolated by mistake (it is 0 everywhere). The latencies are host figures: the board's are a measurement still to make (`STATUS.md`).")
     w("")
+    w("**Why the criticality number has no detection factor.** ECSS-Q-ST-30-02C 5.2 ranks a failure mode by severity times probability (CN = SN x PN, 1 to 16); detection and compensation are written down, not multiplied in. The automotive practice of RPN = severity x occurrence x detection (and the AIAG-VDA handbook of 2019 that replaced it with an action-priority table because multiplying ordinal ratings misleads) rates *how likely the fault is to be caught*. Here that is not a judgement but a measurement, so it stands as evidence beside the rating: the campaign's own detection latencies and false isolations, and the fault-matrix status of the test. The ECSS process-FMECA clause 8 does add a detection number; it is for processes and is not used. MIL-STD-1629A\'s Cm = beta x alpha x lambda x t needs part failure rates, which this project does not have.")
+    w("")
     w("## 3. The worksheet")
     w("")
     items: list[str] = []
@@ -308,7 +310,8 @@ def render() -> str:
             star = "*" if critical(m) else ""
             ref = ", ".join(m.faults)
             meas = measured(m, camp)
-            evidence = ev[m.id] + (f" ({ref})" if ref else "") + (f"<br>{meas}" if meas else "") + (f"<br>{', '.join(m.recs)}" if m.recs else "")
+            partial = ev[m.id] == "none" and ref
+            evidence = (ev[m.id] + (f" (a partial defence is tested: {ref})" if partial else (f" ({ref})" if ref else ""))) + (f"<br>{meas}" if meas else "") + (f"<br>{', '.join(m.recs)}" if m.recs else "")
             w(f"| {m.id}{star} | **{esc(m.mode)}**<br>cause: {esc(m.cause)}<br>effect: {esc(m.effect)} | {label(m)} | {m.pn} | {cn(m)} | {esc(m.detect)} | {esc(m.comp)} | {esc(evidence)} |")
         w("")
     w("`*` a critical item. The probability numbers' reasons are in `tools/fmeca/data.py` (`pn_basis`), one line each.")
@@ -355,6 +358,10 @@ def render() -> str:
     w("`python3 tools/fmeca/fmeca.py check` fails the build when: a row of `FAULT_MATRIX.md` or a fault kind of `tfc_peers.faults.KINDS` is in no failure mode; a failure mode names a row, a kind, a group or a recommendation that does not exist; a requirement named by the fault matrix is not in `REQUIREMENTS.md`; an R mode has a probability number of 3 or 4; a critical item has no test and no open or accepted recommendation; `LIMITATIONS.md` names a single point and no SP mode is under it; a cell of the software FMEA is not a kind, a row, a host test, n/a or a GAP; or this page differs from what the data makes (the measured figures included, which are the campaign's own).")
     w("")
     w("When a fault kind is added: a row in `FAULT_MATRIX.md`, a name in `KINDS`, a failure mode here (or a kind added to an existing one), and, if it is a data fault, a cell of section 6. When the rig produces a measurement: change the evidence of the rows it settles (in `FAULT_MATRIX.md`; this page follows) and the probability numbers it moves (in `data.py`).")
+    w("")
+    w("## 9. Sources")
+    w("")
+    w("Read for this page, not recalled: **ECSS-Q-ST-30-02C** (6 March 2009), clauses 4.2 (severity categories and the suffixes), 4.3 and 5.3 (critical items), 5.2 (the criticality number), 7 (hardware-software interaction analysis) and Annexes B and C (the worksheets): <https://ecss.nl/standard/ecss-q-st-30-02c-failure-modes-effects-and-criticality-analysis-fmeafmeca/>. **NASA-GB-8719.13**, the Software Safety Guidebook, section 6.6.8 and appendix D (software FMEA: the data and event fault types, the worksheet, the limits of the method): <https://s3vi.ndc.nasa.gov/ssri-kb/static/resources/nasa-gb-8719.13.pdf>. NASA-STD-8739.8A replaced NASA-STD-8719.13; the guidebook still carries the procedure. The AIAG-VDA action-priority change is from secondary sources only.")
     w("")
     return "\n".join(out) + "\n"
 

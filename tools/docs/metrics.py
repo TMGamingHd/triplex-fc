@@ -39,7 +39,7 @@ CURRENT_DOCS = [
     "docs/README.md", "docs/STATUS.md", "docs/LIMITATIONS.md", "docs/project/PROOF.md",
     "docs/verification/CODING_STANDARD.md", "docs/verification/SAFETY_CASE.md", "docs/verification/REQUIREMENTS.md",
     "docs/verification/FAULT_CAMPAIGN.md", "docs/verification/CODE_REVIEW_CORE.md",
-    "docs/design/ARCHITECTURE.md", "docs/design/ACT_LOGIC.md", "docs/design/SUPERVISOR.md",
+    "docs/design/ARCHITECTURE.md", "docs/design/ACT_LOGIC.md", "docs/design/SUPERVISOR.md", "docs/design/CONSOLE.md",
 ]
 
 
@@ -53,6 +53,13 @@ def _count(rx: str, text: str, flags: int = re.M) -> int:
 
 def _python_tests() -> int:
     code = "import unittest;print(unittest.defaultTestLoader.discover('tests', top_level_dir='.').countTestCases())"
+    r = subprocess.run([sys.executable, "-c", code], cwd=ROOT / "sim", capture_output=True, text=True, check=True)
+    return int(r.stdout.strip().splitlines()[-1])
+
+
+def _console_tests() -> int:
+    code = ("import unittest;l=unittest.defaultTestLoader;"
+            "print(sum(l.discover('tests', pattern=p, top_level_dir='.').countTestCases() for p in ('test_console_*.py', 'test_peers_control.py', 'test_live_console.py')))")
     r = subprocess.run([sys.executable, "-c", code], cwd=ROOT / "sim", capture_output=True, text=True, check=True)
     return int(r.stdout.strip().splitlines()[-1])
 
@@ -79,6 +86,7 @@ def computed() -> dict[str, tuple[object, str]]:
     tests = "".join(p.read_text() for p in sorted((ROOT / "tests").glob("*.cpp")))
     out["cpp_tests"] = (_count(r"^TFC_TEST\(", tests), "TFC_TEST( in tests/*.cpp")
     out["python_tests"] = (_python_tests(), "unittest discovery in sim/")
+    out["console_tests"] = (_console_tests(), "tests of the flight console (test_console_*, test_peers_control, test_live_console)")
     adr = _read("docs/decisions/DECISIONS.md")
     nums = sorted({int(m) for m in re.findall(r"^#{2,3} ADR-(\d+)", adr, re.M)})
     out["adrs"] = (len(nums), "ADR headings in decisions/DECISIONS.md")

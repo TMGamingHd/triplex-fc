@@ -494,7 +494,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "log_damaged_record_read_as_good": ("flightlog.hpp", "ok = r.crc == logdetail::record_crc(r);", "ok = true;"),
     "log_fault_magic_unchecked": ("flightlog.hpp", "return s_.fault.magic == kFaultMagic && s_.fault.crc == logdetail::fault_crc(s_.fault);", "return s_.fault.crc == logdetail::fault_crc(s_.fault);"),
     "log_fault_crc_unchecked": ("flightlog.hpp", "return s_.fault.magic == kFaultMagic && s_.fault.crc == logdetail::fault_crc(s_.fault);", "return s_.fault.magic == kFaultMagic;"),
-    "log_nan_is_not_zero": ("flightlog.hpp", "  if (std::isnan(v)) {\n    return 0;\n  }", "  if (false) {\n    return 0;\n  }"),
+    # (not listed, equivalent on the host: without the NaN guard of `hundredths` the conversion of a NaN to a 16-bit integer is undefined behaviour that x86 happens to make zero; the guard is for the target, and no host test can see the difference)
     "log_hundredths_not_saturated": ("flightlog.hpp", "  if (x >= 32767.0F) {\n    return 32767;", "  if (x >= 40000.0F) {\n    return 32767;"),
     "log_record_crc_leaves_out_the_flags": ("flightlog.hpp", "  b[7] = r.flags;", "  b[7] = 0U;"),
     "log_index_upset_writes_outside_the_ring": ("flightlog.hpp", "    if (s_.head >= N) {  // an upset in the index", "    if (false) {  // an upset in the index"),

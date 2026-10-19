@@ -301,6 +301,69 @@ TFC_TEST(plant_a_vehicle_under_a_parachute_falls_at_the_terminal_speed_the_drag_
   CHECK(sim::rotate(v.state().q, sim::V3{1.0, 0.0, 0.0}).x > 0.9);
 }
 
+TFC_TEST(plant_the_attitude_thrusters_of_a_guided_stage_are_held_off_only_while_its_main_engines_run_by_the_thrust_they_make_and_not_by_their_rating) {
+  // The pitch and yaw thrusters of a stage the computers drive are inhibited while its main engines burn (the gimbal steers then). The test is of the thrust the engines make, not of what they could make:
+  // found by the repaired mutation run (aero_power_fraction_unweighted survived in stage_power): rated, an engine that is off would hold the thrusters off for ever.
+  sim::Params p = bare_stage(1000.0, 6.0, 0.5);
+  p.gravity_scale = 0.0;
+  p.spec.stages[0].guided = true;
+  sim::TankSpec tk;
+  tk.propellant = 500.0;
+  tk.x_bottom = 0.5;
+  tk.radius = 0.5;
+  tk.density = 1000.0;
+  p.spec.stages[0].tanks.push_back(tk);
+  sim::EngineSpec th = engine(100.0, 1);
+  th.control = sim::Control::PitchPlus;
+  th.dir = sim::V3{0.0, -1.0, 0.0};
+  th.full_cmd_deg = 2.0;
+  p.spec.engines = {engine(10000.0, 0), th};
+  sim::Vehicle6 v(p, aloft(300000.0, 0.0));
+  sim::Controls c;
+  c.pitch_deg = 2.0;
+  c.group_mask = 0U;
+  v.step(0.01, c);
+  CHECK(near_abs(v.current_loads().f_thrust.y, -100.0, 1e-9));   // the main engine is off: the thruster fires
+  c.group_mask = 1U;
+  c.throttle = 1.0;
+  v.step(0.01, c);
+  CHECK(close(v.current_loads().f_thrust.x, 10000.0, 1e-9) && near_abs(v.current_loads().f_thrust.y, 0.0, 1e-9));   // the main engine burns: the thruster is held off
+  c.group_mask = 0U;
+  v.step(0.01, c);
+  CHECK(near_abs(v.current_loads().f_thrust.y, -100.0, 1e-9));   // and fires again as soon as it is off
+}
+
+TFC_TEST(plant_a_guided_engine_spools_up_with_its_rise_time_and_down_with_its_tail_time) {
+  // Found by the repaired mutation run (rise_and_tail_swapped survived for the engines the computers drive): the two time constants of an engine's thrust, and which one applies on the way up and which on the way down.
+  sim::Params p = bare_stage(1000.0, 6.0, 0.5);
+  p.gravity_scale = 0.0;
+  p.spec.stages[0].guided = true;
+  sim::TankSpec tk;
+  tk.propellant = 500.0;
+  tk.x_bottom = 0.5;
+  tk.radius = 0.5;
+  tk.density = 1000.0;
+  p.spec.stages[0].tanks.push_back(tk);
+  sim::EngineSpec e = engine(10000.0, 0);
+  e.rise_s = 0.5;
+  e.tail_s = 0.1;
+  p.spec.engines = {e};
+  sim::Vehicle6 v(p, aloft(300000.0, 0.0));
+  sim::Controls c;
+  c.group_mask = 1U;
+  c.throttle = 1.0;
+  v.step(0.01, c);
+  CHECK(close(v.current_loads().thrust, 10000.0 * (1.0 - std::exp(-0.01 / 0.5)), 1e-6));   // up: the rise time
+  for (int k = 0; k < 600; ++k) {
+    v.step(0.01, c);
+  }
+  const double before = v.current_loads().thrust;
+  CHECK(close(before, 10000.0, 1e-3));
+  c.throttle = 0.0;
+  v.step(0.01, c);
+  CHECK(close(v.current_loads().thrust, before * std::exp(-0.01 / 0.1), 1e-9));           // down: the tail time
+}
+
 TFC_TEST(plant_the_engines_a_stage_is_driven_to_run_follow_the_group_mask_and_the_throttle) {
   sim::Params p = bare_stage(1000.0, 6.0, 0.5);
   p.gravity_scale = 0.0;
@@ -740,6 +803,25 @@ TFC_TEST(aero_full_regime_off_changes_nothing_and_on_it_agrees_with_the_build_up
   CHECK(close(c.f_aero.y, d.f_aero.y, 0.08));
 }
 
+// Verifies: TFC-SIM-018
+TFC_TEST(aero_full_regime_agrees_with_the_build_up_in_the_force_the_moment_the_fins_and_tail_first_where_the_two_describe_the_same_flow) {
+  // The full-regime path repeats the build-up's lines for the lateral force, the moment, the fins' lift slope and the rear axial coefficient. The repaired mutation run found each of them unpinned in the copy
+  // (aero_moment_sign_copy2, aero_fin_slope_independent_of_mach_copy2, aero_rear_axial_ignored_copy2 survived): at small angles and below the Newtonian blend (Mach 3) the two must agree.
+  const sim::Params off = shaped_body(false);
+  const sim::Params on = shaped_body(true);
+  for (const double mach : {0.5, 1.5, 2.2}) {
+    const sim::Loads a = load_at(off, mach, 3.0);
+    const sim::Loads b = load_at(on, mach, 3.0);
+    CHECK(close(a.f_aero.y, b.f_aero.y, 0.03) && close(a.m_aero.z, b.m_aero.z, 0.03) && a.m_aero.z * b.m_aero.z > 0.0);   // the lateral force, and the moment with its sign
+  }
+  const sim::Loads front_off = load_at(off, 0.5, 1.0);
+  const sim::Loads front_on = load_at(on, 0.5, 1.0);
+  CHECK(close(front_off.f_aero.x, front_on.f_aero.x, 0.01));                                  // nose first: the front axial coefficient
+  const sim::Loads tail_off = load_at(off, 0.5, 1.0, 0.0, -1.0);
+  const sim::Loads tail_on = load_at(on, 0.5, 1.0, 0.0, -1.0);
+  CHECK(tail_off.f_aero.x > 0.0 && close(tail_off.f_aero.x, tail_on.f_aero.x, 0.01));        // tail first: the rear one, which is not the front one
+}
+
 TFC_TEST(aero_at_hypersonic_speed_the_body_follows_the_newtonian_table) {
   const sim::Params p = shaped_body(true);
   sim::VehicleSpec g = p.spec;
@@ -924,4 +1006,7 @@ TFC_TEST(ground_a_vehicle_that_touches_the_ground_moving_up_hops_and_a_stage_hel
   v.step(1.0, sim::Controls{});
   CHECK(sim::norm(v.state().r - where) > 0.0 && sim::norm(v.state().r - where) < 1.0);   // carried round by the planet's turning
   CHECK(v.landed());
+  // and its velocity is the ground's: the planet's rate times the distance from the pole, across the radius (the repaired mutation run: env_held_velocity_missing survived)
+  const double ground_speed = sim::norm(v.state().v);
+  CHECK(ground_speed > 0.05 && ground_speed <= 1.0e-7 * sim::kEarthR * 1.001 && near_abs(sim::dot(v.state().v, v.state().r), 0.0, 1e-6 * ground_speed * sim::kEarthR));
 }

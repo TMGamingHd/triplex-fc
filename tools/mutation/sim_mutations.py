@@ -565,6 +565,7 @@ def build_vehicle(name: str, tmp: Path) -> Path:
     """Copy sim/vehicle into tmp, apply the mutant `name` (a key of MUTATIONS, or an EQUIVALENT one, or "BASELINE" for none), and return the directory."""
     dst = tmp / "vehicle"
     shutil.copytree(ROOT / "sim" / "vehicle", dst)
+    shutil.copytree(ROOT / "sim" / "cfd", tmp / "cfd")   # vehicle6.hpp includes "../cfd/viscous.hpp": without its sibling every mutant fails to build (as every one did when the flow solver arrived)
     if name == "BASELINE":
         return dst
     f, old, new = MUTATIONS[name] if name in MUTATIONS else EQUIVALENT[name][:3]

@@ -8,7 +8,7 @@ The [fault matrix](FAULT_MATRIX.md) says what is injected and what is expected; 
 ## 1. Where it stands
 
 * **49 failure modes** of 13 items cover all 102 rows of the fault matrix and all 32 fault kinds of the campaign (the tool refuses to build the page otherwise).
-* **32 critical items** (severity 1, or CN of 6 or more: ECSS 5.3). Evidence for their compensation: 5 none, 5 rig pending, 8 host, rig pending, 14 verified on the host.
+* **32 critical items** (severity 1, or CN of 6 or more: ECSS 5.3). Evidence for their compensation: 6 none, 5 rig pending, 8 host, rig pending, 13 verified on the host.
 * **10 single points** (suffix SP): FM-C8 (flight computer), FM-C9 (flight computer), FM-C10 (flight computer), FM-B2 (can bus), FM-B4 (can bus), FM-A1 (actuator node act), FM-A2 (actuator node act), FM-A3 (actuator node act), FM-U1 (supervisor), FM-W1 (power). These are the limits of the claim, and `LIMITATIONS.md` section 1 lists the same ones.
 * **12 open recommendations** of 19 (1 done, 6 accepted as limits): section 7.
 * **Software FMEA** of 10 data items against 8 fault types: 80 cells, 23 not applicable, **4 gaps** that nothing exercises: section 6.
@@ -41,6 +41,8 @@ Severity (rows) against probability (columns); each cell lists the failure modes
 
 **Evidence** is what stands behind the compensation, from the fault matrix: *verified on the host* (a test passes, on the host, the virtual rig or the real firmware on `vcan0`); *host, rig pending* (the software side passes, the hardware side waits for the rig); *rig pending*; *none* (nothing exercises it: the row carries a recommendation); *out of v1*. **Measured** gives the campaign's own figures for the fault kinds of the row: how many detectable scenarios were isolated, the 95th percentile and the maximum latency in 10 ms frames, and how many scenarios that must be left alone were isolated by mistake (it is 0 everywhere). The latencies are host figures: the board's are a measurement still to make (`STATUS.md`).
 
+**Why the criticality number has no detection factor.** ECSS-Q-ST-30-02C 5.2 ranks a failure mode by severity times probability (CN = SN x PN, 1 to 16); detection and compensation are written down, not multiplied in. The automotive practice of RPN = severity x occurrence x detection (and the AIAG-VDA handbook of 2019 that replaced it with an action-priority table because multiplying ordinal ratings misleads) rates *how likely the fault is to be caught*. Here that is not a judgement but a measurement, so it stands as evidence beside the rating: the campaign's own detection latencies and false isolations, and the fault-matrix status of the test. The ECSS process-FMECA clause 8 does add a detection number; it is for processes and is not used. MIL-STD-1629A's Cm = beta x alpha x lambda x t needs part failure rates, which this project does not have.
+
 ## 3. The worksheet
 
 ### IMU (one of three, on its own computer)
@@ -71,7 +73,7 @@ Severity (rows) against probability (columns); each cell lists the failure modes
 
 | ID | Failure mode | Sev | PN | CN | Seen by | Compensated by | Evidence |
 |---|---|---|---|---|---|---|---|
-| FM-C8* | **A software defect common to every replica**<br>cause: the same code on the same inputs<br>effect: all three commands are wrong together | 1SP | 2 | 8 | a regression is seen by the node on the previous release (ADR-021); a bug in both releases is not seen | none for a defect present in both releases; the claim excludes it (LIMITATIONS 2) | verified on the host (F63, F64)<br>REC-01 |
+| FM-C8* | **A software defect common to every replica**<br>cause: the same code on the same inputs<br>effect: all three commands are wrong together | 1SP | 2 | 8 | a regression is seen by the node on the previous release (ADR-021); a bug in both releases is not seen | none for a defect present in both releases; the claim excludes it (LIMITATIONS 2) | none (a partial defence is tested: F63, F64)<br>REC-01 |
 | FM-C9* | **The guidance or navigation commands a wrong thing**<br>cause: a model of the descent that is wrong, a bad fix<br>effect: the stage misses the tower or leaves its corridor | 2SP | 3 | 9 | none on a board; the host Monte Carlo and the mission runs | none: host only | none<br>REC-02 |
 | FM-C10* | **A cycle that overruns its frame on the target**<br>cause: software double precision on a single-precision FPU, a predictor that runs long<br>effect: late commands from all three computers together | 1SP | 2 | 8 | the firmware's WCET counters; the frame number check | none until it is measured (S1) | none<br>REC-03 |
 
@@ -173,7 +175,7 @@ Severity (rows) against probability (columns); each cell lists the failure modes
 | FM-B6 | CAN bus: Inconsistent omission | 1R | 8 | none | REC-04 |
 | FM-C10 | Flight computer: A cycle that overruns its frame on the target | 1SP | 8 | none | REC-03 |
 | FM-C7 | Flight computer: The estimator state diverges from the others' | 1R | 8 | host, rig pending | REC-08 |
-| FM-C8 | Flight computer: A software defect common to every replica | 1SP | 8 | verified on the host | REC-01 |
+| FM-C8 | Flight computer: A software defect common to every replica | 1SP | 8 | none | REC-01 |
 | FM-G1 | Ground command path: A command forged, replayed, stale or damaged | 1R | 8 | verified on the host | REC-13 |
 | FM-G2 | Ground command path: A dangerous command given by mistake | 1R | 8 | verified on the host | - |
 | FM-L1 | Launch sequence and mission clock: A launch with the system not ready, forged, twice, or a scrub after T-zero | 1R | 8 | verified on the host | - |
@@ -274,4 +276,8 @@ The gaps: sync: frame number and mission frame / frozen (REC-19); act output / m
 `python3 tools/fmeca/fmeca.py check` fails the build when: a row of `FAULT_MATRIX.md` or a fault kind of `tfc_peers.faults.KINDS` is in no failure mode; a failure mode names a row, a kind, a group or a recommendation that does not exist; a requirement named by the fault matrix is not in `REQUIREMENTS.md`; an R mode has a probability number of 3 or 4; a critical item has no test and no open or accepted recommendation; `LIMITATIONS.md` names a single point and no SP mode is under it; a cell of the software FMEA is not a kind, a row, a host test, n/a or a GAP; or this page differs from what the data makes (the measured figures included, which are the campaign's own).
 
 When a fault kind is added: a row in `FAULT_MATRIX.md`, a name in `KINDS`, a failure mode here (or a kind added to an existing one), and, if it is a data fault, a cell of section 6. When the rig produces a measurement: change the evidence of the rows it settles (in `FAULT_MATRIX.md`; this page follows) and the probability numbers it moves (in `data.py`).
+
+## 9. Sources
+
+Read for this page, not recalled: **ECSS-Q-ST-30-02C** (6 March 2009), clauses 4.2 (severity categories and the suffixes), 4.3 and 5.3 (critical items), 5.2 (the criticality number), 7 (hardware-software interaction analysis) and Annexes B and C (the worksheets): <https://ecss.nl/standard/ecss-q-st-30-02c-failure-modes-effects-and-criticality-analysis-fmeafmeca/>. **NASA-GB-8719.13**, the Software Safety Guidebook, section 6.6.8 and appendix D (software FMEA: the data and event fault types, the worksheet, the limits of the method): <https://s3vi.ndc.nasa.gov/ssri-kb/static/resources/nasa-gb-8719.13.pdf>. NASA-STD-8739.8A replaced NASA-STD-8719.13; the guidebook still carries the procedure. The AIAG-VDA action-priority change is from secondary sources only.
 

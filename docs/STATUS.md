@@ -15,7 +15,7 @@
 | What | Now | Where it comes from |
 |---|---|---|
 | C++ tests (ASan and UBSan) | <!--m:cpp_tests-->887<!--/m--> | computed; `ctest --test-dir build` |
-| Python tests (peers, replay, tools, console, docs) | <!--m:python_tests-->639<!--/m--> | computed; `cd sim && python3 -m unittest discover -s tests -t .` (some are live and skip without `vcan0`: [`RESULTS.md`](verification/RESULTS.md)) |
+| Python tests (peers, replay, tools, console, docs) | <!--m:python_tests-->641<!--/m--> | computed; `cd sim && python3 -m unittest discover -s tests -t .` (some are live and skip without `vcan0`: [`RESULTS.md`](verification/RESULTS.md)) |
 | Requirements | <!--m:requirements-->186<!--/m-->, of which <!--m:requirements_test-->152<!--/m--> are checked by a test and <!--m:requirements_hw-->45<!--/m--> by a hardware measurement | computed; [`REQUIREMENTS.md`](verification/REQUIREMENTS.md). <!--m:requirements_rig_pending-->41<!--/m--> say *rig pending* or *waits for* |
 | Decisions | <!--m:adrs-->58<!--/m--> ADRs, the latest <!--m:adr_latest-->ADR-058<!--/m--> | computed; [`DECISIONS.md`](decisions/DECISIONS.md) |
 | Fault matrix | <!--m:fault_matrix_rows-->102<!--/m--> rows, <!--m:fault_kinds-->32<!--/m--> fault kinds injected by the peers | computed; [`FAULT_MATRIX.md`](verification/FAULT_MATRIX.md) |
@@ -23,7 +23,7 @@
 | FMECA | <!--m:fmeca_rows-->102<!--/m--> failure modes | computed; [`FMECA.md`](verification/FMECA.md) |
 | Structural coverage of `core/` and `supervisor/` | <!--m:coverage_core_line-->0<!--/m--> % of lines, <!--m:coverage_core_branch-->0<!--/m--> % of branches (gates 100 and 98) | **recorded** by `python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98`; CI enforces the gate |
 | Structural coverage of `sim/vehicle` | <!--m:coverage_sim_line-->0<!--/m--> % of lines, <!--m:coverage_sim_branch-->0<!--/m--> % of branches (gates 99 and 90) | **recorded**, same command with `--sim-min-line 99 --sim-min-branch 90` |
-| Mutants | <!--m:mutants_unit-->470<!--/m--> in the core and supervisor, <!--m:mutants_sim-->493<!--/m--> in the simulator; the fault campaign can reach <!--m:mutants_campaign-->130<!--/m--> of the first | computed; `tools/mutation/` |
+| Mutants | <!--m:mutants_unit-->470<!--/m--> in the core and supervisor, <!--m:mutants_sim-->494<!--/m--> in the simulator; the fault campaign can reach <!--m:mutants_campaign-->130<!--/m--> of the first | computed; `tools/mutation/` |
 | Mutation result | core: <!--m:mutation_unit_result-->not yet recorded<!--/m-->; simulator: <!--m:mutation_sim_result-->not yet recorded<!--/m--> | **recorded** from the last full run; `python3 tools/mutation/run_unit.py --fast --rerun-survivors` and `run_sim.py` |
 | Headers that no mutant targets | <!--m:headers_without_mutants-->9<!--/m--> of <!--m:core_headers-->38<!--/m--> in core and supervisor (the guidance, navigation and attitude control, the sensor driver); <!--m:sim_headers_without_mutants-->12<!--/m--> in `sim/vehicle` | computed; `python3 tools/mutation/check_tables.py --report` |
 | Flight code | <!--m:core_lines-->10,344<!--/m--> lines in <!--m:core_headers-->38<!--/m--> header-only files, no heap, no exceptions, no RTTI | computed; `python3 tools/check_standard.py`, `tools/check_elf.sh` |
@@ -72,7 +72,7 @@ Each row is a thing that cannot be settled without the parts. "Where" is the pro
 From the FMECA ([`FMECA.md`](verification/FMECA.md)), the review of the core ([`CODE_REVIEW_CORE.md`](verification/CODE_REVIEW_CORE.md)) and the review against the field's practice (`FUTURE_WORK.md` 6a and 6b). In the order that would raise a reader's confidence most per week:
 
 1. **The board.** Every row of section 5; the largest single gain.
-2. **Critical items with nothing that exercises their compensation:** the guidance (host only, and the whole-mission Monte Carlo catches the stage in none of 100 flights under the assumed dispersions), the cycle time on the target, ACT silent or hung, inconsistent omission on the bus, the single power rail.
+2. **Critical items with no compensation, or nothing that exercises it** (six of the 32, section 1 of `FMECA.md`): a defect common to every replica (accepted: the claim excludes it), the guidance (host only, and the whole-mission Monte Carlo catches the stage in none of 100 flights under the assumed dispersions), the cycle time on the target, ACT silent or hung, inconsistent omission on the bus, and the single power rail.
 3. **An outside reader** for `core/`: the review here is one fresh reader of the same lineage as the author; the parts it did not read (the guidance) and the requirements themselves are for a human.
 4. **Mutation cover of the guidance and the mission code**, which carry no mutants.
 5. **The software FMEA's gaps:** ACT's output frame as the go/no-go reads it (the freshness rule is in the firmware, not the core, and untested), a SYNC whose counter stops, and a heartbeat that lies (the campaign's peers send none).

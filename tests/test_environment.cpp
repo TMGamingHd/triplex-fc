@@ -334,6 +334,12 @@ TFC_TEST(environment_an_east_north_wind_profile_is_put_in_the_launch_frame_by_th
     CHECK(near_abs(std::sqrt((w.y * w.y) + (w.z * w.z)), 10.0, 1e-12));   // the turn keeps the speed
     CHECK(near_abs(v.mean_wind_ms(500.0), 10.0, 1e-12));
   }
+  sc.wind_scale = 2.5;          // the scenario's scale multiplies the profile as well (found by the repaired mutation run: wind_profile_scale_ignored survived)
+  {
+    const sim::Vehicle6 v(p, sc);
+    CHECK(near_abs(v.mean_wind_ms(500.0), 25.0, 1e-12) && near_abs(v.wind_at(500.0, 0.0).y, 25.0 * std::sqrt(0.5), 1e-12));
+  }
+  sc.wind_scale = 1.0;
   // the wind scale scales it and the profile is read and written back; altitudes that do not increase are refused
   const std::string text = R"({
     "stages": [{"dry_mass_kg": 100, "length_m": 2, "radius_m": 0.2}],
