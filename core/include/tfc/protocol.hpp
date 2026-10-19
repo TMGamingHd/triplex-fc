@@ -30,6 +30,7 @@ constexpr uint32_t kSimState = 0x503;      // simulator telemetry: altitude, spe
 constexpr uint32_t kSimTelemetry = 0x504;  // simulator telemetry: dynamic pressure, attitude error
 constexpr uint32_t kSimFlags = 0x505;      // simulator: flags, engines on, time
 constexpr uint32_t kSimGnss = 0x506;       // simulator: the GNSS fix, three frames 0x506 to 0x508 (position, velocity)
+constexpr uint32_t kSimEngines = 0x509;    // the engine controllers' health word, two frames 0x509 and 0x50A (engines 0 to 47 and 48 to 63)
 constexpr uint32_t kSimLast = 0x50F;
 constexpr uint32_t kGround = 0x510;     // operator / ground command (lowest priority of the control traffic)
 }  // namespace id
@@ -709,6 +710,7 @@ struct PropCommand {
   uint8_t events = 0U;
   uint8_t phase = 0U;
   float roll_deg = 0.0F;
+  uint8_t engines = 0U;       // how many of the engines of the commanded groups to run, the healthy ones in the order of the vehicle file (0: all of them): the engine controller skips an engine that is out
 };
 struct DecodedProp {
   PropCommand p;
@@ -729,7 +731,7 @@ inline Frame pack_prop(uint8_t node, const PropCommand& c, uint8_t seq) noexcept
   const float r = c.roll_deg / kRollLsbDeg;
   const float rc = r < -127.0F ? -127.0F : (r > 127.0F ? 127.0F : r);
   f.data[4] = static_cast<uint8_t>(static_cast<int8_t>(rc >= 0.0F ? rc + 0.5F : rc - 0.5F));
-  f.data[5] = 0U;
+  f.data[5] = c.engines;
   detail::seal(f, seq);
   return f;
 }
@@ -744,6 +746,7 @@ inline DecodedProp unpack_prop(const Frame& f) noexcept {
   d.p.events = f.data[2];
   d.p.phase = f.data[3];
   d.p.roll_deg = static_cast<float>(static_cast<int8_t>(f.data[4])) * kRollLsbDeg;
+  d.p.engines = f.data[5];
   d.seq = f.data[6];
   d.ok = true;
   return d;
@@ -861,6 +864,35 @@ inline bool unpack_gnss(const Frame& f, GnssRaw& g, uint8_t& seq, unsigned& part
     g.vel_cms[1] = detail::get_i24(f, 0);
     g.vel_cms[2] = detail::get_i24(f, 3);
   }
+  seq = f.data[6];
+  return true;
+}
+
+// 0x509 and 0x50A, the engine controllers' health word (docs/design/GNC.md, ADR-058): bit e of the 64-bit word is set when engine e of the vehicle file has been declared out (it does not produce the thrust it
+// is commanded to, or its controller has shut it down). Frame 0x509 carries engines 0 to 47 in bytes 0 to 5 (bit i of the 48-bit number is engine i), frame 0x50A engines 48 to 63. The word only grows: an engine
+// that is out stays out for the flight. A receiver ORs what it hears into what it has, so a frame that is lost is made up by the next, and a frame that does not pass its check is not used.
+constexpr unsigned kEngineHealthBits = 48U;
+inline Frame pack_engine_health(unsigned part, uint64_t out_mask, uint8_t seq) noexcept {
+  Frame f;
+  f.id = id::kSimEngines + (part == 0U ? 0U : 1U);
+  const uint64_t slice = (out_mask >> (part == 0U ? 0U : kEngineHealthBits)) & 0xFFFFFFFFFFFFULL;
+  for (unsigned i = 0; i < 6U; ++i) {
+    f.data[i] = static_cast<uint8_t>((slice >> (8U * i)) & 0xFFU);
+  }
+  detail::seal(f, seq);
+  return f;
+}
+
+// The bits of one frame, in their place in the 64-bit word. False if it is not an engine health frame or its check fails.
+inline bool unpack_engine_health(const Frame& f, uint64_t& out_bits, uint8_t& seq) noexcept {
+  if ((f.id != id::kSimEngines && f.id != id::kSimEngines + 1U) || !detail::check(f)) {
+    return false;
+  }
+  uint64_t slice = 0U;
+  for (unsigned i = 0; i < 6U; ++i) {
+    slice |= static_cast<uint64_t>(f.data[i]) << (8U * i);
+  }
+  out_bits = f.id == id::kSimEngines ? slice : (slice << kEngineHealthBits);
   seq = f.data[6];
   return true;
 }

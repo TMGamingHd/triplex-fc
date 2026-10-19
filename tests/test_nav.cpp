@@ -7,6 +7,7 @@
 
 #include "tfc_test.hpp"
 
+#include "tfc/flight.hpp"
 #include "tfc/nav.hpp"
 
 namespace {
@@ -179,7 +180,9 @@ TFC_TEST(nav_propulsion_and_surface_commands_survive_the_frames_and_are_voted_by
   p.events = tfc::propbit::kSeparate | tfc::propbit::kChute1;
   p.phase = 7U;
   p.roll_deg = -3.3F;
+  p.engines = 13U;   // the number of engines to run (0: all of the commanded groups)
   const tfc::DecodedProp d = tfc::unpack_prop(tfc::pack_prop(2U, p, 42U));
+  CHECK(d.ok && d.p.engines == 13U && tfc::unpack_prop(tfc::pack_prop(0U, tfc::PropCommand{}, 1U)).p.engines == 0U);
   CHECK(d.ok && d.seq == 42U && std::fabs(d.p.throttle - 0.735F) <= 0.0026F && d.p.groups == 0x0DU && d.p.events == p.events && d.p.phase == 7U && std::fabs(d.p.roll_deg + 3.25F) < 0.13F);
   tfc::PropCommand over;
   over.throttle = 1.7F;
@@ -293,4 +296,33 @@ TFC_TEST(nav_two_fixes_with_no_frame_between_them_give_no_attitude_correction) {
   fix.v = n.velocity() + Vec3{0.0, 0.5, 0.0};
   n.apply_fix(fix);   // no time since the last: nothing to divide by
   CHECK(tfc::dm::norm(n.take_attitude_correction()) == 0.0);
+}
+
+// Verifies: TFC-SIM-022
+TFC_TEST(nav_the_engine_health_word_travels_in_two_frames_and_a_flight_function_takes_it_for_its_own_frame_only_and_keeps_every_engine_it_has_heard_of) {
+  // the 64-bit word in two frames: engines 0 to 47 in 0x509, 48 to 63 in 0x50A
+  const uint64_t word = (uint64_t{1} << 0) | (uint64_t{1} << 20) | (uint64_t{1} << 47) | (uint64_t{1} << 48) | (uint64_t{1} << 63);
+  const tfc::Frame lo = tfc::pack_engine_health(0U, word, 9U);
+  const tfc::Frame hi = tfc::pack_engine_health(1U, word, 9U);
+  CHECK(lo.id == tfc::id::kSimEngines && hi.id == tfc::id::kSimEngines + 1U && lo.id <= tfc::id::kSimLast && hi.id <= tfc::id::kSimLast);
+  uint64_t bits = 0U;
+  uint8_t seq = 0U;
+  CHECK(tfc::unpack_engine_health(lo, bits, seq) && seq == 9U && bits == ((uint64_t{1} << 0) | (uint64_t{1} << 20) | (uint64_t{1} << 47)));
+  CHECK(tfc::unpack_engine_health(hi, bits, seq) && bits == ((uint64_t{1} << 48) | (uint64_t{1} << 63)));
+  tfc::Frame damaged = lo;
+  damaged.data[2] ^= 0x10U;
+  CHECK(!tfc::unpack_engine_health(damaged, bits, seq) && !tfc::unpack_engine_health(tfc::pack_prop(0U, tfc::PropCommand{}, 9U), bits, seq));
+  // a flight function that flies a mission takes the frames of its own frame number and ORs them in: a lost frame is made up by the next, and an engine that has been heard of is out for good
+  tfc::gnc::Tables t;
+  tfc::FlightFunction plain;
+  plain.begin_frame(9U, 0x07U);
+  CHECK(!plain.on_engine_frame(lo) && plain.engine_out() == 0U);   // (no mission: nothing to tell)
+  tfc::FlightFunction pilot;
+  pilot.enable_gnc(&t);
+  pilot.begin_frame(9U, 0x07U);
+  CHECK(!pilot.on_engine_frame(tfc::pack_engine_health(0U, word, 3U)) && !pilot.on_engine_frame(damaged) && pilot.engine_out() == 0U);   // (the frame of an earlier cycle; a damaged one)
+  CHECK(pilot.on_engine_frame(lo) && pilot.engine_out() == ((uint64_t{1} << 0) | (uint64_t{1} << 20) | (uint64_t{1} << 47)));
+  pilot.begin_frame(10U, 0x07U);
+  CHECK(pilot.on_engine_frame(tfc::pack_engine_health(1U, word, 10U)) && pilot.engine_out() == word);
+  CHECK(pilot.on_engine_frame(tfc::pack_engine_health(0U, uint64_t{1} << 5, 10U)) && pilot.engine_out() == (word | (uint64_t{1} << 5)));   // (it only grows)
 }

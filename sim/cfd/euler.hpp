@@ -6,6 +6,8 @@
 #include <array>
 #include <cmath>
 
+#include "eos.hpp"
+
 namespace sim::cfd {
 
 // The primitive state: density, the three velocity components, pressure.
@@ -23,27 +25,28 @@ using Cons = std::array<double, 5>;
 [[nodiscard]] inline double vel(const Prim& s, int d) { return d == 0 ? s.u : (d == 1 ? s.v : s.w); }
 inline void set_vel(Prim& s, int d, double c) { (d == 0 ? s.u : (d == 1 ? s.v : s.w)) = c; }
 
-[[nodiscard]] inline Cons to_cons(const Prim& s, double g) {
+[[nodiscard]] inline Cons to_cons(const Prim& s, const Gas& g) {
   const double ke = 0.5 * s.rho * ((s.u * s.u) + (s.v * s.v) + (s.w * s.w));
-  return {s.rho, s.rho * s.u, s.rho * s.v, s.rho * s.w, (s.p / (g - 1.0)) + ke};
+  return {s.rho, s.rho * s.u, s.rho * s.v, s.rho * s.w, (s.rho * g.e_from_p(s.rho, s.p)) + ke};
 }
 
-[[nodiscard]] inline Prim to_prim(const Cons& q, double g) {
+[[nodiscard]] inline Prim to_prim(const Cons& q, const Gas& g) {
   Prim s;
   s.rho = q[0];
   const double inv = 1.0 / q[0];
   s.u = q[1] * inv;
   s.v = q[2] * inv;
   s.w = q[3] * inv;
-  s.p = (g - 1.0) * (q[4] - (0.5 * q[0] * ((s.u * s.u) + (s.v * s.v) + (s.w * s.w))));
+  const double e = (q[4] - (0.5 * q[0] * ((s.u * s.u) + (s.v * s.v) + (s.w * s.w)))) * inv;   // the specific internal energy
+  s.p = g.p_from_e(s.rho, e);
   return s;
 }
 
-[[nodiscard]] inline double sound(const Prim& s, double g) { return std::sqrt(g * s.p / s.rho); }
+[[nodiscard]] inline double sound(const Prim& s, const Gas& g) { return g.sound(s.rho, s.p); }
 
 // The flux of the conserved quantities through a face whose normal is the axis d, from the state on its low side (l) and its high side (r): HLLC with the wave speeds of Einfeldt (Roe-averaged),
 // and HLL in its place when the two sides differ in pressure by more than `shock_ratio` (a shock lying along the face: HLLC across it can grow the carbuncle, a spurious bump on a bow shock).
-[[nodiscard]] inline Cons flux(const Prim& l, const Prim& r, int d, double g, double shock_ratio = 1.8) {
+[[nodiscard]] inline Cons flux(const Prim& l, const Prim& r, int d, const Gas& g, double shock_ratio = 1.8) {
   const int t1 = (d + 1) % 3;
   const int t2 = (d + 2) % 3;
   const double un_l = vel(l, d);
@@ -52,8 +55,10 @@ inline void set_vel(Prim& s, int d, double c) { (d == 0 ? s.u : (d == 1 ? s.v : 
   const double c_r = sound(r, g);
   const double ke_l = 0.5 * ((l.u * l.u) + (l.v * l.v) + (l.w * l.w));
   const double ke_r = 0.5 * ((r.u * r.u) + (r.v * r.v) + (r.w * r.w));
-  const double e_l = (l.p / (g - 1.0)) + (l.rho * ke_l);
-  const double e_r = (r.p / (g - 1.0)) + (r.rho * ke_r);
+  const double ei_l = l.rho * g.e_from_p(l.rho, l.p);   // the internal energy per volume
+  const double ei_r = r.rho * g.e_from_p(r.rho, r.p);
+  const double e_l = ei_l + (l.rho * ke_l);
+  const double e_r = ei_r + (r.rho * ke_r);
   // Roe averages for the wave speeds
   const double sl = std::sqrt(l.rho);
   const double sr = std::sqrt(r.rho);
@@ -65,7 +70,8 @@ inline void set_vel(Prim& s, int d, double c) { (d == 0 ? s.u : (d == 1 ? s.v : 
   const double v1_roe = ((sl * vel(l, t1)) + (sr * vel(r, t1))) * inv;
   const double v2_roe = ((sl * vel(l, t2)) + (sr * vel(r, t2))) * inv;
   const double q_roe = 0.5 * ((u_roe * u_roe) + (v1_roe * v1_roe) + (v2_roe * v2_roe));
-  const double c_roe = std::sqrt(std::max(1e-30, (g - 1.0) * (h_roe - q_roe)));
+  const double gm = g.air != nullptr ? 1.0 + (0.5 * ((l.p / ei_l) + (r.p / ei_r))) : g.gamma;   // a real gas: the effective gamma of the two sides
+  const double c_roe = std::sqrt(std::max(1e-30, (gm - 1.0) * (h_roe - q_roe)));
   const double s_l = std::min(un_l - c_l, u_roe - c_roe);
   const double s_r = std::max(un_r + c_r, u_roe + c_roe);
   // the physical fluxes of each side
@@ -135,9 +141,10 @@ enum class Limiter : int { Minmod = 0, VanAlbada = 1, VanLeer = 2 };
 
 // The state a far-field boundary gives the ghost cell: the free stream, and the inside state where the flow leaves, mixed through the Riemann invariants of the normal direction (n_out is the outward
 // unit normal, axis d and sign +1 or -1). For a supersonic inflow it is the free stream, for a supersonic outflow the inside; for a subsonic face the invariant that comes from outside is the free stream's.
-[[nodiscard]] inline Prim farfield_state(const Prim& inside, const Prim& inf, int d, double sign, double g) {
-  const double ci = sound(inside, g);
-  const double cf = sound(inf, g);
+[[nodiscard]] inline Prim farfield_state(const Prim& inside, const Prim& inf, int d, double sign, const Gas& gas) {
+  const double g = gas.gamma;   // the far field is the cold free stream: the perfect gas's relations
+  const double ci = std::sqrt(g * inside.p / inside.rho);
+  const double cf = std::sqrt(g * inf.p / inf.rho);
   const double un_i = sign * vel(inside, d);   // along the outward normal: positive leaves
   const double un_f = sign * vel(inf, d);
   const double m = un_i / ci;

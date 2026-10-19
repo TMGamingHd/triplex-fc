@@ -126,6 +126,7 @@ class Fetching(unittest.TestCase):
 
 
 class Routes(unittest.TestCase):
+    # Verifies: TFC-VIEW-009
     def test_the_viewer_serves_the_manifest_and_its_files_behind_the_token(self):
         from tfc_console import services
         with tempfile.TemporaryDirectory() as d:

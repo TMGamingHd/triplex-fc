@@ -66,6 +66,7 @@ Slope slope_of(const sim::AeroGeometry& g, double mach) {
 
 // ---- the components ----
 
+// Verifies: TFC-SIM-012
 TFC_TEST(aero_a_nose_has_the_slope_two_and_the_centre_of_pressure_of_its_shape) {
   const std::array<std::pair<sim::NoseShape, double>, 4> shapes{{{sim::NoseShape::Cone, 0.666}, {sim::NoseShape::TangentOgive, 0.466}, {sim::NoseShape::Parabola, 0.5}, {sim::NoseShape::Ellipse, 0.333}}};
   for (const auto& sh : shapes) {
@@ -591,4 +592,182 @@ TFC_TEST(aero_the_scale_factors_the_running_engines_the_table_and_the_fairing_ac
   }
   fv.aero_summary(0.9, tcn, tcp, tca, ts);
   CHECK(near_abs(tcn, 0.0, 1e-12));  // without it: a bare tube has none
+}
+
+// ---- the flow solver's tables in the plant ----
+
+namespace {
+// A table for the body of shaped_body(): the normal force 1.5 sin(a) cos(a), the axial force 0.30 at every angle (drag; -0.9 from behind), the moment of a centre of pressure at x = 1.4 about x_ref = 0.8.
+sim::CfdAeroDb synthetic_table(const sim::Params& p) {
+  sim::CfdAeroDb db;
+  db.stages = {0};
+  db.x_ref = 0.8;
+  db.s_ref = sim::kPi * 0.25 * 0.01;
+  db.d_ref = 0.1;
+  db.mach = {0.1, 8.0};
+  db.alpha_deg = {0.0, 10.0, 45.0, 90.0, 135.0, 180.0};
+  for (std::size_t i = 0; i < db.mach.size(); ++i) {
+    for (const double a : db.alpha_deg) {
+      const double r = a * sim::kDeg2Rad;
+      const double cn = 1.5 * std::sin(r) * std::cos(r);
+      db.ca.push_back(a < 100.0 ? 0.30 : -0.9);
+      db.ca_base.push_back(a < 100.0 ? 0.0 : -0.2);
+      db.cn.push_back(cn);
+      db.cm.push_back(-cn * (1.4 - 0.8) / db.d_ref);
+    }
+  }
+  (void)p;
+  return db;
+}
+}  // namespace
+
+TFC_TEST(aero_cfd_a_table_from_the_flow_solver_sets_the_body_force_and_moment_in_the_conventions_of_the_build_up) {
+  sim::Params p = shaped_body();
+  p.spec.aero.cfd.push_back(synthetic_table(p));
+  const double a = 10.0 * sim::kDeg2Rad;
+  const sim::Vehicle6 v(p, at_speed(sim::V3{150.0 * std::cos(a), 150.0 * std::sin(a), 0.0}, 5000.0));
+  const sim::Loads l = v.current_loads();
+  const double q_s = l.dynamic_pressure * p.spec.aero.cfd[0].s_ref;
+  const double cn = 1.5 * std::sin(a) * std::cos(a);
+  CHECK(near_abs(-l.f_aero.y, q_s * cn, 1e-9 * q_s) && near_abs(l.f_aero.z, 0.0, 1e-9));                        // opposing the lateral velocity, the table's CN
+  CHECK(-l.f_aero.x > q_s * 0.30 && -l.f_aero.x < q_s * 0.90);                                                   // the table's axial force and the plant's friction (this slender body has eighty times its frontal area in skin) and base drag on top of it
+  // the moment about the centre of gravity: the normal force at x = 1.4 from a centre of mass at x_cg: -q S CN (x_cp - x_cg) about z for a vehicle moving toward +Y
+  const double x_cg = v.mass_props().x_cg;
+  CHECK(near_abs(l.m_aero.z, -q_s * cn * (1.4 - x_cg), 1e-6 * q_s * cn));
+  // the design quantities follow the table: the divergence at the slope of its first positive angle, the summary
+  double cna = 0.0;
+  double xcp = 0.0;
+  double ca = 0.0;
+  double sref = 0.0;
+  v.aero_summary(0.5, cna, xcp, ca, sref);
+  CHECK(near_abs(cna, 1.5 * std::sin(a) * std::cos(a) / a, 1e-9) && near_abs(xcp, 1.4, 1e-9) && near_abs(sref, p.spec.aero.cfd[0].s_ref, 1e-12));
+  CHECK(ca > 0.30 && ca < 0.9);   // the table's 0.30 and the plant's friction and base on top of it (this slender body has eighty times its frontal area in skin)
+  CHECK(v.divergence() > 0.0);   // the centre of pressure is ahead of the centre of mass: unstable
+  // a body with the base to the stream: the table's base pressure and axial force (the air comes from behind: the force pushes forward)
+  const sim::Vehicle6 back(p, at_speed(sim::V3{-150.0, 0.0, 0.0}, 5000.0));
+  CHECK(back.current_loads().f_aero.x > 0.0);
+  // below the table's lowest Mach number the build-up takes over, smoothly: a table that begins at Mach 2 is not used at Mach 0.46 and is whole from Mach 2
+  sim::Params high = p;
+  high.spec.aero.cfd[0].mach = {2.0, 8.0};
+  const sim::Vehicle6 slow(high, at_speed(sim::V3{150.0 * std::cos(a), 150.0 * std::sin(a), 0.0}, 5000.0));
+  const sim::Vehicle6 plain(shaped_body(), at_speed(sim::V3{150.0 * std::cos(a), 150.0 * std::sin(a), 0.0}, 5000.0));
+  CHECK(near_abs(slow.current_loads().f_aero.y, plain.current_loads().f_aero.y, 1e-12 * q_s) && near_abs(slow.current_loads().f_aero.x, plain.current_loads().f_aero.x, 1e-12 * q_s));
+  CHECK(sim::cfdaero::weight(high.spec.aero.cfd[0], 1.7) > 0.0 && sim::cfdaero::weight(high.spec.aero.cfd[0], 1.7) < 1.0 && sim::cfdaero::weight(high.spec.aero.cfd[0], 2.0) == 1.0);
+  double cna_hi = 0.0;
+  double xcp_hi = 0.0;
+  double ca_hi = 0.0;
+  double sref_hi = 0.0;
+  double cna_lo = 0.0;
+  double xcp_lo = 0.0;
+  double ca_lo = 0.0;
+  double sref_lo = 0.0;
+  double cna_mid = 0.0;
+  slow.aero_summary(0.5, cna_lo, xcp_lo, ca_lo, sref_lo);   // the design summary fades the same way: the build-up's numbers below the table, the table's from its lowest Mach number
+  slow.aero_summary(3.0, cna_hi, xcp_hi, ca_hi, sref_hi);
+  slow.aero_summary(1.7, cna_mid, xcp_hi, ca_hi, sref_hi);
+  double cna_plain = 0.0;
+  double xcp_plain = 0.0;
+  double ca_plain = 0.0;
+  double sref_plain = 0.0;
+  plain.aero_summary(0.5, cna_plain, xcp_plain, ca_plain, sref_plain);
+  CHECK(near_abs(cna_lo, cna_plain, 1e-12) && near_abs(xcp_lo, xcp_plain, 1e-12) && near_abs(ca_lo, ca_plain, 1e-12));
+  CHECK(near_abs(cna_hi, 1.5 * std::sin(a) * std::cos(a) / a, 1e-9) && cna_mid != cna_plain && cna_mid != cna_hi);
+  // a flat forward end (a booster without the ship): its pressure force is a drag while it is to the stream, and is the base's business once the base is
+  sim::Params flat = p;
+  flat.spec.aero.cfd[0].ca_fore.assign(flat.spec.aero.cfd[0].ca.size(), 1.2);
+  flat.spec.aero.cfd[0].cm_fore.assign(flat.spec.aero.cfd[0].ca.size(), 0.0);
+  const sim::Vehicle6 blunt(flat, at_speed(sim::V3{150.0 * std::cos(a), 150.0 * std::sin(a), 0.0}, 5000.0));
+  CHECK(near_abs(-blunt.current_loads().f_aero.x, -l.f_aero.x + (q_s * 1.2), 1e-9 * q_s));
+  const sim::Vehicle6 blunt_back(flat, at_speed(sim::V3{-150.0, 0.0, 0.0}, 5000.0));
+  CHECK(near_abs(blunt_back.current_loads().f_aero.x, back.current_loads().f_aero.x, 1e-9 * q_s));   // tail first: it is not in the table's axial force at all
+  // a stage that has left has no table: the build-up takes over
+  sim::Params q = p;
+  q.spec.aero.cfd[0].stages = {1};
+  const sim::Vehicle6 other(q, at_speed(sim::V3{150.0 * std::cos(a), 150.0 * std::sin(a), 0.0}, 5000.0));
+  CHECK(!near_abs(-other.current_loads().f_aero.y, q_s * cn, 1e-3 * q_s));
+  // the plant's scale factors apply to it
+  sim::Params s = p;
+  s.cn_scale = 2.0;
+  const sim::Vehicle6 doubled(s, at_speed(sim::V3{150.0 * std::cos(a), 150.0 * std::sin(a), 0.0}, 5000.0));
+  CHECK(near_abs(-doubled.current_loads().f_aero.y, 2.0 * q_s * cn, 1e-9 * q_s));
+}
+
+TFC_TEST(aero_cfd_a_stage_let_go_flies_on_the_table_of_that_stage_alone) {
+  sim::Params p = shaped_body();
+  p.spec.stages[0].guided = true;
+  sim::StageSpec hi = p.spec.stages[0];
+  hi.name = "upper";
+  hi.x_start = 2.0;
+  hi.x_cg_dry = 2.8;
+  for (sim::SectionSpec& sec : hi.sections) {
+    sec.x_start += 2.0;
+  }
+  for (sim::FinPlanform& f : hi.stabilizers) {
+    f.x_le_root += 2.0;
+  }
+  p.spec.stages.push_back(hi);
+  // three tables: the stack's (CN 1 x), the lower stage's alone (2 x) and the upper stage's alone (3 x), each of the shape of the synthetic one
+  for (const std::vector<int>& st : {std::vector<int>{0, 1}, std::vector<int>{0}, std::vector<int>{1}}) {
+    sim::CfdAeroDb db = synthetic_table(p);
+    db.stages = st;
+    const double k = st.size() == 2U ? 1.0 : (st[0] == 0 ? 2.0 : 3.0);
+    for (std::size_t i = 0; i < db.cn.size(); ++i) {
+      db.cn[i] *= k;
+      db.cm[i] *= k;
+    }
+    p.spec.aero.cfd.push_back(db);
+  }
+  const double a = 10.0 * sim::kDeg2Rad;
+  const sim::Scenario sc = at_speed(sim::V3{150.0 * std::cos(a), 150.0 * std::sin(a), 0.0}, 5000.0);
+  sim::Vehicle6 v(p, sc);
+  const double q_s = v.current_loads().dynamic_pressure * p.spec.aero.cfd[0].s_ref;
+  const double cn = 1.5 * std::sin(a) * std::cos(a);
+  CHECK(near_abs(-v.current_loads().f_aero.y, q_s * cn, 1e-9 * q_s));   // the stack
+  sim::Controls c;
+  c.events = sim::ev::kSeparate;
+  v.step(0.01, c);
+  std::vector<sim::Detached> d = v.take_detached();
+  CHECK(d.size() == 1U && d[0].spec.aero.cfd.size() == 1U && d[0].spec.aero.cfd[0].stages == std::vector<int>{0});
+  const sim::Vehicle6 child = sim::Vehicle6::spawn(d[0], p, sc);
+  const sim::Loads lc = child.current_loads();
+  CHECK(near_abs(-lc.f_aero.y, 2.0 * lc.dynamic_pressure * p.spec.aero.cfd[0].s_ref * 1.5 * std::sin(lc.alpha) * std::cos(lc.alpha), 1e-6 * q_s));   // the lower stage alone: its own table, and not the stack's, which also names stage 0
+  const sim::Loads lp = v.current_loads();
+  CHECK(near_abs(std::hypot(lp.f_aero.y, lp.f_aero.z), 3.0 * lp.dynamic_pressure * p.spec.aero.cfd[0].s_ref * 1.5 * std::sin(lp.alpha) * std::cos(lp.alpha), 5e-3 * q_s * 1.5));   // the upper stage that goes on flying: the table for it alone (to the few parts in a thousand of the turning it has after the release)
+}
+
+TFC_TEST(aero_cfd_the_table_is_read_and_written_and_a_bad_one_is_refused) {
+  const std::string text = R"({
+    "stages": [{"dry_mass_kg": 100, "length_m": 2, "radius_m": 0.2, "sections": [{"kind": "tube", "x_start_m": 0, "length_m": 2, "d_aft_m": 0.4, "d_fore_m": 0.4}]}],
+    "aero": {"cfd": [{"stages": [0], "x_ref_m": 1, "s_ref_m2": 0.12, "d_ref_m": 0.4, "mach": [1, 3], "alpha_deg": [0, 90],
+      "ca": [[0.3, 0], [0.2, 0]], "ca_base": [[0, 0], [0, 0]], "cn": [[0, 1], [0, 1.1]], "cm": [[0, -2], [0, -2.2]]}]}
+  })";
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(sim::read_vehicle(text, v, errors) && errors.empty() && v.params.spec.aero.cfd.size() == 1U && v.params.spec.aero.cfd[0].cn.size() == 4U);
+  const std::string once = sim::write_vehicle(v);
+  sim::VehicleFile w;
+  CHECK(sim::read_vehicle(once, w, errors) && errors.empty() && sim::write_vehicle(w) == once && w.params.spec.aero.cfd[0].cm[3] == -2.2);
+  // the flat forward end of a stage flown alone is kept apart: written and read back with the rest, and a table with only one of the two is refused
+  std::string fore = text;
+  const std::string cm_text = "\"cm\": [[0, -2], [0, -2.2]]";
+  fore.replace(fore.find(cm_text), cm_text.size(), cm_text + ", \"ca_fore\": [[1.4, 0], [1.5, 0]], \"cm_fore\": [[0, 0.1], [0, 0.2]]");
+  sim::VehicleFile f;
+  errors.clear();
+  CHECK(sim::read_vehicle(fore, f, errors) && errors.empty() && f.params.spec.aero.cfd[0].ca_fore.size() == 4U && f.params.spec.aero.cfd[0].cm_fore[3] == 0.2);
+  const std::string fore_once = sim::write_vehicle(f);
+  sim::VehicleFile g;
+  CHECK(sim::read_vehicle(fore_once, g, errors) && errors.empty() && sim::write_vehicle(g) == fore_once && g.params.spec.aero.cfd[0].ca_fore[2] == 1.5);
+  std::string half = fore;
+  const std::string cmf_text = ", \"cm_fore\": [[0, 0.1], [0, 0.2]]";
+  half.replace(half.find(cmf_text), cmf_text.size(), "");
+  errors.clear();
+  CHECK(!sim::read_vehicle(half, f, errors) && !errors.empty());
+  std::string bad = text;
+  bad.replace(bad.find("[[0.3, 0], [0.2, 0]]"), 20, "[[0.3, 0]]");
+  errors.clear();
+  CHECK(!sim::read_vehicle(bad, v, errors) && !errors.empty() && errors[0].find("aero.cfd[0]") != std::string::npos);
+  bad = text;
+  bad.replace(bad.find("\"alpha_deg\": [0, 90]"), 20, "\"alpha_deg\": [5, 90]");
+  errors.clear();
+  CHECK(!sim::read_vehicle(bad, v, errors));
 }

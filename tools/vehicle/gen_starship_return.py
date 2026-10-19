@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Writes vehicles/missions/starship_return.json: the Starship V3 class stack with a MISSION in the file (docs/design/GNC.md): the flight computers fly the whole of it, the booster comes back and is caught by the tower.
 
-    python3 tools/vehicle/gen_starship_return.py [--out vehicles/missions/starship_return.json]
+    python3 tools/vehicle/gen_starship_return.py [--out vehicles/missions/starship_return.json] [--aerodb vehicles/aerodb | --no-aerodb]
 
 The engines are listed one by one (a file with a hundred lines of engines is not a file anyone edits), so the file is generated; the numbers are in this script, with where each comes from. The file is a design
 of mine from PUBLICLY REPORTED numbers, not SpaceX data (the header of the file says so; docs/design/RECOVERY.md section 2 lists every number and its source).
@@ -37,12 +37,24 @@ SHIP = {
     "roll_deg": 12.0,           # the small roll of the climb: out to this many degrees and back (starting at 10 s, over 40 s); my estimate: launchers roll to their azimuth after the tower, nothing Starship-specific was found
 }
 
+# The bandwidth of the booster's attitude loop in its landing burn (rad/s). 1.0 until 18 Oct 2026, 2.0 since: the gains are designed from probes of the plant along the nominal flight, and the probes used to go on
+# after the stage was caught (a body held at rest by the arms kept being probed for the rest of the mission), which diluted the average control effectiveness the allocation is made from; with the probes stopped at the
+# catch (mission_world.hpp) the same loop at 1.0 rad/s catches the booster 33 times in 40 and at 1.5 to 3.0 rad/s 19 times in 20 (docs/design/CFD.md section 14).
+BOOSTER_LANDING_WN = 2.0
+
 # ---- the vehicle ----
 # Sources (read 9-10 Oct 2026): the SpaceX Starship page and Wikipedia (Super Heavy, Raptor, Starship flight 12); Flight 12 (22 May 2026): max-Q 0:45, MECO 2:22, hot staging 2:24, boost-back 2:30, ship cut-off
 # 8:11 (planned), apogee about 195 km. Super Heavy: 72.3 m, 9 m, 33 Raptor 3 of 2.449 MN at sea level (80.8 MN), 3,650 t of propellant. The ship: three sea-level and three vacuum Raptor, 1,600 t.
 # MY ESTIMATES (nothing public): the booster's dry mass 275 t (the Block 1/2 figure), the ship's dry mass 100 t, the vacuum Raptor's thrust 2.697 MN (Isp 380 s), the tanks' split and positions.
-SEA_LEVEL = dict(thrust_vac=2_584_000, area=1.33, isp=350)   # 2.449 MN at sea level + 101325 Pa x 1.33 m^2
-VACUUM = dict(thrust_vac=2_697_000, area=4.5, isp=380)
+# The nozzles (docs/design/PROPULSION.md; the analysis `tfc_propulsion` checks them against an ideal nozzle): the chamber pressure of Raptor 3 is reported near 350 bar, the sea-level nozzle's area ratio 34 and the
+# vacuum nozzle's 90 (from memory of the public pages, MY ESTIMATES for gamma, 1.2 for a methane-oxygen exhaust). With them the sea-level engine's ideal exit area is 1.34 m^2 against the 1.33 here; the vacuum engine's
+# is 3.57 m^2, and the files before ADR-057 had 4.5 (a 2.4 m exit, from memory): the analysis flagged it as 26 % from an ideal nozzle of that area ratio and thrust, so the area is now the ideal one. The vacuum
+# engine is not run in the atmosphere, so the change moves no flight by more than the pressure on one square metre at 45 km (150 N).
+SEA_LEVEL = dict(thrust_vac=2_584_000, area=1.33, isp=350, pc=3.5e7, eps=34, gamma=1.2)   # 2.449 MN at sea level + 101325 Pa x 1.33 m^2
+VACUUM = dict(thrust_vac=2_697_000, area=3.57, isp=380, pc=3.5e7, eps=90, gamma=1.2)
+ISP_THROTTLE_LOSS = 0.02    # MY ESTIMATE: a fifth of a per cent of Isp per ten per cent of throttle below full (the chamber pressure falls and the nozzle runs off its design point); no public number
+ROLL_GAIN = 1.0             # degrees of tangential deflection per degree of the roll command, for every engine that gimbals: the differential gimbal that rolls a cluster (the cold-gas thrusters roll it when the engines are off)
+PER_ENGINE_GIMBAL = True    # every engine that gimbals has its own angle and servo (ADR-057); --shared-gimbal flies the stage's common angle as before
 
 
 def ring(n: int, radius: float, start_deg: float):
@@ -51,14 +63,30 @@ def ring(n: int, radius: float, start_deg: float):
 
 def engine(stage, yz, spec, group, gimbal=True, x=0.0):
     e = {"stage": stage, "position_m": [x, round(yz[0], 4), round(yz[1], 4)], "thrust_vac_n": spec["thrust_vac"], "exit_area_m2": spec["area"], "isp_vac_s": spec["isp"], "group": group,
-         "min_throttle": 0.4, "rise_s": 0.8, "tail_s": 0.8}
+         "min_throttle": 0.4, "rise_s": 0.8, "tail_s": 0.8, "chamber_pressure_pa": spec["pc"], "area_ratio": spec["eps"], "gamma": spec["gamma"], "isp_throttle_loss": ISP_THROTTLE_LOSS}
     if not gimbal:
         e["gimbal"] = False
+    elif PER_ENGINE_GIMBAL:
+        e["roll_gain"] = ROLL_GAIN
     return e
 
 
 def thruster(stage, x, control, yz, direction, thrust):
     return {"stage": stage, "position_m": [x, yz[0], yz[1]], "thrust_vac_n": thrust, "exit_area_m2": 0.0, "isp_vac_s": 80, "gimbal": False, "direction": list(direction), "control": control, "full_cmd_deg": 2.0}
+
+
+# the flow solver's tables (tools/cfd/make_aerodb.py), inlined into the plant's `aero.cfd` when --aerodb names the directory that holds them: the stack's, the ship's and the booster's
+AERODB: list = []
+
+
+def load_aerodb(directory: str) -> list:
+    """The tables in `directory` (starship_stack.json, starship_ship.json, starship_booster.json, those that exist), in the order the plant looks for them."""
+    out = []
+    for name in ("stack", "ship", "booster"):
+        f = Path(directory) / f"starship_{name}.json"
+        if f.exists():
+            out.append(json.loads(f.read_text())["cfd"])
+    return out
 
 
 def plant():
@@ -95,10 +123,10 @@ def plant():
     for ch, (nm, x, az, area, chord, span, cdir) in enumerate((("aft flap port", 73.6, 80, 36.9, 4.1, 9.0, 1), ("aft flap starboard", 73.6, 280, 36.9, 4.1, 9.0, -1), ("forward flap port", 110.0, 112, 16.2, 2.7, 6.0, 1), ("forward flap starboard", 110.0, 248, 16.2, 2.7, 6.0, -1))):
         surfaces.append({"name": nm, "stage": 1, "kind": "flap", "axial_hinge": True, "x_hinge_m": x, "azimuth_deg": az, "radius_m": 4.5 if span > 7.5 else 4.0, "area_m2": area, "chord_m": chord, "span_m": span, "chord_dir": cdir,
                          "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": ch, "deployed": False})
-    return {"name": "starship-v3-class-return",
+    return {**({"per_engine_gimbal": True} if PER_ENGINE_GIMBAL else {}), "name": "starship-v3-class-return",
             "description": "Starship V3 class stack that flies its whole mission on the flight computers: ascent, hot staging, orbital insertion of the ship (PEG), and the booster's flip, boost-back, grid-fin entry, landing burn and catch.",
             "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "ideal_roll_control": False, "landing_model": True, "max_substep_s": 0.004},
-            "aero": {"diameter_m": 9.0, "roughness": 1.2, "full_regime": True, "nose_radius_m": 0.4},
+            "aero": {"diameter_m": 9.0, "roughness": 1.2, "full_regime": True, "nose_radius_m": 0.4, **({"cfd": AERODB} if AERODB else {})},
             "stages": [booster, ship], "engines": engines, "payloads": [{"name": "payload", "mass_kg": 37500, "x_m": 112}], "surfaces": surfaces}
 
 
@@ -198,7 +226,7 @@ def mission():
             {"name": "boostback", "kind": "boostback", "end": {"cutoff": True}, "groups": [0, 1, 2, 3], "mixer": 0, "throttle": 1.0, "bias_m": 625, "reserve_mass_kg": 330000, "slew_dps": 8, "events": ["deploy_surfaces"]},
             {"name": "coast", "kind": "coast", "hold": "radial", "end": {"altitude_below_m": 70000}, "groups": [], "mixer": 3, "slew_dps": 8},
             {"name": "entry", "kind": "glide", "end": {"ignition_below_m": 6000}, "groups": [], "mixer": 3, "alpha_max_deg": 12, "gain_deg_per_km": 2.0, "slew_dps": 10, "alpha_brake_deg": 0, "brake_max_deg": 0, "lift_area_per_deg_m2": 3.5},
-            {"name": "landing burn", "kind": "landing", "end": {"touchdown": True}, "groups": [0, 1, 2], "mixer": 3, "landing_groups": {"one": [0, 1, 2], "two": [0, 1, 2], "three": [0, 1, 2], "many": [0, 1, 2, 3]}, "slew_dps": 25, "wn_rad_s": 1.0},
+            {"name": "landing burn", "kind": "landing", "end": {"touchdown": True}, "groups": [0, 1, 2], "mixer": 3, "landing_groups": {"one": [0, 1, 2], "two": [0, 1, 2], "three": [0, 1, 2], "many": [0, 1, 2, 3]}, "slew_dps": 25, "wn_rad_s": BOOSTER_LANDING_WN},
             {"name": "done", "kind": "done", "end": {"time_s": 100000}, "groups": [], "mixer": 3}],
     }
 
@@ -246,13 +274,31 @@ HEADER_SHIP = """// The Starship V3 class stack WITH A MISSION IN THE FILE: the 
 """
 
 
+HEADER_EARTH = HEADER.replace("// The Starship V3 class stack WITH A MISSION IN THE FILE:", "// The same mission on a ROTATING Earth (7.292e-5 rad/s; the launch site is at 28.5 N, the stack goes east): the pad is carried round the planet's axis, the air turns with it, and the guidance aims at where the pad will be when the stage gets there (docs/design/GNC.md, ADR-056). The Starship V3 class stack WITH A MISSION IN THE FILE:", 1).replace("starship_return.json            #", "starship_return_earth.json      #")
+
+
+# Engines that fail in the engines-out variant (docs/design/PROPULSION.md section 9, ADR-058): (seconds since T-zero, the engine's index in the file). A ring engine (7), an outer fixed engine (25) and an inner
+# engine (1) go out on the way up, and two of the thirteen the landing burn lights (the ring engines 3 and 9) go out five seconds before it. The mission still reaches orbit and the booster is caught.
+ENGINES_OUT = [(20, 7), (60, 25), (100, 1), (300, 3), (300, 9)]
+HEADER_ENGINES_OUT = HEADER.replace("// The Starship V3 class stack WITH A MISSION IN THE FILE:", "// The same mission with FIVE ENGINES OUT (the scenario's engine_failures: three on the way up and two of the booster's landing engines five seconds before the landing; ADR-058): the flight computers hear of each from the engine controllers, the engines that are left gimbal to trim, the guidance allows for the thrust that is gone and the landing burn lights the engines that can run. The Starship V3 class stack WITH A MISSION IN THE FILE:", 1).replace("starship_return.json            #", "starship_return_engines_out.json #")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=str(ROOT / "vehicles" / "missions" / "starship_return.json"))
     ap.add_argument("--ship-out", default=str(ROOT / "vehicles" / "missions" / "starship_ship_return.json"), help="the experimental mission in which the ship also deorbits and enters (empty: not written)")
+    ap.add_argument("--earth-out", default=str(ROOT / "vehicles" / "missions" / "starship_return_earth.json"), help="the same mission on a planet that turns (empty: not written)")
+    ap.add_argument("--engines-out-out", default=str(ROOT / "vehicles" / "missions" / "starship_return_engines_out.json"), help="the same mission with five engines out (empty: not written)")
     ap.add_argument("--rig-out", default=str(ROOT / "vehicles" / "starship.json"), help="the vehicle the rig and tfc_fly fly (empty: not written)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="override a number of the ship's return (SHIP in this script), for scanning")
+    ap.add_argument("--aerodb", metavar="DIR", default=str(ROOT / "vehicles" / "aerodb"), help="inline the flow solver's tables found in DIR as the plant's aero.cfd, so that the flight uses them (tools/cfd/make_aerodb.py makes them)")
+    ap.add_argument("--shared-gimbal", action="store_true", help="the stage's engines that gimbal share one angle, as before ADR-057 (no differential gimbal for roll)")
+    ap.add_argument("--no-aerodb", action="store_true", help="leave them out: the plant flies the engineering build-up of AERODYNAMICS.md alone")
     args = ap.parse_args()
+    global PER_ENGINE_GIMBAL
+    PER_ENGINE_GIMBAL = not args.shared_gimbal
+    if not args.no_aerodb:
+        AERODB[:] = load_aerodb(args.aerodb)
     for kv in args.set:
         k, _, val = kv.partition("=")
         if k not in SHIP:
@@ -265,6 +311,17 @@ def main() -> int:
         v = plant()
         v["mission"] = mission()
         Path(path).write_text((HEADER_SHIP if with_return else HEADER) + dump(v) + "\n")
+    if args.earth_out:
+        SHIP["with_return"] = 0
+        v = {"planet": {"preset": "earth"}, **plant()}
+        v["mission"] = mission()
+        Path(args.earth_out).write_text(HEADER_EARTH + dump(v) + "\n")
+    if args.engines_out_out:
+        SHIP["with_return"] = 0
+        v = plant()
+        v["mission"] = mission()
+        v["scenario"] = {"engine_failures": [{"time_s": t, "engine": e} for t, e in ENGINES_OUT]}
+        Path(args.engines_out_out).write_text(HEADER_ENGINES_OUT + dump(v) + "\n")
     if args.rig_out:
         Path(args.rig_out).write_text(HEADER_RIG + dump(rig_vehicle()) + "\n")
     return 0

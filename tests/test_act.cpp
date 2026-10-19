@@ -251,6 +251,7 @@ TFC_TEST(act_starts_in_standby_after_a_power_on_or_a_damaged_record) {
   CHECK(p.output().mode == ActMode::Standby && p.output().pitch_deg == 0.0F);
 }
 
+// Verifies: TFC-RESP-003
 TFC_TEST(act_starts_in_safe_after_a_reset_and_resumes_from_the_stored_output) {
   Bench b;
   b.nominal(5.0F, -3.0F);

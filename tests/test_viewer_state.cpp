@@ -90,6 +90,7 @@ TFC_TEST(viewer_spec_carries_the_centre_of_mass_the_vehicle_has_at_t_zero) {
   CHECK(get(spec, "cg0_m").number > 1.0);
 }
 
+// Verifies: TFC-VIEW-001
 TFC_TEST(viewer_pose_is_consistent_with_the_vehicle) {
   sim::VehicleFile vf = load("two_stage_launcher.json");
   vf.scenario.wind_scale = 0.0;                        // no wind: the velocity through the air is the velocity

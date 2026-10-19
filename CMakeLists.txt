@@ -47,6 +47,7 @@ add_executable(tfc_tests
   tests/test_aero.cpp
   tests/test_newtonian.cpp
   tests/test_landing_plant.cpp
+  tests/test_propulsion.cpp
   tests/test_dmath.cpp
   tests/test_nav.cpp
   tests/test_peg.cpp
@@ -61,6 +62,9 @@ add_executable(tfc_tests
   tests/test_slosh.cpp
   tests/test_flex.cpp
   tests/test_montecarlo.cpp
+  tests/test_margins.cpp
+  tests/test_model_check.cpp
+  tests/test_flightlog.cpp
   tests/test_imu_datasheet.cpp
   tests/test_pad.cpp
   tests/test_launch.cpp
@@ -197,3 +201,21 @@ if(Python3_FOUND)
             ${Python3_EXECUTABLE} -m unittest discover -s tests -t .
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/sim)
 endif()
+
+# The propulsion of a vehicle: the cluster, the nozzles, the gimbal's authority, the engine out (tools/sim/tfc_propulsion.cpp, sim/vehicle/propulsion.hpp, docs/design/PROPULSION.md).
+add_executable(tfc_propulsion tools/sim/tfc_propulsion.cpp)
+target_link_libraries(tfc_propulsion PRIVATE tfc_core)
+target_include_directories(tfc_propulsion PRIVATE sim/vehicle)
+target_compile_options(tfc_propulsion PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
+
+# The stability margins of the attitude loop along a mission, from the design probes (tools/sim/tfc_margins.cpp, sim/vehicle/margins.hpp, docs/design/CONTROL_LOOP.md section 7).
+add_executable(tfc_margins tools/sim/tfc_margins.cpp)
+target_link_libraries(tfc_margins PRIVATE tfc_core)
+target_include_directories(tfc_margins PRIVATE sim/vehicle)
+target_compile_options(tfc_margins PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)
+
+# A Monte Carlo of a whole mission: the chance that the stage is caught and the ship is in orbit, over dispersions of everything at once (tools/sim/tfc_mission_mc.cpp, docs/design/MONTE_CARLO.md section 7).
+add_executable(tfc_mission_mc tools/sim/tfc_mission_mc.cpp)
+target_link_libraries(tfc_mission_mc PRIVATE tfc_core Threads::Threads)
+target_include_directories(tfc_mission_mc PRIVATE sim/vehicle)
+target_compile_options(tfc_mission_mc PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Werror -fno-exceptions -fno-rtti)

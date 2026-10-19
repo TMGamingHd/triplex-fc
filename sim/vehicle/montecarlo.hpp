@@ -143,6 +143,7 @@ inline const std::vector<Target>& targets() {
       {"cn_scale", "x", "the normal-force slope times this", [](L l, double v) { l.cfg.params.cn_scale = v; }},
       {"thrust_misalign_pitch_deg", "deg", "the thrust direction's constant offset, pitch plane", [](L l, double v) { l.cfg.params.thrust_misalign_pitch_deg = v; }},
       {"thrust_misalign_yaw_deg", "deg", "the thrust direction's constant offset, yaw plane", [](L l, double v) { l.cfg.params.thrust_misalign_yaw_deg = v; }},
+      {"gnss_sigma_m", "m", "the GNSS receiver's position noise (a mission's: the one receiver the three computers share; an ascent has none)", [](L l, double v) { l.gnss_sigma_m = v; }},
       {"gimbal_lag_s", "s", "the gimbal servo's first-order lag", [](L l, double v) { l.cfg.params.gimbal_lag_s = v; }},
       {"dry_mass_scale", "x", "every stage's dry mass times this", [](L l, double v) { scale_dry_mass(l.cfg.params, v); }},
       {"propellant_scale", "x", "every tank's propellant times this", [](L l, double v) { scale_propellant(l.cfg.params, v); }},

@@ -137,6 +137,14 @@ class Kinds(unittest.TestCase):
         self.assertEqual(parse_line("[frame 5] RESYNC: nothing adopted (fewer than two voters)").level, "warn")
         self.assertEqual(parse_line("[frame 5] LAUNCH REFUSED, no-go: a flight computer is not ready").kind, "launch-refused")
 
+    def test_the_flight_log_a_reset_leaves_is_reported_by_its_kind(self):
+        f = parse_line("PREVIOUS RUN ENDED IN A FATAL FAULT: reason 4 at pc 0x08001234 (lr 0x08005678) in frame 912")
+        self.assertEqual((f.kind, f.level), ("previous-fault", "crit"))
+        r = parse_line("previous run, frame 911: mode 0, voted 0x07, out 0x03, flags 0x0, output 1, command 12 / -3 (hundredths)")
+        self.assertEqual((r.kind, r.level), ("previous-run", "info"))
+        self.assertEqual(parse_line("previous run: a record of the log is damaged and is skipped").level, "warn")
+        self.assertEqual(parse_line("image crc32 6d08cf52 over 41234 bytes (0 on the host)").kind, "image-crc")
+
     def test_the_supervisor(self):
         self.assertEqual(parse_line("RESET B (kicks stopped)").kind, "supervisor")
         self.assertEqual(parse_line("DEAD A: held in reset; `release A` to try again").level, "crit")

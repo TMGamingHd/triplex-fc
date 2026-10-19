@@ -98,6 +98,7 @@ TFC_TEST(phase_without_phases_the_manager_knows_none_and_the_command_is_refused)
   CHECK(rep.phase == 0U && !rep.below_minimum);
 }
 
+// Verifies: TFC-PHASE-004
 TFC_TEST(phase_the_manager_starts_in_power_up_and_the_command_changes_it_one_phase_at_a_time_or_any) {
   Rig r;
   const FrameReport rep = r.run(10U);

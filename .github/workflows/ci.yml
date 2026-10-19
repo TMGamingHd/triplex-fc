@@ -26,7 +26,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
           fetch-depth: 0
       - name: Documentation check (every flag, fault kind and counter is documented)
@@ -60,23 +60,31 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build clang-tidy cppcheck
       - name: Configure (sanitizers on)
         run: cmake -S . -B build -G Ninja -DTFC_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+      # Verifies: TFC-SW-006 (every push and pull request runs this workflow), TFC-SW-007 (the strictest warning set is an error)
       - name: Build (warnings are errors)
         run: cmake --build build
+      # Verifies: TFC-SW-003 (the suite under ASan and UBSan)
       - name: Test (host unit tests + virtual-peers end-to-end)
         run: ctest --test-dir build --output-on-failure
+      # Verifies: TFC-SW-002 (clang-tidy and cppcheck clean), TFC-SW-008 (the size and complexity limits are clang-tidy checks)
       - name: clang-tidy (flight code; bug patterns, CERT, size and complexity limits)
         run: clang-tidy -p build tests/*.cpp tools/replay/*.cpp
       - name: cppcheck
         run: cppcheck --error-exitcode=1 --enable=warning,portability --inline-suppr --language=c++ --std=c++17 -I core/include -I supervisor/include core/include/tfc/*.hpp supervisor/include/sup/*.hpp
+      # Verifies: TFC-SW-001 (no heap, exceptions or RTTI in core/)
       - name: Coding standard (mechanical rules of docs/verification/CODING_STANDARD.md)
         run: python3 tools/check_standard.py
+      # Verifies: TFC-SW-004, TFC-SW-010 (the core's coverage gate), TFC-SIM-008 (the simulator's)
       - name: Structural coverage of core/ and of the vehicle simulator (gates may only be raised)
         run: python3 tools/coverage/core_coverage.py --list --min-line 100 --min-branch 98 --sim-min-line 99 --sim-min-branch 90
+      - name: Requirement trace (every requirement verified by a test must be named by one; the orphans may only get fewer)
+        run: python3 tools/trace/check_trace.py --baseline tools/trace/baseline.json
+      # Verifies: TFC-SW-012 (the campaign raises no anomaly)
       - name: Fault campaign (safety properties on every frame; fails on any anomaly; a sample on pull requests, everything on main)
         run: |
           cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -85,11 +93,16 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then sample="--every 8"; else sample=""; fi
           echo "campaign sample option: '${sample}'"
           TFC_REPLAY_BIN="$GITHUB_WORKSPACE/build/rel/tfc_replay" python3 -m campaign.run --workers 4 --quiet --strict $sample --out "$RUNNER_TEMP/campaign.jsonl"
+      # Verifies: TFC-SW-013, TFC-SW-014 (a mission designed and flown on three flight computers reaches its orbit and its catch)
       - name: Missions (guidance, navigation and a stage's return, docs/design/GNC.md; release build, about 100 s)
         run: |
-          cmake --build build/rel --target tfc_mission tfc_fly
+          cmake --build build/rel --target tfc_mission tfc_fly tfc_margins tfc_mission_mc tfc_propulsion
           # the Starship V3 class stack designed and flown on the three flight computers: the ship in an orbit above 100 km and the booster caught by the tower (exits 3 if not)
           build/rel/tfc_mission vehicles/missions/starship_return.json --expect-orbit --expect-catch
+          # the same with five engines out, three on the way up (a ring, an outer and an inner engine) and two of the landing engines five seconds before the landing (ADR-058): the flight computers hear of each, the engines left gimbal to trim, and the booster is still caught
+          build/rel/tfc_mission vehicles/missions/starship_return_engines_out.json --expect-orbit --expect-catch
+          # and on a planet that turns (ADR-056): the pad is carried 400 m/s east and the guidance aims at where it will be (exits 3 if the booster is not caught or the ship is not in orbit)
+          build/rel/tfc_mission vehicles/missions/starship_return_earth.json --expect-orbit --expect-catch
           # the same, and then the ship's deorbit and belly entry on its flaps (experimental, ADR-044: it is flown to its end, which is a crash about 27 km from the tower, so that no outcome is expected; what is checked is that the
           # whole of it designs and flies on the three computers without a fault, in about 80 s)
           build/rel/tfc_mission vehicles/missions/starship_ship_return.json
@@ -97,6 +110,11 @@ jobs:
           build/rel/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 1500 --frames 41000 --mission vehicles/missions/starship_return.json --expect-catch
           # a single-stage rocket comes back under its parachutes
           build/rel/tfc_mission vehicles/missions/rocket_recovery.json --expect-landing
+          # the propulsion analysis of the mission's vehicle (ADR-057): the cluster, the nozzles against an ideal one, the gimbal's authority, the engine out; exits 3 on a finding (the shipped file has none)
+          build/rel/tfc_propulsion vehicles/missions/starship_return.json --strict
+          # the stability margins of the attitude loop along the mission (a report: the ship's roll loop is below the usual limits, CONTROL_LOOP.md 7), and a few dispersed flights of a whole mission (ADR-054)
+          build/rel/tfc_margins vehicles/missions/starship_return.json
+          build/rel/tfc_mission_mc vehicles/missions/rocket_recovery.json --config vehicles/mission_dispersions.json --flights 4 --threads 4
       - name: Campaign tables (for the job summary)
         if: always()
         run: |
@@ -112,7 +130,7 @@ jobs:
     env:
       ZEPHYR_SDK_VERSION: "1.0.1"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
       - name: Install system tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build device-tree-compiler gperf ccache
       - name: Install west and Zephyr Python requirements
@@ -156,6 +174,7 @@ jobs:
           west build -p always -b nucleo_g474re firmware/act -d build/act_nucleo
           west build -p always -b rpi_pico2/rp2350a/m33 firmware/pico -d build/pico
           west build -p always -b rpi_pico2/rp2350a/m33 firmware/supervisor -d build/supervisor
+      # Verifies: TFC-SW-009 (tools/check_elf.sh on the ARM image)
       - name: No heap, exceptions, RTTI or vtables in the flight binary
         run: |
           tools/check_elf.sh build/nucleo_g474re/zephyr/zephyr.elf

@@ -12,7 +12,7 @@
 | `0x100+n` | GYRO | node n | three axes, **1/32 dps per count** (range +-1024 dps; it was 0.125 and +-4096 until 7 Oct 2026, ADR-032) | 1, scale changed |
 | `0x110+n` | ACCEL | node n | three axes, 1/2048 g per count | 1 |
 | `0x200+n` | CMD | node n | pitch and yaw gimbal command, 0.001 degree; a 16-bit state digest | 1 |
-| `0x210+n` | Propulsion command | node n | throttle (0.5 % per count), the engine-group mask, the event bits, the mission phase, a roll command (0.25 degree per count); sent after CMD by a flight computer that flies a mission (`GNC.md` section 8) | 2, **host only so far** |
+| `0x210+n` | Propulsion command | node n | throttle (0.5 % per count), the engine-group mask, the event bits, the mission phase, a roll command (0.25 degree per count), and in byte 5 **how many of the engines of the commanded groups to run** (0: all; the engine controller runs that many of the engines that can run, those whose thrust acts nearest the axis, ADR-058); sent after CMD by a flight computer that flies a mission (`GNC.md` section 8) | 2, **host only so far** |
 | `0x220+n` | Surface command | node n | four control-surface deflections, 12 bits each, 0.05 degree per count, signed | 2, **host only so far** |
 | `0x300` | ACT out | ACT | the voted gimbal command and the vote status | **2** |
 | `0x400+n` | Heartbeat | node n | protocol version, mode, role, view of the nodes, reset count, release hash | **2** |
@@ -23,6 +23,7 @@
 | `0x503` | Sim state | the simulator | altitude, speed, mass | **2** |
 | `0x504` | Sim telemetry | the simulator | dynamic pressure, attitude error in the two planes | **2** |
 | `0x505` | Sim flags | the simulator | flags, engines on, time | **2** |
+| `0x509`, `0x50A` | Engine health | the engine controllers (the simulator) | the engines declared out: a 64-bit word in two frames, bit e = engine e of the vehicle file (engines 0 to 47 in `0x509` bytes 0 to 5, 48 to 63 in `0x50A`); it only grows, a receiver ORs it in (`GNC.md` section 12, ADR-058) | 2, **host only so far** |
 | `0x506`-`0x508` | Sim GNSS | the simulator | the GNSS fix in three frames (position, then velocity), each component a signed 24-bit number (metres; 0.01 m/s), in the launch-centred inertial frame (`GNC.md` section 3) | 2, **host only so far** |
 | `0x510` | Ground command | the operator | authenticated opcode, node, tag, counter (ADR-019) | 1 |
 
@@ -79,3 +80,12 @@ Telemetry and event records in a fixed format and a machine-readable command dic
 ## Frames of a flight computer that flies a mission (host only so far)
 
 `0x210+n` and `0x220+n` carry what the guidance asks for beyond the gimbal; a consumer (the vehicle) takes the **middle value of the three nodes'** throttle, roll and deflections and **two of three for each bit** of the group mask and the events (`mid3`, `majority3` in `protocol.hpp`), as ACT votes the gimbal. A frame whose CRC or sequence is wrong, or whose node is not 0 to 2, is refused (`unpack_prop`, `unpack_surf`). `0x506` to `0x508` are the receiver's three frames of one fix (they carry the same sequence byte), assembled by `nav::GnssCollector`. The ids are in `redundancy.hpp`'s list of the traffic that belongs to the schedule. **The firmware does not send or receive them yet**; the host loop (`avionics.hpp`) passes the commands in memory, so their quantisation is not in the results of `GNC.md` section 10. The Python mirror (`sim/tfc_peers/protocol.py`) does not know these ids.
+
+## Bus timing: worst-case response times (`tools/bench/can_rta.py`, 18 Oct 2026)
+
+The bus load of the design is arithmetic (111 bits a frame, no stuffing). A time-triggered schedule has a stronger question: does every frame reach its receiver before the step that needs it, with the arbitration, the blocking by a frame already on the wire, the worst-case stuffing (135 bits for eight data bytes in the standard format) and the release jitter all at their worst? `can_rta.py` gives two answers from the firmware's own transmit instants (`main.cpp`: the three computers send together at 1.5, 5.0 and, in a resync frame, 5.5 ms; ACT and the heartbeats at the vote, 7.0 ms; the simulator's traffic in the slack after):
+
+1. a **bound** in the manner of Davis, Burns, Bril and Lukkien (2007, from memory): every frame released together (the slot schedule prevents it: pessimistic);
+2. the schedule itself on a bus that sends the lowest identifier pending, with the release jitter of each burst at 0 or its largest, **every combination** (a computer's frames of one slot share one timer): the largest response each frame has in any corner, and a random run besides.
+
+**Result** (1 Mbit/s, jitter 100 us, the firmware's frames and the simulator's): every frame meets its deadline in every corner; the worst-case load is 19.1 % (without the simulator's traffic, 26 frames of 135 bits a 10 ms frame, the 12 resync frames spread over their period); the **smallest slack is 340 us, the last resync frame of a resync cycle** (it is sent at 5.5 ms with the three commands still on the bus, and must be in by 8.0 ms); at a jitter of 300 us it is 135 us. The critical-instant bound alone fails for ten frames: it counts every frame as released together, which is not a schedule. **Finding:** when the firmware sends the propulsion and surface frames of a computer that flies a mission (`0x210`, `0x220`, six more frames at 5.0 ms: `--with-gnc-frames`), **four of the resync frames miss their deadline by up to 475 us in the worst corner**: the resync burst has to move (to 5.8 ms or later, with the collection at 8.5) or the commands' frames have to be fewer before that is built. Not measured on a bus: `tools/bench/bus_loss.py` and a logic analyser are, and wait for the board. Tests: `sim/tests/test_can_rta.py` (the frame length, the bound against cases worked by hand, the bound never below the schedule's worst corner, the identifiers against `protocol.hpp`, and a verdict on a jittery schedule and a slow bus).

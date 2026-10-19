@@ -14,12 +14,12 @@ namespace sim::cfd {
 
 // The radius of the body at stations along it, from the aft end (the smallest x) to the nose, from the sections of the stages from `first_stage` on and the payloads (when the whole stack is
 // meant): each section's outline at `per_section` + 1 stations, a nose with its stations crowded at the tip (newtonian.hpp's outline).
-inline std::vector<std::pair<double, double>> body_profile(const VehicleSpec& g, std::size_t first_stage, int per_section) {
+inline std::vector<std::pair<double, double>> body_profile(const VehicleSpec& g, std::size_t first_stage, int per_section, std::size_t last_stage = 1000U) {
   std::vector<SectionSpec> sections;
-  for (std::size_t s = first_stage; s < g.stages.size(); ++s) {
+  for (std::size_t s = first_stage; s < g.stages.size() && s <= last_stage; ++s) {
     sections.insert(sections.end(), g.stages[s].sections.begin(), g.stages[s].sections.end());
   }
-  if (first_stage == 0U) {
+  if (first_stage == 0U && last_stage >= g.stages.size() - 1U) {
     for (const PayloadSpec& p : g.payloads) {
       sections.insert(sections.end(), p.sections.begin(), p.sections.end());
     }

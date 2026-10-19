@@ -141,6 +141,7 @@ class RecordThenReplay(unittest.TestCase):
 class SeekIsReplayFromTheStart(unittest.TestCase):
     """The votes, the strikes and the mission clock are histories, not values: the only state that is true after a seek is the one a straight run reaches."""
 
+    # Verifies: TFC-CON-009
     def test_seeking_to_a_time_gives_the_state_of_playing_to_it(self):
         straight = Hub()
         a = LogSource(straight, DEMO)

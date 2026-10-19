@@ -84,7 +84,7 @@ console/
     viewer.py              the 3D viewer's data: poses and spec, the pose-file player, the models
     server.py, app.py, services.py, cli.py
   web/                     the page: index.html, style.css, js/ (ES modules), js/tabs/ (one per tab)
-  web/viewer/              the 3D viewer: index.html, js/ (world, sky, models, effects, six lenses), vendor/ (three.js, MIT)
+  web/viewer/              the 3D viewer: index.html, js/ (world, sky, models, effects, seven lenses, the director, the gyro), vendor/ (three.js, MIT)
   models/                  your own glTF models for the viewer (not committed)
   demo/                    one recorded run (a launch and a node loss) and one flight of the Starship-class vehicle for the viewer, gzip
 ```

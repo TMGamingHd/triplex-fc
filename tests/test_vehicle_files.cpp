@@ -97,6 +97,7 @@ TFC_TEST(vehicle_reader_accepts_a_minimal_description_and_fills_in_the_defaults)
   CHECK(near_abs(veh.mass(), 5000.0, 1e-9) && veh.current_loads().thrust > 90000.0);
 }
 
+// Verifies: TFC-SIM-010
 TFC_TEST(vehicle_reader_refuses_unknown_fields_suggests_the_nearest_and_reports_every_problem_at_once) {
   sim::VehicleFile v;
   std::vector<std::string> errors;

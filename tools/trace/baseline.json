@@ -1,0 +1,23 @@
+{
+ "orphans": [
+  "TFC-FDIR-035",
+  "TFC-ARCH-009",
+  "TFC-SUP-002",
+  "TFC-SAFE-004",
+  "TFC-SAFE-005",
+  "TFC-RESP-002",
+  "TFC-RESP-004",
+  "TFC-SIM-003",
+  "TFC-SIM-017",
+  "TFC-CON-001",
+  "TFC-CON-003",
+  "TFC-CON-006",
+  "TFC-CON-012",
+  "TFC-CON-014",
+  "TFC-VIEW-002",
+  "TFC-VIEW-006",
+  "TFC-VIEW-007",
+  "TFC-VIEW-008",
+  "TFC-IF-001"
+ ]
+}

@@ -76,6 +76,28 @@ struct AeroTablePoint {
   double x_cp = 0.0;      // m, centre of pressure
 };
 
+// A table of aerodynamic coefficients computed by the flow solver (tfc_cfd, docs/design/CFD.md section 14) for one configuration of the vehicle (the stages that are on it), by Mach number and angle of attack
+// (0 to 180 degrees; the flow in the vehicle's plane of symmetry). The coefficients are on `s_ref` and `d_ref`, the moment about `x_ref`:
+//   ca      the axial force from the pressure on the skin and the control surfaces, drag positive (negative when the air comes from behind), the base left out
+//   ca_base the axial force from the pressure the solver has on the base (it has no wake: used only where the base faces the stream)
+//   cn      the normal force toward the side the vehicle moves to... opposing the lateral velocity (positive in the usual case of the lift of the nose)
+//   cm      the moment about the axis across the plane of symmetry, on q S d_ref, positive nose up, about x_ref
+// Friction and the base drag are not in it: the plant adds them from the viscous layer's laws and the base-drag law.
+struct CfdAeroDb {
+  std::vector<int> stages;            // the stages on the vehicle in this configuration (indices into the vehicle's stages)
+  double x_ref = 0.0;                 // m from the aft end of the first stage
+  double s_ref = 0.0;                 // m^2
+  double d_ref = 0.0;                 // m
+  std::vector<double> mach;           // ascending
+  std::vector<double> alpha_deg;      // ascending, from 0
+  std::vector<double> ca;             // [mach][alpha] row by row
+  std::vector<double> ca_base;
+  std::vector<double> cn;
+  std::vector<double> cm;
+  std::vector<double> ca_fore;        // optional (empty, or the size of ca): the pressure force of a flat forward end alone (a booster without the ship), a windward face when the body flies nose first
+  std::vector<double> cm_fore;        // and its moment, with the same size as ca_fore
+};
+
 struct AeroSpec {
   double reference_diameter_m = 0.0;  // 0: the largest body diameter of the sections
   double crossflow_cd = 1.2;          // drag coefficient of a circular cylinder in cross-flow
@@ -93,6 +115,7 @@ struct AeroSpec {
   double belly_heat_factor = 0.3;     // the heat flux over the lower surface as a fraction of the stagnation flux (a flat-plate estimate at the angle of attack of an entry)
   double emissivity = 0.85;           // of the heat shield, for the radiative-equilibrium temperature
   std::vector<AeroTablePoint> table;  // a table by Mach instead of the build-up (used when `sections` of every stage are empty)
+  std::vector<CfdAeroDb> cfd;         // the flow solver's tables, one per configuration: the body's force in place of the build-up's and the Newtonian model's (see CfdAeroDb)
 };
 
 struct StageSpec {
@@ -142,6 +165,9 @@ struct StageSpec {
 // should turn the nose toward downrange), PitchMinus for a negative one, and likewise for the yaw plane. Its position and direction decide the torque and the parasitic force it makes.
 enum class Control : int { None = 0, PitchPlus = 1, PitchMinus = 2, YawPlus = 3, YawMinus = 4, RollPlus = 5, RollMinus = 6 };
 
+// How an engine's gimbal fails (EngineSpec::fault, from `fault_time_s`): it stays where it was (Stuck), or runs to an angle and stays there (Hardover: `fault_pitch_deg`, `fault_yaw_deg`).
+enum class GimbalFault : int { None = 0, Stuck = 1, Hardover = 2 };
+
 struct EngineSpec {
   int stage = 0;
   V3 pos{};                   // x from the vehicle's aft end (the nozzle exit plane is where the thrust acts), y and z lateral
@@ -165,6 +191,22 @@ struct EngineSpec {
   int group = 0;
   double min_throttle = 0.0;
   int max_starts = 0;
+  // The engine as a part of its own (docs/design/PROPULSION.md). Without `VehicleSpec::per_engine_gimbal` the gimbal fields below do nothing: the stage's engines that gimbal share one angle.
+  double thrust_factor = 1.0;     // this engine's thrust relative to the rated (a weak engine is 0.97): an imbalance that the gimbal has to trim
+  double isp_throttle_loss = 0.0; // the fraction of the specific impulse lost at zero throttle, linear in between (the chamber pressure falls and the nozzle is run off its design point); 0: none
+  double gimbal_limit_deg = -1.0; // this engine's travel in each plane (a negative number takes the stage's, then the vehicle's)
+  double gimbal_rate_dps = -1.0;
+  double gimbal_lag_s = -1.0;
+  double roll_gain = 0.0;         // differential gimbal: degrees of deflection along the tangent to the engine's circle per degree of the roll command (0: this engine takes no part in roll)
+  GimbalFault fault = GimbalFault::None;
+  double fault_time_s = 0.0;      // seconds since T-zero at which the fault begins
+  double fault_pitch_deg = 0.0;   // a hard-over goes to this angle, in the pitch plane, and to the next in the yaw plane
+  double fault_yaw_deg = 0.0;
+  // The nozzle, for the analysis (tfc_propulsion) and not for the plant: the chamber pressure, the area ratio and the ratio of specific heats of the exhaust (0: not given). The plant flies on thrust_vac,
+  // exit_area and isp_vac; the analysis checks that they agree with an ideal nozzle of these.
+  double chamber_pressure_pa = 0.0;
+  double area_ratio = 0.0;
+  double gamma = 0.0;
 };
 
 // A set of four fins in a cross, two in the pitch plane and two in the yaw plane, that steer by aerodynamic force: deflection = gain x the command, limited, rate-limited, lagged. The force of a
@@ -347,6 +389,9 @@ struct VehicleSpec {
   RollSpec roll;
   FlexSpec flex;
   bool jet_damping = false;  // the moment of the exhaust leaving a turning vehicle: -mdot x r x (omega x r) for each engine (a damping of the pitch and yaw rates)
+  // Every engine that gimbals has a gimbal of its own (its own angle and servo, `EngineSpec::gimbal_*`), the pitch and yaw command goes to each, and the roll command is added along each engine's
+  // tangent (`roll_gain`): the thrust vector of a cluster is the sum of the engines' and the clusters' differential gimbal turns the vehicle about its axis. False: one angle for the stage, as always.
+  bool per_engine_gimbal = false;
   [[nodiscard]] bool empty() const { return stages.empty(); }
 };
 
@@ -484,6 +529,15 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
     if (en.group < 0 || en.group >= static_cast<int>(kEngineGroups) || !(en.min_throttle >= 0.0 && en.min_throttle <= 1.0) || en.max_starts < 0) {
       fail(at + ": group is 0 to 7, min_throttle between 0 and 1, max_starts not negative");
     }
+    if (!(en.thrust_factor >= 0.0 && en.thrust_factor <= 2.0) || !(en.isp_throttle_loss >= 0.0 && en.isp_throttle_loss < 1.0) || en.roll_gain < 0.0 || en.fault_time_s < 0.0) {
+      fail(at + ": thrust_factor is 0 to 2, isp_throttle_loss 0 to below 1, roll_gain and fault_time_s not negative");
+    }
+    if (en.roll_gain != 0.0 && (!en.gimbal || en.control != Control::None)) {
+      fail(at + ": only an engine that gimbals can have a roll_gain");
+    }
+    if (en.chamber_pressure_pa < 0.0 || en.area_ratio < 0.0 || en.gamma < 0.0 || (en.gamma != 0.0 && !(en.gamma > 1.0))) {
+      fail(at + ": chamber_pressure_pa and area_ratio must not be negative, gamma (if given) above 1");
+    }
   }
   for (std::size_t s = 0; s < v.stages.size(); ++s) {
     bool has_engine = false;
@@ -513,6 +567,25 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
       if (!(a.table[k].mach > a.table[k - 1U].mach)) {
         fail("aero.table: the Mach numbers must increase");
         break;
+      }
+    }
+    for (std::size_t k = 0; k < a.cfd.size(); ++k) {
+      const CfdAeroDb& db = a.cfd[k];
+      const std::string at = "aero.cfd[" + std::to_string(k) + "]";
+      const std::size_t n = db.mach.size() * db.alpha_deg.size();
+      bool ok = db.mach.size() >= 2U && db.alpha_deg.size() >= 2U && db.ca.size() == n && db.ca_base.size() == n && db.cn.size() == n && db.cm.size() == n && (db.ca_fore.empty() || db.ca_fore.size() == n) && db.cm_fore.size() == db.ca_fore.size() && db.s_ref > 0.0 && db.d_ref > 0.0 && !db.stages.empty();
+      for (std::size_t i = 1; ok && i < db.mach.size(); ++i) {
+        ok = db.mach[i] > db.mach[i - 1U];
+      }
+      for (std::size_t i = 1; ok && i < db.alpha_deg.size(); ++i) {
+        ok = db.alpha_deg[i] > db.alpha_deg[i - 1U];
+      }
+      ok = ok && db.alpha_deg.front() == 0.0 && db.alpha_deg.back() <= 180.0;
+      for (std::size_t i = 0; ok && i < n; ++i) {
+        ok = std::isfinite(db.ca[i]) && std::isfinite(db.ca_base[i]) && std::isfinite(db.cn[i]) && std::isfinite(db.cm[i]) && (db.ca_fore.empty() || (std::isfinite(db.ca_fore[i]) && std::isfinite(db.cm_fore[i])));
+      }
+      if (!ok) {
+        fail(at + ": two or more increasing Mach numbers and angles of attack from 0 (to 180 at most), the four tables of mach x alpha finite numbers, positive s_ref_m2 and d_ref_m, and the stages it is for");
       }
     }
     bool any_section = false;

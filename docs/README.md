@@ -27,7 +27,7 @@
 | [SUPERVISOR.md](design/SUPERVISOR.md) | The supervisor (SUP-Lite): lines, ladder, commands |
 | [HARDWARE_OVERRIDE.md](design/HARDWARE_OVERRIDE.md) | The manual switches below the supervisor; their own failure modes |
 | [PICO.md](design/PICO.md) | The Pico: platform driver and fault injector |
-| [VIEWER.md](design/VIEWER.md) | The 3D viewer: the vehicle seen as a vehicle (a Starship-class stack or any vehicle file), the pose the simulator sends, the six lenses and what each number is (measured, derived or illustrative) |
+| [VIEWER.md](design/VIEWER.md) | The 3D viewer: the vehicle seen as a vehicle (a Starship-class stack or any vehicle file), the pose the simulator sends, the seven lenses (a broadcast, and six of analysis), a camera director, a gyro, and what each number is (measured, derived or illustrative) |
 | [CONSOLE.md](design/CONSOLE.md) | The flight console: one web page that shows the bus, the nodes' consoles and the simulator's truth, and sends the operator's commands |
 | [VEHICLE_SIM.md](design/VEHICLE_SIM.md) | The 6-DOF ascent simulator, the platform and the bus runner |
 | [ENVIRONMENT.md](design/ENVIRONMENT.md) | The world: planets, rotation, J2, atmospheres and their dispersions, wind profiles, turbulence |
@@ -35,12 +35,15 @@
 | [MONTE_CARLO.md](design/MONTE_CARLO.md) | Many flights, each with a random draw of everything that can differ: the tool, the statistics, what it found |
 | [DYNAMICS.md](design/DYNAMICS.md) | The servo (second order, backlash), jet damping, the push and tip-off of a separation, the roll controller: the formulas and their checks |
 | [AERODYNAMICS.md](design/AERODYNAMICS.md) | The aerodynamics that follow a vehicle's shape: the formulas, their limits, how they are checked; the whole speed range, Newtonian impact theory, control surfaces and parachutes (sections 7 to 9) |
+| [PROPULSION.md](design/PROPULSION.md) | The engines of a cluster one by one: thrust and specific impulse against throttle and altitude, the nozzle against an ideal one, each engine's gimbal and the differential gimbal for roll, a gimbal that sticks, an engine out and what trims it; `tfc_propulsion`, the Starship-class booster and ship analysed, what flying it showed |
 | [CFD.md](design/CFD.md) | An Euler flow solver for the vehicle's body: a Cartesian grid with the body cut out of it, shocks captured, checked against exact solutions, run on the Starship-class outline, its fields in the 3D viewer |
 | [GNC.md](design/GNC.md) | Guidance, navigation and control of a whole mission: navigation with GNSS aiding, PEG to orbit, the attitude loop through any angle, a stage's return (boost-back, entry, landing burn), the mission sequencer, the closed loop of three computers, the mission in the vehicle file and its design, what was measured and what is not done |
 | [RECOVERY.md](design/RECOVERY.md) | Bringing a stage back: the plant (engines the computers drive, surfaces, parachutes, separation, ground and tower), the Starship V3 class vehicle with its numbers and where each comes from, the mission phase by phase, a single stage under parachutes, what the tuning taught |
 | [VEHICLE_SPEC.md](design/VEHICLE_SPEC.md) | Describing any vehicle (stages, tanks, engines, effectors) as a file; the tools; the examples; what the flight computers can do with it |
 | [SIM_FIDELITY.md](design/SIM_FIDELITY.md) | How close the simulator is to real life, measured |
-| [FUTURE_WORK.md](design/FUTURE_WORK.md) | Designs written down and not built, with their triggers |
+| [FUTURE_WORK.md](design/FUTURE_WORK.md) | Designs written down and not built, with their triggers; the review against the practice of the field |
+| [CONOPS.md](design/CONOPS.md) | The concept of operations: who does what from power-up to the end of a run, what the operator decides and never decides |
+| [RANGE_SAFETY.md](design/RANGE_SAFETY.md) | Abort and range safety: what a real vehicle has, what this project does and does not do |
 
 ## Decisions: why (`decisions/`)
 | Page | Covers |
@@ -57,6 +60,10 @@
 | [FAULT_CAMPAIGN.md](verification/FAULT_CAMPAIGN.md) | The systematic fault campaign: the numbers (generated), the edge cases found and what was done |
 | [CODING_STANDARD.md](verification/CODING_STANDARD.md) | The flight-code rules and the tool that enforces each |
 | [PICO_TESTS.md](verification/PICO_TESTS.md) | Every way to test the Pico, and the recommended order |
+| [HAZARDS.md](verification/HAZARDS.md) | The hazard analysis (STPA style): losses, hazards and 25 unsafe control actions, with what controls each and the gaps |
+| [RISKS.md](verification/RISKS.md) | The risk register: what could stop the project or the claim, ranked |
+| [SAFETY_CASE.md](verification/SAFETY_CASE.md) | The argument that joins the evidence into one claim, and what it leaves out |
+| [VALIDATION.md](verification/VALIDATION.md) | How far the models are from anything real, and the public data that would close the gap |
 | [VERIFICATION_PROCEDURE_TEMPLATE.md](verification/VERIFICATION_PROCEDURE_TEMPLATE.md) | The template every hardware procedure copies |
 
 ## Hardware: what to buy and build (`hardware/`)

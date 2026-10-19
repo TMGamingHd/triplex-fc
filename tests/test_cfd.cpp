@@ -13,6 +13,7 @@
 // the solver lives in sim/cfd, found through sim/vehicle, which every tool that builds the tests already has on its include path
 #include "../cfd/gasdyn.hpp"
 #include "../cfd/solver.hpp"
+#include "../cfd/viscous.hpp"
 
 namespace {
 
@@ -248,6 +249,18 @@ TFC_TEST(cfd_the_surface_elements_add_up_to_the_areas_of_the_shapes_and_a_consta
     CHECK(near_abs(sim::norm(p.n), 1.0, 1e-12) && cone.phi(p.c + (p.n * 1e-3)) > 0.0 && cone.phi(p.c - (p.n * 1e-3)) < 0.0);   // the normal points out of the body
   }
   CHECK(near_rel(ac, 0.5 * 3.14159265358979 * ((3.0 * 5.0) + (3.0 * 3.0)), 2e-3) && near_rel(base, 0.5 * 3.14159265358979 * 9.0, 1e-3));
+  // a cylinder with a flat end each side (a booster without the ship): the aft end is part 1, the forward end part 2, and the force of a pressure on each is the pressure times the disc, along its normal
+  const cfd::Revolution can({{0.0, 3.0}, {6.0, 3.0}});
+  std::vector<cfd::Panel> pk;
+  can.panels(0.1, pk);
+  double aft = 0.0;
+  double fore = 0.0;
+  double wall = 0.0;
+  for (const cfd::Panel& p : pk) {
+    (p.part == 1 ? aft : (p.part == 2 ? fore : wall)) += p.area;
+    CHECK(p.part == 0 || (p.part == 1 && p.n.x < -0.99) || (p.part == 2 && p.n.x > 0.99));
+  }
+  CHECK(near_rel(aft, 0.5 * 3.14159265358979 * 9.0, 1e-3) && near_rel(fore, aft, 1e-12) && near_rel(wall, 3.14159265358979 * 3.0 * 6.0, 2e-3));
   // the signed distance of the cone: on the axis inside, a point 1 above the middle of the side, one beyond the base
   CHECK(cone.phi(V3{2.0, 0.0, 0.0}) < -1.0 && cone.phi(V3{4.5, 0.0, 0.0}) > 0.49 && cone.phi(V3{4.5, 0.0, 0.0}) < 0.51);
   CHECK(near_abs(cone.phi(V3{2.0, 1.5 + (0.8 * 1.0), 0.6 * 1.0}), std::sqrt(((1.5 + 0.8) * (1.5 + 0.8)) + 0.36) - 1.5, 0.2));   // a point off the side (in the meridian plane it is the distance to the line)
@@ -293,4 +306,220 @@ TFC_TEST(cfd_the_result_does_not_depend_on_the_number_of_threads) {
     out.push_back(v);
   }
   CHECK(out[0].size() == out[1].size() && std::memcmp(out[0].data(), out[1].data(), out[0].size() * sizeof(double)) == 0);   // bit for bit
+}
+
+// ---- the real gas ----
+
+TFC_TEST(cfd_the_real_gas_is_a_perfect_gas_when_cold_and_obeys_the_conservation_laws_through_a_shock) {
+  const double tinf = 220.0;
+  const double rinf = 0.0889;
+  const cfd::RealAir air(3000.0 / tinf, 59500.0 / tinf, 150000.0 / rinf);
+  CHECK(near_abs(cfd::Gas(1.4, &air).gamma_eff(1.0, 1.0), 1.4, 1e-4) && near_abs(air.sound2(1.0, 1.0), 1.4, 5e-4));   // cold: gamma 1.4 (the vibration is not quite nothing: 1e-5)
+  CHECK(air.alpha(1.0, 0.1) == 0.0 && air.alpha(1.0, 50.0) > 0.99);                                               // nothing dissociated cold, all of it hot
+  // the tables against the equations they were made from
+  double worst = 0.0;
+  for (const double rho : {0.01, 0.1, 1.0, 5.0, 14.0}) {
+    for (const double p : {5.0, 50.0, 500.0, 3000.0}) {
+      const double e = air.e_from_p_exact(rho, p);
+      worst = std::fmax(worst, std::fabs(air.p_from_e(rho, e) / p - 1.0));
+      worst = std::fmax(worst, std::fabs(air.e_from_p(rho, p) / e - 1.0));
+      worst = std::fmax(worst, std::fabs(air.sound2(rho, p) / air.sound2_exact(rho, p) - 1.0));
+    }
+  }
+  CHECK(worst < 3e-3);   // measured 2.4e-4
+  // a Mach 15 shock: conservation of mass, momentum and energy to round-off, and the density higher and the temperature lower than a perfect gas's
+  const double u1 = 15.0 * std::sqrt(1.4);
+  const gd::RealShock sh = gd::real_normal_shock(air, u1);
+  CHECK(sh.ok);
+  const double u2 = u1 / sh.rho2;
+  CHECK(near_abs(1.0 + (u1 * u1) - (sh.rho2 * u2 * u2), sh.p2, 1e-9 * sh.p2));
+  CHECK(near_abs(air.e_from_p_exact(sh.rho2, sh.p2) + (sh.p2 / sh.rho2) + (0.5 * u2 * u2), air.e_from_p_exact(1.0, 1.0) + 1.0 + (0.5 * u1 * u1), 1e-9 * u1 * u1));
+  const gd::Normal pg = gd::normal_shock(15.0, 1.4);
+  CHECK(sh.rho2 > 1.8 * pg.rho2_rho1 && sh.t2 < 0.5 * (pg.p2_p1 / pg.rho2_rho1) && sh.alpha2 > 0.1);
+}
+
+TFC_TEST(cfd_the_temperature_solve_finds_a_root_in_the_thin_dissociating_gas_of_a_wake) {
+  // 68 km: the density of the wake behind a base at Mach 20 is a thousandth of the free stream's, where the dissociation sets in over a few per cent of the temperature. Newton's method alone jumped from one
+  // shoulder of it to the other and back and returned, after eighty steps, a temperature that is no root (the sound speed squared then came out at -1200, and the flux was not a number).
+  const cfd::RealAir air(3000.0 / 225.065202, 59500.0 / 225.065202, 150000.0 / 1.09169e-4, false);
+  double worst = 0.0;
+  bool sound_positive = true;
+  for (const double rho : {1e-4, 3e-4, 8.1033147453591302e-4, 2e-3}) {
+    for (const double p : {1e-4, 1e-3, 9.0412095340830622e-3, 5e-2}) {
+      worst = std::fmax(worst, std::fabs(air.pressure_rt(rho, air.t_from_p(rho, p)) / p - 1.0));
+      const double e = air.e_from_p_exact(rho, p);
+      worst = std::fmax(worst, std::fabs(air.energy_rt(rho, air.t_from_e(rho, e)) / e - 1.0));
+      sound_positive = sound_positive && air.sound2_exact(rho, p) > 0.0;
+    }
+  }
+  CHECK(worst < 1e-10 && sound_positive);
+}
+
+TFC_TEST(cfd_the_solver_finds_the_real_gas_shock_the_equation_of_state_gives) {
+  const double tinf = 220.0;
+  const double rinf = 0.0889;
+  const cfd::RealAir air(3000.0 / tinf, 59500.0 / tinf, 150000.0 / rinf);
+  const double u0 = 6.0 * std::sqrt(1.4);   // a gas rushing at a wall: the shock that leaves it, and the gas at rest behind
+  cfd::Config cfg;
+  cfg.gas = cfd::Gas(1.4, &air);
+  cfg.local_dt = false;
+  cfg.cfl = 0.4;
+  cfg.bc = {cfd::Bc::Symmetry, cfd::Bc::Outflow, cfd::Bc::Symmetry, cfd::Bc::Symmetry, cfd::Bc::Symmetry, cfd::Bc::Symmetry};
+  const std::array<std::vector<double>, 3> nd{cfd::uniform_nodes(0.0, 3.0, 100), cfd::uniform_nodes(0.0, 0.06, 2), cfd::uniform_nodes(0.0, 0.06, 2)};
+  cfd::Euler3D s(nd, cfd::Prim{1.0, -u0, 0.0, 0.0, 1.0}, nullptr, cfg);
+  double w = 0.0;
+  const gd::RealShock ex = gd::real_wall_shock(air, u0, w);
+  const double t_end = 1.5 / w;
+  while (s.time() < t_end - 1e-12) {
+    s.step(std::fmin(s.max_dt(), t_end - s.time()));
+  }
+  const cfd::Prim p = s.prim(3, 0, 0);
+  CHECK(near_rel(p.p, ex.p2, 0.03) && near_rel(p.rho, ex.rho2, 0.05) && near_rel(air.t_from_p(p.rho, p.p), ex.t2, 0.05));   // 0.00, 1.5, 1.5 % at 200 cells
+  CHECK(s.healthy() && !s.floored());
+}
+
+// ---- flaps, fins and the boundary layer ----
+
+TFC_TEST(cfd_a_pointed_plate_is_cut_out_of_the_grid_and_an_assembly_keeps_only_the_surface) {
+  const cfd::BeveledPlate plate(V3{0, 0, 1}, V3{1, 0, 0}, V3{0, 1, 0}, V3{0, 0, 1}, 4.0, 0.6, 1.2, 0.5, 12);
+  CHECK(plate.phi(V3{0, 0, 1}) < -0.25 && plate.phi(V3{0, 0.3, 1}) < 0.01 && plate.phi(V3{0, 0.5, 1}) > 0.15 && plate.phi(V3{-2.2, 0, 1}) > 0.15 && plate.phi(V3{0, 0, 1.7}) > 0.15);
+  std::vector<cfd::Panel> pp;
+  plate.panels(0.05, pp);
+  double area = 0.0;
+  for (const cfd::Panel& q : pp) {
+    area += q.area;
+    CHECK(q.part == 12 && near_abs(sim::norm(q.n), 1.0, 1e-9) && plate.phi(q.c + (q.n * 1e-3)) > 0.0);
+  }
+  // the hexagon's perimeter (2 x 2.4 flat + 4 slopes of sqrt(1.2^2 + 0.3^2)) times the extrusion 1.0, plus the two ends' areas: only the half z >= 1 - ... the plate lies in z >= 0.5 entirely: all of it
+  const double perim = (2.0 * 1.6) + (4.0 * std::hypot(1.2, 0.3));
+  const double ends = 2.0 * 1.68;   // the hexagon's area, twice
+  CHECK(near_rel(area, (perim * 1.0) + ends, 0.03));
+  // an assembly: a box and a sphere that overlap lose the part of each surface that lies inside the other
+  const cfd::Box box(V3{-1, -1, 0}, V3{1, 1, 2});
+  const cfd::Sphere ball(V3{1, 0, 1}, 0.5);
+  cfd::Assembly as;
+  as.add(&box);
+  as.add(&ball);
+  std::vector<cfd::Panel> pa;
+  std::vector<cfd::Panel> pb;
+  std::vector<cfd::Panel> pall;
+  box.panels(0.1, pa);
+  ball.panels(0.1, pb);
+  as.panels(0.1, pall);
+  CHECK(pall.size() < pa.size() + pb.size() && pall.size() > pa.size() / 2U && as.phi(V3{1.2, 0, 1}) < 0.0 && as.phi(V3{3, 0, 1}) > 0.0);
+}
+
+TFC_TEST(cfd_the_front_faces_of_a_thin_airfoil_have_the_pressure_the_oblique_shock_gives) {
+  const double m = 3.0;
+  const double al = 4.0 * kDeg;
+  const double eps = 10.0 * kDeg;
+  const double len = 4.0;
+  const double h = 0.15;
+  const V3 ax{std::cos(al), -std::sin(al), 0};
+  const V3 ay{std::sin(al), std::cos(al), 0};
+  const cfd::BeveledPlate foil(V3{0, 0, 1.0}, ax, ay, V3{0, 0, 1}, len, len * std::tan(eps), 0.49 * len, 5.0, 3);   // a diamond of half-angle 10 degrees
+  cfd::Config cfg;
+  cfg.bc = {cfd::Bc::Farfield, cfd::Bc::Outflow, cfd::Bc::Farfield, cfd::Bc::Farfield, cfd::Bc::Symmetry, cfd::Bc::Symmetry};
+  const std::array<std::vector<double>, 3> nd{cfd::uniform_nodes(-3.0, 5.0, 53), cfd::uniform_nodes(-3.0, 3.0, 40), cfd::uniform_nodes(0.0, 2 * h, 2)};
+  cfd::Euler3D s(nd, cfd::Prim{1.0, m * std::sqrt(1.4), 0, 0, 1.0}, &foil, cfg);
+  s.run_to_steady(500, 9.0);
+  std::vector<cfd::Panel> pan;
+  foil.panels(0.25 * h, pan);
+  double sl = 0.0;
+  double al_ = 0.0;
+  double su = 0.0;
+  double au = 0.0;
+  for (const cfd::Panel& p : pan) {
+    const double xc = sim::dot(p.c - V3{0, 0, 1.0}, ax);
+    if (xc > -0.1 * len || xc < -0.45 * len || std::fabs(p.n.z) > 0.5) {
+      continue;
+    }
+    const double w = s.wall_pressure(p);
+    if (sim::dot(p.n, ay) < 0.0) {
+      sl += w * p.area;
+      al_ += p.area;
+    } else {
+      su += w * p.area;
+      au += p.area;
+    }
+  }
+  const double bw = gd::weak_shock_angle(m, eps + al, 1.4);
+  const double bu = gd::weak_shock_angle(m, eps - al, 1.4);
+  CHECK(al_ > 0.0 && au > 0.0);
+  CHECK(near_rel(sl / al_, gd::oblique_shock(m, bw, eps + al, 1.4).p2_p1, 0.12));   // measured 6.5 % low at 0.12 and 4.4 % at 0.08: a pointed edge is the immersed boundary's hard case
+  CHECK(near_rel(su / au, gd::oblique_shock(m, bu, eps - al, 1.4).p2_p1, 0.2));   // the gentler face reads worse on this grid of 0.15 (3 % at 0.12 and 0.5 % at 0.08 in the longer runs)
+}
+
+TFC_TEST(cfd_a_lattice_turns_the_stream_toward_its_axis_and_the_stream_pushes_on_it) {
+  const double al = 10.0 * kDeg;
+  const V3 axis{std::cos(al), std::sin(al), 0};
+  const V3 face{-std::sin(al), std::cos(al), 0};
+  const cfd::OrientedBox box(V3{0, 0, 1.0}, axis, face, V3{0, 0, 1}, V3{0.35, 1.0, 5.0}, 0);
+  cfd::Config cfg;
+  cfg.bc = {cfd::Bc::Farfield, cfd::Bc::Outflow, cfd::Bc::Farfield, cfd::Bc::Farfield, cfd::Bc::Symmetry, cfd::Bc::Symmetry};
+  const std::array<std::vector<double>, 3> nd{cfd::uniform_nodes(-3.0, 4.0, 28), cfd::uniform_nodes(-3.0, 3.0, 24), cfd::uniform_nodes(0.0, 0.5, 2)};
+  const double m = 2.0;
+  cfd::Euler3D s(nd, cfd::Prim{1.0, m * std::sqrt(1.4), 0, 0, 1.0}, nullptr, cfg);
+  cfd::Porous p;
+  p.region = &box;
+  p.axis = axis;
+  p.k_axial = 0.3;
+  p.k_cross = 20.0;
+  p.depth = 0.7;
+  s.set_porous({p});
+  s.run_to_steady(400, 9.0);
+  const cfd::Forces f = s.porous_force(0, V3{0, 0, 1.0}, false);
+  const double q = 0.5 * m * m * 1.4;
+  const double frame_area = 2.0 * 0.5;   // 2 m of face by the slab's depth of 0.5 (the lattice runs the whole depth)
+  CHECK(f.force.x > 0.0 && f.force.y < 0.0);                                               // pushed downstream and away from the side the cells' axis leans toward
+  CHECK(near_abs(-f.force.y / (q * frame_area), 2.0 * std::sin(al) * std::cos(al), 0.25));   // the ideal straightener's 2 sin cos on the frame (measured 0.39 against 0.34 at 3D and finer grids)
+  CHECK(s.healthy() && !s.floored());
+}
+
+TFC_TEST(cfd_the_reference_temperature_method_matches_the_laminar_similarity_solution_and_van_drivest) {
+  const double te = 220.0;
+  for (const double m : {0.01, 2.0, 5.0}) {
+    const gd::Laminar ex = gd::laminar_flat_plate(m, -1.0, te);   // an insulated wall
+    CHECK(ex.ok);
+    sim::cfd::visc::Edge e;
+    e.t = te;
+    e.p = 1000.0;
+    e.rho = e.p / (sim::cfd::visc::kGasConstant * te);
+    e.u = m * std::sqrt(1.4 * sim::cfd::visc::kGasConstant * te);
+    const sim::cfd::visc::Layer ly = sim::cfd::visc::local_layer(e, 1.0, te * ex.t_wall_ratio, 1e30);
+    CHECK(near_rel(ly.cf * std::sqrt(ly.re_x), ex.cf_sqrt_re, 0.04));   // 0.0, 0.3, 1.8 %
+    if (m < 0.1) {
+      CHECK(near_abs(ex.cf_sqrt_re, 0.664, 2e-3) && near_abs(ex.t_wall_ratio, 1.0, 1e-3));   // Blasius
+    }
+  }
+  const gd::Laminar cold = gd::laminar_flat_plate(5.0, 2.0, te);   // a cold wall
+  CHECK(cold.ok && cold.cf_sqrt_re > 0.55);
+  // a turbulent layer: the average friction against Van Driest's second method
+  for (const double m : {2.0, 5.0, 8.0}) {
+    sim::cfd::visc::Edge e;
+    e.t = te;
+    e.p = 1000.0;
+    e.rho = e.p / (sim::cfd::visc::kGasConstant * te);
+    e.u = m * std::sqrt(1.4 * sim::cfd::visc::kGasConstant * te);
+    const double rise = 0.5 * 0.4 * m * m * std::cbrt(0.71);
+    const double tw = te * (1.0 + rise);
+    const double len = 100.0;
+    double sum = 0.0;
+    for (int i = 0; i < 4000; ++i) {
+      sum += sim::cfd::visc::local_layer(e, len * (i + 0.5) / 4000.0, tw, 1e-9).cf * len / 4000.0;
+    }
+    const double re_l = e.rho * e.u * len / sim::cfd::visc::sutherland(te);
+    CHECK(near_rel(sum / len, gd::van_driest_ii(m, -1.0, te, re_l), 0.2));   // +1.4, +5.8, +10.5 %
+  }
+  // a laminar layer on a cone has sqrt(3) times a flat plate's friction (Mangler); a cylinder's is the flat plate's
+  std::vector<double> s(301);
+  std::vector<double> rc(301);
+  for (std::size_t i = 0; i < s.size(); ++i) {
+    s[i] = 0.01 * static_cast<double>(i);
+    rc[i] = 0.1 * s[i];
+  }
+  const std::vector<double> m1 = sim::cfd::visc::mangler_length(s, rc);
+  CHECK(near_abs(m1[200], 2.0 / 3.0, 0.01) && near_abs(m1[300], 1.0, 0.01));   // a cone: a third of the length
+  const std::vector<double> m2 = sim::cfd::visc::mangler_length(s, std::vector<double>(301, 0.2));
+  CHECK(near_abs(m2[300], 3.0, 1e-9));
 }

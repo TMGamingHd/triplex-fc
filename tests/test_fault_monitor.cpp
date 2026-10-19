@@ -88,6 +88,7 @@ TFC_TEST(stuck_detector_flags_frozen_sensor_only) {
   CHECK(first == 5);  // 1 baseline sample + 5 repeats
 }
 
+// Verifies: TFC-SAFE-007
 TFC_TEST(mode_ladder) {
   CHECK(mode_from_healthy(3) == Mode::Triplex);
   CHECK(mode_from_healthy(2) == Mode::Duplex);

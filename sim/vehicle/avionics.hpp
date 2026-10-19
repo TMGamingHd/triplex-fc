@@ -69,6 +69,7 @@ struct AvionicsConfig {
   uint32_t noise_seed = 0U;
   GnssModel gnss;
   bool calibrate_on_pad = true;      // each computer measures its gyros' zero-rate level while the vehicle stands on the pad, and subtracts it
+  double engine_detect_s = 0.15;     // how long an engine has been out before its controller declares it so on the health frames (the thrust is gone at once; the word follows)
 };
 
 class Avionics {
@@ -101,6 +102,7 @@ class Avionics {
     for (tfc::FlightFunction& f : ff_) {
       f.set_attitude_state(est);
       f.set_navigation_state(tfc::nav::Navigator::State{tfc::dm::Vec3{v.state().r.x, v.state().r.y, v.state().r.z}, tfc::dm::Vec3{v.state().v.x, v.state().v.y, v.state().v.z}, true});
+      f.set_epoch(v.time());   // (a stage's computers count frames from here, and the planet has been turning since T-zero)
     }
   }
 
@@ -128,6 +130,7 @@ class Avionics {
     tfc::nav::GnssFix fix;
     const bool have_fix = cfg_.gnss.fix(frame, v.state().r, v.state().v, fix);
     const tfc::GnssRaw raw = tfc::nav::to_raw(fix);
+    const uint64_t out_word = engine_health_word(frame, v);
     act_.begin_frame();
     std::array<tfc::Command, 3> cmds{};
     for (unsigned n = 0; n < 3U; ++n) {
@@ -139,6 +142,11 @@ class Avionics {
       if (have_fix) {
         for (unsigned part = 0; part < 3U; ++part) {
           (void)ff_[n].on_gnss_frame(tfc::pack_gnss(part, raw, seq));
+        }
+      }
+      if (out_word != 0U) {
+        for (unsigned part = 0; part < 2U; ++part) {
+          (void)ff_[n].on_engine_frame(tfc::pack_engine_health(part, out_word, seq));
         }
       }
       cmds[n] = ff_[n].step();
@@ -198,10 +206,33 @@ class Avionics {
       c.surface_deg[k] = static_cast<double>(tfc::mid3(ff_[0].surf().deg[k], ff_[1].surf().deg[k], ff_[2].surf().deg[k]));
     }
     c.roll_deg = static_cast<double>(tfc::mid3(p0.roll_deg, p1.roll_deg, p2.roll_deg));
+    c.engine_count = static_cast<unsigned>(tfc::mid3(static_cast<float>(p0.engines), static_cast<float>(p1.engines), static_cast<float>(p2.engines)));
     return c;
   }
 
+  // What the engine controllers report: the engines that have been out for `engine_detect_s` (the plant's truth, with the controllers' delay). The word only grows.
+  [[nodiscard]] uint64_t engine_health_word(uint32_t frame, const Vehicle6& v) {
+    const std::size_t n = std::min<std::size_t>(v.spec().engines.size(), tfc::gnc::kMaxEngines);
+    for (std::size_t e = 0; e < n; ++e) {
+      if (v.engine_failed(e)) {
+        if (!(failed_at_[e] >= 0.0)) {
+          failed_at_[e] = static_cast<double>(frame) * 0.01;
+        }
+        if (static_cast<double>(frame) * 0.01 - failed_at_[e] >= cfg_.engine_detect_s) {
+          reported_ |= uint64_t{1} << e;
+        }
+      }
+    }
+    return reported_;
+  }
+
   AvionicsConfig cfg_;
+  uint64_t reported_ = 0U;                  // the engines declared out so far
+  std::array<double, tfc::gnc::kMaxEngines> failed_at_ = [] {
+    std::array<double, tfc::gnc::kMaxEngines> a{};
+    a.fill(-1.0);
+    return a;
+  }();
   std::array<tfc::FlightFunction, 3> ff_;
   std::array<ImuModel, 3> imu_;
   std::array<tfc::ImuCalibrator, 3> cal_{};

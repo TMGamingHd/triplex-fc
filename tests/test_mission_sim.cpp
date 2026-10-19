@@ -114,6 +114,7 @@ static std::string two_stage_text() {
 })";
 }
 
+// Verifies: TFC-SIM-019
 TFC_TEST(missionfile_the_committed_missions_load_and_their_text_reads_back_the_same) {
   for (const char* name : {"missions/starship_return.json", "missions/starship_ship_return.json", "missions/rocket_recovery.json"}) {
     sim::VehicleFile v;
@@ -379,6 +380,39 @@ TFC_TEST(missiondesign_gains_come_from_the_probes_with_the_allocation_of_each_po
   CHECK(near_abs(static_cast<double>(other.gains[0].gains[0].pitch.kp), (4.0 + 3.0) / 0.4 / sim::kRad2Deg, 1e-4));
 }
 
+TFC_TEST(missionworld_a_body_held_at_rest_is_not_probed_so_the_gains_of_its_last_phase_are_those_of_the_flight) {
+  // A body that has landed (or is held by the arms) goes on running its phase for as long as the rest of the mission is flown, and a design that kept probing it would spread the sixteen points of its gain
+  // track over those thousands of seconds, leaving the landing burn that came before with one or none (the booster's catch was designed from points 210 s apart: docs/design/CFD.md section 14).
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(sim::load_vehicle_file(repo_root() + "vehicles/missions/rocket_recovery.json", v, errors) && errors.empty());
+  sim::BuiltMission bm;
+  CHECK(sim::build_mission(v, bm, errors));
+  const sim::DesignReport rep = sim::design_mission(v, bm);
+  CHECK(rep.ok);
+  sim::WorldConfig wc;
+  wc.params = v.params;
+  wc.scenario = v.scenario;
+  wc.main_tables = &bm.main;
+  wc.ideal = true;
+  wc.probe_every = 100U;
+  sim::MissionWorld w(wc);
+  double last_probe = -1.0;
+  w.set_probe([&last_probe](const sim::AxisProbe& p) { last_probe = p.t; });
+  double t_rest = -1.0;
+  for (int k = 0; k < 40000; ++k) {
+    w.step();
+    const sim::Vehicle6& veh = w.body(0).veh;
+    if (t_rest < 0.0 && (veh.landed() || veh.caught() || veh.crashed())) {
+      t_rest = static_cast<double>(k) * 0.01;
+    }
+    if (t_rest >= 0.0 && static_cast<double>(k) * 0.01 > t_rest + 30.0) {
+      break;
+    }
+  }
+  CHECK(t_rest > 10.0 && last_probe > 0.0 && last_probe <= t_rest + 0.011);   // probes up to the touchdown and none in the 30 s after it
+}
+
 TFC_TEST(missionworld_a_rocket_flown_ideally_and_on_its_three_computers_comes_down_under_its_parachutes) {
   sim::VehicleFile v;
   std::vector<std::string> errors;
@@ -403,13 +437,26 @@ TFC_TEST(missionworld_a_rocket_flown_ideally_and_on_its_three_computers_comes_do
   {
     sim::MissionWorld w(world_config(true));
     double apogee = 0.0;
+    // the envelope is the extremes of the loads at every tenth frame: the same samples taken here from the outside must give the same extremes
+    sim::Envelope check_env;
+    uint32_t samples = 0U;
     for (int k = 0; k < 60000 && !(w.body(0).veh.landed() || w.body(0).veh.crashed()); ++k) {
       w.step();
       apogee = std::fmax(apogee, w.body(0).veh.altitude());
+      if (k % 10 == 0) {
+        check_env.note(w.body(0).veh.time(), w.body(0).veh.current_loads(), w.body(0).veh.mass(), w.body(0).veh.heating());
+        ++samples;
+      }
     }
     CHECK(w.body(0).veh.landed() && !w.body(0).veh.crashed());
     CHECK(apogee > 15000.0);
     CHECK(w.bodies() == 1U && w.finished());
+    const sim::Envelope& env = w.body(0).env;
+    CHECK(env.samples == samples && env.samples > 1000U);
+    CHECK(env.max_q_pa == check_env.max_q_pa && env.max_q_sin_alpha_pa == check_env.max_q_sin_alpha_pa && env.max_normal_force_n == check_env.max_normal_force_n && env.max_axial_g == check_env.max_axial_g && env.max_stagnation_w_m2 == check_env.max_stagnation_w_m2);
+    CHECK(env.max_q_pa > 1000.0 && env.max_mach > 0.5 && env.max_axial_g > 1.0 && env.t_max_q > 5.0 && env.t_max_q < 120.0);
+    CHECK(env.max_q_sin_alpha_pa >= 0.0 && env.max_q_sin_alpha_pa <= env.max_q_pa);   // (sin alpha is at most 1)
+    CHECK(env.max_wall_k > 250.0 && env.max_aero_moment_nm >= 0.0 && env.max_alpha_rad >= 0.0);
   }
   // on the computers: through the burn and the start of the coast, and the three agree
   {
@@ -478,6 +525,11 @@ TFC_TEST(missionworld_a_stage_let_go_is_flown_on_by_computers_of_its_own_and_com
     }
     CHECK(w.body(1).veh.chute_open(0));
     CHECK(w.body(1).veh.chute_fill(0) > 0.0);   // the canopy is open
+    // the clearance of the separation was followed for its first 30 s: the closest gap is not above the last, and the stage has fallen away from the vehicle it left
+    {
+      const sim::Clearance& c = w.body(1).clearance;
+      CHECK(c.seen && c.cleared && c.t_clear_s >= 0.0 && c.min_gap_m <= c.gap_at_end_m + 1e-9 && c.gap_at_end_m > 1.0 && c.t_s >= c.t_clear_s && c.t_s <= 30.0);
+    }
     if (!ideal) {
       CHECK(w.body(1).av->computer(0).mission().phase() == 2U);
       CHECK(w.body(1).av->flight_frame() > 100U);
@@ -851,4 +903,137 @@ TFC_TEST(missionworld_the_demand_goes_to_the_surfaces_by_the_allocation_of_the_p
   pilot.begin_frame(7U, 0x07U);
   CHECK(!pilot.on_gnss_frame(tfc::pack_gnss(0U, raw, 3U)));   // (a late fix of an earlier frame)
   CHECK(!pilot.on_gnss_frame(tfc::pack_gnss(0U, raw, 7U)) && !pilot.on_gnss_frame(tfc::pack_gnss(1U, raw, 7U)) && pilot.on_gnss_frame(tfc::pack_gnss(2U, raw, 7U)));
+}
+
+TFC_TEST(missionworld_the_distance_between_two_segments_is_that_of_their_closest_points) {
+  using sim::V3;
+  const auto d = [](V3 p1, V3 q1, V3 p2, V3 q2) { return sim::segment_distance(p1, q1, p2, q2); };
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {0, 3, 0}, {10, 3, 0}), 3.0, 1e-12));          // parallel, side by side
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {5, -2, 1}, {5, 2, 1}), 1.0, 1e-12));          // crossing over, one metre apart
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {13, 4, 0}, {13, 8, 0}), 5.0, 1e-12));         // the end of one to the end of the other: (3, 4)
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {10, 0, 0}, {20, 0, 0}), 0.0, 1e-12));         // end to end on one line
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {14, 0, 0}, {20, 0, 0}), 4.0, 1e-12));         // collinear with a gap
+  CHECK(near_abs(d({0, 0, 0}, {0, 0, 0}, {3, 4, 0}, {3, 4, 0}), 5.0, 1e-12));            // two points
+  CHECK(near_abs(d({0, 0, 0}, {0, 0, 0}, {-2, 1, 0}, {2, 1, 0}), 1.0, 1e-12));           // a point and a segment
+  CHECK(near_abs(d({-2, 1, 0}, {2, 1, 0}, {0, 0, 0}, {0, 0, 0}), 1.0, 1e-12));           // and the other way
+  CHECK(near_abs(d({0, 0, 0}, {10, 0, 0}, {0, 0, 5}, {10, 5, 5}), 5.0, 1e-12));          // skew, diverging
+}
+
+TFC_TEST(missionfile_the_structure_limits_are_read_written_and_read_again_and_a_mission_over_them_says_so) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  const std::string mission = R"({"structure": {"source": "an assumed set, for the test", "min_separation_gap_m": 4.5,
+      "main": {"max_q_pa": 35000, "max_q_sin_alpha_pa": 4000, "max_axial_g": 4.5, "max_lateral_g": 1.0, "max_stagnation_w_m2": 2.0e6, "max_wall_k": 1800},
+      "stages": [{"max_q_pa": 60000, "max_axial_g": 6}]}, "main": [{"kind": "coast"}]})";
+  CHECK(reads(tiny(mission), v, errors));
+  CHECK(errors.empty());
+  const sim::MissionSpec m = v.mission;   // (a copy: the file is read again below)
+  CHECK(m.structure_source == "an assumed set, for the test" && near_abs(m.min_separation_gap_m, 4.5, 1e-12));
+  CHECK(near_abs(m.structure_main.max_q_pa, 35000.0, 1e-9) && near_abs(m.structure_main.max_q_sin_alpha_pa, 4000.0, 1e-9) && near_abs(m.structure_main.max_wall_k, 1800.0, 1e-9));
+  CHECK(near_abs(m.structure_stage[0].max_q_pa, 60000.0, 1e-9) && near_abs(m.structure_stage[0].max_axial_g, 6.0, 1e-12) && !m.structure_stage[1].any());
+  const std::string written = sim::write_vehicle(v);
+  sim::VehicleFile w;
+  CHECK(reads(written, w, errors));
+  CHECK(errors.empty() && sim::write_vehicle(w) == written);
+  CHECK(near_abs(w.mission.structure_stage[0].max_q_pa, 60000.0, 1e-9) && w.mission.structure_source == m.structure_source);
+  // a file with no limits writes none, and one with a name that is not one is refused
+  CHECK(reads(tiny(R"({"main": [{"kind": "coast"}]})"), v, errors) && sim::write_vehicle(v).find("structure") == std::string::npos);
+  CHECK(!reads(tiny(R"({"structure": {"main": {"max_speed": 3}}})"), v, errors) && mentions(errors, "max_speed"));
+  CHECK(!reads(tiny(R"({"structure": {"stages": 3}})"), v, errors) && mentions(errors, "stages"));
+  // what an envelope has over the limits
+  sim::Envelope e;
+  e.max_q_pa = 40000.0;
+  e.max_q_sin_alpha_pa = 3000.0;
+  e.max_axial_g = 5.0;
+  e.max_wall_k = 1000.0;
+  const std::vector<std::string> over = sim::envelope_violations(m.structure_main, e);
+  CHECK(over.size() == 2U && mentions(over, "max q 40.0 kPa is over the limit of 35.0 kPa") && mentions(over, "axial acceleration 5.0 g is over the limit of 4.5 g"));
+  CHECK(sim::envelope_violations(sim::LoadLimits{}, e).empty());
+}
+
+// Verifies: TFC-SIM-022
+TFC_TEST(missiondesign_a_coast_that_begins_in_the_engines_tail_is_designed_on_the_probes_that_are_flown_and_a_burn_leaves_out_its_probe_without_thrust) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(reads(tiny(R"({
+    "design": {"wn": 1.0, "zeta": 0.7, "ki_over_kp": 0.2, "kp_max": 50, "b_min": 0.01},
+    "mixers": [{"name": "tvc", "gimbal": true, "roll_thrusters": true}, {"name": "fins", "gimbal": false, "roll_thrusters": false, "surfaces": [0, 1, 2]}],
+    "main": [{"kind": "program", "groups": [0], "mixer": 0, "end": {"time_s": 10}, "program": [[0, 0], [10, 5]]}, {"kind": "coast", "mixer": 1}]})"), v, errors));
+  v.params.spec.surfaces.clear();
+  for (int i = 0; i < 3; ++i) {
+    sim::SurfaceSpec f;
+    f.channel = i;
+    f.area = 5.0;
+    f.chord = 1.0;
+    f.span = 2.0;
+    f.radius = 0.5;
+    f.min_deg = -20.0;
+    f.max_deg = 20.0;
+    v.params.spec.surfaces.push_back(f);
+  }
+  sim::BuiltMission bm;
+  CHECK(sim::build_mission(v, bm, errors));
+  std::vector<sim::AxisProbe> probes;
+  for (int k = 0; k < 40; ++k) {
+    sim::AxisProbe p;
+    p.stage = -1;
+    p.phase = k < 20 ? 0U : 1U;
+    p.t_in_phase = static_cast<double>(k % 20) * 0.5;
+    // the burn's first probe is on the pad, with the engines not yet up; the coast's first is taken while the engines die away, and the rest of the coast has none
+    p.thrust = k < 20 ? (k == 0 ? 0.0 : 40000.0) : (k == 20 ? 30000.0 : 0.0);
+    p.a = {0.5, 2.0, 3.0};
+    p.col[0] = {0.0, 0.0, 0.4};
+    p.col[1] = {0.0, 0.4, 0.0};
+    p.col[2] = {0.05, 0.0, 0.0};
+    p.col[3] = {0.003, 0.0, 0.002};
+    p.col[4] = {-0.003, 0.002, 0.0};
+    p.col[5] = {0.0, -0.002, -0.002};
+    probes.push_back(p);
+  }
+  sim::fit_plan(v.mission, v.params.spec, bm.main, probes, -1);
+  const tfc::gnc::GainTrack& burn = bm.main.gains[0];
+  const tfc::gnc::GainTrack& coast = bm.main.gains[1];
+  CHECK(burn.n > 0U && burn.frame[0] == 50U && near_abs(static_cast<double>(burn.thrust[0]), 40000.0, 1.0));   // the pad probe (no thrust) is out: the track starts at the second, 0.5 s in
+  CHECK(coast.n >= 16U && near_abs(static_cast<double>(coast.thrust[0]), 30000.0, 1.0) && coast.thrust[coast.n - 1U] == 0.0F);   // the unpowered probes are the track
+}
+
+// Verifies: TFC-SIM-022
+TFC_TEST(missionworld_an_engine_that_fails_is_declared_by_its_controller_after_a_delay_to_all_three_computers_and_the_guidance_counts_its_mass_by_what_is_left) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(sim::load_vehicle_file(repo_root() + "vehicles/missions/rocket_recovery.json", v, errors) && errors.empty());
+  sim::BuiltMission bm;
+  CHECK(sim::build_mission(v, bm, errors));
+  CHECK(sim::design_mission(v, bm).ok);
+  CHECK(bm.main.group_engines[0] == 1U && bm.main.engine_thrust[0] > 1000.0F);   // the one engine of the group, and what it is worth
+  v.scenario.engine_failures.push_back(sim::EngineFailure{5.0, 0});
+  sim::WorldConfig wc;
+  wc.params = v.params;
+  wc.scenario = v.scenario;
+  wc.main_tables = &bm.main;
+  wc.ideal = false;
+  wc.pad_frames = 300U;
+  sim::MissionWorld w(wc);
+  for (int k = 0; k < 300 + 480; ++k) {   // 4.8 s into the flight: the engine is still running
+    w.step();
+  }
+  const sim::MissionWorld::Body& b = w.body(0);
+  CHECK(!b.veh.engine_failed(0) && b.av->computer(0).engine_out() == 0U);
+  for (int k = 0; k < 40; ++k) {   // 5.2 s: it failed at 5.0 and its controller has not yet said so (the delay is 0.15 s)...
+    w.step();
+  }
+  CHECK(b.veh.engine_failed(0));
+  for (int k = 0; k < 60; ++k) {   // ... and at 5.8 s it has, to each of the three computers
+    w.step();
+  }
+  CHECK(b.av->computer(0).engine_out() == 1U && b.av->computer(1).engine_out() == 1U && b.av->computer(2).engine_out() == 1U);
+  // the ideal pilot hears it at once, and the mass the guidance keeps follows the truth: with no thrust there is no flow, where the nominal flow would take hundreds of kilograms off its estimate
+  sim::WorldConfig ic = wc;
+  ic.ideal = true;
+  ic.pad_frames = 0U;
+  sim::MissionWorld wi(ic);
+  for (int k = 0; k < 1500; ++k) {   // 15 s
+    wi.step();
+  }
+  CHECK(wi.body(0).veh.engine_failed(0) && std::fabs(wi.body(0).ideal->mass() - wi.body(0).veh.mass()) < 5.0);
 }

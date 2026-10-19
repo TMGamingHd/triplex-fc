@@ -21,7 +21,9 @@
 #include <cstdlib>
 #include <vector>
 
+#include "../cfd/viscous.hpp"
 #include "aero.hpp"
+#include "cfd_aero.hpp"
 #include "atmosphere.hpp"
 #include "math3.hpp"
 #include "newtonian.hpp"
@@ -184,6 +186,7 @@ struct Controls {
   uint32_t group_mask = 0U;                           // guided stages: bit g set: the engines of group g are commanded on
   std::array<double, kSurfaceChannels> surface_deg{};  // the surface command
   double roll_deg = 0.0;                              // the roll command: what the roll thrusters fire in proportion to
+  unsigned engine_count = 0U;                         // guided stages: how many of the engines of the commanded groups to run, the healthy ones in the order of the vehicle file (0: all of them)
   uint32_t events = 0U;
 };
 
@@ -260,6 +263,7 @@ struct Detached {
   double recoil_ms = 0.0;     // the speed the push of the separation gives it, backward along the axis
   double ground_radius = 0.0; // the sphere the ground is on
   bool launched = false;
+  std::vector<EngineFailure> failures;   // the stage's engine failures, by the engine's index in the stage alone: those already out (time -1) and those still to come
 };
 
 class Vehicle6 {
@@ -393,6 +397,9 @@ class Vehicle6 {
           }
         }
       }
+      if (g_.per_engine_gimbal) {
+        drive_engine_gimbals(h, cmd_pitch_deg, cmd_yaw_deg);
+      }
       if (p_.ground_contact && held_by_ground(h)) {
         t_ += h;
         continue;
@@ -464,6 +471,8 @@ class Vehicle6 {
   // Read-only views of what the model holds, for the 3D viewer (viewer_state.hpp, docs/design/VIEWER.md): they change nothing and nothing in the flight depends on them.
   [[nodiscard]] double engine_fraction(std::size_t e) const { return e < g_.engines.size() ? frac_[e] : 0.0; }   // the thrust fraction now, after the rise and the tail (0..1, times the stage's throttle)
   [[nodiscard]] bool engine_failed(std::size_t e) const { return e < g_.engines.size() && failed_[e]; }
+  [[nodiscard]] double engine_gimbal_pitch_deg(std::size_t e) const { return e < kMaxEngines ? (engine_gimbals_alone(g_.engines[e]) ? eg_p_[e] : (g_.engines[e].gimbal ? gimbal_p_[static_cast<std::size_t>(g_.engines[e].stage)] : 0.0)) : 0.0; }
+  [[nodiscard]] double engine_gimbal_yaw_deg(std::size_t e) const { return e < kMaxEngines ? (engine_gimbals_alone(g_.engines[e]) ? eg_y_[e] : (g_.engines[e].gimbal ? gimbal_y_[static_cast<std::size_t>(g_.engines[e].stage)] : 0.0)) : 0.0; }
   [[nodiscard]] double stage_gimbal_pitch_deg(std::size_t s) const { return s < kMaxStages ? gimbal_p_[s] : 0.0; }
   [[nodiscard]] double stage_gimbal_yaw_deg(std::size_t s) const { return s < kMaxStages ? gimbal_y_[s] : 0.0; }
   [[nodiscard]] double fin_pitch_deg(std::size_t f) const { return f < kMaxFins ? fin_p_[f] : 0.0; }
@@ -478,10 +487,27 @@ class Vehicle6 {
   [[nodiscard]] bool landed() const { return landed_; }   // touched down upright and slowly: held on the ground
   [[nodiscard]] bool caught() const { return caught_; }   // held in the tower's arms
   [[nodiscard]] bool catch_missed() const { return catch_missed_; }   // the pins came down through the arms' height outside what the arms can take
+  // The state of the pins as they came down through the arms' height (caught or not): how far from the site, how fast down and across, how far from upright. `valid` once they have.
+  struct CatchPass {
+    bool valid = false;
+    double miss_m = 0.0;
+    double sink_ms = 0.0;
+    double lateral_ms = 0.0;
+    double tilt_deg = 0.0;
+  };
+  [[nodiscard]] const CatchPass& catch_pass() const { return catch_pass_; }
   [[nodiscard]] bool launched() const { return launched_; }
   [[nodiscard]] bool engine_on_command(std::size_t e) const { return e < g_.engines.size() && eng_on_[e]; }
   [[nodiscard]] int engine_starts(std::size_t e) const { return e < g_.engines.size() ? starts_[e] : 0; }
   [[nodiscard]] double ground_radius() const { return ground_radius_; }
+  // A point (inertial frame) in the pad's own axes now, minus the pad's place: x up, y downrange, z crossrange. A planet that turns carries the pad away from where it was at T-zero; this is where the point is from the pad.
+  [[nodiscard]] V3 pad_offset(const V3& r) const {
+    V3 up;
+    V3 down;
+    V3 cross_r;
+    pad_frame(up, down, cross_r);
+    return V3{dot(r, up) - ground_radius_, dot(r, down), dot(r, cross_r)};
+  }
   [[nodiscard]] const Controls& controls() const { return ctrl_; }
   // The height of the lowest point of the vehicle above the ground, m (the base, or the foot of the legs, or an end of a body lying down); the pins' height above the ground for a catch.
   [[nodiscard]] double base_height() const { return lowest_point_height(); }
@@ -539,6 +565,14 @@ class Vehicle6 {
     mp.mass = m;  // as asked: the mass given, whatever the parts add up to
     return mp;
   }
+  // The mass properties with the given propellant in each stage (kg, by stage), for the stages that are on the vehicle: the analysis of what the engines can do at a chosen point of the burn.
+  [[nodiscard]] MassProps mass_props_with(const std::array<double, kMaxStages>& prop) const {
+    MassProps mp = mass_props_of(prop, false);
+    mp.mass = total_mass(prop);
+    return mp;
+  }
+  [[nodiscard]] double stage_capacity(std::size_t s) const { return s < kMaxStages ? cap_[s] : 0.0; }
+  [[nodiscard]] bool stage_on_vehicle(std::size_t s) const { return s < kMaxStages && active_[s]; }
   [[nodiscard]] MassProps mass_props() const { return mass_props_state(s_, -1, false); }  // the whole liquid in the rigid body: what the gains are designed from
   [[nodiscard]] MassProps rigid_mass_props() const { return mass_props_state(s_, -1, true); }  // with the sloshing mass taken out (`slosh_mass` says how much): what the dynamics use
 
@@ -555,7 +589,21 @@ class Vehicle6 {
     const double area = kPi * 0.25 * p_.diameter * p_.diameter;
     if (shaped_) {
       if (v_abs > 1.0) {
-        if (g_.aero.full_regime && geo_.ready()) {
+        const CfdAeroDb* const tab = geo_.ready() ? cfd_ : nullptr;
+        const double wc = tab != nullptr ? cfdaero::weight(*tab, l.mach) : 0.0;
+        if (tab != nullptr && wc >= 1.0) {
+          shape_forces_cfd(*tab, l, air, vrel, v_abs, mp, s.w);
+        } else if (tab != nullptr && wc > 0.0) {   // below the table's lowest Mach number the build-up fades in
+          Loads lc = l;
+          shape_forces_cfd(*tab, lc, air, vrel, v_abs, mp, s.w);
+          if (g_.aero.full_regime) {
+            shape_forces_full(l, air, vrel, v_abs, mp, s.w);
+          } else {
+            shape_forces(l, air, vrel, v_abs, mp);
+          }
+          l.f_aero = (lc.f_aero * wc) + (l.f_aero * (1.0 - wc));
+          l.m_aero = (lc.m_aero * wc) + (l.m_aero * (1.0 - wc));
+        } else if (g_.aero.full_regime && geo_.ready()) {
           shape_forces_full(l, air, vrel, v_abs, mp, s.w);
         } else {
           shape_forces(l, air, vrel, v_abs, mp);
@@ -586,10 +634,10 @@ class Vehicle6 {
       if (!(frac > 0.0) || !(s_.prop[st] > kEmptyProp)) {  // an engine without propellant in its stage does not run (the vehicle's own state decides, not the intermediate states of a step)
         continue;
       }
-      const double ti = std::max(0.0, (frac * p_.thrust_scale * en.thrust_vac) - (air.pressure * en.exit_area));
+      const double ti = std::max(0.0, (frac * p_.thrust_scale * (en.thrust_vac * en.thrust_factor)) - (air.pressure * en.exit_area));
       V3 dir;
       const bool own_dir = en.dir.x != 1.0 || en.dir.y != 0.0 || en.dir.z != 0.0;  // a thruster pointing its own way
-      const bool shared = !own_dir && en.cant_pitch_deg == 0.0 && en.cant_yaw_deg == 0.0;
+      const bool shared = !own_dir && en.cant_pitch_deg == 0.0 && en.cant_yaw_deg == 0.0 && !engine_gimbals_alone(en);
       if (own_dir) {
         dir = normalized(en.dir);
       } else if (shared && en.gimbal && have_gimbal[st]) {
@@ -597,8 +645,11 @@ class Vehicle6 {
       } else if (shared && !en.gimbal && have_fixed) {
         dir = dir_fixed;
       } else {
-        const double dp = (((en.gimbal ? gimbal_p_[st] : 0.0) + en.cant_pitch_deg) + p_.thrust_misalign_pitch_deg) * kDeg2Rad;
-        const double dy = (((en.gimbal ? gimbal_y_[st] : 0.0) + en.cant_yaw_deg) + p_.thrust_misalign_yaw_deg) * kDeg2Rad;
+        const bool own = engine_gimbals_alone(en);   // (an engine with a gimbal of its own is at its own angle, not the stage's)
+        const double gp = own ? eg_p_[e] : gimbal_p_[st];
+        const double gy = own ? eg_y_[e] : gimbal_y_[st];
+        const double dp = (((en.gimbal ? gp : 0.0) + en.cant_pitch_deg) + p_.thrust_misalign_pitch_deg) * kDeg2Rad;
+        const double dy = (((en.gimbal ? gy : 0.0) + en.cant_yaw_deg) + p_.thrust_misalign_yaw_deg) * kDeg2Rad;
         dir = V3{std::cos(dp) * std::cos(dy), -std::sin(dp) * std::cos(dy), std::sin(dy)};
         if (shared && en.gimbal) {
           dir_gimbal[st] = dir;
@@ -614,7 +665,8 @@ class Vehicle6 {
       }
       l.f_thrust = l.f_thrust + f;
       l.m_thrust = l.m_thrust + cross(V3{en.pos.x - mp.x_cg, en.pos.y, en.pos.z}, f);
-      const double md = frac * p_.thrust_scale * en.thrust_vac / (en.isp_vac * kG0);
+      const double isp = en.isp_throttle_loss > 0.0 ? en.isp_vac * (1.0 - (en.isp_throttle_loss * (1.0 - std::min(frac, 1.0)))) : en.isp_vac;
+      const double md = frac * p_.thrust_scale * (en.thrust_vac * en.thrust_factor) / (isp * kG0);
       l.mdot += md;
       l.mdot_stage[st] += md;
       l.thrust += ti;
@@ -729,6 +781,11 @@ class Vehicle6 {
       tmp.gimbal_p_[st] = c.pitch_deg;
       tmp.gimbal_y_[st] = c.yaw_deg;
     }
+    if (tmp.g_.per_engine_gimbal) {   // (every engine's gimbal at what the command asks of it, healthy: the design is for the vehicle as it should be)
+      for (std::size_t e = 0; e < tmp.g_.engines.size(); ++e) {
+        tmp.engine_command(tmp.g_.engines[e], c.pitch_deg, c.yaw_deg, c.roll_deg, tmp.eg_p_[e], tmp.eg_y_[e]);
+      }
+    }
     for (std::size_t i = 0; i < tmp.g_.surfaces.size(); ++i) {
       const SurfaceSpec& sf = tmp.g_.surfaces[i];
       if (tmp.surf_deployed_[i] && sf.channel >= 0 && sf.channel < static_cast<int>(kSurfaceChannels)) {
@@ -778,7 +835,7 @@ class Vehicle6 {
       const EngineSpec& en = g_.engines[e];
       const bool own_dir = en.dir.x != 1.0 || en.dir.y != 0.0 || en.dir.z != 0.0;
       if (en.control == Control::None && en.gimbal && frac_[e] > 0.0) {
-        const double ti = std::max(0.0, (frac_[e] * p_.thrust_scale * en.thrust_vac) - (air.pressure * en.exit_area));
+        const double ti = std::max(0.0, (frac_[e] * p_.thrust_scale * (en.thrust_vac * en.thrust_factor)) - (air.pressure * en.exit_area));
         num += ti * (mp.x_cg - en.pos.x);
         thrust += ti;
       } else if (en.control == Control::PitchPlus && own_dir && engine_available(e)) {
@@ -812,7 +869,19 @@ class Vehicle6 {
       double moment_slope = 0.0;
       double ca = 0.0;
       double s_ref = kPi * 0.25 * p_.diameter * p_.diameter;
-      if (geo_.ready()) {
+      if (cfd_ != nullptr && cfdaero::weight(*cfd_, l.mach) >= 1.0) {
+        s_ref = cfd_->s_ref;
+        cfdaero::slopes(*cfd_, l.mach, mp.x_cg, cn_alpha, moment_slope);
+        moment_slope *= p_.cn_scale;
+      } else if (cfd_ != nullptr && geo_.ready()) {   // fading in: the mean of the two, on the build-up's reference area
+        s_ref = geo_.reference_area();
+        double c1 = 0.0;
+        double m1 = 0.0;
+        cfdaero::slopes(*cfd_, l.mach, mp.x_cg, c1, m1);
+        geo_.slopes(l.mach, mp.x_cg, cn_alpha, moment_slope);
+        const double wc = cfdaero::weight(*cfd_, l.mach);
+        moment_slope = (wc * m1 * p_.cn_scale * cfd_->s_ref / s_ref) + ((1.0 - wc) * moment_slope);
+      } else if (geo_.ready()) {
         s_ref = geo_.reference_area();
         geo_.slopes(l.mach, mp.x_cg, cn_alpha, moment_slope);
       } else {
@@ -826,9 +895,29 @@ class Vehicle6 {
 
   // The aerodynamics of the vehicle as it is now, at Mach `mach`: the slope of the normal force (per radian, on `s_ref`), where its centre of pressure is (m from the aft end) and the
   // axial coefficient flying nose first at sea-level density and 1e7 Reynolds. For the reference model's fixed numbers, those. For tools that describe a vehicle and for the tests.
+  // With a flow-solver table (aero.cfd) the axial coefficient is the table's pressure part plus the plant's friction and base drag at sea-level air and the speed of that Mach number (in flight they depend on the
+  // density and the speed), and below the table's lowest Mach number the build-up's numbers fade in.
   void aero_summary(double mach, double& cn_alpha, double& x_cp, double& ca, double& s_ref) const {
     double moment_slope = 0.0;
-    if (geo_.ready()) {
+    if (cfd_ != nullptr) {
+      s_ref = cfd_->s_ref;
+      cfdaero::slopes(*cfd_, mach, 0.0, cn_alpha, moment_slope);
+      const Air sea = atmosphere(0.0);   // (the build-up's own figure is at sea-level density and 1e7 Reynolds; this one is at sea-level air and the speed of the Mach number)
+      ca = cfdaero::lookup(*cfd_, mach, 0.0).ca + (geo_.ready() ? cfd_friction_ca(sea, mach * sea.sound, mach, s_ref) + cfd_base_ca(mach, s_ref) : 0.0);
+      const double wc = cfdaero::weight(*cfd_, mach);
+      if (wc < 1.0 && geo_.ready()) {   // below the table's lowest Mach number the build-up fades in, as it does in the loads
+        double cn2 = 0.0;
+        double ms2 = 0.0;
+        geo_.slopes(mach, 0.0, cn2, ms2);
+        const double s2 = geo_.reference_area();
+        const double ca2 = geo_.axial(mach, 1.0e7, power_fraction(), g_.aero) * p_.cd_scale;
+        cn_alpha = (wc * cn_alpha * s_ref / s2) + ((1.0 - wc) * cn2);
+        moment_slope = (wc * moment_slope * s_ref / s2) + ((1.0 - wc) * ms2);
+        ca = (wc * ca * s_ref / s2) + ((1.0 - wc) * ca2);
+        s_ref = s2;
+      }
+      x_cp = cn_alpha != 0.0 ? moment_slope / cn_alpha : 0.0;
+    } else if (geo_.ready()) {
       s_ref = geo_.reference_area();
       geo_.slopes(mach, 0.0, cn_alpha, moment_slope);
       ca = geo_.axial(mach, 1.0e7, power_fraction(), g_.aero) * p_.cd_scale;
@@ -988,7 +1077,7 @@ class Vehicle6 {
     cs.has_initial = false;
     cs.ground_radius_override = d.ground_radius;
     cs.engine_out_time = -1.0;
-    cs.engine_failures.clear();
+    cs.engine_failures = d.failures;   // (the stage's own engines, by their index in the stage alone)
     Vehicle6 v(cp, cs);
     State st = d.state;
     v.set_state(st);
@@ -1051,6 +1140,60 @@ class Vehicle6 {
     const double want = lag > 0.0 ? (target - cur) * (h / (lag + h)) : (target - cur);  // a first-order lag, then the rate limit
     const double d = std::clamp(want, -rate * h, rate * h);
     return cur + d;
+  }
+
+  // True for an engine that has a gimbal of its own: the vehicle's engines gimbal one by one and this one moves with the thrust-vector command.
+  [[nodiscard]] bool engine_gimbals_alone(const EngineSpec& en) const { return g_.per_engine_gimbal && en.gimbal && en.control == Control::None; }
+
+  // The deflection an engine is asked for by the pitch and yaw command and the roll command (degrees): the stage's common command, and along the tangent of the circle the engine is on (the
+  // direction a positive roll turns it) `roll_gain` degrees per degree of the roll command, which is the differential gimbal. Positive tp turns the thrust toward -Y (as the pitch gimbal does), positive ty toward +Z.
+  void engine_command(const EngineSpec& en, double cmd_pitch, double cmd_yaw, double cmd_roll, double& tp, double& ty) const {
+    tp = cmd_pitch;
+    ty = cmd_yaw;
+    if (en.roll_gain > 0.0) {
+      const double r = std::hypot(en.pos.y, en.pos.z);
+      if (r > 1.0e-6) {
+        const double d = en.roll_gain * cmd_roll;
+        tp += d * en.pos.z / r;
+        ty += d * en.pos.y / r;
+      }
+    }
+  }
+
+  // The gimbal of each engine that has one of its own for one substep: toward what the command asks of it through its own servo (travel, rate, lag; the second-order servo and the play of the
+  // `actuator` block), or, from the time of its fault, where the fault takes it (stuck: it stays; hard-over: it runs to its angle at its rate).
+  void drive_engine_gimbals(double h, double cmd_pitch, double cmd_yaw) {
+    for (std::size_t e = 0; e < g_.engines.size(); ++e) {
+      const EngineSpec& en = g_.engines[e];
+      const std::size_t st = static_cast<std::size_t>(en.stage);
+      if (!engine_gimbals_alone(en) || !active_[st]) {
+        continue;
+      }
+      const StageSpec& stg = g_.stages[st];
+      const double stage_limit = stg.gimbal_limit_deg >= 0.0 ? stg.gimbal_limit_deg : p_.gimbal_limit_deg;
+      const double stage_rate = stg.gimbal_rate_dps >= 0.0 ? stg.gimbal_rate_dps : p_.gimbal_rate_dps;
+      const double stage_lag = stg.gimbal_lag_s >= 0.0 ? stg.gimbal_lag_s : p_.gimbal_lag_s;
+      const double limit = en.gimbal_limit_deg >= 0.0 ? en.gimbal_limit_deg : stage_limit;
+      const double rate = en.gimbal_rate_dps >= 0.0 ? en.gimbal_rate_dps : stage_rate;
+      const double lag = en.gimbal_lag_s >= 0.0 ? en.gimbal_lag_s : stage_lag;
+      double tp = 0.0;
+      double ty = 0.0;
+      engine_command(en, cmd_pitch, cmd_yaw, ctrl_.roll_deg, tp, ty);
+      if (en.fault != GimbalFault::None && t_ >= en.fault_time_s) {
+        if (en.fault == GimbalFault::Stuck) {
+          continue;
+        }
+        tp = en.fault_pitch_deg;
+        ty = en.fault_yaw_deg;
+      }
+      if (servo_dynamics_) {
+        drive_servo(esv_p_[e], esv_pv_[e], eg_p_[e], tp, h, limit, rate, lag);
+        drive_servo(esv_y_[e], esv_yv_[e], eg_y_[e], ty, h, limit, rate, lag);
+      } else {
+        eg_p_[e] = slew(eg_p_[e], tp, h, limit, rate, lag);
+        eg_y_[e] = slew(eg_y_[e], ty, h, limit, rate, lag);
+      }
+    }
   }
 
   // One axis of a gimbal servo with dynamics (a second-order servo and/or backlash; the plain first-order lag is `slew`): moves the servo (`pos`, `vel`) toward the command, then the engine
@@ -1376,12 +1519,74 @@ class Vehicle6 {
 
   // One engine of a stage that the computers drive: it starts when its group is commanded on (if it has starts left, and the start takes: the scenario can make a start fail), runs at the throttle
   // commanded (raised to the engine's lowest, `min_throttle`) and stops when its group is commanded off or the propellant is gone.
+  // The engines the engine controller runs when the command asks for a number of them (`Controls::engine_count`): of the engines the commanded groups light that can run (not out, no failed start), the `count`
+  // whose thrust acts nearest the axis, so that a cluster with engines out is as balanced as it can be (a thrust off the axis is a torque the gimbal must trim and a force that is not along the axis). Ties go to
+  // the lower index (the order of the vehicle file). It is found again only when the command, the groups or the engines that can run change; over twenty candidates the first twenty are used.
+  void refresh_selection() {
+    uint64_t can_run = 0U;
+    for (std::size_t k = 0; k < g_.engines.size() && k < kMaxEngines; ++k) {
+      const EngineSpec& en = g_.engines[k];
+      const bool in_group = ((ctrl_.group_mask >> static_cast<unsigned>(en.group)) & 1U) != 0U;
+      if (en.control == Control::None && en.group >= 0 && in_group && active_[static_cast<std::size_t>(en.stage)] && !failed_[k] && !start_failed_[k]) {
+        can_run |= uint64_t{1} << k;
+      }
+    }
+    if (sel_valid_ && can_run == sel_can_run_ && ctrl_.engine_count == sel_count_) {
+      return;
+    }
+    sel_valid_ = true;
+    sel_can_run_ = can_run;
+    sel_count_ = ctrl_.engine_count;
+    selected_.fill(false);
+    std::array<std::size_t, 20> cand{};
+    unsigned n = 0U;
+    for (std::size_t k = 0; k < kMaxEngines && n < cand.size(); ++k) {
+      if (((can_run >> k) & 1U) != 0U) {
+        cand[n++] = k;
+      }
+    }
+    const unsigned want = std::min(ctrl_.engine_count, n);
+    double best = 1.0e300;
+    uint32_t best_set = 0U;
+    for (uint32_t set = 0U; set < (uint32_t{1} << n); ++set) {
+      unsigned bits = 0U;
+      for (uint32_t m = set; m != 0U; m &= m - 1U) {
+        ++bits;
+      }
+      if (bits != want) {
+        continue;
+      }
+      double sy = 0.0;
+      double sz = 0.0;
+      double st = 0.0;
+      for (unsigned i = 0; i < n; ++i) {
+        if (((set >> i) & 1U) != 0U) {
+          const EngineSpec& en = g_.engines[cand[i]];
+          const double w = en.thrust_vac * en.thrust_factor;
+          sy += w * en.pos.y;
+          sz += w * en.pos.z;
+          st += w;
+        }
+      }
+      const double off = st > 0.0 ? std::hypot(sy, sz) / st : 0.0;
+      if (off < best - 1.0e-9) {
+        best = off;
+        best_set = set;
+      }
+    }
+    for (unsigned i = 0; i < n; ++i) {
+      selected_[cand[i]] = ((best_set >> i) & 1U) != 0U;
+    }
+  }
+
+  [[nodiscard]] bool in_first_engines(std::size_t e) const { return ctrl_.engine_count == 0U || (e < kMaxEngines && selected_[e]); }
+
   void update_guided_engine(std::size_t e, double h) {
     const EngineSpec& en = g_.engines[e];
     const std::size_t st = static_cast<std::size_t>(en.stage);
     const bool bit = ((ctrl_.group_mask >> static_cast<unsigned>(en.group)) & 1U) != 0U;
     const bool fuel = s_.prop[st] > kEmptyProp;
-    const bool want = bit && fuel && !failed_[e] && ctrl_.throttle > 0.0;
+    const bool want = bit && fuel && !failed_[e] && ctrl_.throttle > 0.0 && in_first_engines(e);
     if (want && !eng_on_[e] && !start_failed_[e]) {
       if (en.max_starts > 0 && starts_[e] >= en.max_starts) {
         start_failed_[e] = true;
@@ -1521,6 +1726,7 @@ class Vehicle6 {
           const double sink = -dot(v_rel, up_pad);
           const double lat = norm(v_rel + (up_pad * sink));
           const double tilt = std::acos(std::clamp(dot(rotate(s_.q, V3{1.0, 0.0, 0.0}), up_pad), -1.0, 1.0)) * kRad2Deg;
+          catch_pass_ = CatchPass{true, miss, sink, lat, tilt};
           if (miss <= sc_.tower.capture_radius_m && sink >= 0.0 && sink <= sc_.tower.max_sink_ms && lat <= sc_.tower.max_lateral_ms && tilt <= sc_.tower.max_tilt_deg) {
             caught_ = true;
             s_.r = s_.r + (up_pad * (sc_.tower.height_m - hp));
@@ -1590,6 +1796,23 @@ class Vehicle6 {
       }
     }
     d.spec = stage_alone(s, d.x_off);
+    {   // the failures of the stage's engines go with it, by the engine's index in the stage alone
+      int local = 0;
+      for (std::size_t e = 0; e < g_.engines.size(); ++e) {
+        if (g_.engines[e].stage != static_cast<int>(s)) {
+          continue;
+        }
+        if (failed_[e]) {
+          d.failures.push_back(EngineFailure{-1.0, local});
+        }
+        for (const EngineFailure& f : failures_) {
+          if (f.index == static_cast<int>(e) && !failed_[e]) {
+            d.failures.push_back(EngineFailure{f.time, local});
+          }
+        }
+        ++local;
+      }
+    }
     const double prop_s = d.state.prop[s];   // (the copy was taken before the stage left)
     d.state.prop = std::array<double, kMaxStages>{};
     d.state.prop[0] = prop_s;
@@ -1603,8 +1826,16 @@ class Vehicle6 {
     VehicleSpec v;
     v.planet = g_.planet;
     v.aero = g_.aero;
+    v.aero.cfd.clear();   // the flow solver's tables are by the stages on the vehicle: the one of this stage alone, renumbered (it is stage 0 of the vehicle it now is)
+    for (const CfdAeroDb& db : g_.aero.cfd) {
+      if (db.stages.size() == 1U && db.stages[0] == static_cast<int>(s)) {
+        v.aero.cfd.push_back(db);
+        v.aero.cfd.back().stages = {0};
+      }
+    }
     v.actuator = g_.actuator;
     v.jet_damping = g_.jet_damping;
+    v.per_engine_gimbal = g_.per_engine_gimbal;
     StageSpec st = g_.stages[s];
     st.x_start = 0.0;
     if (st.x_cg_dry >= 0.0) {
@@ -1698,6 +1929,59 @@ class Vehicle6 {
       l.f_aero.y = -q_s * n_total * n.y;
       l.f_aero.z = -q_s * n_total * n.z;
       l.m_aero = cross(V3{-q_s * arm_sum, 0.0, 0.0}, n);
+    }
+  }
+
+  // The body's force and moment from the flow solver's tables (aero.cfd): the pressure forces at the Mach number and the angle of attack, to which the plant adds what an Euler solution does not have: the skin
+  // friction (the viscous layer's reference-temperature law, viscous.hpp, on the free stream's state, the wall at a radiative-equilibrium-like temperature), and the base drag (the build-up's law, less with the engines
+  // on) where the base is not facing the stream; where it does (the angle of attack past 90 degrees) the solver's own pressure on the base. The body's turning is the build-up's.
+  // What the plant adds to the flow solver's table (which is the pressure on the skin of an Euler solution). The skin friction: the viscous layer's mean coefficient over the body's length at the free stream's state,
+  // the wall at 80 % of the recovery temperature up to 1,500 K, times the wetted area over the reference area and the file's roughness factor. The base drag: the build-up's law on the area of the base, less with
+  // the engines running.
+  [[nodiscard]] double cfd_friction_ca(const Air& air, double v_abs, double mach, double s_ref) const {
+    cfd::visc::Edge e;
+    e.rho = air.density;
+    e.p = air.pressure;
+    e.t = air.temperature;
+    e.u = v_abs;
+    const double t_aw = air.temperature * (1.0 + (0.9 * 0.2 * mach * mach));
+    const double t_wall = std::min(0.8 * t_aw, 1500.0);
+    return cfd::visc::average_cf(e, geo_.length(), t_wall, 1.0e6) * g_.aero.wetted_roughness * geo_.wetted_area() / s_ref;
+  }
+  [[nodiscard]] double cfd_base_ca(double mach, double s_ref) const {
+    const double cd_base = mach < 1.0 ? 0.12 + (0.13 * mach * mach) : 0.25 / mach;
+    return cd_base * (geo_.base_area() / s_ref) * (1.0 - (g_.aero.power_on_base * std::clamp(power_fraction(), 0.0, 1.0)));
+  }
+
+  void shape_forces_cfd(const CfdAeroDb& db, Loads& l, const Air& air, const V3& vrel, double v_abs, const MassProps& mp, const V3& w) const {
+    const AeroSpec& a = g_.aero;
+    const double lat = std::hypot(vrel.y, vrel.z);
+    const double alpha = std::atan2(lat, vrel.x);
+    l.alpha = alpha;
+    const double alpha_deg = alpha / kDeg2Rad;
+    const cfdaero::Coeffs c = cfdaero::lookup(db, l.mach, alpha_deg);
+    const double s_ref = db.s_ref;
+    const double q_s = l.dynamic_pressure * s_ref;
+    const double cos_a = std::cos(alpha);
+    const double ca_fric = cfd_friction_ca(air, v_abs, l.mach, s_ref);
+    const double toward_base = aero::smoothstep(80.0, 100.0, alpha_deg);   // 0 flying nose first, 1 with the base to the stream
+    const double base_law = cfd_base_ca(l.mach, s_ref) * std::max(cos_a, 0.0);
+    const double ca_total = c.ca + (ca_fric * cos_a) + ((1.0 - toward_base) * (base_law + c.ca_fore)) + (toward_base * c.ca_base);   // (a flat forward end is a windward face until the base is to the stream: ca_base has it then)
+    const double n_total = p_.cn_scale * c.cn;
+    const double arm = p_.cn_scale * ((-(c.cm + ((1.0 - toward_base) * c.cm_fore)) * db.d_ref) + ((db.x_ref - mp.x_cg) * c.cn));   // N times the distance from the centre of mass to where it acts, m
+    l.f_aero.x = -q_s * p_.cd_scale * ca_total;
+    if (lat > 1e-9) {
+      const V3 n{0.0, vrel.y / lat, vrel.z / lat};
+      l.f_aero.y = -q_s * n_total * n.y;
+      l.f_aero.z = -q_s * n_total * n.z;
+      l.m_aero = cross(V3{-q_s * arm, 0.0, 0.0}, n);
+    }
+    if (w.y != 0.0 || w.z != 0.0) {
+      V3 df;
+      V3 dm;
+      geo_.rotation_increment(l.mach, air.sound, air.density, vrel, w, mp.x_cg, a, p_.cn_scale, df, dm);
+      l.f_aero = l.f_aero + df;
+      l.m_aero = l.m_aero + dm;
     }
   }
 
@@ -1819,6 +2103,11 @@ class Vehicle6 {
       }
     }
     geo_.build(sections, fins, g_.aero.reference_diameter_m);
+    std::vector<bool> on(g_.stages.size(), false);
+    for (std::size_t k = 0; k < on.size(); ++k) {
+      on[k] = active_[k];
+    }
+    cfd_ = g_.aero.cfd.empty() ? nullptr : cfdaero::select(g_.aero.cfd, on);
     shaped_ = geo_.ready() || !g_.aero.table.empty();
     if (g_.aero.full_regime && geo_.ready()) {
       newton_.build(sections, fins, geo_.reference_area());
@@ -1877,6 +2166,9 @@ class Vehicle6 {
 
   // The thrust fraction of each engine for the next substep of h seconds: 1 (or the throttle) while it is lit, with the rise and tail-off time constants, 0 once its stage has gone.
   void update_engines(double h, double cmd_pitch_deg, double cmd_yaw_deg) {
+    if (ctrl_.engine_count != 0U) {
+      refresh_selection();
+    }
     for (std::size_t e = 0; e < g_.engines.size(); ++e) {
       const EngineSpec& en = g_.engines[e];
       const std::size_t st = static_cast<std::size_t>(en.stage);
@@ -2157,6 +2449,7 @@ class Vehicle6 {
   V3 omega_{};
   bool rotating_ = false;
   V3 turb_{};
+  const CfdAeroDb* cfd_ = nullptr;   // the flow solver's table for the stages that are on the vehicle (aero.cfd), if there is one
   uint64_t rng_ = 1U;
   AeroGeometry geo_;
   bool shaped_ = false;  // the aerodynamics follow the shape (or a table), not the reference model's fixed numbers
@@ -2167,6 +2460,16 @@ class Vehicle6 {
   std::array<double, kMaxStages> servo_p_{};   // the servo's own position and velocity when it has dynamics (a second-order servo or backlash)
   std::array<double, kMaxStages> servo_y_{};
   std::array<double, kMaxStages> servo_pv_{};
+  std::array<bool, kMaxEngines> selected_{};   // the engines the engine controller runs when the command asks for a number of them
+  uint64_t sel_can_run_ = 0U;
+  unsigned sel_count_ = 0U;
+  bool sel_valid_ = false;
+  std::array<double, kMaxEngines> eg_p_{};     // the gimbal of each engine that has one of its own (VehicleSpec::per_engine_gimbal), degrees, after any play
+  std::array<double, kMaxEngines> eg_y_{};
+  std::array<double, kMaxEngines> esv_p_{};    // and the servos' own positions and velocities, when they have dynamics
+  std::array<double, kMaxEngines> esv_pv_{};
+  std::array<double, kMaxEngines> esv_y_{};
+  std::array<double, kMaxEngines> esv_yv_{};
   std::array<double, kMaxStages> servo_yv_{};
   struct Pod {  // a tank that sloshes: which one
     std::size_t stage;
@@ -2205,6 +2508,7 @@ class Vehicle6 {
   bool landed_ = false;
   bool caught_ = false;
   bool catch_missed_ = false;
+  CatchPass catch_pass_{};
   double ground_radius_ = 0.0;
   double prev_pin_h_ = 1.0e30;
   NewtonTable newton_;

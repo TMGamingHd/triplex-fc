@@ -97,10 +97,11 @@ struct DragModel {
   double rho0 = 1.225;
   double scale_height = 7200.0;   // m (a fit to the lower atmosphere, better than the standard 8500 through the stratosphere)
   double beta = 6000.0;
+  Vec3 omega{};   // rad/s: the planet's angular velocity, navigation frame (the air turns with it: the drag is on the velocity relative to the air; zero: the planet does not turn)
 };
 
 // The place a vehicle would meet the sphere of radius `radius` flying down under gravity and drag from (r, v): steps of `dt` seconds of velocity Verlet with the drag deceleration -(rho |v| v) / (2 beta) on the velocity
-// through the air (the planet does not turn in this frame). Returns the point reached (the last step is cut at the sphere) and the time; `valid` false if it did not get there in `max_steps`.
+// through the air (which turns with the planet when `drag.omega` is not zero). Returns the point reached (the last step is cut at the sphere) and the time; `valid` false if it did not get there in `max_steps`.
 inline Impact descent_predict(Vec3 r, Vec3 v, const nav::Gravity& grav, const DragModel& drag, double radius, double dt, unsigned max_steps) noexcept {
   Impact out;
   Vec3 rr = r;
@@ -110,7 +111,8 @@ inline Impact descent_predict(Vec3 r, Vec3 v, const nav::Gravity& grav, const Dr
     const auto accel = [&](Vec3 pos, Vec3 vel) {
       const double alt = dm::norm(pos) - grav.radius;
       const double rho = drag.rho0 * dm::exp_(-dm::max_(alt, 0.0) / drag.scale_height);
-      return grav.at(pos) - (vel * (0.5 * rho * dm::norm(vel) / drag.beta));
+      const Vec3 rel = vel - dm::cross(drag.omega, pos);
+      return grav.at(pos) - (rel * (0.5 * rho * dm::norm(rel) / drag.beta));
     };
     const Vec3 a0 = accel(rr, vv);
     const Vec3 r1 = rr + (vv * dt) + (a0 * (0.5 * dt * dt));
@@ -173,10 +175,24 @@ class PoweredDescent {
  public:
   PoweredDescent() noexcept = default;
 
+  static constexpr double kThrustMargin = 0.95;   // the fraction of the engines' full thrust the planned deceleration may ask for (the rest is the throttle's room to correct)
+
   // The stopping height: how far above the target point the vehicle must be to be stopped at the arrival speed `sink` by the planned deceleration `decel` (m/s^2, beyond the weight).
   [[nodiscard]] static double stopping_height(double v_down, double decel, double sink) noexcept {
     const double v2 = dm::max_((v_down * v_down) - (sink * sink), 0.0);
     return v2 / (2.0 * dm::max_(decel, 0.1));
+  }
+
+  // The deceleration the burn is planned on: the plan's, or what the most engines it may run give at the mass the vehicle has now (kThrustMargin of their full thrust, less the weight), whichever is smaller. A
+  // vehicle heavier than the plan assumed, or with engines out, is lit earlier and brought down more gently than the plan, instead of being lit too late to stop.
+  [[nodiscard]] static double planned_decel(const LandingTarget& tgt, const Engines& eng, double mass, double g_local) noexcept {
+    const unsigned n_opt = eng.options < kEngineOptions ? eng.options : kEngineOptions;
+    unsigned most = 1U;
+    for (unsigned k = 0; k < n_opt; ++k) {
+      most = eng.counts[k] > most ? eng.counts[k] : most;
+    }
+    const double a_avail = (kThrustMargin * eng.thrust_each * static_cast<double>(most) / dm::max_(mass, 1.0)) - g_local;
+    return dm::max_(dm::min_(tgt.decel_plan, a_avail), 1.0);
   }
 
   // One cycle. `ignition_margin` is the multiple of the stopping height at which to start (1.15 leaves a reserve for the start-up and the lateral correction).
@@ -191,7 +207,8 @@ class PoweredDescent {
     const double g_local = dm::norm(grav.at(r));
     const double v_down = dm::max_(-v_z, 0.0);
     out.height = h;
-    const double h_stop = stopping_height(v_down, tgt.decel_plan, tgt.sink_ms);
+    const double decel = planned_decel(tgt, eng, mass, g_local);
+    const double h_stop = stopping_height(v_down, decel, tgt.sink_ms);
     out.ignite = burning || h <= (h_stop * ignition_margin) + 1.0;
     out.miss = e_h;
     if (!out.ignite) {
@@ -201,13 +218,19 @@ class PoweredDescent {
     // vertical: hold the speed profile that stops at the arrival sink speed at zero height with the planned deceleration, v_ref^2 = sink^2 + 2 a h: the planned deceleration is the feed-forward, and the speed
     // error from the profile is corrected (too fast: more thrust; too slow: less, down to a fraction of the weight)
     const double h_rem = dm::max_(h, 0.05);
-    const double v_plan = dm::sqrt_((tgt.sink_ms * tgt.sink_ms) + (2.0 * tgt.decel_plan * h_rem));
+    const double v_plan = dm::sqrt_((tgt.sink_ms * tgt.sink_ms) + (2.0 * decel * h_rem));
     const double v_approach = tgt.sink_ms + (h_rem / dm::max_(tgt.approach_s, 0.1));
     const double v_ref = dm::min_(v_plan, v_approach);
     // the deceleration that holds the vehicle on the profile is the profile's slope times the speed: the planned one on the constant-deceleration part, v / approach_s on the gentle end
-    const double slope = v_approach < v_plan ? 1.0 / dm::max_(tgt.approach_s, 0.1) : tgt.decel_plan / v_ref;
+    const double slope = v_approach < v_plan ? 1.0 / dm::max_(tgt.approach_s, 0.1) : decel / v_ref;
     const double a_ff = v_down * slope;
-    const double a_up = dm::max_(g_local + a_ff + (0.6 * (v_down - v_ref)), 0.3 * g_local);
+    // an integral on the speed error takes out what the model of the thrust and the mass gets wrong (a thrust a percent high or low, a mass a percent off: the P term alone settles at a speed error of
+    // that over its gain, which at the end of the approach is the whole of the speed it is meant to arrive at); it builds only while the burn runs and is bounded
+    const double v_err = v_down - v_ref;
+    // (no integrating while far from the profile: the start of the burn, a step of the engine count; and none in the last metres, where what it holds is kept and a late change would be the arrival speed)
+    const double near_profile = dm::clamp_(1.0 - (dm::fabs_(v_err) / kIntegralBand), 0.0, 1.0) * dm::clamp_(h_rem / kIntegralFreezeHeight, 0.0, 1.0);
+    int_v_ = burning ? dm::clamp_(int_v_ + (near_profile * v_err * kFramePeriodS), -kIntegralLimit, kIntegralLimit) : 0.0;
+    const double a_up = dm::max_(g_local + a_ff + (0.6 * v_err) + (kIntegralGain * int_v_), 0.3 * g_local);
     // horizontal: ZEM / ZEV over the time to go (the time the vertical profile takes: 2 h / (v_down + sink), at least a second and a half)
     const double t_go = dm::clamp_(2.0 * h_rem / (v_down + tgt.sink_ms), 1.5, 60.0);
     out.time_to_go = t_go;
@@ -247,13 +270,22 @@ class PoweredDescent {
     return out;
   }
 
-  void reset() noexcept { have_option_ = false; }
+  void reset() noexcept {
+    have_option_ = false;
+    int_v_ = 0.0;
+  }
   [[nodiscard]] bool running() const noexcept { return have_option_; }
   [[nodiscard]] unsigned option() const noexcept { return option_; }
 
  private:
+  static constexpr double kFramePeriodS = 0.01;   // the guidance runs every frame
+  static constexpr double kIntegralGain = 0.25;   // m/s^2 per metre of accumulated speed error (that is: 1/s^2 on the position it integrates to)
+  static constexpr double kIntegralBand = 3.0;    // m/s: the integral builds at full rate on the profile and not at all three metres per second off it
+  static constexpr double kIntegralFreezeHeight = 25.0;   // m above the aim point: below it the integral stops changing
+  static constexpr double kIntegralLimit = 4.0;   // m: the term is at most a metre per second squared
   unsigned option_ = 0U;
   bool have_option_ = false;
+  double int_v_ = 0.0;
 };
 
 }  // namespace tfc::descent

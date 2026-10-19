@@ -109,6 +109,7 @@ TFC_TEST(runner_closed_loop_masks_a_failed_sensor_and_flies_on_with_a_computer_l
   CHECK(rd.final_mode == tfc::ActMode::Nominal);
 }
 
+// Verifies: TFC-SIM-004
 TFC_TEST(runner_closed_loop_holds_the_last_command_through_a_short_loss_of_acts_frame) {
   Loop lp;
   lp.act_lost_from = 3000U;

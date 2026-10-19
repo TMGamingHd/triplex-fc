@@ -91,6 +91,7 @@ TFC_TEST(atmosphere_is_continuous_between_layers_decreasing_and_has_an_exponenti
 
 // ---- mass properties ----
 
+// Verifies: TFC-SIM-002
 TFC_TEST(mass_properties_move_as_the_propellant_burns) {
   sim::Vehicle6 v;
   const sim::MassProps full = v.mass_props(30000.0);
@@ -214,6 +215,7 @@ TFC_TEST(torque_free_rotation_conserves_angular_momentum_and_energy) {
   CHECK(near_abs(std::sqrt((e.q.w * e.q.w) + (e.q.x * e.q.x) + (e.q.y * e.q.y) + (e.q.z * e.q.z)), 1.0, 1e-12));
 }
 
+// Verifies: TFC-SIM-002
 TFC_TEST(thrust_rises_with_altitude_and_stops_when_the_propellant_is_gone) {
   using namespace sim;
   Vehicle6 v;
@@ -397,6 +399,7 @@ TFC_TEST(the_platform_lags_the_vehicle_limits_its_rate_and_its_travel_and_says_w
   CHECK(!far.saturated() && near_abs(far.tilts().y_deg, 0.0, 1e-6));
 }
 
+// Verifies: TFC-SIM-005
 TFC_TEST(vehicle_true_sensors_read_specific_force_and_body_rates_in_the_sensor_frame) {
   using namespace sim;
   Vehicle6 v;  // on the pad, burning: specific force is thrust over mass along the long axis
@@ -535,6 +538,7 @@ TFC_TEST(the_nominal_ascent_is_a_believable_gravity_turn) {
 
 // ---- the schedule and guidance in the flight code ----
 
+// Verifies: TFC-LOOP-007
 TFC_TEST(the_gain_schedule_interpolates_and_holds_at_the_ends) {
   tfc::GainSchedule gs;
   CHECK(gs.at(10U).kp == tfc::ControllerGains{}.kp);  // empty: the defaults

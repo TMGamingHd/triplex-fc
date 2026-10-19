@@ -18,6 +18,8 @@ import atmosphere from './lenses/atmosphere.js';
 import propulsion from './lenses/propulsion.js';
 import loads from './lenses/loads.js';
 import attitude from './lenses/attitude.js';
+import broadcast from './lenses/broadcast.js';
+import { Director } from './director.js';
 
 const Q = new URLSearchParams(window.__query || location.search);
 
@@ -31,7 +33,7 @@ if (Q.get('debug')) {
   window.__dbg = (...a) => send('dbg', a);
 }
 
-const LENSES = [overview, aero, atmosphere, propulsion, loads, attitude];
+const LENSES = [broadcast, overview, aero, atmosphere, propulsion, loads, attitude];
 
 const canvas = document.getElementById('scene');
 const ui = document.getElementById('ui');
@@ -49,6 +51,10 @@ st.plumes = store.get('v.plumes', true); st.trail = store.get('v.trail', true); 
 
 const app = {
   world, data, events: [], wall: 0, dt: 0.016, pose: null, d: null, lens: null, styleName: Q.get('style') || store.get('v.style', 'auto'),
+  raw: null,                                                     // the pose as the simulator sent it, with the other bodies in it (the Broadcast lens shows every stage)
+  auto: false, director: new Director(),                         // the camera director: when it is on it picks the camera and the body that is followed
+  setAuto(on) { setAuto(on); },
+  syncCam() { syncCamSeg(); },
   curSpec: null,                                               // the spec of the body that is followed (the main body's, or the spec of one stage of it)
   get spec() { return this.curSpec || data.spec; }, get vehicle() { return world.vehicle; },
   left: h('aside', { id: 'v-left', class: 'v-dock', 'aria-label': 'Left panels' }), right: h('aside', { id: 'v-right', class: 'v-dock', 'aria-label': 'Right panels' }),
@@ -101,18 +107,28 @@ function updateFollow(raw) {
   const label = (n) => n === 'main' ? (data.spec.stages.length > 1 ? 'Ship' : 'Vehicle') : n.charAt(0).toUpperCase() + n.slice(1);
   followBar.replaceChildren(h('span', { class: 'v-follow-lbl' }, 'Follow'), ...names.map((n) => h('button', { type: 'button', dataset: { id: n }, 'aria-pressed': String(n === data.focus), title: n === 'main' ? 'The main vehicle (the ship, after the stages have left)' : 'The ' + n + ', flown by its own computers', onclick: () => setFocus(n) }, label(n))));
 }
-function setFocus(n) {
+function setFocus(n, quiet = false) {
   if (data.focus === n) return;
-  data.focus = n; data.hist = { t: [], s: {} }; tracker.prev = null; app.events.length = 0; followKey = '';
+  data.focus = n; data.hist = { t: [], s: {} }; tracker.prev = null; followKey = '';
   world.rig.firstFrame = true;
+  if (quiet) return;                                        // the director's cut: the events stay (they are the flight's, not the body's) and no toast says it
+  app.events.length = 0;
   toast('Following ' + (n === 'main' ? 'the main vehicle' : 'the ' + n), 'info', 2500);
 }
+/** The director on or off. On: it picks the camera and the body followed from the pose; off: they stay as the last shot left them. */
+function setAuto(on) {
+  app.auto = !!on; store.set('v.auto', app.auto); app.director.reset();
+  autoBtn.setAttribute('aria-pressed', String(app.auto)); syncCamSeg();
+}
+const cutEl = h('div', { id: 'v-cut' }); document.body.append(cutEl);
+function flashCut() { cutEl.classList.remove('go'); void cutEl.offsetWidth; cutEl.classList.add('go'); }
 // "Inside": the cutaway. The half of the skin toward the camera is removed (whichever way the camera goes round) and the tanks with the liquid in them, the thrust structure, the header tanks and the payload are seen (models/interior.js).
 const insideBtn = h('button', { type: 'button', id: 'v-inside', 'aria-pressed': 'false', title: 'See inside the vehicle: the skin cut away, the tanks with the liquid in them, the engine mount and the payload (I)', onclick: () => setInside(!world.settings.inside) }, 'Inside');
 function showInside() { const on = !!world.settings.inside; insideBtn.setAttribute('aria-pressed', String(on)); insideBtn.textContent = on ? 'Inside: on' : 'Inside'; }
 function setInside(on) { world.settings.inside = !!on; store.set('v.inside', !!on); showInside(); }
 showInside();
-const camBar = h('div', { id: 'v-cams' }, h('nav', { 'aria-label': 'Camera', role: 'group' }, CAMERAS.map((c) => h('button', { type: 'button', dataset: { id: c.id }, 'aria-pressed': 'false', title: c.hint, onclick: () => { world.rig.set(c.id); store.set('v.cam', c.id); syncCamSeg(); } }, c.label))), camHint, h('div', { class: 'v-viewrow' }, followBar, insideBtn));
+const autoBtn = h('button', { type: 'button', id: 'v-auto', 'aria-pressed': 'false', title: 'The director: cuts between the ground, tracking and chase cameras and follows the stage that matters, as a broadcast does (A)', onclick: () => setAuto(!app.auto) }, 'Auto');
+const camBar = h('div', { id: 'v-cams' }, h('nav', { 'aria-label': 'Camera', role: 'group' }, autoBtn, CAMERAS.map((c) => h('button', { type: 'button', dataset: { id: c.id }, 'aria-pressed': 'false', title: c.hint, onclick: () => { setAuto(false); world.rig.set(c.id); store.set('v.cam', c.id); syncCamSeg(); } }, c.label))), camHint, h('div', { class: 'v-viewrow' }, followBar, insideBtn));
 // the docks can be folded away one at a time (H hides everything); a narrow window starts with the right one folded
 const dockBtn = (side, glyph) => h('button', { type: 'button', class: 'v-dockbtn', id: 'v-tg-' + side, 'aria-label': `Hide or show the ${side} panels`, title: `Hide or show the ${side} panels`, onclick: () => setDock(side, document.body.classList.contains('no-' + side)) }, glyph);
 function setDock(side, show) { document.body.classList.toggle('no-' + side, !show); store.set('v.dock.' + side, show); const b = document.getElementById('v-tg-' + side); if (b) b.textContent = side === 'left' ? (show ? '‹' : '›') : (show ? '›' : '‹'); }
@@ -131,11 +147,12 @@ setDock('left', store.get('v.dock.left', true)); setDock('right', store.get('v.d
 app.empty = empty;
 
 function toggleUI() { document.body.classList.toggle('hideui'); }
-function nextCamera() { const i = CAMERAS.findIndex((c) => c.id === world.rig.mode); const n = CAMERAS[(i + 1) % CAMERAS.length]; world.rig.set(n.id); store.set('v.cam', n.id); syncCamSeg(); }
+function nextCamera() { setAuto(false); const i = CAMERAS.findIndex((c) => c.id === world.rig.mode); const n = CAMERAS[(i + 1) % CAMERAS.length]; world.rig.set(n.id); store.set('v.cam', n.id); syncCamSeg(); }
 function syncCamSeg() {
   const m = world.rig.mode;
-  for (const b of camBar.querySelectorAll('button')) b.setAttribute('aria-pressed', b.dataset.id === m ? 'true' : 'false');
-  const c = CAMERAS.find((x) => x.id === m); const t = c ? c.hint : ''; if (camHint.textContent !== t) camHint.textContent = t;
+  for (const b of camBar.querySelectorAll('button[data-id]')) b.setAttribute('aria-pressed', !app.auto && b.dataset.id === m ? 'true' : 'false');
+  autoBtn.setAttribute('aria-pressed', String(!!app.auto));
+  const c = CAMERAS.find((x) => x.id === m); const t = app.auto ? 'The director cuts between the cameras and follows the stage that matters. Take a camera, or drag, to take over' : c ? c.hint : ''; if (camHint.textContent !== t) camHint.textContent = t;
 }
 
 // ---- lenses
@@ -155,11 +172,11 @@ function rebuildVehicle() {
   if (keep) setLens(keep.id);
 }
 data.onSpec.push(() => { data.focus = Q.get('follow') || 'main'; app.curSpec = null; rebuildVehicle(); });
-data.onReset.push(() => { data.padCg = null; world.padCG = null; world.trail.clear(); world.smoke.clear(); app.events.length = 0; tracker.prev = null; tracker.liftoff = false; tracker.space = false; tracker.qpeak = 0; });
+data.onReset.push(() => { data.padCg = null; world.padCG = null; world.trail.clear(); world.smoke.clear(); app.events.length = 0; tracker.prev = null; tracker.liftoff = false; tracker.space = false; tracker.qpeak = 0; tracker.done.clear(); app.director.reset(); });
 
 // ---- the events: what happened, from the poses
-const tracker = { prev: null, qpeak: 0, qpeakT: 0, maxQDone: false, liftoff: false, space: false };
-function track(pose) {
+const tracker = { prev: null, qpeak: 0, qpeakT: 0, maxQDone: false, liftoff: false, space: false, done: new Set() };
+function track(pose, raw) {
   const p = tracker.prev, t = pose.t, ev = (level, text) => app.events.push({ t, level, text });
   if (p && Math.abs(pose.tt - p.tt) < 5) {
     if (p.clamp && !pose.clamp && !tracker.liftoff) { tracker.liftoff = true; ev('ok', 'lift-off'); }
@@ -175,6 +192,11 @@ function track(pose) {
     if (pose.qd > tracker.qpeak) { tracker.qpeak = pose.qd; tracker.qpeakT = t; tracker.maxQDone = false; }
     else if (!tracker.maxQDone && tracker.qpeak > 2000 && pose.qd < 0.9 * tracker.qpeak) { tracker.maxQDone = true; ev('info', `max-Q passed: ${(tracker.qpeak / 1000).toFixed(1)} kPa at T+${tracker.qpeakT.toFixed(1)} s`); }
     if (pose.crash && !p.crash) ev('crit', 'the vehicle was destroyed');
+    for (const o of (raw && raw.others) || []) {                                  // a stage that comes back: caught by the arms, or down on its legs
+      if (!o.pose) continue;
+      const key = o.name + (o.pose.cgt === 1 ? ':caught' : o.pose.lnd === 1 ? ':landed' : '');
+      if (key !== o.name && !tracker.done.has(key)) { tracker.done.add(key); ev('ok', o.pose.cgt === 1 ? `${o.name} caught` : `${o.name} landed`); }
+    }
   } else if (p) { tracker.liftoff = false; }
   tracker.prev = pose;
 }
@@ -311,7 +333,7 @@ function updateHeader(pose) {
 // ---- input
 let drag = null;
 canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, slide: e.button === 2 || e.shiftKey }; canvas.setPointerCapture(e.pointerId); canvas.classList.add('dragging'); });
-canvas.addEventListener('pointermove', (e) => { if (!drag) return; world.rig.drag(e.clientX - drag.x, e.clientY - drag.y, drag.slide); drag.x = e.clientX; drag.y = e.clientY; syncCamSeg(); });
+canvas.addEventListener('pointermove', (e) => { if (!drag) return; if (app.auto) setAuto(false); world.rig.drag(e.clientX - drag.x, e.clientY - drag.y, drag.slide); drag.x = e.clientX; drag.y = e.clientY; syncCamSeg(); });
 canvas.addEventListener('pointerup', () => { drag = null; canvas.classList.remove('dragging'); });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('dblclick', () => { world.rig.recenter(); syncCamSeg(); });
@@ -321,6 +343,7 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase(), lens = LENSES.find((l) => l.key === e.key);
   if (lens) setLens(lens.id);
   else if (k === 'c') nextCamera();
+  else if (k === 'a') setAuto(!app.auto);
   else if (k === 'i') setInside(!world.settings.inside);
   else if (k === 'h') toggleUI();
   else if (k === ' ') { e.preventDefault(); control('toggle'); }
@@ -361,7 +384,12 @@ function loop(now) {
   let pose = null;
   if (Q.get('static')) pose = staticPose();
   else { const t = data.clock.frame(data.buf, data.source, false); pose = t == null ? null : data.buf.at(t); }
-  const raw = pose;                                                          // the pose as the simulator sent it, with the other bodies in it
+  const raw = pose; app.raw = raw;                                           // the pose as the simulator sent it, with the other bodies in it
+  if (app.auto && raw && !Q.get('static')) {                                 // the director: the camera, and the body that is followed, for this moment
+    const s = app.director.shot(raw);
+    if (s.focus !== data.focus && data.bodies(raw).includes(s.focus)) setFocus(s.focus, true);
+    if (s.cam !== world.rig.mode) { world.rig.set(s.cam); if (s.cut) flashCut(); syncCamSeg(); }
+  }
   if (raw && data.padCg == null) data.padCg = raw.cg;                          // the main body's centre of mass on the pad: the ground is placed from it
   if (pose) { const v = data.view(pose); pose = v.pose; if (v.spec !== app.curSpec) { app.curSpec = v.spec; if (world.spec !== v.spec) rebuildVehicle(); } updateFollow(raw); }
   if (pose && Q.get('finsout')) pose = { ...pose, sdep: 255 };                 // ?finsout=1: every surface deployed, to look at deployed grid fins without flying the return
@@ -375,7 +403,7 @@ function loop(now) {
       if (app.lens) app.lens.update(app, pose, d, dt);
       world.render(); frames++;
     } catch (e) { console.error('frame', e); }
-    if (frames % 5 === 0 || !tracker.prev) track(pose);
+    if (frames % 5 === 0 || !tracker.prev) track(pose, raw);
   }
   updateHeader(pose); if (frames % 6 === 0) updateBottom();
   { const want = !pose && performance.now() - bootAt > 1500 && !Q.get('static'); if (empty.hidden === want) empty.hidden = !want; }
@@ -400,7 +428,8 @@ if (Q.get('yaw')) world.rig.yaw = +Q.get('yaw'); if (Q.get('pitch')) world.rig.p
 if (Q.get('dbgmode')) world.sky.u.uDebug.value.x = +Q.get('dbgmode');
 if (Q.get('el')) st.sunElev = +Q.get('el'); if (Q.get('bear')) st.sunBear = +Q.get('bear'); if (Q.get('cloud')) st.cloud = +Q.get('cloud');
 if (Q.get('hideui')) document.body.classList.add('hideui');
-setLens(Q.get('lens') || store.get('v.lens', 'overview'));
+if (Q.get('auto') ? Q.get('auto') !== '0' : store.get('v.auto', false)) setAuto(true);
+setLens(Q.get('lens') || store.get('v.lens', 'cast'));
 app.refreshModels().then(() => { if (app.styleName.startsWith('gltf:')) app.setStyle(app.styleName); else if (app.lens && app.lens.id === 'overview') setLens('overview'); });
 data.start();
 requestAnimationFrame(loop);

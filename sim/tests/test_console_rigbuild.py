@@ -192,6 +192,7 @@ class TheRigIsGivenTheVehicle(Fixture):
         self.assertEqual(p["procs"][1].argv[0], str(self.repo / "build/launch_a/zephyr/zephyr.exe"))
         self.assertNotIn("--vehicle-true", p["procs"][0].argv)
 
+    # Verifies: TFC-CON-013
     def test_another_vehicle_is_not_ready_until_its_flight_computers_are_built_and_then_it_is_given_its_own(self):
         rig = self.make_rig()
         self.veh.set_active("starship", {})

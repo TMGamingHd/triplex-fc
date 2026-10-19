@@ -77,6 +77,7 @@ TFC_TEST(no_fault_no_latch_and_small_error) {
   CHECK(o.worst_error < 0.1F);
 }
 
+// Verifies: TFC-SYS-006
 TFC_TEST(stuck_sensor_is_isolated_and_never_reaches_output) {
   // A frozen sensor only diverges once the truth moves away, so isolation takes longer
   // than for a step fault; assert an upper bound rather than an exact frame.
@@ -89,6 +90,7 @@ TFC_TEST(stuck_sensor_is_isolated_and_never_reaches_output) {
   }
 }
 
+// Verifies: TFC-SYS-006
 TFC_TEST(bias_step_isolated_in_exactly_m_frames) {
   for (unsigned bad = 0; bad < 3; ++bad) {
     const Outcome o = run(Fault::BiasStep, bad, 100);
@@ -97,6 +99,7 @@ TFC_TEST(bias_step_isolated_in_exactly_m_frames) {
   }
 }
 
+// Verifies: TFC-SYS-006
 TFC_TEST(dropout_fail_silent_node_is_isolated_and_output_unaffected) {
   for (unsigned bad = 0; bad < 3; ++bad) {
     const Outcome o = run(Fault::Dropout, bad, 100);

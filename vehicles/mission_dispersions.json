@@ -1,0 +1,26 @@
+// A starting set of dispersions for tfc_mission_mc (docs/design/MONTE_CARLO.md section 7). EVERY NUMBER IS AN ASSUMPTION, written from the usual orders of magnitude of launch-vehicle dispersion
+// analyses and not taken from any vehicle or measured: they are the same as vehicles/dispersions.json's where the quantity is the same, with the receiver's noise added (`gnss_sigma_m`, the
+// mission's, which the catch is most sensitive to), the sensors the ISM330DHCX's typical values (docs/design/IMU_MODEL.md), and no slosh or bending (the Starship file has none). Replace them with the
+// ones your vehicle has. "normal": [mean, standard deviation(, clip in standard deviations; 3 if not given)]; "uniform": [min, max]; "constant": a number.
+{
+  "flights": 40,
+  "seed": 1,
+  "sensor_preset": "ism330dhcx_typical",
+  "dispersions": [
+    {"name": "thrust_scale", "normal": [1.0, 0.01]},
+    {"name": "isp_scale", "normal": [1.0, 0.005]},
+    {"name": "cd_scale", "normal": [1.0, 0.1]},
+    {"name": "cn_scale", "normal": [1.0, 0.1]},
+    {"name": "thrust_misalign_pitch_deg", "normal": [0, 0.15]},
+    {"name": "thrust_misalign_yaw_deg", "normal": [0, 0.15]},
+    {"name": "dry_mass_scale", "normal": [1.0, 0.02]},
+    {"name": "propellant_scale", "normal": [1.0, 0.005]},
+    {"name": "dry_cg_shift_m", "normal": [0, 0.15]},
+    {"name": "wind_scale", "uniform": [0, 2]},
+    {"name": "wind_azimuth_deg", "uniform": [0, 360]},
+    {"name": "turbulence_sigma_ms", "uniform": [0, 3]},
+    {"name": "density_scale", "normal": [1.0, 0.05]},
+    {"name": "temperature_offset_k", "normal": [0, 5]},
+    {"name": "gnss_sigma_m", "uniform": [0.5, 3]}
+  ]
+}

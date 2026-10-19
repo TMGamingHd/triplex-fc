@@ -214,6 +214,8 @@ class AeroGeometry {
   [[nodiscard]] bool ready() const { return ready_; }
   [[nodiscard]] double reference_area() const { return s_ref_; }
   [[nodiscard]] double reference_diameter() const { return d_ref_; }
+  [[nodiscard]] double wetted_area() const { return wetted_; }
+  [[nodiscard]] double base_area() const { return base_area_; }
   [[nodiscard]] double length() const { return length_; }
 
   // The slope of the normal force at small angles (per radian), and the sum of slope times the arm to x_cg (m), at Mach m: the parts add, a fin set follows its lift slope with Mach.

@@ -136,3 +136,103 @@ canvas.chart { width: 100%; display: block; }
 #v-cams #v-inside { background: color-mix(in srgb, var(--bg2) 84%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line); border-radius: 10px; color: var(--muted); padding: 7px 14px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
 #v-cams #v-inside:hover { color: var(--text); }
 #v-cams #v-inside[aria-pressed="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); background: var(--panel3); }
+
+/* ---- the director's button and the cut between two cameras */
+#v-cams #v-auto { color: var(--accent); }
+#v-cams #v-auto[aria-pressed="true"] { background: var(--panel3); color: var(--text); box-shadow: inset 0 -2px 0 var(--ok); }
+#v-cut { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; z-index: 8; }
+#v-cut.go { animation: v-cut .34s ease-out; }
+@keyframes v-cut { 0% { opacity: 0; } 20% { opacity: .8; } 100% { opacity: 0; } }
+
+/* ---- the gyro */
+.gy-box .gy-view { width: 100%; height: 100%; }
+.gy-box.full .gy-view { height: 232px; }
+.gy-ang { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0; }
+.gy-ang div { background: var(--panel2); border-radius: 6px; padding: 5px 8px; }
+.gy-ang span { display: block; font-size: 10px; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; }
+.gy-ang b { font: 600 15px var(--mono); }
+.gy-row { display: grid; grid-template-columns: 42px 1fr 46px 30px; gap: 8px; align-items: center; font-size: 12px; margin: 6px 0; }
+.gy-k { color: var(--muted); }
+.gy-track { position: relative; height: 8px; border-radius: 4px; background: var(--panel3); overflow: hidden; }
+.gy-track em { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--line2); }
+.gy-track i { position: absolute; top: 0; height: 100%; width: 0; background: var(--accent); }
+.gy-row b { font: 600 12px var(--mono); text-align: right; }
+.gy-row small { color: var(--muted); }
+.v-card.has-gyro { background: transparent; backdrop-filter: none; }
+.v-card.has-gyro > header { background: color-mix(in srgb, var(--panel) 80%, transparent); backdrop-filter: blur(9px); border-radius: var(--r) var(--r) 0 0; }
+.v-card.has-gyro > .body { padding: 0; }
+.v-card.has-gyro .gy-read, .v-card.has-gyro .note { margin: 0; padding: 8px 10px; background: color-mix(in srgb, var(--panel) 80%, transparent); backdrop-filter: blur(9px); }
+.v-card.has-gyro .note { border-radius: 0 0 var(--r) var(--r); }
+
+/* ---- the broadcast: the picture, and at the bottom the stages, the clock and the event; everything else away until the pointer moves */
+body.cast .v-dock, body.cast .v-dockbtn, body.cast #v-camhint, body.cast #v-locator { display: none !important; }
+body.cast #v-top, body.cast #v-bottom, body.cast #v-cams { transition: opacity .35s ease, transform .35s ease; }
+body.cast:not(.awake) #v-top { opacity: 0; transform: translateY(-10px); pointer-events: none; }
+body.cast:not(.awake) #v-top *, body.cast:not(.awake) #v-cams > *, body.cast:not(.awake) #v-bottom * { pointer-events: none; }
+body.cast:not(.awake) #v-bottom, body.cast:not(.awake) #v-cams { opacity: 0; }
+body.cast #v-cams { top: 62px; bottom: auto; }
+body.cast.awake { cursor: default; }
+body.cast:not(.awake) #scene { cursor: none; }
+#cast { position: fixed; inset: 0; pointer-events: none; z-index: 5; color: #fff; font-family: "D-DIN", "DIN Alternate", "Eurostile", "Avenir Next", "Helvetica Neue", var(--sans); text-shadow: 0 1px 14px rgba(0, 0, 0, .55); }
+.cast-brand { position: absolute; left: clamp(16px, 3vw, 48px); top: clamp(14px, 2.6vh, 28px); display: flex; align-items: center; gap: 16px; font-size: 12px; letter-spacing: .26em; text-transform: uppercase; transition: opacity .35s; }
+body.cast.awake .cast-brand { opacity: 0; }
+.cast-logo { font-weight: 700; font-size: 17px; letter-spacing: .34em; }
+.cast-sub { opacity: .7; }
+.cast-live { font-size: 11px; }
+.cast-live[data-k="LIVE"]::before { content: '●'; color: #ff5d73; margin-right: 7px; animation: cast-blink 1.8s ease-in-out infinite; }
+@keyframes cast-blink { 50% { opacity: .25; } }
+.cast-bar { position: absolute; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: 1fr minmax(250px, 32%) 1fr; align-items: end; gap: 24px; padding: 80px clamp(16px, 3vw, 48px) clamp(14px, 2.6vh, 30px); background: linear-gradient(to top, rgba(0, 0, 0, .66), rgba(0, 0, 0, .3) 55%, transparent); transition: transform .4s ease; }
+body.cast.awake .cast-bar, body.cast.awake .cast-gyro { transform: translateY(-50px); }
+.cast-stage { display: flex; align-items: flex-end; gap: 18px; min-width: 0; transition: opacity .5s; }
+.cast-stage:last-child { flex-direction: row-reverse; text-align: right; }
+.cast-stage.spare { visibility: hidden; }
+.cast-stage.gone { opacity: .35; }
+.cast-eng-wrap { flex: none; width: clamp(48px, 5.6vw, 76px); aspect-ratio: 1; }
+.cast-eng { width: 100%; height: 100%; display: block; }
+.cast-info { min-width: 0; }
+.cast-name { font-size: 12px; letter-spacing: .3em; font-weight: 500; margin-bottom: 6px; }
+.cast-count { font-size: 11px; letter-spacing: .2em; opacity: .6; margin: 0 0 0 12px; font-weight: 400; }
+.cast-stage:last-child .cast-count { margin: 0 12px 0 0; }
+.cast-stage:last-child .cast-name { display: flex; flex-direction: row-reverse; justify-content: flex-start; }
+.cast-name { display: flex; align-items: baseline; }
+.cast-nums { display: flex; gap: clamp(16px, 2.6vw, 38px); }
+.cast-stage:last-child .cast-nums { justify-content: flex-end; }
+.cast-num { pointer-events: auto; cursor: pointer; }
+.cast-k { display: block; font-size: 10.5px; letter-spacing: .24em; opacity: .65; margin-bottom: 1px; }
+.cast-v b { font-size: clamp(24px, 3vw, 42px); font-weight: 300; letter-spacing: .01em; font-variant-numeric: tabular-nums; }
+.cast-v small { font-size: 10.5px; letter-spacing: .2em; margin-left: 7px; opacity: .7; }
+.cast-mid { text-align: center; min-width: 0; }
+.cast-call { height: 22px; font-size: 13px; letter-spacing: .34em; font-weight: 500; opacity: 0; transition: opacity .6s ease; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cast-call.on { opacity: 1; }
+.cast-clock { font-size: clamp(26px, 3.4vw, 48px); font-weight: 300; letter-spacing: .14em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.cast-clock.pre { opacity: .85; }
+.cast-track { position: relative; height: 14px; margin: 10px 0 2px; }
+.cast-line { position: absolute; left: 0; right: 0; top: 6px; height: 2px; border-radius: 1px; background: linear-gradient(to right, #fff var(--done, 0%), rgba(255, 255, 255, .28) var(--done, 0%)); }
+.cast-play { position: absolute; top: 2px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: #fff; box-shadow: 0 0 10px rgba(255, 255, 255, .8); }
+.cast-marks i { position: absolute; top: 3px; width: 2px; height: 8px; margin-left: -1px; background: #fff; pointer-events: auto; }
+.cast-marks i::before { content: ''; position: absolute; inset: -4px -5px; }
+.cast-marks i.crit { background: #ff5d73; }
+.cast-last { height: 16px; font-size: 11px; letter-spacing: .22em; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cast-gyro { position: absolute; right: clamp(16px, 3vw, 48px); bottom: clamp(120px, 21vh, 190px); width: 210px; transition: transform .4s ease; }
+.cast-gyro.off { display: none; }
+.cast-gyro .gy-view { height: 210px; }
+.gy-cap { display: flex; justify-content: space-between; gap: 6px; font-size: 11px; letter-spacing: .06em; margin-top: 2px; white-space: nowrap; }
+.gy-cap small { font-size: 9.5px; opacity: .65; margin-right: 5px; letter-spacing: .18em; }
+.gy-cap b { font-weight: 500; font-variant-numeric: tabular-nums; }
+@media (max-width: 900px) { .cast-bar { grid-template-columns: 1fr 1fr; gap: 10px 16px; padding-top: 60px; } .cast-mid { grid-column: 1 / -1; order: -1; } .cast-eng-wrap { display: none; } .cast-gyro { display: none; } .cast-nums { gap: 14px; } .cast-v b { font-size: 22px; } }
+
+/* ---- the CFD view: the map of the tables the flight flies on, and the legend of the section */
+.v-map { margin: 2px 0; }
+.v-map .seg { margin-bottom: 6px; }
+.v-aeromap { width: 100%; height: 220px; display: block; border-radius: 6px; }
+.v-mapread { margin-top: 6px; font: 12px var(--mono); color: var(--muted); min-height: 2.6em; line-height: 1.35; }
+#v-cfd-legend { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); width: min(320px, calc(100vw - 80px)); z-index: 12; padding: 8px 12px 9px; border-radius: 10px; background: color-mix(in srgb, var(--bg2) 78%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line); pointer-events: none; text-align: center; }
+#v-cfd-legend[hidden] { display: none; }
+body.cast #v-cfd-legend { display: none; }
+#v-cfd-legend canvas { width: 100%; height: 10px; display: block; border-radius: 3px; margin: 5px 0 3px; }
+.v-lg-b { font: 700 10.5px var(--sans); letter-spacing: .14em; color: var(--accent); }
+.v-lg-t { font-size: 12px; color: var(--text); margin-top: 3px; }
+.v-lg-ticks { display: flex; justify-content: space-between; font: 10.5px var(--mono); color: var(--muted); }
+.v-lg-s { font-size: 10.5px; color: var(--faint); margin-top: 3px; }
+.v-slider output { white-space: nowrap; }
+.v-slider { grid-template-columns: 96px 1fr 52px; }

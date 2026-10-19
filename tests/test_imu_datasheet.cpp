@@ -62,6 +62,7 @@ TFC_TEST(imu_nothing_switched_on_is_the_bench_model_sample_for_sample) {
   }
 }
 
+// Verifies: TFC-SIM-016
 TFC_TEST(imu_white_noise_of_a_given_density_has_the_rms_density_times_root_bandwidth_and_is_gaussian) {
   sim::SensorErrors e;
   e.gyro_noise_density_dps = 0.005F;

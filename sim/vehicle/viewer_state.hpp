@@ -249,6 +249,15 @@ inline std::string viewer_pose_json(const Vehicle6& veh, double t_s, const PoseE
     o.num(veh.stage_gimbal_yaw_deg(st), 3);
   }
   o.close(']');
+  if (g.per_engine_gimbal) {
+    o.key("egim");                                  // the gimbal of each engine, in the order of the vehicle file's "engines": pitch and yaw, degrees (an engine that does not gimbal reads 0)
+    o.open('[');
+    for (std::size_t e = 0; e < g.engines.size(); ++e) {
+      o.num(veh.engine_gimbal_pitch_deg(e), 3);
+      o.num(veh.engine_gimbal_yaw_deg(e), 3);
+    }
+    o.close(']');
+  }
   if (!g.fins.empty()) {
     o.key("fin");
     o.open('[');

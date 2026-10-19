@@ -72,6 +72,7 @@ class TheFrames(Base):
         self.assertEqual(a.tag, P.ground_mac(P.ground_key(), 3 | P.ARM_FLAG, 2, a.counter))
         self.assertEqual([f["arm"] for f in rec["frames"]], [True, False])
 
+    # Verifies: TFC-CON-004
     def test_counters_increase_and_are_the_command_lines_counters(self):
         self.svc.send("noop")
         self.svc.send("noop")
@@ -126,6 +127,7 @@ class TheDiscipline(Base):
         e = self.refused("clear-safe", mode="single", confirmed=True)
         self.assertIn("ARM", e.message)
 
+    # Verifies: TFC-CON-005
     def test_a_launch_is_refused_while_the_checklist_is_no_go_and_names_why(self):
         e = self.refused("launch", mode="armed", confirmed=True)
         self.assertIn("NO-GO", e.message)

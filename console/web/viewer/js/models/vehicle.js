@@ -189,10 +189,10 @@ export class VehicleModel {
       const k = Math.max(0, Math.min(1, (q - 2e5) / 2.8e6)), a = k * k * (3 - 2 * k);
       for (const m of this.hull) if (m.emissive) m.emissive.setRGB(a * 1.0, a * 0.32, a * 0.07);
     }
-    const gim = pose.gim || [];
+    const gim = pose.gim || [], egim = pose.egim || null;   // the stage's common gimbal, or (when the vehicle gimbals engine by engine) each engine's own
     const q = new THREE.Quaternion(), d = new THREE.Vector3();
     for (const en of this.engines) {
-      const gp = en.gimbal ? (gim[2 * en.stage] || 0) : 0, gy = en.gimbal ? (gim[2 * en.stage + 1] || 0) : 0;
+      const gp = en.gimbal ? (egim ? (egim[2 * en.index] || 0) : (gim[2 * en.stage] || 0)) : 0, gy = en.gimbal ? (egim ? (egim[2 * en.index + 1] || 0) : (gim[2 * en.stage + 1] || 0)) : 0;
       const cp = (en.spec.cant_pitch_deg || 0) + gp, cy = (en.spec.cant_yaw_deg || 0) + gy;
       const a = cp * Math.PI / 180, b = cy * Math.PI / 180;
       d.set(Math.sin(b), Math.cos(a) * Math.cos(b), -Math.sin(a) * Math.cos(b));   // the thrust direction (the simulator's (cos dp cos dy, -sin dp cos dy, sin dy) in the model's axes)

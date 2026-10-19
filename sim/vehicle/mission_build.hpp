@@ -142,6 +142,24 @@ inline void set_catch_height(const Vehicle6& v, const StageSpec& st, std::size_t
   t.arm_height = arm_height_m;
 }
 
+// The engines each group lights and what each is worth, for the engine health word (ADR-058). `stage` < 0: every engine of the vehicle, by its place in the vehicle file (the stack, and the ship that stays when the
+// booster goes). A stage that is let go flies as a vehicle of its own, whose engines are those of the stage in the order of the file: its tables number them so.
+inline void set_engine_tables(const VehicleSpec& g, int stage, tfc::gnc::Tables& t) {
+  t.group_engines = {};
+  t.engine_thrust = {};
+  std::size_t local = 0;
+  for (const EngineSpec& en : g.engines) {
+    if (stage >= 0 && en.stage != stage) {
+      continue;
+    }
+    if (local < tfc::gnc::kMaxEngines && en.control == Control::None && en.group >= 0 && en.group < 8) {
+      t.group_engines[static_cast<std::size_t>(en.group)] |= uint64_t{1} << local;
+      t.engine_thrust[local] = static_cast<float>(en.thrust_vac * en.thrust_factor);
+    }
+    ++local;
+  }
+}
+
 }  // namespace detail
 
 // Build the tables of one plan. `v` is the vehicle at T-zero (for the planet, the ground, the masses).
@@ -160,7 +178,12 @@ inline bool build_plan(const VehicleFile& f, const Vehicle6& v, const std::vecto
   t.mass0 = v.mass();
   t.ground_radius = v.ground_radius();
   t.site = tfc::dm::Vec3{v.ground_radius(), m.site_offset_y_m, m.site_offset_z_m};
+  // a planet that turns carries the pad round its axis (the pole of the launch site, the same one the plant turns the ground by) and the air with it: the guidance aims at where the pad will be
+  t.pole = tfc::dm::Vec3{v.pole().x, v.pole().y, v.pole().z};
+  t.planet_omega = pl.rotation_rate;
+  t.drag.omega = t.pole * pl.rotation_rate;
   t.plane_normal = tfc::dm::Vec3{0.0, 0.0, 1.0};
+  detail::set_engine_tables(g, -1, t);
   t.limits.command_deg = static_cast<float>(m.command_limit_deg);
   t.limits.integrator_deg = static_cast<float>(m.integrator_limit_deg);
   t.limits.slew_deg_per_frame = static_cast<float>(m.slew_deg_per_frame);
@@ -348,6 +371,7 @@ inline bool build_mission(const VehicleFile& f, BuiltMission& out, std::vector<s
     }
     out.has_stage[s] = true;
     ok = build_plan(f, v, m.stage[s], "stage" + std::to_string(s), out.stage[s], errors) && ok;
+    detail::set_engine_tables(f.params.spec, static_cast<int>(s), out.stage[s]);   // (the stage flies alone, with its own numbering of its engines)
     set_mixers(out.stage[s]);
     detail::set_catch_height(v, f.params.spec.stages[s], s, m.landing_propellant_kg, m.arm_height_m, out.stage[s]);
   }

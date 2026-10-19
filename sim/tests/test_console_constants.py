@@ -17,14 +17,17 @@ def numbers(text):
 
 
 class CopiesOfCoreDefaults(unittest.TestCase):
+    # Verifies: TFC-CON-011
     def test_the_vote_tolerances_are_the_redundancy_configs(self):
         m = re.search(r"std::array<float, kVoteChannels> tol\{\{([^}]*)\}\}", TYPES)
         self.assertIsNotNone(m)
         self.assertEqual(tuple(numbers(m.group(1))), K.VOTE_TOL)
 
+    # Verifies: TFC-CON-011
     def test_the_persistence_window_is_m_of_n(self):
         self.assertEqual((int(re.search(r"persist_m = (\d+)", TYPES).group(1)), int(re.search(r"persist_n = (\d+)", TYPES).group(1))), (K.PERSIST_M, K.PERSIST_N))
 
+    # Verifies: TFC-CON-011
     def test_the_arm_window_and_the_command_window(self):
         self.assertEqual(int(re.search(r"arm_window_frames = (\d+)", TYPES).group(1)), K.ARM_WINDOW_FRAMES)
         self.assertEqual(int(re.search(r"command_window = (\d+)", TYPES).group(1)), K.COMMAND_WINDOW)
