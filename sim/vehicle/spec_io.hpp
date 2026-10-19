@@ -440,6 +440,26 @@ inline bool read_control(const std::string& s, Control& c) {
   return true;
 }
 
+inline bool read_fault(const std::string& s, GimbalFault& f) {
+  if (s == "none") {
+    f = GimbalFault::None;
+  } else if (s == "stuck") {
+    f = GimbalFault::Stuck;
+  } else if (s == "hardover") {
+    f = GimbalFault::Hardover;
+  } else {
+    return false;
+  }
+  return true;
+}
+inline const char* fault_name(GimbalFault f) {
+  switch (f) {
+    case GimbalFault::Stuck: return "stuck";
+    case GimbalFault::Hardover: return "hardover";
+    case GimbalFault::None: break;
+  }
+  return "none";
+}
 inline const char* control_name(Control c) {
   switch (c) {
     case Control::PitchPlus: return "pitch+";
@@ -478,6 +498,22 @@ inline void read_engines(const Json& j, const std::string& path, std::vector<Eng
   o.integer("group", e.group);
   o.num("min_throttle", e.min_throttle);
   o.integer("max_starts", e.max_starts);
+  o.num("thrust_factor", e.thrust_factor);
+  o.num("isp_throttle_loss", e.isp_throttle_loss);
+  o.num("gimbal_limit_deg", e.gimbal_limit_deg);
+  o.num("gimbal_rate_dps", e.gimbal_rate_dps);
+  o.num("gimbal_lag_s", e.gimbal_lag_s);
+  o.num("roll_gain", e.roll_gain);
+  std::string fault;
+  if (o.str("gimbal_fault", fault) && !read_fault(fault, e.fault)) {
+    o.error(*o.get("gimbal_fault"), "gimbal_fault", "expected \"none\", \"stuck\" or \"hardover\"");
+  }
+  o.num("fault_time_s", e.fault_time_s);
+  o.num("fault_pitch_deg", e.fault_pitch_deg);
+  o.num("fault_yaw_deg", e.fault_yaw_deg);
+  o.num("chamber_pressure_pa", e.chamber_pressure_pa);
+  o.num("area_ratio", e.area_ratio);
+  o.num("gamma", e.gamma);
   int count = 1;
   o.integer("count", count);
   double ring_r = 0.0;
@@ -1063,6 +1099,7 @@ inline bool read_vehicle(const std::string& text, VehicleFile& out, std::vector<
     o.finish();
   }
   top.flag("jet_damping", p.spec.jet_damping);
+  top.flag("per_engine_gimbal", p.spec.per_engine_gimbal);
   if (const Json* v = top.get("scenario")) {
     ObjectReader o(*v, "scenario", errors);
     Scenario& sc = out.scenario;
@@ -1326,6 +1363,33 @@ inline std::string mission_text(const MissionSpec& m) {
 
 }  // namespace detail
 
+// The fields of an engine that are not at their default, as the text that follows the engine's other fields (a file of a hundred engines stays a hundred short lines).
+inline std::string engine_extras(const EngineSpec& en) {
+  const EngineSpec d;
+  std::string o;
+  const auto add = [&o](const char* key, double v, double def) {
+    if (v != def) {
+      o += std::string(", \"") + key + "\": " + detail::num_text(v);
+    }
+  };
+  add("thrust_factor", en.thrust_factor, d.thrust_factor);
+  add("isp_throttle_loss", en.isp_throttle_loss, d.isp_throttle_loss);
+  add("gimbal_limit_deg", en.gimbal_limit_deg, d.gimbal_limit_deg);
+  add("gimbal_rate_dps", en.gimbal_rate_dps, d.gimbal_rate_dps);
+  add("gimbal_lag_s", en.gimbal_lag_s, d.gimbal_lag_s);
+  add("roll_gain", en.roll_gain, d.roll_gain);
+  if (en.fault != GimbalFault::None) {
+    o += std::string(", \"gimbal_fault\": ") + detail::quoted(detail::fault_name(en.fault));
+  }
+  add("fault_time_s", en.fault_time_s, d.fault_time_s);
+  add("fault_pitch_deg", en.fault_pitch_deg, d.fault_pitch_deg);
+  add("fault_yaw_deg", en.fault_yaw_deg, d.fault_yaw_deg);
+  add("chamber_pressure_pa", en.chamber_pressure_pa, d.chamber_pressure_pa);
+  add("area_ratio", en.area_ratio, d.area_ratio);
+  add("gamma", en.gamma, d.gamma);
+  return o;
+}
+
 // A vehicle as the text of a file that read_vehicle reads back as the same vehicle. A `Params` without a spec is written out as the stage, tank and engines it stands for.
 inline std::string write_vehicle(const VehicleFile& v) {
   using namespace detail;
@@ -1449,7 +1513,7 @@ inline std::string write_vehicle(const VehicleFile& v) {
          ", \"cant_yaw_deg\": " + num_text(en.cant_yaw_deg) + ", \"start_offset_s\": " + num_text(en.start_offset_s) + ", \"cutoff_time_s\": " + num_text(en.cutoff_time_s) +
          ", \"rise_s\": " + num_text(en.rise_s) + ", \"tail_s\": " + num_text(en.tail_s) + ", \"direction\": " + vec_text(en.dir) + ", \"control\": " + quoted(control_name(en.control)) +
          ", \"full_cmd_deg\": " + num_text(en.full_cmd_deg) + ", \"group\": " + std::to_string(en.group) + ", \"min_throttle\": " + num_text(en.min_throttle) + ", \"max_starts\": " +
-         std::to_string(en.max_starts) + "}" + (e + 1U < g.engines.size() ? "," : "") + "\n";
+         std::to_string(en.max_starts) + engine_extras(en) + "}" + (e + 1U < g.engines.size() ? "," : "") + "\n";
   }
   o += "  ],\n  \"payloads\": [";
   for (std::size_t i = 0; i < g.payloads.size(); ++i) {
@@ -1516,6 +1580,9 @@ inline std::string write_vehicle(const VehicleFile& v) {
   }
   if (g.jet_damping) {
     o += ",\n  \"jet_damping\": true";
+  }
+  if (g.per_engine_gimbal) {
+    o += ",\n  \"per_engine_gimbal\": true";
   }
   const Scenario& sc = v.scenario;
   o += ",\n  \"scenario\": {\"wind_scale\": " + num_text(sc.wind_scale) + ", \"wind_direction\": " + vec_text(sc.wind_dir) + ", \"dry_cg_shift_m\": " + num_text(sc.dry_cg_shift) +

@@ -6,6 +6,7 @@
 //   build/rel/tfc_mission vehicles/missions/starship_return_earth.json      # design the mission, fly it on the three flight computers, print what happened
 {
   "planet": {"preset": "earth"},
+  "per_engine_gimbal": true,
   "name": "starship-v3-class-return",
   "description": "Starship V3 class stack that flies its whole mission on the flight computers: ascent, hot staging, orbital insertion of the ship (PEG), and the booster's flip, boost-back, grid-fin entry, landing burn and catch.",
   "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "ideal_roll_control": false, "landing_model": true, "max_substep_s": 0.004},
@@ -207,7 +208,12 @@
       "group": 0,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -218,7 +224,12 @@
       "group": 1,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -229,7 +240,12 @@
       "group": 2,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -240,7 +256,12 @@
       "group": 3,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -251,7 +272,12 @@
       "group": 3,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -262,7 +288,12 @@
       "group": 3,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -273,7 +304,12 @@
       "group": 3,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -284,7 +320,12 @@
       "group": 3,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -295,7 +336,12 @@
       "group": 3,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -306,7 +352,12 @@
       "group": 3,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -317,7 +368,12 @@
       "group": 3,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -328,7 +384,12 @@
       "group": 3,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -339,7 +400,12 @@
       "group": 3,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,
@@ -351,6 +417,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -363,6 +433,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -375,6 +449,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -387,6 +465,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -399,6 +481,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -411,6 +497,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -423,6 +513,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -435,6 +529,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -447,6 +545,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -459,6 +561,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -471,6 +577,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -483,6 +593,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -495,6 +609,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -507,6 +625,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -519,6 +641,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -531,6 +657,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -543,6 +673,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -555,6 +689,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -567,6 +705,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -579,6 +721,10 @@
       "min_throttle": 0.4,
       "rise_s": 0.8,
       "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
       "gimbal": false
     },
     {
@@ -590,7 +736,12 @@
       "group": 5,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 1,
@@ -601,7 +752,12 @@
       "group": 7,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 1,
@@ -612,40 +768,60 @@
       "group": 7,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 34,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 1,
       "position_m": [72.3, 2.2084, 1.275],
       "thrust_vac_n": 2697000,
-      "exit_area_m2": 4.5,
+      "exit_area_m2": 3.57,
       "isp_vac_s": 380,
       "group": 6,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 90,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 1,
       "position_m": [72.3, -2.2084, 1.275],
       "thrust_vac_n": 2697000,
-      "exit_area_m2": 4.5,
+      "exit_area_m2": 3.57,
       "isp_vac_s": 380,
       "group": 6,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 90,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 1,
       "position_m": [72.3, -0.0, -2.55],
       "thrust_vac_n": 2697000,
-      "exit_area_m2": 4.5,
+      "exit_area_m2": 3.57,
       "isp_vac_s": 380,
       "group": 6,
       "min_throttle": 0.4,
       "rise_s": 0.8,
-      "tail_s": 0.8
+      "tail_s": 0.8,
+      "chamber_pressure_pa": 35000000.0,
+      "area_ratio": 90,
+      "gamma": 1.2,
+      "isp_throttle_loss": 0.02,
+      "roll_gain": 1.0
     },
     {
       "stage": 0,

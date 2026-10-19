@@ -96,7 +96,7 @@ jobs:
       # Verifies: TFC-SW-013, TFC-SW-014 (a mission designed and flown on three flight computers reaches its orbit and its catch)
       - name: Missions (guidance, navigation and a stage's return, docs/design/GNC.md; release build, about 100 s)
         run: |
-          cmake --build build/rel --target tfc_mission tfc_fly tfc_margins tfc_mission_mc
+          cmake --build build/rel --target tfc_mission tfc_fly tfc_margins tfc_mission_mc tfc_propulsion
           # the Starship V3 class stack designed and flown on the three flight computers: the ship in an orbit above 100 km and the booster caught by the tower (exits 3 if not)
           build/rel/tfc_mission vehicles/missions/starship_return.json --expect-orbit --expect-catch
           # and on a planet that turns (ADR-056): the pad is carried 400 m/s east and the guidance aims at where it will be (exits 3 if the booster is not caught or the ship is not in orbit)
@@ -108,6 +108,8 @@ jobs:
           build/rel/tfc_fly vehicles/starship.json --sensors vehicle --no-accel --pad 1500 --frames 41000 --mission vehicles/missions/starship_return.json --expect-catch
           # a single-stage rocket comes back under its parachutes
           build/rel/tfc_mission vehicles/missions/rocket_recovery.json --expect-landing
+          # the propulsion analysis of the mission's vehicle (ADR-057): the cluster, the nozzles against an ideal one, the gimbal's authority, the engine out; exits 3 on a finding (the shipped file has none)
+          build/rel/tfc_propulsion vehicles/missions/starship_return.json --strict
           # the stability margins of the attitude loop along the mission (a report: the ship's roll loop is below the usual limits, CONTROL_LOOP.md 7), and a few dispersed flights of a whole mission (ADR-054)
           build/rel/tfc_margins vehicles/missions/starship_return.json
           build/rel/tfc_mission_mc vehicles/missions/rocket_recovery.json --config vehicles/mission_dispersions.json --flights 4 --threads 4

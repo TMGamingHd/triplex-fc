@@ -165,6 +165,9 @@ struct StageSpec {
 // should turn the nose toward downrange), PitchMinus for a negative one, and likewise for the yaw plane. Its position and direction decide the torque and the parasitic force it makes.
 enum class Control : int { None = 0, PitchPlus = 1, PitchMinus = 2, YawPlus = 3, YawMinus = 4, RollPlus = 5, RollMinus = 6 };
 
+// How an engine's gimbal fails (EngineSpec::fault, from `fault_time_s`): it stays where it was (Stuck), or runs to an angle and stays there (Hardover: `fault_pitch_deg`, `fault_yaw_deg`).
+enum class GimbalFault : int { None = 0, Stuck = 1, Hardover = 2 };
+
 struct EngineSpec {
   int stage = 0;
   V3 pos{};                   // x from the vehicle's aft end (the nozzle exit plane is where the thrust acts), y and z lateral
@@ -188,6 +191,22 @@ struct EngineSpec {
   int group = 0;
   double min_throttle = 0.0;
   int max_starts = 0;
+  // The engine as a part of its own (docs/design/PROPULSION.md). Without `VehicleSpec::per_engine_gimbal` the gimbal fields below do nothing: the stage's engines that gimbal share one angle.
+  double thrust_factor = 1.0;     // this engine's thrust relative to the rated (a weak engine is 0.97): an imbalance that the gimbal has to trim
+  double isp_throttle_loss = 0.0; // the fraction of the specific impulse lost at zero throttle, linear in between (the chamber pressure falls and the nozzle is run off its design point); 0: none
+  double gimbal_limit_deg = -1.0; // this engine's travel in each plane (a negative number takes the stage's, then the vehicle's)
+  double gimbal_rate_dps = -1.0;
+  double gimbal_lag_s = -1.0;
+  double roll_gain = 0.0;         // differential gimbal: degrees of deflection along the tangent to the engine's circle per degree of the roll command (0: this engine takes no part in roll)
+  GimbalFault fault = GimbalFault::None;
+  double fault_time_s = 0.0;      // seconds since T-zero at which the fault begins
+  double fault_pitch_deg = 0.0;   // a hard-over goes to this angle, in the pitch plane, and to the next in the yaw plane
+  double fault_yaw_deg = 0.0;
+  // The nozzle, for the analysis (tfc_propulsion) and not for the plant: the chamber pressure, the area ratio and the ratio of specific heats of the exhaust (0: not given). The plant flies on thrust_vac,
+  // exit_area and isp_vac; the analysis checks that they agree with an ideal nozzle of these.
+  double chamber_pressure_pa = 0.0;
+  double area_ratio = 0.0;
+  double gamma = 0.0;
 };
 
 // A set of four fins in a cross, two in the pitch plane and two in the yaw plane, that steer by aerodynamic force: deflection = gain x the command, limited, rate-limited, lagged. The force of a
@@ -370,6 +389,9 @@ struct VehicleSpec {
   RollSpec roll;
   FlexSpec flex;
   bool jet_damping = false;  // the moment of the exhaust leaving a turning vehicle: -mdot x r x (omega x r) for each engine (a damping of the pitch and yaw rates)
+  // Every engine that gimbals has a gimbal of its own (its own angle and servo, `EngineSpec::gimbal_*`), the pitch and yaw command goes to each, and the roll command is added along each engine's
+  // tangent (`roll_gain`): the thrust vector of a cluster is the sum of the engines' and the clusters' differential gimbal turns the vehicle about its axis. False: one angle for the stage, as always.
+  bool per_engine_gimbal = false;
   [[nodiscard]] bool empty() const { return stages.empty(); }
 };
 
@@ -506,6 +528,15 @@ inline std::vector<std::string> validate(const VehicleSpec& v) {
     }
     if (en.group < 0 || en.group >= static_cast<int>(kEngineGroups) || !(en.min_throttle >= 0.0 && en.min_throttle <= 1.0) || en.max_starts < 0) {
       fail(at + ": group is 0 to 7, min_throttle between 0 and 1, max_starts not negative");
+    }
+    if (!(en.thrust_factor >= 0.0 && en.thrust_factor <= 2.0) || !(en.isp_throttle_loss >= 0.0 && en.isp_throttle_loss < 1.0) || en.roll_gain < 0.0 || en.fault_time_s < 0.0) {
+      fail(at + ": thrust_factor is 0 to 2, isp_throttle_loss 0 to below 1, roll_gain and fault_time_s not negative");
+    }
+    if (en.roll_gain != 0.0 && (!en.gimbal || en.control != Control::None)) {
+      fail(at + ": only an engine that gimbals can have a roll_gain");
+    }
+    if (en.chamber_pressure_pa < 0.0 || en.area_ratio < 0.0 || en.gamma < 0.0 || (en.gamma != 0.0 && !(en.gamma > 1.0))) {
+      fail(at + ": chamber_pressure_pa and area_ratio must not be negative, gamma (if given) above 1");
     }
   }
   for (std::size_t s = 0; s < v.stages.size(); ++s) {

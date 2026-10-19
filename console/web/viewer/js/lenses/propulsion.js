@@ -121,8 +121,14 @@ export default {
       ctx.beginPath(); ctx.arc(x, y, r, 0, 7);
       ctx.fillStyle = f < 0 ? css('--crit') : f > 0.02 ? `rgba(61,220,151,${0.35 + 0.65 * Math.min(1, f)})` : css('--panel3'); ctx.fill(); ctx.strokeStyle = e.gimbal === false ? css('--faint') : css('--text'); ctx.lineWidth = e.gimbal === false ? 1 : 1.6; ctx.stroke();
       if (r > 7 || list.length <= 12) { ctx.fillStyle = css('--text'); ctx.font = '9px system-ui'; ctx.textAlign = 'center'; ctx.fillText(String(i + 1), x, y + 3); }
+      // the lean of the thrust vector of an engine that gimbals on its own: a line from its centre toward where the thrust is pushed (body Y across, Z up in the map), a ring's radius long at the travel
+      const eg = pose.egim;
+      if (eg && e.gimbal !== false && f > 0.02) {
+        const lim = Math.max(1, e.gimbal_limit_deg > 0 ? e.gimbal_limit_deg : (spec.stages[e.stage] && spec.stages[e.stage].gimbal_limit_deg) || 8), dp = eg[2 * i] || 0, dy = eg[2 * i + 1] || 0, mag = Math.hypot(dp, dy);
+        if (mag > 0.02) { const len = r * (0.4 + 2.6 * Math.min(1, mag / lim)), ex = x - dp / mag * len, ey = y - dy / mag * len; ctx.strokeStyle = css('--accent'); ctx.fillStyle = css('--accent'); ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(ex, ey); ctx.stroke(); ctx.beginPath(); ctx.arc(ex, ey, 1.8, 0, 7); ctx.fill(); }
+      }
     }
-    ctx.fillStyle = css('--muted'); ctx.font = '11px system-ui'; ctx.textAlign = 'left'; ctx.fillText(`${list.length} engines; a thick ring gimbals, a thin one is fixed`, 6, H - 6);
+    ctx.fillStyle = css('--muted'); ctx.font = '11px system-ui'; ctx.textAlign = 'left'; ctx.fillText(`${list.length} engines; a thick ring gimbals, a thin one is fixed${pose.egim ? '; a blue line is the lean of an engine\'s thrust' : ''}`, 6, H - 6);
   },
   drawCurve(app, pose, stage) {
     const c = this.s.curve, spec = app.spec, ctx = c.getContext('2d'), st = Math.max(0, stage);

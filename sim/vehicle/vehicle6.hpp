@@ -395,6 +395,9 @@ class Vehicle6 {
           }
         }
       }
+      if (g_.per_engine_gimbal) {
+        drive_engine_gimbals(h, cmd_pitch_deg, cmd_yaw_deg);
+      }
       if (p_.ground_contact && held_by_ground(h)) {
         t_ += h;
         continue;
@@ -466,6 +469,8 @@ class Vehicle6 {
   // Read-only views of what the model holds, for the 3D viewer (viewer_state.hpp, docs/design/VIEWER.md): they change nothing and nothing in the flight depends on them.
   [[nodiscard]] double engine_fraction(std::size_t e) const { return e < g_.engines.size() ? frac_[e] : 0.0; }   // the thrust fraction now, after the rise and the tail (0..1, times the stage's throttle)
   [[nodiscard]] bool engine_failed(std::size_t e) const { return e < g_.engines.size() && failed_[e]; }
+  [[nodiscard]] double engine_gimbal_pitch_deg(std::size_t e) const { return e < kMaxEngines ? (engine_gimbals_alone(g_.engines[e]) ? eg_p_[e] : (g_.engines[e].gimbal ? gimbal_p_[static_cast<std::size_t>(g_.engines[e].stage)] : 0.0)) : 0.0; }
+  [[nodiscard]] double engine_gimbal_yaw_deg(std::size_t e) const { return e < kMaxEngines ? (engine_gimbals_alone(g_.engines[e]) ? eg_y_[e] : (g_.engines[e].gimbal ? gimbal_y_[static_cast<std::size_t>(g_.engines[e].stage)] : 0.0)) : 0.0; }
   [[nodiscard]] double stage_gimbal_pitch_deg(std::size_t s) const { return s < kMaxStages ? gimbal_p_[s] : 0.0; }
   [[nodiscard]] double stage_gimbal_yaw_deg(std::size_t s) const { return s < kMaxStages ? gimbal_y_[s] : 0.0; }
   [[nodiscard]] double fin_pitch_deg(std::size_t f) const { return f < kMaxFins ? fin_p_[f] : 0.0; }
@@ -558,6 +563,14 @@ class Vehicle6 {
     mp.mass = m;  // as asked: the mass given, whatever the parts add up to
     return mp;
   }
+  // The mass properties with the given propellant in each stage (kg, by stage), for the stages that are on the vehicle: the analysis of what the engines can do at a chosen point of the burn.
+  [[nodiscard]] MassProps mass_props_with(const std::array<double, kMaxStages>& prop) const {
+    MassProps mp = mass_props_of(prop, false);
+    mp.mass = total_mass(prop);
+    return mp;
+  }
+  [[nodiscard]] double stage_capacity(std::size_t s) const { return s < kMaxStages ? cap_[s] : 0.0; }
+  [[nodiscard]] bool stage_on_vehicle(std::size_t s) const { return s < kMaxStages && active_[s]; }
   [[nodiscard]] MassProps mass_props() const { return mass_props_state(s_, -1, false); }  // the whole liquid in the rigid body: what the gains are designed from
   [[nodiscard]] MassProps rigid_mass_props() const { return mass_props_state(s_, -1, true); }  // with the sloshing mass taken out (`slosh_mass` says how much): what the dynamics use
 
@@ -619,10 +632,10 @@ class Vehicle6 {
       if (!(frac > 0.0) || !(s_.prop[st] > kEmptyProp)) {  // an engine without propellant in its stage does not run (the vehicle's own state decides, not the intermediate states of a step)
         continue;
       }
-      const double ti = std::max(0.0, (frac * p_.thrust_scale * en.thrust_vac) - (air.pressure * en.exit_area));
+      const double ti = std::max(0.0, (frac * p_.thrust_scale * (en.thrust_vac * en.thrust_factor)) - (air.pressure * en.exit_area));
       V3 dir;
       const bool own_dir = en.dir.x != 1.0 || en.dir.y != 0.0 || en.dir.z != 0.0;  // a thruster pointing its own way
-      const bool shared = !own_dir && en.cant_pitch_deg == 0.0 && en.cant_yaw_deg == 0.0;
+      const bool shared = !own_dir && en.cant_pitch_deg == 0.0 && en.cant_yaw_deg == 0.0 && !engine_gimbals_alone(en);
       if (own_dir) {
         dir = normalized(en.dir);
       } else if (shared && en.gimbal && have_gimbal[st]) {
@@ -630,8 +643,11 @@ class Vehicle6 {
       } else if (shared && !en.gimbal && have_fixed) {
         dir = dir_fixed;
       } else {
-        const double dp = (((en.gimbal ? gimbal_p_[st] : 0.0) + en.cant_pitch_deg) + p_.thrust_misalign_pitch_deg) * kDeg2Rad;
-        const double dy = (((en.gimbal ? gimbal_y_[st] : 0.0) + en.cant_yaw_deg) + p_.thrust_misalign_yaw_deg) * kDeg2Rad;
+        const bool own = engine_gimbals_alone(en);   // (an engine with a gimbal of its own is at its own angle, not the stage's)
+        const double gp = own ? eg_p_[e] : gimbal_p_[st];
+        const double gy = own ? eg_y_[e] : gimbal_y_[st];
+        const double dp = (((en.gimbal ? gp : 0.0) + en.cant_pitch_deg) + p_.thrust_misalign_pitch_deg) * kDeg2Rad;
+        const double dy = (((en.gimbal ? gy : 0.0) + en.cant_yaw_deg) + p_.thrust_misalign_yaw_deg) * kDeg2Rad;
         dir = V3{std::cos(dp) * std::cos(dy), -std::sin(dp) * std::cos(dy), std::sin(dy)};
         if (shared && en.gimbal) {
           dir_gimbal[st] = dir;
@@ -647,7 +663,8 @@ class Vehicle6 {
       }
       l.f_thrust = l.f_thrust + f;
       l.m_thrust = l.m_thrust + cross(V3{en.pos.x - mp.x_cg, en.pos.y, en.pos.z}, f);
-      const double md = frac * p_.thrust_scale * en.thrust_vac / (en.isp_vac * kG0);
+      const double isp = en.isp_throttle_loss > 0.0 ? en.isp_vac * (1.0 - (en.isp_throttle_loss * (1.0 - std::min(frac, 1.0)))) : en.isp_vac;
+      const double md = frac * p_.thrust_scale * (en.thrust_vac * en.thrust_factor) / (isp * kG0);
       l.mdot += md;
       l.mdot_stage[st] += md;
       l.thrust += ti;
@@ -762,6 +779,11 @@ class Vehicle6 {
       tmp.gimbal_p_[st] = c.pitch_deg;
       tmp.gimbal_y_[st] = c.yaw_deg;
     }
+    if (tmp.g_.per_engine_gimbal) {   // (every engine's gimbal at what the command asks of it, healthy: the design is for the vehicle as it should be)
+      for (std::size_t e = 0; e < tmp.g_.engines.size(); ++e) {
+        tmp.engine_command(tmp.g_.engines[e], c.pitch_deg, c.yaw_deg, c.roll_deg, tmp.eg_p_[e], tmp.eg_y_[e]);
+      }
+    }
     for (std::size_t i = 0; i < tmp.g_.surfaces.size(); ++i) {
       const SurfaceSpec& sf = tmp.g_.surfaces[i];
       if (tmp.surf_deployed_[i] && sf.channel >= 0 && sf.channel < static_cast<int>(kSurfaceChannels)) {
@@ -811,7 +833,7 @@ class Vehicle6 {
       const EngineSpec& en = g_.engines[e];
       const bool own_dir = en.dir.x != 1.0 || en.dir.y != 0.0 || en.dir.z != 0.0;
       if (en.control == Control::None && en.gimbal && frac_[e] > 0.0) {
-        const double ti = std::max(0.0, (frac_[e] * p_.thrust_scale * en.thrust_vac) - (air.pressure * en.exit_area));
+        const double ti = std::max(0.0, (frac_[e] * p_.thrust_scale * (en.thrust_vac * en.thrust_factor)) - (air.pressure * en.exit_area));
         num += ti * (mp.x_cg - en.pos.x);
         thrust += ti;
       } else if (en.control == Control::PitchPlus && own_dir && engine_available(e)) {
@@ -1116,6 +1138,60 @@ class Vehicle6 {
     const double want = lag > 0.0 ? (target - cur) * (h / (lag + h)) : (target - cur);  // a first-order lag, then the rate limit
     const double d = std::clamp(want, -rate * h, rate * h);
     return cur + d;
+  }
+
+  // True for an engine that has a gimbal of its own: the vehicle's engines gimbal one by one and this one moves with the thrust-vector command.
+  [[nodiscard]] bool engine_gimbals_alone(const EngineSpec& en) const { return g_.per_engine_gimbal && en.gimbal && en.control == Control::None; }
+
+  // The deflection an engine is asked for by the pitch and yaw command and the roll command (degrees): the stage's common command, and along the tangent of the circle the engine is on (the
+  // direction a positive roll turns it) `roll_gain` degrees per degree of the roll command, which is the differential gimbal. Positive tp turns the thrust toward -Y (as the pitch gimbal does), positive ty toward +Z.
+  void engine_command(const EngineSpec& en, double cmd_pitch, double cmd_yaw, double cmd_roll, double& tp, double& ty) const {
+    tp = cmd_pitch;
+    ty = cmd_yaw;
+    if (en.roll_gain > 0.0) {
+      const double r = std::hypot(en.pos.y, en.pos.z);
+      if (r > 1.0e-6) {
+        const double d = en.roll_gain * cmd_roll;
+        tp += d * en.pos.z / r;
+        ty += d * en.pos.y / r;
+      }
+    }
+  }
+
+  // The gimbal of each engine that has one of its own for one substep: toward what the command asks of it through its own servo (travel, rate, lag; the second-order servo and the play of the
+  // `actuator` block), or, from the time of its fault, where the fault takes it (stuck: it stays; hard-over: it runs to its angle at its rate).
+  void drive_engine_gimbals(double h, double cmd_pitch, double cmd_yaw) {
+    for (std::size_t e = 0; e < g_.engines.size(); ++e) {
+      const EngineSpec& en = g_.engines[e];
+      const std::size_t st = static_cast<std::size_t>(en.stage);
+      if (!engine_gimbals_alone(en) || !active_[st]) {
+        continue;
+      }
+      const StageSpec& stg = g_.stages[st];
+      const double stage_limit = stg.gimbal_limit_deg >= 0.0 ? stg.gimbal_limit_deg : p_.gimbal_limit_deg;
+      const double stage_rate = stg.gimbal_rate_dps >= 0.0 ? stg.gimbal_rate_dps : p_.gimbal_rate_dps;
+      const double stage_lag = stg.gimbal_lag_s >= 0.0 ? stg.gimbal_lag_s : p_.gimbal_lag_s;
+      const double limit = en.gimbal_limit_deg >= 0.0 ? en.gimbal_limit_deg : stage_limit;
+      const double rate = en.gimbal_rate_dps >= 0.0 ? en.gimbal_rate_dps : stage_rate;
+      const double lag = en.gimbal_lag_s >= 0.0 ? en.gimbal_lag_s : stage_lag;
+      double tp = 0.0;
+      double ty = 0.0;
+      engine_command(en, cmd_pitch, cmd_yaw, ctrl_.roll_deg, tp, ty);
+      if (en.fault != GimbalFault::None && t_ >= en.fault_time_s) {
+        if (en.fault == GimbalFault::Stuck) {
+          continue;
+        }
+        tp = en.fault_pitch_deg;
+        ty = en.fault_yaw_deg;
+      }
+      if (servo_dynamics_) {
+        drive_servo(esv_p_[e], esv_pv_[e], eg_p_[e], tp, h, limit, rate, lag);
+        drive_servo(esv_y_[e], esv_yv_[e], eg_y_[e], ty, h, limit, rate, lag);
+      } else {
+        eg_p_[e] = slew(eg_p_[e], tp, h, limit, rate, lag);
+        eg_y_[e] = slew(eg_y_[e], ty, h, limit, rate, lag);
+      }
+    }
   }
 
   // One axis of a gimbal servo with dynamics (a second-order servo and/or backlash; the plain first-order lag is `slew`): moves the servo (`pos`, `vel`) toward the command, then the engine
@@ -2299,6 +2375,12 @@ class Vehicle6 {
   std::array<double, kMaxStages> servo_p_{};   // the servo's own position and velocity when it has dynamics (a second-order servo or backlash)
   std::array<double, kMaxStages> servo_y_{};
   std::array<double, kMaxStages> servo_pv_{};
+  std::array<double, kMaxEngines> eg_p_{};     // the gimbal of each engine that has one of its own (VehicleSpec::per_engine_gimbal), degrees, after any play
+  std::array<double, kMaxEngines> eg_y_{};
+  std::array<double, kMaxEngines> esv_p_{};    // and the servos' own positions and velocities, when they have dynamics
+  std::array<double, kMaxEngines> esv_pv_{};
+  std::array<double, kMaxEngines> esv_y_{};
+  std::array<double, kMaxEngines> esv_yv_{};
   std::array<double, kMaxStages> servo_yv_{};
   struct Pod {  // a tank that sloshes: which one
     std::size_t stage;

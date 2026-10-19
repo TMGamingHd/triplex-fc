@@ -46,8 +46,15 @@ BOOSTER_LANDING_WN = 2.0
 # Sources (read 9-10 Oct 2026): the SpaceX Starship page and Wikipedia (Super Heavy, Raptor, Starship flight 12); Flight 12 (22 May 2026): max-Q 0:45, MECO 2:22, hot staging 2:24, boost-back 2:30, ship cut-off
 # 8:11 (planned), apogee about 195 km. Super Heavy: 72.3 m, 9 m, 33 Raptor 3 of 2.449 MN at sea level (80.8 MN), 3,650 t of propellant. The ship: three sea-level and three vacuum Raptor, 1,600 t.
 # MY ESTIMATES (nothing public): the booster's dry mass 275 t (the Block 1/2 figure), the ship's dry mass 100 t, the vacuum Raptor's thrust 2.697 MN (Isp 380 s), the tanks' split and positions.
-SEA_LEVEL = dict(thrust_vac=2_584_000, area=1.33, isp=350)   # 2.449 MN at sea level + 101325 Pa x 1.33 m^2
-VACUUM = dict(thrust_vac=2_697_000, area=4.5, isp=380)
+# The nozzles (docs/design/PROPULSION.md; the analysis `tfc_propulsion` checks them against an ideal nozzle): the chamber pressure of Raptor 3 is reported near 350 bar, the sea-level nozzle's area ratio 34 and the
+# vacuum nozzle's 90 (from memory of the public pages, MY ESTIMATES for gamma, 1.2 for a methane-oxygen exhaust). With them the sea-level engine's ideal exit area is 1.34 m^2 against the 1.33 here; the vacuum engine's
+# is 3.57 m^2, and the files before ADR-057 had 4.5 (a 2.4 m exit, from memory): the analysis flagged it as 26 % from an ideal nozzle of that area ratio and thrust, so the area is now the ideal one. The vacuum
+# engine is not run in the atmosphere, so the change moves no flight by more than the pressure on one square metre at 45 km (150 N).
+SEA_LEVEL = dict(thrust_vac=2_584_000, area=1.33, isp=350, pc=3.5e7, eps=34, gamma=1.2)   # 2.449 MN at sea level + 101325 Pa x 1.33 m^2
+VACUUM = dict(thrust_vac=2_697_000, area=3.57, isp=380, pc=3.5e7, eps=90, gamma=1.2)
+ISP_THROTTLE_LOSS = 0.02    # MY ESTIMATE: a fifth of a per cent of Isp per ten per cent of throttle below full (the chamber pressure falls and the nozzle runs off its design point); no public number
+ROLL_GAIN = 1.0             # degrees of tangential deflection per degree of the roll command, for every engine that gimbals: the differential gimbal that rolls a cluster (the cold-gas thrusters roll it when the engines are off)
+PER_ENGINE_GIMBAL = True    # every engine that gimbals has its own angle and servo (ADR-057); --shared-gimbal flies the stage's common angle as before
 
 
 def ring(n: int, radius: float, start_deg: float):
@@ -56,9 +63,11 @@ def ring(n: int, radius: float, start_deg: float):
 
 def engine(stage, yz, spec, group, gimbal=True, x=0.0):
     e = {"stage": stage, "position_m": [x, round(yz[0], 4), round(yz[1], 4)], "thrust_vac_n": spec["thrust_vac"], "exit_area_m2": spec["area"], "isp_vac_s": spec["isp"], "group": group,
-         "min_throttle": 0.4, "rise_s": 0.8, "tail_s": 0.8}
+         "min_throttle": 0.4, "rise_s": 0.8, "tail_s": 0.8, "chamber_pressure_pa": spec["pc"], "area_ratio": spec["eps"], "gamma": spec["gamma"], "isp_throttle_loss": ISP_THROTTLE_LOSS}
     if not gimbal:
         e["gimbal"] = False
+    elif PER_ENGINE_GIMBAL:
+        e["roll_gain"] = ROLL_GAIN
     return e
 
 
@@ -114,7 +123,7 @@ def plant():
     for ch, (nm, x, az, area, chord, span, cdir) in enumerate((("aft flap port", 73.6, 80, 36.9, 4.1, 9.0, 1), ("aft flap starboard", 73.6, 280, 36.9, 4.1, 9.0, -1), ("forward flap port", 110.0, 112, 16.2, 2.7, 6.0, 1), ("forward flap starboard", 110.0, 248, 16.2, 2.7, 6.0, -1))):
         surfaces.append({"name": nm, "stage": 1, "kind": "flap", "axial_hinge": True, "x_hinge_m": x, "azimuth_deg": az, "radius_m": 4.5 if span > 7.5 else 4.0, "area_m2": area, "chord_m": chord, "span_m": span, "chord_dir": cdir,
                          "stow_deg": 90, "min_deg": 0, "max_deg": 110, "rate_dps": 30, "lag_s": 0.05, "channel": ch, "deployed": False})
-    return {"name": "starship-v3-class-return",
+    return {**({"per_engine_gimbal": True} if PER_ENGINE_GIMBAL else {}), "name": "starship-v3-class-return",
             "description": "Starship V3 class stack that flies its whole mission on the flight computers: ascent, hot staging, orbital insertion of the ship (PEG), and the booster's flip, boost-back, grid-fin entry, landing burn and catch.",
             "vehicle": {"gimbal_limit_deg": 8, "gimbal_rate_dps": 15, "gimbal_lag_s": 0.08, "ideal_roll_control": False, "landing_model": True, "max_substep_s": 0.004},
             "aero": {"diameter_m": 9.0, "roughness": 1.2, "full_regime": True, "nose_radius_m": 0.4, **({"cfd": AERODB} if AERODB else {})},
@@ -276,8 +285,11 @@ def main() -> int:
     ap.add_argument("--rig-out", default=str(ROOT / "vehicles" / "starship.json"), help="the vehicle the rig and tfc_fly fly (empty: not written)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="override a number of the ship's return (SHIP in this script), for scanning")
     ap.add_argument("--aerodb", metavar="DIR", default=str(ROOT / "vehicles" / "aerodb"), help="inline the flow solver's tables found in DIR as the plant's aero.cfd, so that the flight uses them (tools/cfd/make_aerodb.py makes them)")
+    ap.add_argument("--shared-gimbal", action="store_true", help="the stage's engines that gimbal share one angle, as before ADR-057 (no differential gimbal for roll)")
     ap.add_argument("--no-aerodb", action="store_true", help="leave them out: the plant flies the engineering build-up of AERODYNAMICS.md alone")
     args = ap.parse_args()
+    global PER_ENGINE_GIMBAL
+    PER_ENGINE_GIMBAL = not args.shared_gimbal
     if not args.no_aerodb:
         AERODB[:] = load_aerodb(args.aerodb)
     for kv in args.set:

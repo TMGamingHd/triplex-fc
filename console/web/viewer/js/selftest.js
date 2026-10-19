@@ -21,6 +21,17 @@ export async function run(app, lenses, setLens, world) {
   await settle(1500);
   check(!!app.pose, 'a pose is being shown');
   check(world.vehicle && world.vehicle.engines.length === app.spec.engines.length, `the model has the vehicle file's ${app.spec.engines.length} engines`);
+  if (app.pose && app.pose.egim) {                                                          // a vehicle that gimbals engine by engine: each engine's nozzle leans as its own angles say, not as its stage's
+    const eg = app.pose.egim; let bad = 0, leaning = 0; const d = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+    for (const en of world.vehicle.engines) {
+      if (!en.gimbal) continue;
+      const a = ((en.spec.cant_pitch_deg || 0) + (eg[2 * en.index] || 0)) * Math.PI / 180, b = ((en.spec.cant_yaw_deg || 0) + (eg[2 * en.index + 1] || 0)) * Math.PI / 180;
+      d.set(Math.sin(b), Math.cos(a) * Math.cos(b), -Math.sin(a) * Math.cos(b)).normalize();
+      if (up.clone().applyQuaternion(en.holder.quaternion).distanceTo(d) > 1e-6) bad++;
+      if (Math.abs(eg[2 * en.index] || 0) + Math.abs(eg[2 * en.index + 1] || 0) > 0.01) leaning++;
+    }
+    check(bad === 0, `per-engine gimbal: every engine's nozzle leans as its own angles say (${leaning} are leaning in this pose)`);
+  }
   for (const l of lenses) {
     const before = errors.length;
     setLens(l.id); await settle();
