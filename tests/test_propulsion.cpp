@@ -614,19 +614,23 @@ TFC_TEST(propulsion_a_stage_let_go_takes_its_engine_failures_and_its_gimbal_mode
   v.step(0.01, c);
   std::vector<sim::Detached> gone = v.take_detached();
   CHECK(gone.size() == 1U && gone[0].stage == 0 && gone[0].failures.empty() && gone[0].spec.per_engine_gimbal);   // none of the lower stage's engines had failed
-  // the upper stage let go too (it is the lowest left): its engines are 3 and 4 of the stack and 0 and 1 of the stage alone
-  sim::Vehicle6 upper_first(stack_of(3U, 2U), sc);
-  sim::Controls c2 = c;
-  c2.events = sim::ev::kSeparate;
-  upper_first.step(0.01, c2);
-  (void)upper_first.take_detached();
-  sim::Controls c3 = c2;
-  c3.events = 0U;
-  upper_first.step(0.01, c3);
-  c3.events = sim::ev::kSeparate;
-  upper_first.step(0.01, c3);   // (a second rising edge: the upper stage, now the lowest, goes too)
-  const std::vector<sim::Detached> second = upper_first.take_detached();
-  CHECK(second.size() == 1U && second[0].stage == 1);
+  // the upper stage on its own timer (the separation event never lets go the last stage on the vehicle, so the upper stage cannot be the one it
+  // releases): its engines are 3 and 4 of the stack and 0 and 1 of the stage alone
+  sim::Params timed = stack_of(3U, 2U);
+  timed.spec.stages[1].separate_time_s = 0.02;
+  sim::Vehicle6 upper_goes(timed, sc);
+  sim::Controls c2;
+  c2.group_mask = 3U;
+  c2.throttle = 1.0;
+  for (int k = 0; k < 4; ++k) {
+    upper_goes.step(0.01, c2);
+  }
+  const std::vector<sim::Detached> second = upper_goes.take_detached();
+  CHECK(second.size() == 1U);
+  if (second.size() != 1U) {
+    return;   // (nothing to look into; the check above has said so)
+  }
+  CHECK(second[0].stage == 1);
   bool engine_1_out_now = false;
   bool engine_0_out_later = false;
   for (const sim::EngineFailure& f : second[0].failures) {
@@ -635,12 +639,28 @@ TFC_TEST(propulsion_a_stage_let_go_takes_its_engine_failures_and_its_gimbal_mode
   }
   CHECK(engine_1_out_now && engine_0_out_later);
   // flown on as a vehicle of its own: the engine is out from its first step and the gimbal is per engine
-  sim::Vehicle6 child = sim::Vehicle6::spawn(second[0], stack_of(3U, 2U), sc);
+  sim::Vehicle6 child = sim::Vehicle6::spawn(second[0], timed, sc);
   sim::Controls run;
   run.group_mask = 2U;
   run.throttle = 1.0;
   child.step(0.01, run);
   CHECK(child.spec().per_engine_gimbal && child.engine_failed(1) && !child.engine_failed(0));
+}
+
+// Verifies: TFC-SIM-022
+TFC_TEST(propulsion_the_separation_event_never_lets_go_the_last_stage_on_the_vehicle) {
+  sim::Vehicle6 v(stack_of(3U, 2U), in_space());
+  sim::Controls c;
+  c.group_mask = 3U;
+  c.throttle = 1.0;
+  c.events = sim::ev::kSeparate;
+  v.step(0.01, c);
+  CHECK(v.take_detached().size() == 1U);   // the lower stage goes
+  c.events = 0U;
+  v.step(0.01, c);
+  c.events = sim::ev::kSeparate;
+  v.step(0.01, c);                         // a second rising edge, with only the upper stage left
+  CHECK(v.take_detached().empty());
 }
 
 TFC_TEST(propulsion_the_tables_of_a_stage_that_flies_alone_number_its_engines_as_the_stage_alone_has_them) {
