@@ -70,6 +70,18 @@ class FlightFunction {
     return false;
   }
 
+  // Offer an engine health frame (0x509, 0x50A; ADR-058). What it says is ORed into the engines this computer takes to be out: an engine that is out stays out, and a lost frame is made up by the next.
+  bool on_engine_frame(const Frame& f) noexcept {
+    uint64_t bits = 0U;
+    uint8_t seq = 0U;
+    if (gnc_ == nullptr || !unpack_engine_health(f, bits, seq) || seq != static_cast<uint8_t>(frame_ & 0xFFU)) {
+      return false;
+    }
+    engine_out_ |= bits;
+    return true;
+  }
+  [[nodiscard]] uint64_t engine_out() const noexcept { return engine_out_; }
+
   // This computer's view of its inputs: the sensors give a trustworthy consensus and the attitude is valid. (A computer is ready for launch when this holds and its own IMU's
   // calibration is ready, `ImuCalibrator::ready()`.)
   [[nodiscard]] bool sensors_ok() const noexcept {
@@ -167,6 +179,7 @@ class FlightFunction {
     mi.q = att::body_to_nav(estimator_.quaternion());
     mi.w = att::body_rates_rad(estimator_.body_rates_dps());
     mi.attitude_valid = estimator_.attitude().valid;
+    mi.engine_out = engine_out_;
     mi.epoch_s = epoch0_s_ + (static_cast<double>(mi.frame) * static_cast<double>(kFramePeriodS));
     return mi;
   }
@@ -196,6 +209,7 @@ class FlightFunction {
     cmd_yaw_ = dm::clamp_(static_cast<double>(mx.gimbal_yaw) * d.yaw * eff, -lim, lim);
     prop_.throttle = mo.throttle;
     prop_.groups = mo.groups;
+    prop_.engines = mo.engines;
     prop_.events = mo.events;
     prop_.phase = mo.phase;
     prop_.roll_deg = static_cast<float>(static_cast<double>(mx.roll) * d.roll);
@@ -235,6 +249,7 @@ class FlightFunction {
   double cmd_pitch_ = 0.0;
   double cmd_yaw_ = 0.0;
   uint32_t t0_frame_ = 0U;
+  uint64_t engine_out_ = 0U;
   double epoch0_s_ = 0.0;
   bool gnc_started_ = false;
   bool fix_pending_ = false;

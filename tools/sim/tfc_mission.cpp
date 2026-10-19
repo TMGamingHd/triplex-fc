@@ -209,7 +209,7 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "cannot write %s\n", opt.csv);
       return 1;
     }
-    std::fprintf(csv, "t_s,body,name,phase,altitude_m,speed_ms,mass_kg,downrange_m,crossrange_m\n");
+    std::fprintf(csv, "t_s,body,name,phase,altitude_m,speed_ms,mass_kg,downrange_m,crossrange_m,tilt_deg,thrust_n,engines_on,vertical_ms,land_engines,land_throttle,accel_cmd_ms2,miss_m,ref_tilt_deg,gimbal_p,gimbal_y,est_tilt_deg,nav_err_m,design_thrust_n\n");
   }
   std::FILE* pose = nullptr;
   if (opt.pose != nullptr) {
@@ -260,7 +260,33 @@ int main(int argc, char** argv) {
         for (std::size_t i = 0; i < world.bodies(); ++i) {
           const sim::MissionWorld::Body& b = world.body(i);
           const sim::State& s = b.veh.state();
-          std::fprintf(csv, "%.1f,%zu,%s,%u,%.1f,%.2f,%.0f,%.1f,%.1f\n", t, i, b.name.c_str(), last_phase[i], b.veh.altitude(), b.veh.speed(), b.veh.mass(), s.r.y, s.r.z);
+          const sim::V3 up = sim::normalized(s.r);
+          const sim::V3 axis = sim::rotate(s.q, sim::V3{1.0, 0.0, 0.0});
+          const double tilt = std::acos(std::clamp(sim::dot(axis, up), -1.0, 1.0)) * 57.29577951308232;
+          const tfc::gnc::Mission* gm = b.av != nullptr ? &b.av->computer(0).mission() : (b.ideal != nullptr ? b.ideal.get() : nullptr);
+          const tfc::descent::DescentOut lo = gm != nullptr ? gm->landing_out() : tfc::descent::DescentOut{};
+          double est_tilt = 0.0;
+          double nav_err = 0.0;
+          if (b.av != nullptr) {
+            const tfc::FlightFunction& ff = b.av->computer(0);
+            const tfc::dm::Quat qe = tfc::att::body_to_nav(ff.estimator().quaternion());
+            const tfc::dm::Vec3 ea = tfc::dm::rotate(qe, tfc::dm::Vec3{1.0, 0.0, 0.0});
+            const tfc::dm::Vec3 eu = tfc::dm::unit(tfc::dm::Vec3{s.r.x, s.r.y, s.r.z}, tfc::dm::Vec3{1.0, 0.0, 0.0});
+            est_tilt = std::acos(std::clamp(tfc::dm::dot(ea, eu), -1.0, 1.0)) * 57.29577951308232;
+            nav_err = tfc::dm::norm(ff.navigator().position() - tfc::dm::Vec3{s.r.x, s.r.y, s.r.z});
+          }
+          double design_thrust = 0.0;
+          if (gm != nullptr && b.tables != nullptr) {
+            design_thrust = static_cast<double>(b.tables->gains[gm->phase() < tfc::gnc::kMaxPhases ? gm->phase() : 0U].thrust_at(gm->phase_frames()));
+          }
+          double ref_tilt = 0.0;
+          if (gm != nullptr) {
+            const tfc::dm::Vec3 ra = tfc::dm::rotate(gm->reference(), tfc::dm::Vec3{1.0, 0.0, 0.0});
+            const tfc::dm::Vec3 ru = tfc::dm::unit(tfc::dm::Vec3{s.r.x, s.r.y, s.r.z}, tfc::dm::Vec3{1.0, 0.0, 0.0});
+            ref_tilt = std::acos(std::clamp(tfc::dm::dot(ra, ru), -1.0, 1.0)) * 57.29577951308232;
+          }
+          std::fprintf(csv, "%.1f,%zu,%s,%u,%.1f,%.2f,%.0f,%.1f,%.1f,%.1f,%.0f,%d,%.1f,%u,%.2f,%.1f,%.0f,%.1f,%.2f,%.2f,%.1f,%.1f,%.0f\n", t, i, b.name.c_str(), last_phase[i], b.veh.altitude(), b.veh.speed(), b.veh.mass(), s.r.y, s.r.z, tilt,
+                       b.veh.current_loads().thrust, b.veh.engines_on(), sim::dot(s.v, up), lo.engines, lo.throttle, lo.accel_cmd, gm != nullptr ? tfc::dm::norm(gm->miss()) : 0.0, ref_tilt, b.veh.gimbal_pitch_deg(), b.veh.gimbal_yaw_deg(), est_tilt, nav_err, design_thrust);
         }
       }
     }

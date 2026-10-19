@@ -950,3 +950,90 @@ TFC_TEST(missionfile_the_structure_limits_are_read_written_and_read_again_and_a_
   CHECK(over.size() == 2U && mentions(over, "max q 40.0 kPa is over the limit of 35.0 kPa") && mentions(over, "axial acceleration 5.0 g is over the limit of 4.5 g"));
   CHECK(sim::envelope_violations(sim::LoadLimits{}, e).empty());
 }
+
+// Verifies: TFC-SIM-022
+TFC_TEST(missiondesign_a_coast_that_begins_in_the_engines_tail_is_designed_on_the_probes_that_are_flown_and_a_burn_leaves_out_its_probe_without_thrust) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(reads(tiny(R"({
+    "design": {"wn": 1.0, "zeta": 0.7, "ki_over_kp": 0.2, "kp_max": 50, "b_min": 0.01},
+    "mixers": [{"name": "tvc", "gimbal": true, "roll_thrusters": true}, {"name": "fins", "gimbal": false, "roll_thrusters": false, "surfaces": [0, 1, 2]}],
+    "main": [{"kind": "program", "groups": [0], "mixer": 0, "end": {"time_s": 10}, "program": [[0, 0], [10, 5]]}, {"kind": "coast", "mixer": 1}]})"), v, errors));
+  v.params.spec.surfaces.clear();
+  for (int i = 0; i < 3; ++i) {
+    sim::SurfaceSpec f;
+    f.channel = i;
+    f.area = 5.0;
+    f.chord = 1.0;
+    f.span = 2.0;
+    f.radius = 0.5;
+    f.min_deg = -20.0;
+    f.max_deg = 20.0;
+    v.params.spec.surfaces.push_back(f);
+  }
+  sim::BuiltMission bm;
+  CHECK(sim::build_mission(v, bm, errors));
+  std::vector<sim::AxisProbe> probes;
+  for (int k = 0; k < 40; ++k) {
+    sim::AxisProbe p;
+    p.stage = -1;
+    p.phase = k < 20 ? 0U : 1U;
+    p.t_in_phase = static_cast<double>(k % 20) * 0.5;
+    // the burn's first probe is on the pad, with the engines not yet up; the coast's first is taken while the engines die away, and the rest of the coast has none
+    p.thrust = k < 20 ? (k == 0 ? 0.0 : 40000.0) : (k == 20 ? 30000.0 : 0.0);
+    p.a = {0.5, 2.0, 3.0};
+    p.col[0] = {0.0, 0.0, 0.4};
+    p.col[1] = {0.0, 0.4, 0.0};
+    p.col[2] = {0.05, 0.0, 0.0};
+    p.col[3] = {0.003, 0.0, 0.002};
+    p.col[4] = {-0.003, 0.002, 0.0};
+    p.col[5] = {0.0, -0.002, -0.002};
+    probes.push_back(p);
+  }
+  sim::fit_plan(v.mission, v.params.spec, bm.main, probes, -1);
+  const tfc::gnc::GainTrack& burn = bm.main.gains[0];
+  const tfc::gnc::GainTrack& coast = bm.main.gains[1];
+  CHECK(burn.n > 0U && burn.frame[0] == 50U && near_abs(static_cast<double>(burn.thrust[0]), 40000.0, 1.0));   // the pad probe (no thrust) is out: the track starts at the second, 0.5 s in
+  CHECK(coast.n >= 16U && near_abs(static_cast<double>(coast.thrust[0]), 30000.0, 1.0) && coast.thrust[coast.n - 1U] == 0.0F);   // the unpowered probes are the track
+}
+
+// Verifies: TFC-SIM-022
+TFC_TEST(missionworld_an_engine_that_fails_is_declared_by_its_controller_after_a_delay_to_all_three_computers_and_the_guidance_counts_its_mass_by_what_is_left) {
+  sim::VehicleFile v;
+  std::vector<std::string> errors;
+  CHECK(sim::load_vehicle_file(repo_root() + "vehicles/missions/rocket_recovery.json", v, errors) && errors.empty());
+  sim::BuiltMission bm;
+  CHECK(sim::build_mission(v, bm, errors));
+  CHECK(sim::design_mission(v, bm).ok);
+  CHECK(bm.main.group_engines[0] == 1U && bm.main.engine_thrust[0] > 1000.0F);   // the one engine of the group, and what it is worth
+  v.scenario.engine_failures.push_back(sim::EngineFailure{5.0, 0});
+  sim::WorldConfig wc;
+  wc.params = v.params;
+  wc.scenario = v.scenario;
+  wc.main_tables = &bm.main;
+  wc.ideal = false;
+  wc.pad_frames = 300U;
+  sim::MissionWorld w(wc);
+  for (int k = 0; k < 300 + 480; ++k) {   // 4.8 s into the flight: the engine is still running
+    w.step();
+  }
+  const sim::MissionWorld::Body& b = w.body(0);
+  CHECK(!b.veh.engine_failed(0) && b.av->computer(0).engine_out() == 0U);
+  for (int k = 0; k < 40; ++k) {   // 5.2 s: it failed at 5.0 and its controller has not yet said so (the delay is 0.15 s)...
+    w.step();
+  }
+  CHECK(b.veh.engine_failed(0));
+  for (int k = 0; k < 60; ++k) {   // ... and at 5.8 s it has, to each of the three computers
+    w.step();
+  }
+  CHECK(b.av->computer(0).engine_out() == 1U && b.av->computer(1).engine_out() == 1U && b.av->computer(2).engine_out() == 1U);
+  // the ideal pilot hears it at once, and the mass the guidance keeps follows the truth: with no thrust there is no flow, where the nominal flow would take hundreds of kilograms off its estimate
+  sim::WorldConfig ic = wc;
+  ic.ideal = true;
+  ic.pad_frames = 0U;
+  sim::MissionWorld wi(ic);
+  for (int k = 0; k < 1500; ++k) {   // 15 s
+    wi.step();
+  }
+  CHECK(wi.body(0).veh.engine_failed(0) && std::fabs(wi.body(0).ideal->mass() - wi.body(0).veh.mass()) < 5.0);
+}

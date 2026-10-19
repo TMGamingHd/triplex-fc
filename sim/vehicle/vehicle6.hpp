@@ -186,6 +186,7 @@ struct Controls {
   uint32_t group_mask = 0U;                           // guided stages: bit g set: the engines of group g are commanded on
   std::array<double, kSurfaceChannels> surface_deg{};  // the surface command
   double roll_deg = 0.0;                              // the roll command: what the roll thrusters fire in proportion to
+  unsigned engine_count = 0U;                         // guided stages: how many of the engines of the commanded groups to run, the healthy ones in the order of the vehicle file (0: all of them)
   uint32_t events = 0U;
 };
 
@@ -262,6 +263,7 @@ struct Detached {
   double recoil_ms = 0.0;     // the speed the push of the separation gives it, backward along the axis
   double ground_radius = 0.0; // the sphere the ground is on
   bool launched = false;
+  std::vector<EngineFailure> failures;   // the stage's engine failures, by the engine's index in the stage alone: those already out (time -1) and those still to come
 };
 
 class Vehicle6 {
@@ -1075,7 +1077,7 @@ class Vehicle6 {
     cs.has_initial = false;
     cs.ground_radius_override = d.ground_radius;
     cs.engine_out_time = -1.0;
-    cs.engine_failures.clear();
+    cs.engine_failures = d.failures;   // (the stage's own engines, by their index in the stage alone)
     Vehicle6 v(cp, cs);
     State st = d.state;
     v.set_state(st);
@@ -1517,12 +1519,74 @@ class Vehicle6 {
 
   // One engine of a stage that the computers drive: it starts when its group is commanded on (if it has starts left, and the start takes: the scenario can make a start fail), runs at the throttle
   // commanded (raised to the engine's lowest, `min_throttle`) and stops when its group is commanded off or the propellant is gone.
+  // The engines the engine controller runs when the command asks for a number of them (`Controls::engine_count`): of the engines the commanded groups light that can run (not out, no failed start), the `count`
+  // whose thrust acts nearest the axis, so that a cluster with engines out is as balanced as it can be (a thrust off the axis is a torque the gimbal must trim and a force that is not along the axis). Ties go to
+  // the lower index (the order of the vehicle file). It is found again only when the command, the groups or the engines that can run change; over twenty candidates the first twenty are used.
+  void refresh_selection() {
+    uint64_t can_run = 0U;
+    for (std::size_t k = 0; k < g_.engines.size() && k < kMaxEngines; ++k) {
+      const EngineSpec& en = g_.engines[k];
+      const bool in_group = ((ctrl_.group_mask >> static_cast<unsigned>(en.group)) & 1U) != 0U;
+      if (en.control == Control::None && en.group >= 0 && in_group && active_[static_cast<std::size_t>(en.stage)] && !failed_[k] && !start_failed_[k]) {
+        can_run |= uint64_t{1} << k;
+      }
+    }
+    if (sel_valid_ && can_run == sel_can_run_ && ctrl_.engine_count == sel_count_) {
+      return;
+    }
+    sel_valid_ = true;
+    sel_can_run_ = can_run;
+    sel_count_ = ctrl_.engine_count;
+    selected_.fill(false);
+    std::array<std::size_t, 20> cand{};
+    unsigned n = 0U;
+    for (std::size_t k = 0; k < kMaxEngines && n < cand.size(); ++k) {
+      if (((can_run >> k) & 1U) != 0U) {
+        cand[n++] = k;
+      }
+    }
+    const unsigned want = std::min(ctrl_.engine_count, n);
+    double best = 1.0e300;
+    uint32_t best_set = 0U;
+    for (uint32_t set = 0U; set < (uint32_t{1} << n); ++set) {
+      unsigned bits = 0U;
+      for (uint32_t m = set; m != 0U; m &= m - 1U) {
+        ++bits;
+      }
+      if (bits != want) {
+        continue;
+      }
+      double sy = 0.0;
+      double sz = 0.0;
+      double st = 0.0;
+      for (unsigned i = 0; i < n; ++i) {
+        if (((set >> i) & 1U) != 0U) {
+          const EngineSpec& en = g_.engines[cand[i]];
+          const double w = en.thrust_vac * en.thrust_factor;
+          sy += w * en.pos.y;
+          sz += w * en.pos.z;
+          st += w;
+        }
+      }
+      const double off = st > 0.0 ? std::hypot(sy, sz) / st : 0.0;
+      if (off < best - 1.0e-9) {
+        best = off;
+        best_set = set;
+      }
+    }
+    for (unsigned i = 0; i < n; ++i) {
+      selected_[cand[i]] = ((best_set >> i) & 1U) != 0U;
+    }
+  }
+
+  [[nodiscard]] bool in_first_engines(std::size_t e) const { return ctrl_.engine_count == 0U || (e < kMaxEngines && selected_[e]); }
+
   void update_guided_engine(std::size_t e, double h) {
     const EngineSpec& en = g_.engines[e];
     const std::size_t st = static_cast<std::size_t>(en.stage);
     const bool bit = ((ctrl_.group_mask >> static_cast<unsigned>(en.group)) & 1U) != 0U;
     const bool fuel = s_.prop[st] > kEmptyProp;
-    const bool want = bit && fuel && !failed_[e] && ctrl_.throttle > 0.0;
+    const bool want = bit && fuel && !failed_[e] && ctrl_.throttle > 0.0 && in_first_engines(e);
     if (want && !eng_on_[e] && !start_failed_[e]) {
       if (en.max_starts > 0 && starts_[e] >= en.max_starts) {
         start_failed_[e] = true;
@@ -1732,6 +1796,23 @@ class Vehicle6 {
       }
     }
     d.spec = stage_alone(s, d.x_off);
+    {   // the failures of the stage's engines go with it, by the engine's index in the stage alone
+      int local = 0;
+      for (std::size_t e = 0; e < g_.engines.size(); ++e) {
+        if (g_.engines[e].stage != static_cast<int>(s)) {
+          continue;
+        }
+        if (failed_[e]) {
+          d.failures.push_back(EngineFailure{-1.0, local});
+        }
+        for (const EngineFailure& f : failures_) {
+          if (f.index == static_cast<int>(e) && !failed_[e]) {
+            d.failures.push_back(EngineFailure{f.time, local});
+          }
+        }
+        ++local;
+      }
+    }
     const double prop_s = d.state.prop[s];   // (the copy was taken before the stage left)
     d.state.prop = std::array<double, kMaxStages>{};
     d.state.prop[0] = prop_s;
@@ -1754,6 +1835,7 @@ class Vehicle6 {
     }
     v.actuator = g_.actuator;
     v.jet_damping = g_.jet_damping;
+    v.per_engine_gimbal = g_.per_engine_gimbal;
     StageSpec st = g_.stages[s];
     st.x_start = 0.0;
     if (st.x_cg_dry >= 0.0) {
@@ -2084,6 +2166,9 @@ class Vehicle6 {
 
   // The thrust fraction of each engine for the next substep of h seconds: 1 (or the throttle) while it is lit, with the rise and tail-off time constants, 0 once its stage has gone.
   void update_engines(double h, double cmd_pitch_deg, double cmd_yaw_deg) {
+    if (ctrl_.engine_count != 0U) {
+      refresh_selection();
+    }
     for (std::size_t e = 0; e < g_.engines.size(); ++e) {
       const EngineSpec& en = g_.engines[e];
       const std::size_t st = static_cast<std::size_t>(en.stage);
@@ -2375,6 +2460,10 @@ class Vehicle6 {
   std::array<double, kMaxStages> servo_p_{};   // the servo's own position and velocity when it has dynamics (a second-order servo or backlash)
   std::array<double, kMaxStages> servo_y_{};
   std::array<double, kMaxStages> servo_pv_{};
+  std::array<bool, kMaxEngines> selected_{};   // the engines the engine controller runs when the command asks for a number of them
+  uint64_t sel_can_run_ = 0U;
+  unsigned sel_count_ = 0U;
+  bool sel_valid_ = false;
   std::array<double, kMaxEngines> eg_p_{};     // the gimbal of each engine that has one of its own (VehicleSpec::per_engine_gimbal), degrees, after any play
   std::array<double, kMaxEngines> eg_y_{};
   std::array<double, kMaxEngines> esv_p_{};    // and the servos' own positions and velocities, when they have dynamics

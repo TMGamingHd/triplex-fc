@@ -363,6 +363,10 @@ class MissionWorld {
     in.q = tfc::dm::Quat{s.q.w, s.q.x, s.q.y, s.q.z};
     in.w = dm_of(s.w);
     in.epoch_s = b.veh.time();
+    const std::size_t n = std::min<std::size_t>(b.veh.spec().engines.size(), tfc::gnc::kMaxEngines);   // (the ideal controllers hear the engine controllers at once)
+    for (std::size_t e = 0; e < n; ++e) {
+      in.engine_out |= b.veh.engine_failed(e) ? uint64_t{1} << e : uint64_t{0};
+    }
     return in;
   }
 
@@ -416,6 +420,7 @@ class MissionWorld {
     Controls c;
     c.throttle = static_cast<double>(mo.throttle);
     c.group_mask = mo.groups;
+    c.engine_count = mo.engines;
     c.events = mo.events;
     for (unsigned k = 0; k < 4U; ++k) {
       c.surface_deg[k] = static_cast<double>(mx.trim[k]);

@@ -206,6 +206,8 @@ struct ThrottleTrack {
   }
 };
 
+constexpr unsigned kMaxEngines = 64U;   // the engines of a vehicle that the health word has a bit for
+
 // Everything the sequencer is configured with.
 struct Tables {
   nav::NavConfig nav;
@@ -230,6 +232,10 @@ struct Tables {
   descent::Engines engines;
   descent::DragModel drag;
   double ignition_margin = 1.15;
+  // Which engines a group lights and how much thrust each is worth, for the health word (ADR-058): bit e of `group_engines[g]` is engine e of the vehicle file, which group g lights; `engine_thrust[e]` is its
+  // rated vacuum thrust, N. Tables that name no engines (the old ones, the tests') leave the health word without effect: every engine is taken to be there.
+  std::array<uint64_t, 8> group_engines{};
+  std::array<float, kMaxEngines> engine_thrust{};
 };
 
 // What the sequencer is given each frame.
@@ -241,6 +247,7 @@ struct Inputs {
   Quat q;                            // the attitude, body -> navigation
   Vec3 w;                            // the body rates, rad/s
   bool attitude_valid = true;
+  uint64_t engine_out = 0U;          // the engines the engine controllers have declared out (bit e: engine e of the vehicle file), from the health frames
   double epoch_s = 0.0;              // seconds since T-zero by the mission clock, whichever frame this stage's `frame` counts from: it says where a turning planet has carried the site (tables.planet_omega)
 };
 
@@ -255,6 +262,7 @@ struct Output {
   uint8_t mixer = 0U;
   bool control = true;               // false: the attitude loop is not used (a parachute descent)
   float thrust = 0.0F;               // N, the thrust the engines are commanded to give
+  uint8_t engines = 0U;              // how many of the engines of `groups` to run, the healthy ones in the order of the vehicle file (0: all of them); a landing burn with engines out asks for a number
 };
 
 class Mission {
@@ -275,6 +283,7 @@ class Mission {
     }
     q_ref_ = in.q;
     epoch_ = in.epoch_s;
+    engine_out_ = in.engine_out;
     phase_ = 0U;
     enter(in);
     started_ = true;
@@ -303,6 +312,64 @@ class Mission {
   [[nodiscard]] Vec3 catch_point_at(double ahead_s) const noexcept {
     const Vec3 s = site_at(ahead_s);
     return dm::unit(s, Vec3{1.0, 0.0, 0.0}) * (dm::norm(s) + catch_height());
+  }
+  // The share of the thrust of the engines the groups `groups` light that is there: the rated thrust of those not declared out over that of all of them (1 when the tables name no engines).
+  [[nodiscard]] double health_of(uint8_t groups) const noexcept {
+    double total = 0.0;
+    double alive = 0.0;
+    for (unsigned g = 0; g < 8U; ++g) {
+      if (((groups >> g) & 1U) == 0U) {
+        continue;
+      }
+      for (unsigned e = 0; e < kMaxEngines; ++e) {
+        if (((tab_->group_engines[g] >> e) & 1U) != 0U) {
+          const double w = static_cast<double>(tab_->engine_thrust[e]);
+          total += w;
+          alive += ((engine_out_ >> e) & 1U) != 0U ? 0.0 : w;
+        }
+      }
+    }
+    return total > 0.0 ? alive / total : 1.0;
+  }
+  // How many engines the groups `groups` light, or how many of those are not declared out (zero when the tables name none).
+  [[nodiscard]] unsigned engines_in(uint8_t groups, bool healthy_only) const noexcept {
+    uint64_t set = 0U;
+    for (unsigned g = 0; g < 8U; ++g) {
+      set |= ((groups >> g) & 1U) != 0U ? tab_->group_engines[g] : 0U;
+    }
+    set &= healthy_only ? ~engine_out_ : ~uint64_t{0};
+    unsigned n = 0U;
+    for (unsigned e = 0; e < kMaxEngines; ++e) {
+      n += ((set >> e) & 1U) != 0U ? 1U : 0U;
+    }
+    return n;
+  }
+  // The groups a landing burn may draw its engines from: every group of every option of the (first) landing phase.
+  [[nodiscard]] uint8_t landing_pool() const noexcept {
+    uint8_t pool = 0U;
+    for (unsigned i = 0; i < tab_->n_phases; ++i) {
+      if (tab_->phase[i].kind == kind::kLanding) {
+        const unsigned n_opt = tab_->engines.options < descent::kEngineOptions ? tab_->engines.options : descent::kEngineOptions;
+        for (unsigned k = 0; k < n_opt; ++k) {
+          pool = static_cast<uint8_t>(pool | static_cast<uint8_t>(tab_->phase[i].p[k]));
+        }
+        break;
+      }
+    }
+    return pool;
+  }
+  // The landing burn's engine options as they are with the engines declared out: no option can run more engines than the pool has left (at least one, so that the throttle is a number).
+  [[nodiscard]] descent::Engines landing_engines() const noexcept {
+    descent::Engines eng = tab_->engines;
+    const uint8_t pool = landing_pool();
+    if (engines_in(pool, false) == 0U) {
+      return eng;   // the tables do not name the engines
+    }
+    const unsigned left = engines_in(pool, true) > 0U ? engines_in(pool, true) : 1U;
+    for (unsigned k = 0; k < descent::kEngineOptions; ++k) {
+      eng.counts[k] = eng.counts[k] < left ? eng.counts[k] : left;
+    }
+    return eng;
   }
   // The velocity the ground has where the vehicle is (the planet's turn): what the landing is flown relative to.
   [[nodiscard]] Vec3 ground_velocity(Vec3 at) const noexcept { return dm::cross(tab_->pole * tab_->planet_omega, at); }
@@ -380,6 +447,7 @@ class Mission {
   double aoa_deg_ = 0.0;
   double tof_ = 0.0;
   double epoch_ = 0.0;              // the mission clock now, from the inputs
+  uint64_t engine_out_ = 0U;        // the engines declared out, from the inputs
   double flow_ = 0.0;               // the mass flow of this frame, kg/s
   Vec3 aoa_dir_{};
   uint8_t latched_events_ = 0U;
@@ -457,7 +525,8 @@ inline bool Mission::ended(const Inputs& in) const noexcept {
     const double h = dm::dot(in.r - pt, upt);
     const double v_down = dm::max_(-dm::dot(in.v, upt), 0.0);
     // (the altitude guard: a vehicle on the far side of the planet is "below" the point along its up, and must not light up there)
-    return h <= ev && alt <= ev + catch_height() && h <= descent::PoweredDescent::stopping_height(v_down, tab_->landing.decel_plan, tab_->landing.sink_ms) * tab_->ignition_margin + 1.0;
+    const double decel = descent::PoweredDescent::planned_decel(tab_->landing, landing_engines(), mass_, dm::norm(tab_->nav.gravity.at(in.r)));
+    return h <= ev && alt <= ev + catch_height() && h <= descent::PoweredDescent::stopping_height(v_down, decel, tab_->landing.sink_ms) * tab_->ignition_margin + 1.0;
   }
   if (p.end == end::kTouchdown) {
     // (the burn aims `aim_below_m` under the catch point, so that the pins come down through the arms with the engines still holding the vehicle: the phase ends there, not at the catch point)
@@ -514,12 +583,13 @@ inline void Mission::step_program(const Inputs& in, Output& out) noexcept {
   reference_toward(dir, hint);
   const float thr = p.throttle_track < kThrottleTracks ? tab_->throttle[p.throttle_track].at(in_phase_, p.throttle) : p.throttle;
   out.throttle = thr;
-  flow_ = static_cast<double>(p.mdot) * static_cast<double>(thr);
+  flow_ = static_cast<double>(p.mdot) * static_cast<double>(thr) * health_of(p.groups);
 }
 
 inline void Mission::step_peg(const Inputs& in, Output& out) noexcept {
   const Phase& p = ph();
-  const double thrust_model = static_cast<double>(p.thrust) * static_cast<double>(p.throttle) / mass_;
+  const double health = health_of(p.groups);   // (an engine out gives the share of the thrust and the flow that is left; the specific impulse is the engines')
+  const double thrust_model = static_cast<double>(p.thrust) * static_cast<double>(p.throttle) * health / mass_;
   if (!cutoff_) {
     if (!peg_busy_) {   // a cycle of the guidance begins from the present state; the cycle is spread over the frames, a prediction each
       peg::Target tgt;
@@ -530,7 +600,7 @@ inline void Mission::step_peg(const Inputs& in, Output& out) noexcept {
       peg::Burn burn;
       burn.accel = in.specific_force > 0.5 * thrust_model ? in.specific_force : thrust_model;
       burn.exhaust_speed = static_cast<double>(p.thrust) / dm::max_(static_cast<double>(p.mdot), 1.0e-9);
-      burn.burn_time_max = dm::max_((mass_ - static_cast<double>(p.p[8])) / dm::max_(static_cast<double>(p.mdot) * static_cast<double>(p.throttle), 1.0e-9), 0.0);
+      burn.burn_time_max = dm::max_((mass_ - static_cast<double>(p.p[8])) / dm::max_(static_cast<double>(p.mdot) * static_cast<double>(p.throttle) * health, 1.0e-9), 0.0);
       peg_.begin(in.r, in.v, tgt, burn);
       if (design_ && !peg_.started()) {
         (void)peg_.solve(tab_->nav.gravity, 0.05, 100);
@@ -552,7 +622,7 @@ inline void Mission::step_peg(const Inputs& in, Output& out) noexcept {
     out.throttle = 0.0F;
   } else {
     out.throttle = p.throttle;
-    flow_ = static_cast<double>(p.mdot) * static_cast<double>(p.throttle);
+    flow_ = static_cast<double>(p.mdot) * static_cast<double>(p.throttle) * health;
   }
 }
 
@@ -562,7 +632,7 @@ inline void Mission::step_coast(const Inputs& in, Output& out) noexcept {
   if (p.groups == 0U) {
     out.throttle = 0.0F;
   } else {
-    flow_ = static_cast<double>(p.mdot) * static_cast<double>(p.throttle);   // (a burn at a held attitude: the engines of the hot stage running while the stages are still together)
+    flow_ = static_cast<double>(p.mdot) * static_cast<double>(p.throttle) * health_of(p.groups);   // (a burn at a held attitude: the engines of the hot stage running while the stages are still together)
   }
 }
 
@@ -573,7 +643,7 @@ inline void Mission::step_boostback(const Inputs& in, Output& out) noexcept {
     // where the vehicle would come down if the engines stopped now, with the air of the way down (the same predictor the glide steers by): the burn ends when that point has come back to the catch point
     const double catch_radius = dm::norm(tab_->site) + catch_height();
     // (the engines go on pushing for a while after the command to stop: the impulse they still give is thrust over mass times their decay time, p[3], along the thrust)
-    const double a_thrust = static_cast<double>(p.thrust) * static_cast<double>(p.throttle) / mass_;
+    const double a_thrust = static_cast<double>(p.thrust) * static_cast<double>(p.throttle) * health_of(p.groups) / mass_;
     const Vec3 v_cut = in.v + (dm::rotate(in.q, Vec3{1.0, 0.0, 0.0}) * (a_thrust * static_cast<double>(p.p[3])));   // (along the axis the engines really push along, not the one asked for)
     const descent::Impact imp = descent::descent_predict(in.r, v_cut, tab_->nav.gravity, tab_->drag, catch_radius, 1.0, 900U);
     if (imp.valid) {
@@ -603,7 +673,7 @@ inline void Mission::step_boostback(const Inputs& in, Output& out) noexcept {
     out.throttle = 0.0F;
   } else {
     out.throttle = p.throttle;
-    flow_ = static_cast<double>(p.mdot) * static_cast<double>(p.throttle);
+    flow_ = static_cast<double>(p.mdot) * static_cast<double>(p.throttle) * health_of(p.groups);
   }
 }
 
@@ -692,7 +762,8 @@ inline void Mission::step_landing(const Inputs& in, Output& out) noexcept {
   descent::LandingTarget tgt = tab_->landing;
   tgt.point = catch_point_at(0.0);
   // (the landing is flown relative to the ground: the pad moves at the planet's turn, hundreds of metres a second at the equator)
-  land_out_ = descent_.update(in.r, in.v - ground_velocity(in.r), mass_, tgt, tab_->engines, tab_->nav.gravity, tab_->ignition_margin, burning_);
+  const descent::Engines eng = landing_engines();
+  land_out_ = descent_.update(in.r, in.v - ground_velocity(in.r), mass_, tgt, eng, tab_->nav.gravity, tab_->ignition_margin, burning_);
   burning_ = burning_ || land_out_.ignite;
   miss_ = land_out_.miss;
   reference_toward(land_out_.direction);
@@ -701,7 +772,14 @@ inline void Mission::step_landing(const Inputs& in, Output& out) noexcept {
     out.throttle = 0.0F;
     return;
   }
-  out.groups = static_cast<uint8_t>(p.p[land_out_.option]);   // (the option is one of the four there are: descent.hpp reads no more)
+  const uint8_t option_groups = static_cast<uint8_t>(p.p[land_out_.option]);   // (the option is one of the four there are: descent.hpp reads no more)
+  if (engines_in(option_groups, true) < engines_in(option_groups, false)) {
+    // an engine of the option is out: light the number of engines the option asks for from the whole pool, the engine controller taking the healthy ones in the order of the vehicle file
+    out.groups = landing_pool();
+    out.engines = static_cast<uint8_t>(land_out_.engines);
+  } else {
+    out.groups = option_groups;
+  }
   out.throttle = static_cast<float>(land_out_.throttle);
   out.thrust = static_cast<float>(tab_->engines.thrust_each * static_cast<double>(land_out_.engines) * land_out_.throttle);
   flow_ = static_cast<double>(p.mdot) * static_cast<double>(land_out_.engines) * land_out_.throttle;
@@ -730,6 +808,7 @@ inline Output Mission::step(const Inputs& in) noexcept {
     return out;
   }
   epoch_ = in.epoch_s;
+  engine_out_ = in.engine_out;
   if (ended(in) && static_cast<unsigned>(phase_) + 1U < tab_->n_phases) {
     ++phase_;
     enter(in);
@@ -763,7 +842,7 @@ inline Output Mission::step(const Inputs& in) noexcept {
     out.throttle = 0.0F;
   }
   if (p.kind != kind::kLanding) {
-    out.thrust = out.groups != 0U ? p.thrust * out.throttle : 0.0F;
+    out.thrust = out.groups != 0U ? p.thrust * out.throttle * static_cast<float>(health_of(out.groups)) : 0.0F;
   }
   mass_ = dm::max_(mass_ - (flow_ * kDt), 1.0);
   ++in_phase_;

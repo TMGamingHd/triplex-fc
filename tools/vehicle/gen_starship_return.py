@@ -277,11 +277,18 @@ HEADER_SHIP = """// The Starship V3 class stack WITH A MISSION IN THE FILE: the 
 HEADER_EARTH = HEADER.replace("// The Starship V3 class stack WITH A MISSION IN THE FILE:", "// The same mission on a ROTATING Earth (7.292e-5 rad/s; the launch site is at 28.5 N, the stack goes east): the pad is carried round the planet's axis, the air turns with it, and the guidance aims at where the pad will be when the stage gets there (docs/design/GNC.md, ADR-056). The Starship V3 class stack WITH A MISSION IN THE FILE:", 1).replace("starship_return.json            #", "starship_return_earth.json      #")
 
 
+# Engines that fail in the engines-out variant (docs/design/PROPULSION.md section 9, ADR-058): (seconds since T-zero, the engine's index in the file). A ring engine (7), an outer fixed engine (25) and an inner
+# engine (1) go out on the way up, and two of the thirteen the landing burn lights (the ring engines 3 and 9) go out five seconds before it. The mission still reaches orbit and the booster is caught.
+ENGINES_OUT = [(20, 7), (60, 25), (100, 1), (300, 3), (300, 9)]
+HEADER_ENGINES_OUT = HEADER.replace("// The Starship V3 class stack WITH A MISSION IN THE FILE:", "// The same mission with FIVE ENGINES OUT (the scenario's engine_failures: three on the way up and two of the booster's landing engines five seconds before the landing; ADR-058): the flight computers hear of each from the engine controllers, the engines that are left gimbal to trim, the guidance allows for the thrust that is gone and the landing burn lights the engines that can run. The Starship V3 class stack WITH A MISSION IN THE FILE:", 1).replace("starship_return.json            #", "starship_return_engines_out.json #")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=str(ROOT / "vehicles" / "missions" / "starship_return.json"))
     ap.add_argument("--ship-out", default=str(ROOT / "vehicles" / "missions" / "starship_ship_return.json"), help="the experimental mission in which the ship also deorbits and enters (empty: not written)")
     ap.add_argument("--earth-out", default=str(ROOT / "vehicles" / "missions" / "starship_return_earth.json"), help="the same mission on a planet that turns (empty: not written)")
+    ap.add_argument("--engines-out-out", default=str(ROOT / "vehicles" / "missions" / "starship_return_engines_out.json"), help="the same mission with five engines out (empty: not written)")
     ap.add_argument("--rig-out", default=str(ROOT / "vehicles" / "starship.json"), help="the vehicle the rig and tfc_fly fly (empty: not written)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="override a number of the ship's return (SHIP in this script), for scanning")
     ap.add_argument("--aerodb", metavar="DIR", default=str(ROOT / "vehicles" / "aerodb"), help="inline the flow solver's tables found in DIR as the plant's aero.cfd, so that the flight uses them (tools/cfd/make_aerodb.py makes them)")
@@ -309,6 +316,12 @@ def main() -> int:
         v = {"planet": {"preset": "earth"}, **plant()}
         v["mission"] = mission()
         Path(args.earth_out).write_text(HEADER_EARTH + dump(v) + "\n")
+    if args.engines_out_out:
+        SHIP["with_return"] = 0
+        v = plant()
+        v["mission"] = mission()
+        v["scenario"] = {"engine_failures": [{"time_s": t, "engine": e} for t, e in ENGINES_OUT]}
+        Path(args.engines_out_out).write_text(HEADER_ENGINES_OUT + dump(v) + "\n")
     if args.rig_out:
         Path(args.rig_out).write_text(HEADER_RIG + dump(rig_vehicle()) + "\n")
     return 0

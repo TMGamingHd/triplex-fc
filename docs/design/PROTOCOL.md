@@ -12,7 +12,7 @@
 | `0x100+n` | GYRO | node n | three axes, **1/32 dps per count** (range +-1024 dps; it was 0.125 and +-4096 until 7 Oct 2026, ADR-032) | 1, scale changed |
 | `0x110+n` | ACCEL | node n | three axes, 1/2048 g per count | 1 |
 | `0x200+n` | CMD | node n | pitch and yaw gimbal command, 0.001 degree; a 16-bit state digest | 1 |
-| `0x210+n` | Propulsion command | node n | throttle (0.5 % per count), the engine-group mask, the event bits, the mission phase, a roll command (0.25 degree per count); sent after CMD by a flight computer that flies a mission (`GNC.md` section 8) | 2, **host only so far** |
+| `0x210+n` | Propulsion command | node n | throttle (0.5 % per count), the engine-group mask, the event bits, the mission phase, a roll command (0.25 degree per count), and in byte 5 **how many of the engines of the commanded groups to run** (0: all; the engine controller runs that many of the engines that can run, those whose thrust acts nearest the axis, ADR-058); sent after CMD by a flight computer that flies a mission (`GNC.md` section 8) | 2, **host only so far** |
 | `0x220+n` | Surface command | node n | four control-surface deflections, 12 bits each, 0.05 degree per count, signed | 2, **host only so far** |
 | `0x300` | ACT out | ACT | the voted gimbal command and the vote status | **2** |
 | `0x400+n` | Heartbeat | node n | protocol version, mode, role, view of the nodes, reset count, release hash | **2** |
@@ -23,6 +23,7 @@
 | `0x503` | Sim state | the simulator | altitude, speed, mass | **2** |
 | `0x504` | Sim telemetry | the simulator | dynamic pressure, attitude error in the two planes | **2** |
 | `0x505` | Sim flags | the simulator | flags, engines on, time | **2** |
+| `0x509`, `0x50A` | Engine health | the engine controllers (the simulator) | the engines declared out: a 64-bit word in two frames, bit e = engine e of the vehicle file (engines 0 to 47 in `0x509` bytes 0 to 5, 48 to 63 in `0x50A`); it only grows, a receiver ORs it in (`GNC.md` section 12, ADR-058) | 2, **host only so far** |
 | `0x506`-`0x508` | Sim GNSS | the simulator | the GNSS fix in three frames (position, then velocity), each component a signed 24-bit number (metres; 0.01 m/s), in the launch-centred inertial frame (`GNC.md` section 3) | 2, **host only so far** |
 | `0x510` | Ground command | the operator | authenticated opcode, node, tag, counter (ADR-019) | 1 |
 

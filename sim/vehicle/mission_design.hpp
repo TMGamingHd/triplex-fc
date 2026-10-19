@@ -183,7 +183,11 @@ inline void fit_plan(const MissionSpec& ms, const VehicleSpec& spec, tfc::gnc::T
           strong.push_back(p);
         }
       }
-      pts.swap(strong);
+      // (only when most of the phase is under thrust: a coasting phase that begins while the engines die away has one probe with thrust and all the rest without, and it is the rest that is flown. A glide
+      // whose first probe fell in the engines' tail was designed on its first three points, at the top of it, with the sign of the fins' roll authority of a flight that was still thrusting)
+      if (strong.size() * 2U >= pts.size()) {
+        pts.swap(strong);
+      }
     }
     GainTrack& tr = tab.gains[ph];
     tr = GainTrack{};

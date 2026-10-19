@@ -19,7 +19,7 @@
     {"name": "gyro", "id": 256, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: the computer's IMU rates"},
     {"name": "accel", "id": 272, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: the IMU's specific force"},
     {"name": "command", "id": 512, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: the command and the estimator digest"},
-    {"name": "propulsion", "id": 528, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: throttle, groups, events (a mission's computer; not sent by the firmware yet)"},
+    {"name": "propulsion", "id": 528, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: throttle, groups, events, roll, engine count (a mission's computer; not sent by the firmware yet)"},
     {"name": "surface", "id": 544, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: four surface deflections (a mission's computer; not sent by the firmware yet)"},
     {"name": "act_output", "id": 768, "count": 1, "direction": "ACT", "period_frames": 1, "doc": "the voted output and the vote status"},
     {"name": "heartbeat", "id": 1024, "count": 3, "direction": "computer n", "period_frames": 1, "doc": "id + node: version, mode, role, view, reset count, release"},

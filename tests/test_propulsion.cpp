@@ -10,6 +10,7 @@
 
 #include "tfc_test.hpp"
 
+#include "mission_build.hpp"
 #include "propulsion.hpp"
 #include "spec.hpp"
 #include "spec_io.hpp"
@@ -537,4 +538,118 @@ TFC_TEST(propulsion_a_vehicle_file_with_a_bad_engine_is_refused_with_its_place) 
     std::vector<std::string> errors;
     CHECK(sim::read_vehicle(sim::write_vehicle(vf), back, errors) && errors.empty() && back.params.spec.engines[1].fault == f);
   }
+}
+
+// ---- the engines that run, the engines that fail, and the stage that is let go (ADR-058) ----
+
+namespace {
+// A stack of two stages (the lower with `n0` engines on a ring at its aft end, group 0, the upper with `n1` at x = 30, group 1), per-engine gimbal on, both guided.
+sim::Params stack_of(unsigned n0, unsigned n1) {
+  sim::Params p = cluster(n0, 1.5, true);
+  sim::StageSpec upper = p.spec.stages[0];
+  upper.name = "upper";
+  upper.x_start = 30.0;
+  upper.x_cg_dry = 42.0;
+  upper.tanks[0].x_bottom = 31.0;
+  p.spec.stages.push_back(upper);
+  for (unsigned i = 0; i < n1; ++i) {
+    sim::EngineSpec en = p.spec.engines[0];
+    en.stage = 1;
+    en.group = 1;
+    en.pos = sim::V3{30.0, 0.5 * static_cast<double>(i + 1), 0.0};
+    p.spec.engines.push_back(en);
+  }
+  return p;
+}
+}  // namespace
+
+// Verifies: TFC-SIM-022
+TFC_TEST(propulsion_the_engine_controller_runs_the_number_asked_for_of_the_engines_that_can_run_taking_those_nearest_the_axis) {
+  const unsigned n = 6;
+  const sim::Params p = cluster(n, 1.5, true);
+  sim::Controls c = burn();
+  c.engine_count = 3U;
+  const Out three = fire(p, c);
+  // three of six on a ring: the balanced three (alternate engines), not the first three, so that the thrust is along the axis
+  CHECK(near_abs(three.f.x, 3.0 * kThrust, 1.0e-6 * kThrust) && near_abs(three.m.y, 0.0, 1.0) && near_abs(three.m.z, 0.0, 1.0));
+  // with an engine out (a failure at time 0, found by the controller at once) the three are the best three of the five left
+  sim::Scenario failing = in_space();
+  failing.engine_failures.push_back(sim::EngineFailure{0.0, 0});
+  sim::Vehicle6 v(p, failing);
+  for (int k = 0; k < 20; ++k) {
+    v.step(0.01, c);
+  }
+  const sim::Loads l = v.current_loads();
+  CHECK(v.engine_failed(0) && near_abs(l.f_thrust.x, 3.0 * kThrust, 1.0e-6 * kThrust) && near_abs(l.m_thrust.y, 0.0, 1.0) && near_abs(l.m_thrust.z, 0.0, 1.0));
+  // a count of 0 runs every engine of the groups that can run; a count above what can run runs them all
+  c.engine_count = 0U;
+  sim::Vehicle6 all(p, failing);
+  for (int k = 0; k < 20; ++k) {
+    all.step(0.01, c);
+  }
+  CHECK(near_abs(all.current_loads().f_thrust.x, 5.0 * kThrust, 1.0e-6 * kThrust));
+  c.engine_count = 9U;
+  sim::Vehicle6 many(p, failing);
+  for (int k = 0; k < 20; ++k) {
+    many.step(0.01, c);
+  }
+  CHECK(near_abs(many.current_loads().f_thrust.x, 5.0 * kThrust, 1.0e-6 * kThrust));
+}
+
+// Verifies: TFC-SIM-022
+TFC_TEST(propulsion_a_stage_let_go_takes_its_engine_failures_and_its_gimbal_model_with_it_numbered_as_the_stage_alone) {
+  sim::Params p = stack_of(3U, 2U);
+  sim::Scenario sc = in_space();
+  sc.engine_failures.push_back(sim::EngineFailure{0.0, 4});    // the upper stage's second engine (index 4 of the stack, 1 of the stage alone), out from the start
+  sc.engine_failures.push_back(sim::EngineFailure{50.0, 3});   // the upper stage's first engine, out later
+  sim::Vehicle6 v(p, sc);
+  sim::Controls c;
+  c.group_mask = 3U;
+  c.throttle = 1.0;
+  for (int k = 0; k < 10; ++k) {
+    v.step(0.01, c);
+  }
+  CHECK(v.engine_failed(4) && !v.engine_failed(3));
+  c.events = sim::ev::kSeparate;   // the lower stage goes; the upper stays (the stack's own indices)
+  v.step(0.01, c);
+  std::vector<sim::Detached> gone = v.take_detached();
+  CHECK(gone.size() == 1U && gone[0].stage == 0 && gone[0].failures.empty() && gone[0].spec.per_engine_gimbal);   // none of the lower stage's engines had failed
+  // the upper stage let go too (it is the lowest left): its engines are 3 and 4 of the stack and 0 and 1 of the stage alone
+  sim::Vehicle6 upper_first(stack_of(3U, 2U), sc);
+  sim::Controls c2 = c;
+  c2.events = sim::ev::kSeparate;
+  upper_first.step(0.01, c2);
+  (void)upper_first.take_detached();
+  sim::Controls c3 = c2;
+  c3.events = 0U;
+  upper_first.step(0.01, c3);
+  c3.events = sim::ev::kSeparate;
+  upper_first.step(0.01, c3);   // (a second rising edge: the upper stage, now the lowest, goes too)
+  const std::vector<sim::Detached> second = upper_first.take_detached();
+  CHECK(second.size() == 1U && second[0].stage == 1);
+  bool engine_1_out_now = false;
+  bool engine_0_out_later = false;
+  for (const sim::EngineFailure& f : second[0].failures) {
+    engine_1_out_now = engine_1_out_now || (f.index == 1 && f.time < 0.0);
+    engine_0_out_later = engine_0_out_later || (f.index == 0 && f.time > 0.0);
+  }
+  CHECK(engine_1_out_now && engine_0_out_later);
+  // flown on as a vehicle of its own: the engine is out from its first step and the gimbal is per engine
+  sim::Vehicle6 child = sim::Vehicle6::spawn(second[0], stack_of(3U, 2U), sc);
+  sim::Controls run;
+  run.group_mask = 2U;
+  run.throttle = 1.0;
+  child.step(0.01, run);
+  CHECK(child.spec().per_engine_gimbal && child.engine_failed(1) && !child.engine_failed(0));
+}
+
+TFC_TEST(propulsion_the_tables_of_a_stage_that_flies_alone_number_its_engines_as_the_stage_alone_has_them) {
+  const sim::Params p = stack_of(3U, 2U);
+  tfc::gnc::Tables stack;
+  tfc::gnc::Tables upper;
+  sim::detail::set_engine_tables(p.spec, -1, stack);
+  sim::detail::set_engine_tables(p.spec, 1, upper);
+  CHECK(stack.group_engines[0] == 0x07U && stack.group_engines[1] == 0x18U);   // engines 0 to 2 in group 0, 3 and 4 in group 1
+  CHECK(upper.group_engines[0] == 0U && upper.group_engines[1] == 0x03U);       // the upper stage alone: its engines are 0 and 1
+  CHECK(close(static_cast<double>(upper.engine_thrust[1]), kThrust, 1.0e-6) && upper.engine_thrust[2] == 0.0F);
 }

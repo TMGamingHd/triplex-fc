@@ -99,6 +99,8 @@ jobs:
           cmake --build build/rel --target tfc_mission tfc_fly tfc_margins tfc_mission_mc tfc_propulsion
           # the Starship V3 class stack designed and flown on the three flight computers: the ship in an orbit above 100 km and the booster caught by the tower (exits 3 if not)
           build/rel/tfc_mission vehicles/missions/starship_return.json --expect-orbit --expect-catch
+          # the same with five engines out, three on the way up (a ring, an outer and an inner engine) and two of the landing engines five seconds before the landing (ADR-058): the flight computers hear of each, the engines left gimbal to trim, and the booster is still caught
+          build/rel/tfc_mission vehicles/missions/starship_return_engines_out.json --expect-orbit --expect-catch
           # and on a planet that turns (ADR-056): the pad is carried 400 m/s east and the guidance aims at where it will be (exits 3 if the booster is not caught or the ship is not in orbit)
           build/rel/tfc_mission vehicles/missions/starship_return_earth.json --expect-orbit --expect-catch
           # the same, and then the ship's deorbit and belly entry on its flaps (experimental, ADR-044: it is flown to its end, which is a crash about 27 km from the tower, so that no outcome is expected; what is checked is that the

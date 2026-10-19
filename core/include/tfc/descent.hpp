@@ -175,10 +175,24 @@ class PoweredDescent {
  public:
   PoweredDescent() noexcept = default;
 
+  static constexpr double kThrustMargin = 0.95;   // the fraction of the engines' full thrust the planned deceleration may ask for (the rest is the throttle's room to correct)
+
   // The stopping height: how far above the target point the vehicle must be to be stopped at the arrival speed `sink` by the planned deceleration `decel` (m/s^2, beyond the weight).
   [[nodiscard]] static double stopping_height(double v_down, double decel, double sink) noexcept {
     const double v2 = dm::max_((v_down * v_down) - (sink * sink), 0.0);
     return v2 / (2.0 * dm::max_(decel, 0.1));
+  }
+
+  // The deceleration the burn is planned on: the plan's, or what the most engines it may run give at the mass the vehicle has now (kThrustMargin of their full thrust, less the weight), whichever is smaller. A
+  // vehicle heavier than the plan assumed, or with engines out, is lit earlier and brought down more gently than the plan, instead of being lit too late to stop.
+  [[nodiscard]] static double planned_decel(const LandingTarget& tgt, const Engines& eng, double mass, double g_local) noexcept {
+    const unsigned n_opt = eng.options < kEngineOptions ? eng.options : kEngineOptions;
+    unsigned most = 1U;
+    for (unsigned k = 0; k < n_opt; ++k) {
+      most = eng.counts[k] > most ? eng.counts[k] : most;
+    }
+    const double a_avail = (kThrustMargin * eng.thrust_each * static_cast<double>(most) / dm::max_(mass, 1.0)) - g_local;
+    return dm::max_(dm::min_(tgt.decel_plan, a_avail), 1.0);
   }
 
   // One cycle. `ignition_margin` is the multiple of the stopping height at which to start (1.15 leaves a reserve for the start-up and the lateral correction).
@@ -193,7 +207,8 @@ class PoweredDescent {
     const double g_local = dm::norm(grav.at(r));
     const double v_down = dm::max_(-v_z, 0.0);
     out.height = h;
-    const double h_stop = stopping_height(v_down, tgt.decel_plan, tgt.sink_ms);
+    const double decel = planned_decel(tgt, eng, mass, g_local);
+    const double h_stop = stopping_height(v_down, decel, tgt.sink_ms);
     out.ignite = burning || h <= (h_stop * ignition_margin) + 1.0;
     out.miss = e_h;
     if (!out.ignite) {
@@ -203,11 +218,11 @@ class PoweredDescent {
     // vertical: hold the speed profile that stops at the arrival sink speed at zero height with the planned deceleration, v_ref^2 = sink^2 + 2 a h: the planned deceleration is the feed-forward, and the speed
     // error from the profile is corrected (too fast: more thrust; too slow: less, down to a fraction of the weight)
     const double h_rem = dm::max_(h, 0.05);
-    const double v_plan = dm::sqrt_((tgt.sink_ms * tgt.sink_ms) + (2.0 * tgt.decel_plan * h_rem));
+    const double v_plan = dm::sqrt_((tgt.sink_ms * tgt.sink_ms) + (2.0 * decel * h_rem));
     const double v_approach = tgt.sink_ms + (h_rem / dm::max_(tgt.approach_s, 0.1));
     const double v_ref = dm::min_(v_plan, v_approach);
     // the deceleration that holds the vehicle on the profile is the profile's slope times the speed: the planned one on the constant-deceleration part, v / approach_s on the gentle end
-    const double slope = v_approach < v_plan ? 1.0 / dm::max_(tgt.approach_s, 0.1) : tgt.decel_plan / v_ref;
+    const double slope = v_approach < v_plan ? 1.0 / dm::max_(tgt.approach_s, 0.1) : decel / v_ref;
     const double a_ff = v_down * slope;
     // an integral on the speed error takes out what the model of the thrust and the mass gets wrong (a thrust a percent high or low, a mass a percent off: the P term alone settles at a speed error of
     // that over its gain, which at the end of the approach is the whole of the speed it is meant to arrive at); it builds only while the burn runs and is bounded

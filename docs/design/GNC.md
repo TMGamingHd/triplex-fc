@@ -138,6 +138,12 @@ The ship's orbit is circular to within about 5 % of the altitude, not exact: the
 
 **Wall time**: the whole Starship mission, design included, takes about 6 s in a release build (`starship_ship_return.json`, whose design flies 6,000 s of the ship's return and probes the plant 11,852 times, about 80 s) (51 engines, 5,660 t at lift-off); under the sanitizers it is too long for the unit tests, which is why `test_mission_sim.cpp` flies the small vehicles.
 
+## 12. Engine health (ADR-058, `PROPULSION.md` section 9)
+
+The computers are told which engines are out by the engine controllers' health word (`0x509`, `0x50A`: a 64-bit word, bit e for engine e, only growing, ORed in by each receiver). `Inputs::engine_out` carries it to the sequencer, which multiplies the thrust and the flow of every burning phase by the share of the rated thrust that is left (`Tables::group_engines`, `engine_thrust`; `Mission::health_of`), counts the engines left in a landing burn's pool (`landing_engines`), and asks the engine controller for a number of engines when an engine of the chosen option is out (`Output::engines`, `PropCommand::engines`). The planned deceleration of the landing is capped by the thrust of the engines left (`PoweredDescent::planned_decel`). Tables that name no engines are unaffected. Measured: a booster with any one of its 33 engines out at any time of the ascent, 100 of 100 flights in orbit and caught; up to six of the thirteen landing engines out, caught in every one of 48 cases.
+
+**A design finding on the way (ADR-058):** a glide that began while the boost-back's engines were still dying away had its gain track designed on its first three probes, because the design drops the probes without thrust from a phase that has probes with it, and one of 124 had. The fins' roll authority in that table had the sign of a thrusting flight, and the booster spun up in roll. The filter now applies only to a phase that is mostly under thrust.
+
 ## 11. Limits, in plain words
 
 * **Not run on the target.** No timing of the guidance on the Cortex-M4F has been made. A PEG cycle is seven predictors of twelve steps in `double` (software double precision on a single-precision FPU), the glide's predictor is 600 steps every half second and the boost-back's 900 steps every tenth of a second: the cost per frame is bounded by construction (the cycle is spread out) but the predictors are not, and they may not fit the 10 ms frame. This is the first thing to measure on the board.

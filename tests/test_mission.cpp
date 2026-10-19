@@ -3,6 +3,7 @@
 // in which the vehicle's attitude is the reference the sequencer gives and the thrust is what it commands: an ascent to a circular orbit (PEG, seeded and not), a booster's boost-back, entry and landing burn to the
 // catch point, and a parachute descent's events.
 #include <cmath>
+#include <tuple>
 
 #include "tfc_test.hpp"
 
@@ -923,4 +924,143 @@ TFC_TEST(sequencer_a_turning_planet_carries_the_site_and_the_guidance_aims_at_wh
     (void)mb.step(b);
     CHECK(norm(ma.landing_out().direction - mb.landing_out().direction) < 1.0e-9 && near_abs(ma.landing_out().throttle, mb.landing_out().throttle, 1.0e-9));
   }
+}
+
+// ---- the engine health word (ADR-058) ----
+
+namespace {
+// Tables whose group 0 lights engines 0 to 2 and whose group 1 lights engines 3 to 6, each worth 2.2 MN (engine 3 worth twice that), for a landing with the options 3, 3, 3 and 7 engines.
+Tables engines_named() {
+  const tfc::nav::Gravity g;
+  Tables t = plain(1);
+  t.nav.gravity = g;
+  t.site = Vec3{kR, 0.0, 0.0};
+  t.ground_radius = kR;
+  t.landing_height = 30.0;
+  t.engines.counts = {3U, 3U, 3U, 7U};
+  t.engines.options = 4U;
+  t.engines.thrust_each = 2.2e6;
+  t.group_engines[0] = 0x07U;
+  t.group_engines[1] = 0x78U;
+  for (unsigned e = 0; e < 7U; ++e) {
+    t.engine_thrust[e] = e == 3U ? 4.4e6F : 2.2e6F;
+  }
+  t.phase[0].kind = kind::kLanding;
+  t.phase[0].p[0] = 1.0F;   // group 0: three engines
+  t.phase[0].p[1] = 1.0F;
+  t.phase[0].p[2] = 1.0F;
+  t.phase[0].p[3] = 3.0F;   // groups 0 and 1: seven
+  return t;
+}
+}  // namespace
+
+// Verifies: TFC-SIM-022
+TFC_TEST(sequencer_the_engines_declared_out_take_their_share_of_the_thrust_the_flow_and_the_mass_the_guidance_counts_on) {
+  Tables t = plain(1);
+  t.mass0 = 100000.0;
+  t.phase[0].kind = kind::kProgram;
+  t.phase[0].groups = 1U;
+  t.phase[0].throttle = 1.0F;
+  t.phase[0].thrust = 6.6e6F;
+  t.phase[0].mdot = 100.0F;
+  t.group_engines[0] = 0x0FU;
+  t.engine_thrust = {2.2e6F, 2.2e6F, 2.2e6F, 4.4e6F};   // (an engine worth twice the others)
+  const auto burn = [&t](uint64_t out) {
+    Mission m;
+    m.configure(&t);
+    Inputs in = inputs_at(1000.0, Vec3{});
+    in.engine_out = out;
+    m.start(in);
+    Output o;
+    for (unsigned i = 0; i < 100U; ++i) {
+      o = m.step(in);
+    }
+    return std::make_pair(m.mass(), o.thrust);
+  };
+  const auto healthy = burn(0U);
+  CHECK(near_abs(healthy.first, 100000.0 - 100.0, 1.0e-6) && near_abs(static_cast<double>(healthy.second), 6.6e6, 1.0));
+  const auto lost_big = burn(0x08U);   // the big engine is out: 4.4 of 11 MN, so 60 % of the thrust and the flow is left
+  CHECK(near_abs(lost_big.first, 100000.0 - 60.0, 1.0e-6) && near_abs(static_cast<double>(lost_big.second), 0.6 * 6.6e6, 1.0));
+  const auto lost_small = burn(0x01U);
+  CHECK(near_abs(lost_small.first, 100000.0 - 80.0, 1.0e-6));
+  // tables that name no engines are not affected by the word
+  Tables none = plain(1);
+  none.mass0 = 100000.0;
+  none.phase[0].kind = kind::kProgram;
+  none.phase[0].groups = 1U;
+  none.phase[0].throttle = 1.0F;
+  none.phase[0].mdot = 100.0F;
+  Mission m;
+  m.configure(&none);
+  Inputs in = inputs_at(1000.0, Vec3{});
+  in.engine_out = ~uint64_t{0};
+  m.start(in);
+  for (unsigned i = 0; i < 100U; ++i) {
+    (void)m.step(in);
+  }
+  CHECK(near_abs(m.mass(), 100000.0 - 100.0, 1.0e-6));
+  // the share and the counts as the sequencer reports them
+  Mission r;
+  const Tables named = engines_named();
+  r.configure(&named);
+  Inputs gone = inputs_at(1000.0, Vec3{});
+  gone.engine_out = 0x09U;   // engines 0 and 3
+  r.start(gone);
+  (void)r.step(gone);
+  CHECK(r.engines_in(0x03U, false) == 7U && r.engines_in(0x03U, true) == 5U && r.engines_in(0x01U, true) == 2U);
+  CHECK(near_abs(r.health_of(0x01U), 2.0 / 3.0, 1.0e-9) && near_abs(r.health_of(0x02U), 0.6, 1.0e-9) && r.health_of(0x80U) == 1.0);
+}
+
+// Verifies: TFC-SIM-022
+TFC_TEST(sequencer_a_landing_burn_with_engines_out_runs_the_number_of_engines_it_asks_for_from_the_pool_and_counts_what_is_left) {
+  const Tables t = engines_named();
+  const auto burn = [&t](uint64_t out) {
+    Mission m;
+    m.configure(&t);
+    Inputs in = inputs_at(60.0, Vec3{-30.0, 0.0, 0.0});   // 30 m above the catch point at 30 m/s: due, and three engines can do it
+    in.engine_out = out;
+    m.start(in);
+    (void)m.step(in);
+    const Output o = m.step(in);
+    return std::make_tuple(o.groups, o.engines, m.landing_out().engines, m.landing_pool());
+  };
+  // nothing out: the option's own groups and no count (every engine of them), as before
+  const auto ok = burn(0U);
+  CHECK(std::get<0>(ok) == 1U && std::get<1>(ok) == 0U && std::get<2>(ok) == 3U && std::get<3>(ok) == 3U);
+  // an engine of the option out: the pool of every group of every option, three engines asked for (the controller takes the healthy ones)
+  const auto one = burn(0x01U);
+  CHECK(std::get<0>(one) == 3U && std::get<1>(one) == 3U && std::get<2>(one) == 3U);
+  // an engine out that the option does not light changes nothing
+  const auto elsewhere = burn(0x20U);
+  CHECK(std::get<0>(elsewhere) == 1U && std::get<1>(elsewhere) == 0U);
+  // only two engines left in the pool: no option can run more
+  const auto two = burn(0x1FU);   // engines 0 to 4 out: two left
+  CHECK(std::get<2>(two) == 2U);
+  CHECK(std::get<2>(burn(0x7FU)) == 1U);   // none left: one is counted, so that the throttle is a number
+}
+
+// Verifies: TFC-SIM-022
+TFC_TEST(sequencer_the_burn_is_lit_earlier_and_planned_gentler_when_the_engines_left_decelerate_less) {
+  const auto setup = [](Tables& t) {
+    t.landing_height = 40.0;
+    t.landing.decel_plan = 20.0;
+    t.landing.sink_ms = 0.5;
+    t.landing.aim_below_m = 2.0;
+    t.ignition_margin = 1.0;
+    t.engines.thrust_each = 1.0e6;   // one engine's thrust over the mass of 100 t is 10 m/s^2: 0.95 of it is less than gravity
+    t.engines.counts = {1U, 1U, 1U, 1U};
+    t.engines.options = 4U;
+  };
+  // at 5000 m and 100 m/s with engines that give 11 m/s^2 net of the weight the plan is that and it stops in 450 m: not yet. With engines that cannot even hold the weight the plan is the floor of 1 m/s^2: the stopping height is the whole 5000 m
+  CHECK(!ends_when(end::kIgnition, 6000.0F, inputs_at(8000.0, Vec3{-100.0, 0.0, 0.0}), inputs_at(4900.0, Vec3{-100.0, 0.0, 0.0}), 100000.0, 3U, [](Tables& t) {
+    t.landing_height = 40.0;
+    t.landing.decel_plan = 20.0;
+    t.landing.sink_ms = 0.5;
+    t.landing.aim_below_m = 2.0;
+    t.ignition_margin = 1.0;
+    t.engines.thrust_each = 2.2e6;   // plenty
+    t.engines.counts = {1U, 1U, 1U, 1U};
+    t.engines.options = 4U;
+  }));
+  CHECK(ends_when(end::kIgnition, 6000.0F, inputs_at(8000.0, Vec3{-100.0, 0.0, 0.0}), inputs_at(4900.0, Vec3{-100.0, 0.0, 0.0}), 100000.0, 3U, setup));
 }

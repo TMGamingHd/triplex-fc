@@ -125,7 +125,7 @@ Requirements TFC-AI-001 to 003 (proposed boundary).
 
 ## 6c. Propulsion follow-ups (18 Oct 2026, ADR-057)
 
-* **Engine health for the guidance, and the engine-out return.** An engine out on the way up leaves the ship in orbit and loses the booster's return (`PROPULSION.md` section 6): the landing counts the engines it planned to light and has no way to know one is dead, and the return fails in the last few hundred metres. A health input (the specific force against the commanded thrust, per group) and a choice of which engines to light would be the work; the landing's fragility under the dispersions of 6a item 4 is the same problem from the other side.
+* **Engine health for the guidance, and the engine-out return: done** (ADR-058, `PROPULSION.md` section 9): the health word, the guidance counting what is left, a landing that asks for a number of engines, and an ascent that reaches orbit with any engine out. What is left: detecting a failure the controllers do not report (from the specific force against the commanded thrust), a partial loss of thrust as an event, and a landing that survives seven or more of its thirteen engines out.
 * **The separation side load of a throttled-down nozzle** at sea level: the margin is 1 % of throttle (39 % against 40 %), and the plant reports it and does not simulate it.
 * **Per-engine dispersions in `tfc_mission_mc`:** the plant takes `thrust_factor` and a gimbal fault per engine; the Monte Carlo still disperses the vehicle's thrust as a whole.
 * **The actuator's load, power and the moving engine mass**, when there is a datasheet to set them with.

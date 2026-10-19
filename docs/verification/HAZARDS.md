@@ -15,6 +15,7 @@
 | H5 | L3 | The platform or a servo moves when it should not (the rig's only physical hazard) |
 | H6 | L4 | The record of what happened is missing or cannot be trusted |
 | H7 | L1, L2 | A fault that is the same in all replicas takes all of them at once |
+| H8 | L1, L2 | An engine fails and the guidance does not know it (it counts thrust and flow that are not there, and lights engines that cannot run): the engine controllers' health word (`0x509`, `0x50A`, ADR-058) is the defence, with the loop's integrator behind it |
 
 ## 2. The control structure
 
