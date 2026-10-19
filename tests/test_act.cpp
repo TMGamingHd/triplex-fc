@@ -618,11 +618,15 @@ TFC_TEST(act_a_configuration_with_a_zero_persistence_or_a_nonsense_tolerance_is_
   bad.normal_slew = -1.0F;
   bad.ramp_deg_per_frame = 0.0F;
   bad.lost_votes = 0U;
+  bad.standby_frames = 0U;
+  bad.exit_frames = 0U;
   Bench b(bad);
   CHECK(b.act.config_errors() != 0U);
   b.nominal(1.0F, 0.0F);                                   // goes through Standby into Nominal on the defaults
   CHECK(b.act.output().excluded_nodes == 0U);
   CHECK(b.act.config().persist_m == ActConfig{}.persist_m && b.act.config().tol_deg == ActConfig{}.tol_deg);
+  CHECK(b.act.config().lost_votes == ActConfig{}.lost_votes && b.act.config().standby_frames == ActConfig{}.standby_frames && b.act.config().exit_frames == ActConfig{}.exit_frames);
+  CHECK(b.act.config().normal_slew == ActConfig{}.normal_slew && b.act.config().ramp_deg_per_frame == ActConfig{}.ramp_deg_per_frame);
   Bench ok;
   CHECK(ok.act.config_errors() == 0U);
 }

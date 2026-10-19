@@ -686,8 +686,8 @@ python3 -m campaign.mutate                                       # does the camp
 | `--strict` | Exit status 1 if any anomaly was raised (CI uses this). Without it the status is 0 and the anomalies are only printed and stored. |
 
 With `--strict` the exit status is 1 if any scenario raised an anomaly. Two further tools prove the *tests* can fail:
-`python3 tools/mutation/run_unit.py` (<!--m:mutants_unit-->470<!--/m--> deliberate bugs in `core/` and `supervisor/`, each must be caught by the C++ tests) and
-`python3 -m campaign.mutate` (the <!--m:mutants_campaign-->130<!--/m--> of them that this campaign can see, against this campaign). The decision hash in the results makes a refactor
+`python3 tools/mutation/run_unit.py` (<!--m:mutants_unit-->469<!--/m--> deliberate bugs in `core/` and `supervisor/`, each must be caught by the C++ tests) and
+`python3 -m campaign.mutate` (the <!--m:mutants_campaign-->129<!--/m--> of them that this campaign can see, against this campaign). The decision hash in the results makes a refactor
 provable: run the campaign before and after, and the hashes of every scenario must be identical.
 
 ## Tests

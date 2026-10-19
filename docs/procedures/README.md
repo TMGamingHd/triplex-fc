@@ -9,6 +9,7 @@ Start with **[FIRST_HARDWARE_DAYS.md](FIRST_HARDWARE_DAYS.md)**: the order of wo
 |---|---|---|
 | [P-M1-01-parts-and-bench-checks.md](P-M1-01-parts-and-bench-checks.md) | M1 | Every part against the sheet; JP5, the adapter's voltage, the relay at 3.3 V, the servo with and without a signal |
 | [P-S1-01-single-flight-computer.md](P-S1-01-single-flight-computer.md) | S1 | One flight computer: 10 min at 100 Hz, jitter, WCET, the digest against the golden run |
+| [P-S1-02-soak-and-noise.md](P-S1-02-soak-and-noise.md) | S1, S4 | The IMUs' real noise (Allan deviation) and a fault-free soak: the false-isolation rate that the campaign cannot measure |
 | [P-S2-01-actuator-and-platform.md](P-S2-01-actuator-and-platform.md) | S2 | ACT, the Pico and the platform; Safe by ACT alone; an ACT reset |
 | [P-S2-02-launch-checklist.md](P-S2-02-launch-checklist.md) | S2 | The launch checklist on the rig: calibration, go/no-go, countdown, scrub, T-zero |
 | [P-S2-03-supervisor.md](P-S2-03-supervisor.md) | S2b | The supervisor: a hung node reset in three frames, the ladder, unplugged, the `T0` line, the clock |

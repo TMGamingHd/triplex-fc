@@ -449,15 +449,15 @@ until the accumulated drift reaches the margin of the tightest frame.
 
 ## 5. Proving the campaign can fail: mutation testing
 
-A campaign that cannot fail proves nothing. <!--m:mutants_unit-->470<!--/m--> deliberate bugs (`tools/mutation/mutations.py`) are injected, one at a time, into a
+A campaign that cannot fail proves nothing. <!--m:mutants_unit-->469<!--/m--> deliberate bugs (`tools/mutation/mutations.py`) are injected, one at a time, into a
 copy of the core: a hold that returns zero, a Safe flag that is not sticky, a latched node that still votes, a probation that cannot
 fail, a strike limit that never disables, a tolerance doubled, an arbitration that compares with a standstill, a check removed from
 the self-protection, and so on. Each mutant must be caught.
 
 | Suite | Mutants | Last full run | How |
 |---|---|---|---|
-| C++ tests (unit, property, fuzz, recovery, ground commands; ASan + UBSan) | <!--m:mutants_unit-->470<!--/m--> | <!--m:mutation_unit_result-->not yet recorded<!--/m--> | `python3 tools/mutation/run_unit.py --fast --rerun-survivors` |
-| Fault campaign | <!--m:mutants_campaign-->130<!--/m--> (the others are C++-only, see below) | <!--m:mutation_campaign_result-->not yet recorded<!--/m--> | `python3 -m campaign.mutate` (stops at the first group that raises an anomaly) |
+| C++ tests (unit, property, fuzz, recovery, ground commands; ASan + UBSan) | <!--m:mutants_unit-->469<!--/m--> | <!--m:mutation_unit_result-->not yet recorded<!--/m--> | `python3 tools/mutation/run_unit.py --fast --rerun-survivors` |
+| Fault campaign | <!--m:mutants_campaign-->129<!--/m--> (the others are C++-only, see below) | <!--m:mutation_campaign_result-->not yet recorded<!--/m--> | `python3 -m campaign.mutate` (stops at the first group that raises an anomaly) |
 
 (On 5 Oct 2026 the table had 72 mutants and the campaign reached 58 of them; the rest were added as the self-protection, the ground-command security, the sensor split, the supervisor and, in October 2026, the monitors, the MAC and the logs were built. The tables are checked for stale patterns by `tools/mutation/check_tables.py`.)
 

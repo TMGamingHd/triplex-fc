@@ -14,16 +14,16 @@
 
 | What | Now | Where it comes from |
 |---|---|---|
-| C++ tests (ASan and UBSan) | <!--m:cpp_tests-->887<!--/m--> | computed; `ctest --test-dir build` |
-| Python tests (peers, replay, tools, console, docs) | <!--m:python_tests-->641<!--/m--> | computed; `cd sim && python3 -m unittest discover -s tests -t .` (some are live and skip without `vcan0`: [`RESULTS.md`](verification/RESULTS.md)) |
-| Requirements | <!--m:requirements-->186<!--/m-->, of which <!--m:requirements_test-->152<!--/m--> are checked by a test and <!--m:requirements_hw-->45<!--/m--> by a hardware measurement | computed; [`REQUIREMENTS.md`](verification/REQUIREMENTS.md). <!--m:requirements_rig_pending-->41<!--/m--> say *rig pending* or *waits for* |
+| C++ tests (ASan and UBSan) | <!--m:cpp_tests-->895<!--/m--> | computed; `ctest --test-dir build` |
+| Python tests (peers, replay, tools, console, docs) | <!--m:python_tests-->650<!--/m--> | computed; `cd sim && python3 -m unittest discover -s tests -t .` (some are live and skip without `vcan0`: [`RESULTS.md`](verification/RESULTS.md)) |
+| Requirements | <!--m:requirements-->187<!--/m-->, of which <!--m:requirements_test-->152<!--/m--> are checked by a test and <!--m:requirements_hw-->46<!--/m--> by a hardware measurement | computed; [`REQUIREMENTS.md`](verification/REQUIREMENTS.md). <!--m:requirements_rig_pending-->42<!--/m--> say *rig pending* or *waits for* |
 | Decisions | <!--m:adrs-->58<!--/m--> ADRs, the latest <!--m:adr_latest-->ADR-058<!--/m--> | computed; [`DECISIONS.md`](decisions/DECISIONS.md) |
-| Fault matrix | <!--m:fault_matrix_rows-->102<!--/m--> rows, <!--m:fault_kinds-->32<!--/m--> fault kinds injected by the peers | computed; [`FAULT_MATRIX.md`](verification/FAULT_MATRIX.md) |
+| Fault matrix | <!--m:fault_matrix_rows-->103<!--/m--> rows, <!--m:fault_kinds-->32<!--/m--> fault kinds injected by the peers | computed; [`FAULT_MATRIX.md`](verification/FAULT_MATRIX.md) |
 | Fault campaign | <!--m:campaign_scenarios-->12,362<!--/m--> scenarios, <!--m:campaign_frames-->4,900,623<!--/m--> frames, no property violated, no anomaly | computed from the generated page; `cd sim && python3 -m campaign.run --strict` |
 | FMECA | <!--m:fmeca_rows-->102<!--/m--> failure modes | computed; [`FMECA.md`](verification/FMECA.md) |
 | Structural coverage of `core/` and `supervisor/` | <!--m:coverage_core_line-->0<!--/m--> % of lines, <!--m:coverage_core_branch-->0<!--/m--> % of branches (gates 100 and 98) | **recorded** by `python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98`; CI enforces the gate |
 | Structural coverage of `sim/vehicle` | <!--m:coverage_sim_line-->0<!--/m--> % of lines, <!--m:coverage_sim_branch-->0<!--/m--> % of branches (gates 99 and 90) | **recorded**, same command with `--sim-min-line 99 --sim-min-branch 90` |
-| Mutants | <!--m:mutants_unit-->470<!--/m--> in the core and supervisor, <!--m:mutants_sim-->494<!--/m--> in the simulator; the fault campaign can reach <!--m:mutants_campaign-->130<!--/m--> of the first | computed; `tools/mutation/` |
+| Mutants | <!--m:mutants_unit-->469<!--/m--> in the core and supervisor, <!--m:mutants_sim-->494<!--/m--> in the simulator; the fault campaign can reach <!--m:mutants_campaign-->129<!--/m--> of the first | computed; `tools/mutation/` |
 | Mutation result | core: <!--m:mutation_unit_result-->not yet recorded<!--/m-->; simulator: <!--m:mutation_sim_result-->not yet recorded<!--/m--> | **recorded** from the last full run; `python3 tools/mutation/run_unit.py --fast --rerun-survivors` and `run_sim.py` |
 | Headers that no mutant targets | <!--m:headers_without_mutants-->9<!--/m--> of <!--m:core_headers-->38<!--/m--> in core and supervisor (the guidance, navigation and attitude control, the sensor driver); <!--m:sim_headers_without_mutants-->12<!--/m--> in `sim/vehicle` | computed; `python3 tools/mutation/check_tables.py --report` |
 | Flight code | <!--m:core_lines-->10,344<!--/m--> lines in <!--m:core_headers-->38<!--/m--> header-only files, no heap, no exceptions, no RTTI | computed; `python3 tools/check_standard.py`, `tools/check_elf.sh` |
@@ -55,7 +55,7 @@ Each row is a thing that cannot be settled without the parts. "Where" is the pro
 |---|---|---|---|
 | 1 | Frame jitter (p99 at most 100 us), WCET of the step and the vote, bus load (SYS-001 to 003) | needs the target and a logic analyzer; the firmware's status line already prints `wcet_step`, `wcet_vote`, `wcet_frame` | `P-S1-01`, `tools/bench/frame_jitter.py` |
 | 2 | **The real bus loss rate** | it sets the resync period, the digest persistence and the manager's command tolerance (TS-23, `RESYNC.md` 6b); nothing simulates real CAN | `tools/bench/bus_loss.py` |
-| 3 | **The false-alarm rate on the real IMUs**, and their noise (Allan deviation) | the detection thresholds were tuned on a modelled IMU; a healthy computer's false isolation can only be bounded by a long fault-free run on the rig (REC-10, FMECA) | a soak procedure (to be written), `P-S1-01` |
+| 3 | **The false-alarm rate on the real IMUs**, and their noise (Allan deviation) | the detection thresholds were tuned on a modelled IMU; a healthy computer's false isolation can only be bounded by a long fault-free run on the rig (REC-10, FMECA) | `P-S1-02` (the procedure and its tools are written) |
 | 4 | Sensor self-test limits (FDIR-036), arrival-margin telemetry (FDIR-037) | the part and the board | `FUTURE_WORK.md` 1.1, 1.2 |
 | 5 | The supervisor on its board: `KICK`, `FRAME`, `NRST` and `PWR` against real nodes; the `T0` pin; the RTC and the TCXO's drift | the second Pico 2, the TCXO module and the third relay module | `P-S2-03`, `MISSION_CLOCK.md` |
 | 6 | The Pico: USB enumeration, servo pulse and jitter, relays at 3.3 V drive, what the servo does with no signal | the board and the servos | `P-M1-01`, `PICO_TESTS.md` |

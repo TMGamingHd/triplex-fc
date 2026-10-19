@@ -1,8 +1,21 @@
 # Measured results
 
-> Status: **register, dated** (19 Oct 2026). Every row is a measurement, with the date it was made and the command that makes it again. A row is a record, not a claim about today: the **current** value of a number that recurs (the tests, the coverage, the campaign, the mutants) is in [`../STATUS.md`](../STATUS.md) section 2, computed or recorded with its date by `tools/docs/metrics.py`. Results are added at the top of their section; an old row is kept, because what the project measured and when is part of what it is.
+> Status: **register, dated** (19 Oct 2026). Section 0 is the round of that day. Every row is a measurement, with the date it was made and the command that makes it again. A row is a record, not a claim about today: the **current** value of a number that recurs (the tests, the coverage, the campaign, the mutants) is in [`../STATUS.md`](../STATUS.md) section 2, computed or recorded with its date by `tools/docs/metrics.py`. Results are added at the top of their section; an old row is kept, because what the project measured and when is part of what it is.
 
 Nothing here was measured on a board. Everything is the host, the virtual rig, or real firmware instances on a virtual CAN bus.
+
+## 0. 19 Oct 2026: the review of the core, the FMECA, the repaired mutation run
+
+| What | Result | Reproduce |
+|---|---|---|
+| PR #75's `sil` job | failed at the test `propulsion_a_stage_let_go_...`: it expected a second separation event to let go the upper stage once it was the lowest, but the event never lets go the last stage; the test indexed an empty vector after a `CHECK` that does not abort, and AddressSanitizer reported a segfault. Fixed (the upper stage goes on its own timer) and the guard pinned by a new test. After the fix the four checks passed (the `sil` job in 34 minutes, queued 20 minutes before) | `gh run view 39279347823` |
+| Review of `core/` (second reader) | 8 findings, 3 of them major (the configuration checksum left out `sensor_split`; ACT's mode byte, one bit from Safe to Standby, was unguarded; the flight log's ring index was unchecked while running), each demonstrated on the original code, fixed, and pinned by a test that fails without the fix and a mutant that removes it; 6 observations left as they are, with the reason | `CODE_REVIEW_CORE.md`; `build/tfc_tests act_an_upset` |
+| FMECA | 49 failure modes covering all 103 fault-matrix rows and all 32 fault kinds; 32 critical items, 10 single points, 6 critical items with no compensation or nothing exercising it; a software FMEA of 10 data items against 8 fault types with 4 gaps | `python3 tools/fmeca/fmeca.py check` |
+| The weekly mutation workflow | had never passed: 3 runs (5, 12, 19 Oct) all cut at the 6-hour limit; the unit job never finished, the simulator job finished after 5.5 hours with "17 survivors" that were 17 stale patterns; about 18 runner-hours a week on a 2,000-minute plan. Now sharded, monthly, and its tables checked every pull request | `gh run list --workflow mutation.yml` |
+| The simulator's mutation table | on this branch **every** mutant failed to build (the harness copied `sim/vehicle` and `vehicle6.hpp` includes `../cfd/viscous.hpp`); 22 patterns had gone stale; once repaired the run found **7 real gaps** in the simulator's tests, all now pinned | `python3 tools/mutation/check_tables.py`; `run_sim.py` |
+| New core mutants | about 80 mutants for the 17 headers that had none (CRC, MAC, monitors, consensus, ACT's ground path, the logs): **11 more gaps** found in the tests of code written since the first sweep, all now pinned | `python3 tools/mutation/run_unit.py --fast --rerun-survivors` |
+| Last full mutation run | core: @@mutation_unit_result@@; simulator: @@mutation_sim_result@@; fault campaign: @@mutation_campaign_result@@ | the same commands |
+| Flight-code coverage | @@coverage_core_line@@ % of lines and @@coverage_core_branch@@ % of branches; simulator @@coverage_sim_line@@ % and @@coverage_sim_branch@@ % | `python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98 --sim-min-line 99 --sim-min-branch 90` |
 
 ## 1. The verification of the code
 

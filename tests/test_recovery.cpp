@@ -1005,3 +1005,18 @@ TFC_TEST(ground_a_command_the_queue_had_no_room_for_does_not_use_up_its_counter)
   const FrameReport& r2 = m.end_frame();
   CHECK(r2.command_count == 1U && m.counters().commands_replayed == 0U);
 }
+
+// Verifies: TFC-FDIR-031
+TFC_TEST(ground_without_authentication_a_command_the_queue_had_no_room_for_is_counted_and_dropped) {
+  // (The same overflow with authentication off: there is no counter to use up, the command is simply dropped and counted.)
+  RedundancyConfig cfg;
+  cfg.ground_auth = false;
+  RedundancyManager m(cfg);
+  m.begin_frame();
+  for (uint8_t c = 1U; c <= kMaxCommandsPerFrame + 2U; ++c) {
+    CHECK(m.on_frame(pack_ground(GroundOp::Noop, 0, c)));
+  }
+  CHECK(m.counters().commands_bad == 2U);
+  const FrameReport& r = m.end_frame();
+  CHECK(r.command_count == kMaxCommandsPerFrame);
+}
