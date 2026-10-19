@@ -117,18 +117,31 @@ class Sections(unittest.TestCase):
 
 
 class Numbers(unittest.TestCase):
-    """The headline numbers are quoted in several pages (README, STATUS, PROOF, the standard, the register); they must not drift apart from their source."""
+    """The headline numbers are quoted in several pages; in a page that describes the present they must be the repository's. Those pages are `tools/docs/metrics.py`'s CURRENT_DOCS, where a number
+    is written as a marker (`<!--m:name-->value<!--/m-->`, rewritten by the tool) or, if it is typed, must equal the source. The decisions, the trade studies, the bench log and the register of
+    dated results (verification/RESULTS.md) keep the numbers they had on their date and are not checked."""
+
+    @staticmethod
+    def current_docs():
+        sys.path.insert(0, str(ROOT / "tools" / "docs"))
+        import metrics
+
+        return [p for p in metrics.docs()] + [ROOT / "sim" / "README.md"]
+
+    def quoted(self, pattern):
+        """(file, matched text, number) for every unmarked quotation of a headline number in a current page."""
+        marker = re.compile(r"<!--m:[a-z0-9_]+(?::[a-z]+)?-->.*?<!--/m-->", re.S)
+        for p in self.current_docs():
+            text = marker.sub("", p.read_text())
+            for q in re.finditer(pattern, text):
+                yield p.relative_to(ROOT), q.group(0), int(q.group(1).replace(",", ""))
 
     def test_the_campaign_total_quoted_anywhere_is_the_one_in_the_generated_table(self):
         text = (DOCS / "verification" / "FAULT_CAMPAIGN.md").read_text()
         m = re.search(r"\| \*\*total\*\* \| \*\*([\d,]+)\*\* \| \*\*([\d,]+)\*\* \|", text)
         self.assertIsNotNone(m, "the generated total row is missing from FAULT_CAMPAIGN.md")
-        scenarios = m.group(1)
-        bad = []
-        for p in doc_files() + [ROOT / "README.md"]:
-            for q in re.finditer(r"(\d{1,3}(?:,\d{3})+) (?:fault )?scenarios", p.read_text()):
-                if q.group(1) != scenarios:
-                    bad.append(f"{p.relative_to(ROOT)}: {q.group(0)} (the table says {scenarios})")
+        scenarios = int(m.group(1).replace(",", ""))
+        bad = [f"{f}: {q} (the table says {scenarios})" for f, q, n in self.quoted(r"(\d{1,3}(?:,\d{3})+) (?:fault )?scenarios") if n != scenarios]
         self.assertEqual(bad, [])
 
     def test_the_mutant_count_quoted_anywhere_is_the_number_of_mutants(self):
@@ -136,11 +149,7 @@ class Numbers(unittest.TestCase):
         import mutations
 
         n = len(mutations.MUTATIONS)
-        bad = []
-        for p in doc_files() + [ROOT / "README.md", ROOT / "sim" / "README.md"]:
-            for q in re.finditer(r"(\d{3}) (?:mutants|injected bugs|deliberate bugs)", p.read_text()):
-                if int(q.group(1)) != n:
-                    bad.append(f"{p.relative_to(ROOT)}: {q.group(0)} (there are {n})")
+        bad = [f"{f}: {q} (there are {n})" for f, q, k in self.quoted(r"(\d{3}) (?:mutants|injected bugs|deliberate bugs)") if k != n]
         self.assertEqual(bad, [])
 
     def test_the_simulator_mutant_count_quoted_anywhere_is_the_number_of_simulator_mutants(self):
@@ -148,11 +157,16 @@ class Numbers(unittest.TestCase):
         import sim_mutations
 
         n = len(sim_mutations.MUTATIONS)
-        bad = []
-        for p in doc_files() + [ROOT / "README.md", ROOT / "sim" / "README.md", ROOT / "CONTRIBUTING.md"]:
-            for q in re.finditer(r"(\d+) simulator mutants", p.read_text()):
-                if int(q.group(1)) != n:
-                    bad.append(f"{p.relative_to(ROOT)}: {q.group(0)} (there are {n})")
+        bad = [f"{f}: {q} (there are {n})" for f, q, k in self.quoted(r"(\d+) simulator mutants") if k != n]
+        self.assertEqual(bad, [])
+
+    def test_the_number_of_decisions_and_of_fault_kinds_quoted_anywhere_is_the_repositorys(self):
+        sys.path.insert(0, str(ROOT / "tools" / "docs"))
+        import metrics
+
+        c = {k: v for k, (v, _how) in metrics.computed().items()}
+        bad = [f"{f}: {q} (there are {c['adrs']})" for f, q, k in self.quoted(r"(\d+) ADRs") if k != c["adrs"]]
+        bad += [f"{f}: {q} (there are {c['fault_kinds']})" for f, q, k in self.quoted(r"(\d+) (?:fault )?kinds") if k != c["fault_kinds"]]
         self.assertEqual(bad, [])
 
 

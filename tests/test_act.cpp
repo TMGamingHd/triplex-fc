@@ -3,11 +3,20 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include "tfc/act.hpp"
 #include "tfc_test.hpp"
 
 using namespace tfc;
+
+namespace tfc {
+// Reaches into ACT to simulate a single-event upset in its mode byte. Test code only; never linked into firmware.
+struct ActTestAccess {
+  static void set_mode_raw(ActLogic& a, ActMode m) { a.out_.mode = m; }
+  static void flip_guard_complement(ActLogic& a) { a.mode_g_.n_ = static_cast<uint8_t>(a.mode_g_.n_ ^ 0x01U); }   // the stored complement, not the mode
+};
+}  // namespace tfc
 
 namespace {
 
@@ -554,4 +563,66 @@ TFC_TEST(act_the_output_frame_names_the_stage_of_safe_as_the_protocol_says) {
     seen[st] = true;
   }
   CHECK(!seen[0] && seen[1] == false && seen[2] && seen[3] && seen[4]);
+}
+
+// Verifies: TFC-SAFE-003
+TFC_TEST(act_an_upset_in_the_mode_byte_cannot_take_it_out_of_safe_and_is_reported) {
+  // Found by the review of core/ (docs/verification/CODE_REVIEW_CORE.md, finding 2): Safe is 2 and Standby is 0, one bit apart. ACT, the last line, kept its mode in a plain byte, so a single
+  // upset turned a Safe into a Standby, and Standby goes to Nominal after 100 good votes: Safe was left with no operator. The manager guards the same kind of state (ADR-015); ACT now does too.
+  Bench b;
+  b.nominal(2.0F, 0.0F);
+  b.act.hardware_safe(true);
+  (void)b.same(2.0F, 0.0F);
+  b.act.hardware_safe(false);
+  CHECK(b.act.output().mode == ActMode::Safe);
+  ActTestAccess::set_mode_raw(b.act, ActMode::Standby);   // one bit flipped
+  for (int i = 0; i < 300; ++i) {
+    (void)b.same(2.0F, 0.0F);
+  }
+  CHECK(b.act.output().mode == ActMode::Safe);            // still Safe: nothing but the operator's clear-safe leaves it
+  CHECK(b.act.integrity_faults() == 1U);
+  CHECK(b.act.output().cause == SafeCause::Integrity);
+}
+
+// Verifies: TFC-SAFE-003
+TFC_TEST(act_an_upset_in_the_mode_byte_of_a_nominal_act_safes_it_and_a_healthy_run_reports_nothing) {
+  Bench b;
+  b.nominal(2.0F, 0.0F);
+  for (int i = 0; i < 2000; ++i) {
+    (void)b.same(2.0F, 0.0F);
+  }
+  CHECK(b.act.integrity_faults() == 0U && b.act.output().mode == ActMode::Nominal);   // a healthy run never trips the check
+  ActTestAccess::set_mode_raw(b.act, ActMode::Standby);
+  const ActOutput& o = b.same(2.0F, 0.0F);
+  CHECK(o.mode == ActMode::Safe && o.cause == SafeCause::Integrity && b.act.integrity_faults() == 1U);
+  CHECK(near(o.pitch_deg, 2.0F, 1.0e-3F));                // frozen where it was, not stepped
+  CHECK(!b.act.clear_safe());                             // and the exit conditions are counted from the upset
+}
+
+// Verifies: TFC-SAFE-003
+TFC_TEST(act_an_upset_in_the_stored_complement_of_the_mode_is_found_as_well) {
+  Bench b;
+  b.nominal(2.0F, 0.0F);
+  ActTestAccess::flip_guard_complement(b.act);            // the mode itself is untouched; its guard is not
+  const ActOutput& o = b.same(2.0F, 0.0F);
+  CHECK(o.mode == ActMode::Safe && o.cause == SafeCause::Integrity && b.act.integrity_faults() == 1U);
+}
+
+// Verifies: TFC-SAFE-005
+TFC_TEST(act_a_configuration_with_a_zero_persistence_or_a_nonsense_tolerance_is_replaced_and_reported) {
+  // Found by the review (finding 3): ActConfig was not validated like the manager's (FDIR-026). persist_m = 0 latched every computer on its first frame.
+  ActConfig bad;
+  bad.persist_m = 0U;
+  bad.persist_n = 40U;
+  bad.tol_deg = std::numeric_limits<float>::quiet_NaN();
+  bad.normal_slew = -1.0F;
+  bad.ramp_deg_per_frame = 0.0F;
+  bad.lost_votes = 0U;
+  Bench b(bad);
+  CHECK(b.act.config_errors() != 0U);
+  b.nominal(1.0F, 0.0F);                                   // goes through Standby into Nominal on the defaults
+  CHECK(b.act.output().excluded_nodes == 0U);
+  CHECK(b.act.config().persist_m == ActConfig{}.persist_m && b.act.config().tol_deg == ActConfig{}.tol_deg);
+  Bench ok;
+  CHECK(ok.act.config_errors() == 0U);
 }

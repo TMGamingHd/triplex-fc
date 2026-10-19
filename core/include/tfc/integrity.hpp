@@ -18,6 +18,7 @@
 namespace tfc {
 
 struct ManagerTestAccess;  // fault injection in the host tests only (tests/test_recovery.cpp)
+struct ActTestAccess;      // likewise for ACT (tests/test_act.cpp)
 
 class GuardedByte {
  public:
@@ -33,6 +34,7 @@ class GuardedByte {
 
  private:
   friend struct ManagerTestAccess;
+  friend struct ActTestAccess;
   uint8_t v_ = 0U;
   uint8_t n_ = 0xFFU;
 };

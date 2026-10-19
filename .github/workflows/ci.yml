@@ -31,6 +31,12 @@ jobs:
           fetch-depth: 0
       - name: Documentation check (every flag, fault kind and counter is documented)
         run: cd sim && python3 -m unittest tests.test_docs tests.test_docs_consistency
+      - name: The numbers the documents quote are current, and the FMECA covers the fault matrix (tools/docs/metrics.py, tools/fmeca/fmeca.py)
+        run: |
+          python3 tools/docs/metrics.py check
+          python3 tools/fmeca/fmeca.py check
+      - name: The mutant tables are alive (every deliberate bug still finds its code)
+        run: python3 tools/mutation/check_tables.py
       - name: Did anything besides documentation change?
         id: filter
         run: |

@@ -101,3 +101,21 @@ TFC_TEST(flightlog_numbers_are_kept_in_hundredths_rounded_saturated_and_a_nan_is
   CHECK(hundredths(400.0F) == 32767 && hundredths(-400.0F) == -32768 && hundredths(327.0F) == 32700);
   CHECK(hundredths(std::nanf("")) == 0);
 }
+
+TFC_TEST(flightlog_an_upset_in_the_index_while_running_never_writes_outside_the_ring) {
+  // Finding 6 of the review of core/ (docs/verification/CODE_REVIEW_CORE.md): the header is checked at boot only, and push() indexed the ring with the stored head. Under ASan a wild index is a failure of this test.
+  FlightLogStore<kN> store{};
+  FlightLog<kN> log(store);
+  (void)log.boot();
+  fill(log, 10U, 3U);
+  store.head = 0xFFFFFF00U;                  // an upset in the index
+  fill(log, 20U, 1U);
+  CHECK(store.head < kN && log.size() <= kN);
+  bool ok = false;
+  const FlightRecord newest = log.get(0, ok);
+  CHECK(ok && newest.frame == 20U);          // the new record is the newest one and is readable
+  store.head = 2U;
+  store.count = 0xFFFFFFFFU;                 // and an upset in the count
+  fill(log, 30U, 1U);
+  CHECK(log.size() == kN);
+}

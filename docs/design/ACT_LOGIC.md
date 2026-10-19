@@ -1,6 +1,6 @@
 # Actuator node logic
 
-> Status: **built** (reviewed 5 Oct 2026): the logic is `core/include/tfc/act.hpp`, `act_ground.hpp` (host-tested with a fuzz and mutants) and the application is `firmware/act` (Zephyr: `native_sim` on `vcan0` and the Nucleo; live tests with real instances). Per ADR-024, ACT has **no servo output**: its output is the voted gimbal command on the bus (`0x300`),
+> Status: **built** (reviewed 19 Oct 2026): the logic is `core/include/tfc/act.hpp`, `act_ground.hpp` (host-tested with a fuzz and mutants) and the application is `firmware/act` (Zephyr: `native_sim` on `vcan0` and the Nucleo; live tests with real instances). Per ADR-024, ACT has **no servo output**: its output is the voted gimbal command on the bus (`0x300`),
 > and its Safe action is the value of that command. **Not run on a board.**
 
 ## What it does, each frame
@@ -28,11 +28,17 @@ After a reset that is not a power-on, ACT **starts in Safe** (cause `Reset`), ho
 survives a reset), so the command does not step across the reset; then the hold, then the ramp. With `resume_from_stored = false` it starts from neutral. A power-on, or a record that fails its check,
 starts in Standby. A corrupted mode value is treated as Safe.
 
-## What the tests show (`tests/test_act.cpp`, 19 tests)
+## ACT guards itself (found by the review of core/, 19 Oct 2026)
+ACT is the last line and a single point, so an upset in its own state matters more here than anywhere. Two protections, the same discipline as the manager's (ADR-015):
+* **The mode byte is stored with its complement and checked every frame.** `Safe` is 2 and `Standby` is 0, one bit apart: with a plain byte a single upset turned a Safe into a Standby, and Standby goes to Nominal after 100 good votes, so Safe was left with no operator. Now a mismatch (in the mode or in its complement) enters **Safe**, frozen where the output is, with the new cause **integrity** (value 5 in the ACT frame's cause field, `PROTOCOL.md`), and `integrity_faults()` counts it. Fault-matrix row F99.
+* **The configuration is validated like the manager's** (TFC-SAFE-005): a persistence of zero (which latched every computer on the first frame), a NaN, zero or negative tolerance or rate, or a zero count is replaced by its default and reported (`config_errors()`). Row F100.
+What is not guarded: the held output, the lost-vote count and the hold timer are plain; an upset in one changes a value for a few frames, not a mode (REC-12 of `FMECA.md`).
+
+## What the tests show (`tests/test_act.cpp` and `tests/test_act_ground.cpp`)
 The pad stays neutral; a wrong node is out-voted and excluded after persistent disagreement and readmitted by the operator; missing frames count; Duplex agreement uses the mean and a miscompare holds and blames nobody; one or two lost votes
 are held through and the third enters Safe; the output never moves faster than the slew bound; Safe freezes with no step, holds, ramps without exceeding the ramp rate, waits for both planes, and stays; the SAFE line has priority; `clear_safe()` is refused
 for each missing condition and accepted when all hold; the reset behaviour; the stored record detects damage in every field; and **a 20,000-frame deterministic fuzz** (random commands, drops, wild nodes, Safe requests) shows the output finite,
-never stepping by more than the bound, and never leaving Safe without a clear. Coverage of `act.hpp`: 100% of lines, 99.1% of branches.
+never stepping by more than the bound, and never leaving Safe without a clear.  `act.hpp` is inside the coverage gate of the flight code (100 % of lines); its mutants (`act_*`, `actg_*` in `tools/mutation/mutations.py`) are all killed.
 
 ## The application (`firmware/act`)
 It follows SYNC and never becomes the master (`SyncStart::Observer`); it is silent until the first SYNC. At 6.5 ms (7.5 ms on the host, whose CAN driver polls every millisecond) it drains the

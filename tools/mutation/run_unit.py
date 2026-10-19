@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Mutation check of the C++ test suite: build every test against a mutated copy of core/include and confirm at least
-one test fails. Usage: python3 tools/mutation/run_unit.py [--jobs N] [NAME ...]   (exit 1 if a mutant survives)."""
+one test fails. Usage: python3 tools/mutation/run_unit.py [--jobs N] [--fast] [--rerun-survivors] [--shard K/N] [--changed-since REF] [NAME ...]   (exit 1 if a mutant survives).
+
+--shard K/N       run every Nth mutant starting at the Kth (1-based): the weekly workflow splits the table over several runners, none of which can finish it alone
+--changed-since   only the mutants of a header that differs from REF (a branch, a commit): what a change to core/ should be checked with before it is pushed
+--rerun-survivors after a --fast pass, run again with the sanitizers the mutants that survived it: a mutant that only a sanitizer can kill costs one slow build, not all of them
+"""
 from __future__ import annotations
 
 import argparse
@@ -45,8 +50,22 @@ def main(argv=None) -> int:
     ap.add_argument("--fast", action="store_true", help="build without optimisation or sanitizers (a first pass: a mutant only a sanitizer would catch shows up as a survivor, to be run again without --fast)")
     ap.add_argument("--exclude", default="", help="a regular expression: test files whose name matches are left out")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    ap.add_argument("--shard", default="", help="K/N: every Nth mutant, starting at the Kth (1-based)")
+    ap.add_argument("--changed-since", default="", help="only the mutants of headers that differ from this git ref")
+    ap.add_argument("--rerun-survivors", action="store_true", help="after a --fast pass, run the survivors again with the sanitizers")
     args = ap.parse_args(argv)
     names = args.names or list(MUTATIONS)
+    if args.changed_since:
+        diff = subprocess.run(["git", "diff", "--name-only", args.changed_since], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+        changed = {Path(f).name for f in diff if f.startswith(("core/include/", "supervisor/include/"))}
+        names = [n for n in names if Path(MUTATIONS[n][0]).name in changed]
+        print(f"{len(names)} mutants of the headers that differ from {args.changed_since}: {', '.join(sorted(changed)) or 'none'}", flush=True)
+    if args.shard:
+        k, n = (int(x) for x in args.shard.split("/"))
+        if not 1 <= k <= n:
+            ap.error("--shard K/N needs 1 <= K <= N")
+        names = names[k - 1::n]
+        print(f"shard {k}/{n}: {len(names)} mutants", flush=True)
     if args.fast:
         global FLAGS
         FLAGS = ["-std=c++17", "-O0", "-fno-exceptions", "-fno-rtti", "-w"]
@@ -62,6 +81,16 @@ def main(argv=None) -> int:
             print(f"{name:<34} {verdict:<13} {info}", flush=True)
             if verdict != "killed":
                 survived.append(name)
+    if survived and args.fast and args.rerun_survivors:
+        print(f"\n{len(survived)} survived the fast pass; again with the sanitizers: {', '.join(survived)}", flush=True)
+        FLAGS = ["-std=c++17", "-O1", "-g", "-fsanitize=address,undefined", "-fno-exceptions", "-fno-rtti", "-w"]
+        again = survived
+        survived = []
+        with ThreadPoolExecutor(max_workers=args.jobs) as ex:
+            for name, verdict, info in ex.map(one, again):
+                print(f"{name:<34} {verdict:<13} {info}  (sanitizers)", flush=True)
+                if verdict != "killed":
+                    survived.append(name)
     print(f"\n{len(names) - len(survived)}/{len(names)} mutants killed by the C++ tests")
     if survived:
         print("NOT killed:", ", ".join(survived))

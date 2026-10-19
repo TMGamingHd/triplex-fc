@@ -193,6 +193,7 @@ namespace detail {
   mix(c.digest_persist_frames);
   mix(c.release_aware ? 1U : 0U);
   mix(c.phases ? 1U : 0U);
+  mix(c.sensor_split ? 1U : 0U);
   mix(bits(c.version_tol_factor));
   mix(c.stuck_limit);
   mix(bits(c.alpha_k));
@@ -668,6 +669,10 @@ class RedundancyManager {
           ++counters_.commands_replayed;  // a repeat, or older than the last command: a replay
           return;
         }
+      }
+      if (npending_ >= kMaxCommandsPerFrame) {  // no room: dropped before its counter is used up, so that the same command can be sent again (finding 8 of the review of core/)
+        ++counters_.commands_bad;
+        return;
       }
       cmd_ctr_.set(d.counter);
       cmd_have_.set(1U);
@@ -1628,7 +1633,7 @@ class RedundancyManager {
   uint32_t frame_no_ = 0U;                          // the frame being collected (SYNC's number for the sync master)
   GuardedByte cmd_ctr_{};                           // counter of the last accepted ground command
   GuardedByte cmd_have_{};                          // 1 once a command has been accepted
-  GuardedByte arm_code_{};                          // 0 = nothing armed, else (op << 2 | node)
+  GuardedByte arm_code_{};                          // the operation and node that are armed: (op << 3 | node & 7); only meaningful while arm_left_ is above 0
   GuardedByte arm_left_{};                          // frames the ARM stays valid
   bool cmd_damage_seen_ = false;                    // queue_ground() found the counter record damaged; scrub() reports it
   std::array<NodeRx, kNodes> rx_{};

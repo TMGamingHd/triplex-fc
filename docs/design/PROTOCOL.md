@@ -34,7 +34,7 @@ In version 1 only `0x500` was in the schedule; the range was widened for the sim
 ## Version 2 frames
 **ACT out (`0x300`).** Bytes 0-1: the pitch-plane command; bytes 2-3: the yaw-plane command (0.001 degree, signed). Bytes 4-5, a 16-bit field:
 bits 0-2 state (0 Standby, 1 Nominal, 2 Safe-hold, 3 Safe-ramp, 4 Safe-neutral); bit 3 held (no trustworthy vote this frame); bits 4-6 the pitch vote's status (`VoteStatus`);
-bits 7-9 the nodes whose command took part (bit n = node n); bits 10-12 the nodes ACT has excluded; bits 13-15 the cause of Safe (0 none, 1 lost votes, 2 the flight computers' request, 3 the hardware line, 4 reset).
+bits 7-9 the nodes whose command took part (bit n = node n); bits 10-12 the nodes ACT has excluded; bits 13-15 the cause of Safe (0 none, 1 lost votes, 2 the flight computers' request, 3 the hardware line, 4 reset, 5 integrity: an upset in ACT's own mode byte).
 Example: pitch 1.234, yaw -5.678, Safe-ramp, held, Duplex, nodes A and C, B excluded, lost votes, seq 9: `d204d2e9ab2a092d`.
 
 **Heartbeat (`0x400+n`).** Byte 0: protocol version. Byte 1: bits 0-1 mode (`Mode`), bit 2 Safe requested, bit 3 bus alarm, bits 4-5 role (0 hot, 1 warm, 2 cold), bit 6 quarantined (a reset loop), bit 7 ready for launch.

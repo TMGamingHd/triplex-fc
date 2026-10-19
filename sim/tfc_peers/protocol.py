@@ -323,7 +323,7 @@ def _quantize_u16(v: float, lsb: float) -> int:
 
 
 STATE_NAMES = ("Standby", "Nominal", "Safe-hold", "Safe-ramp", "Safe-neutral")
-CAUSE_NAMES = ("none", "lost-votes", "fc-request", "hardware-line", "reset")
+CAUSE_NAMES = ("none", "lost-votes", "fc-request", "hardware-line", "reset", "integrity")
 VOTE_STATUS_NAMES = ("Triplex", "Duplex", "DuplexMiscompare", "Simplex", "NoMajority", "NoData")
 SIM_FLAG_SAFED = 0x01
 SIM_FLAG_PLATFORM_SATURATED = 0x02

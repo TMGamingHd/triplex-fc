@@ -13,6 +13,8 @@ In Triplex, the 2-of-3 mid-value select **masks a single fault in the same frame
 tolerance of the truth (oracle S2) and, for the loss of a computer, within 0.5 degrees per frame (TFC-SYS-004). Detection and isolation
 matter for the *second* fault, not the first. This is why detection times of 2 to 40 frames are acceptable.
 
+*A note on what "within one tolerance" means* (the review of core/, observation O-2): in Triplex a channel agrees when it is within one tolerance of the **median**, so two channels can be two tolerances apart and both be believed; in Duplex the two must be within one tolerance of each other. The detection thresholds of the campaign (nothing below 0.8x the tolerance is touched, 1.2x and above is isolated) are stated against the median, which is why they are what they are.
+
 ## 2. Response classes
 
 | Class | Name | Output (what the vehicle sees) | Who acts | Operator |

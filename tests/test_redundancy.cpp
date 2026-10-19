@@ -810,6 +810,28 @@ TFC_TEST(life_cycle_old_strikes_are_forgotten_when_a_window_is_configured) {
   CHECK(m.strikes(1) == 1U);  // the first latch (frame 12) is older than 300 frames at the second (402)
 }
 
+// Verifies: TFC-FDIR-007
+TFC_TEST(life_cycle_old_strikes_of_an_imu_channel_are_forgotten_when_a_window_is_configured) {
+  // Finding 5 of the review of core/: the sensor channels (the split) ignored the strike window that the computers honour. The IMU is healed after its first latch and latches again 390 frames later.
+  for (const uint32_t window : {300U, 0U}) {
+    RedundancyConfig cfg;
+    cfg.sensor_split = true;
+    cfg.strike_window_frames = window;
+    RedundancyManager m(cfg);
+    drive(m, 0, 520, smooth,
+          [](int k, std::array<NodeFault, 3>& f) { f[1].gyro_bias = ((k >= 10 && k < 15) || (k >= 400 && k < 405)) ? 3.0F : 0.0F; },
+          [&](int k, const FrameReport&) {
+            if (k == 20) {
+              CHECK(m.command(GroundOp::Reintegrate, kSensorBase + 1U) == CommandResult::Accepted);
+            }
+            if (k == 390) {
+              CHECK(m.sensor_state(1) == NodeState::Healthy);  // it proved itself in between
+            }
+          });
+    CHECK(m.sensor_strikes(1) == (window != 0U ? 1U : 2U));    // with a window the first latch (frame 12) is older than 300 frames at the second (402); without one both count
+  }
+}
+
 TFC_TEST(life_cycle_only_one_node_is_on_probation_at_a_time) {
   RedundancyManager m(full_dwell());
   Events e1;

@@ -142,6 +142,7 @@ const char* cause_text(tfc::SafeCause c) {
     case tfc::SafeCause::FcRequest: return "the flight computers' request";
     case tfc::SafeCause::HardwareLine: return "the SAFE line";
     case tfc::SafeCause::Reset: return "a reset";
+    case tfc::SafeCause::Integrity: return "an upset in its own mode byte";
   }
   return "?";
 }

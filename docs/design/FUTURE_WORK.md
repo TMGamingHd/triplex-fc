@@ -130,6 +130,17 @@ Requirements TFC-AI-001 to 003 (proposed boundary).
 * **Per-engine dispersions in `tfc_mission_mc`:** the plant takes `thrust_factor` and a gimbal fault per engine; the Monte Carlo still disperses the vehicle's thrust as a whole.
 * **The actuator's load, power and the moving engine mass**, when there is a datasheet to set them with.
 
+## 6d. After the round of 19 Oct 2026 (FMECA, review of the core, mutation, documents)
+
+> Written after the owner asked for the outside reader of `core/`, the FMECA, a full mutation run and documents without stale numbers. What was done is in `verification/FMECA.md`, `verification/CODE_REVIEW_CORE.md` and `tools/docs/metrics.py`; this is what it left open, in the order that would raise confidence most.
+
+1. **A human outside reader** for `redundancy.hpp`, `act.hpp`, `act_ground.hpp`, `auth.hpp`, `sync_clock.hpp` and `supervisor.hpp` (`CODE_REVIEW_CORE.md` section 7). Nothing replaces it.
+2. **Mutants for the guidance, navigation and attitude control** (`peg`, `descent`, `mission`, `nav`, `controller`, `attitude`, `dmath`) and for the simulator's mission code, propulsion model and CFD tables: <!--m:headers_without_mutants-->9<!--/m--> and <!--m:sim_headers_without_mutants-->12<!--/m--> headers with none (`python3 tools/mutation/check_tables.py --report`). Survivors there are the likeliest place for a defect that no test sees.
+3. **The detectors' parameters into the scrub** (REC-09): rebuild the 3-of-5 window, the leaky count and the stuck detector from the checked configuration every frame.
+4. **The software FMEA's gaps** (REC-18, REC-19): move ACT's output-frame freshness rule from `firmware/app/src/main.cpp` into `launch_gate.hpp` and test it; check that SYNC's frame number advances; give the virtual peers a heartbeat and a fault kind that lies in it.
+5. **A fault-free soak and the IMUs' Allan deviation on the rig** (REC-10, `STATUS.md` section 5, row 3): the false-alarm rate is the half of the detection story that the campaign cannot measure, because it depends on how the real IMUs and the real bus behave when nothing is wrong.
+6. **Ground-command security before any real uplink** (observations O-1 and O-4 of `CODE_REVIEW_CORE.md`): fail closed on an unprovisioned key, and let ACT take its counter from the computers' state shares.
+
 ## 6. Considered and not added
 Rad-hard parts, MIL-STD-1553, memory types, data processing and encryption units, pyro boxes, the uplink-loss timer (a rocket does not need the ground to survive). Added after the second reading of the lecture and now built: the time-seed plausibility check
 (TFC-SUP-009), the parameters of the Safe configuration (TFC-SAFE-005) and the response ladder (TFC-SAFE-007).

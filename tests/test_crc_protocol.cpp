@@ -159,6 +159,24 @@ TFC_TEST(siphash24_matches_the_published_reference_vectors) {
   CHECK(siphash24(key, in.data(), 8) != siphash24(key, in.data(), 9));
 }
 
+// Verifies: TFC-FDIR-031
+TFC_TEST(ground_tag_is_the_low_32_bits_of_siphash_and_equals_the_python_peers_value_for_the_same_command) {
+  // The expected values were computed by the virtual peers' own implementation (sim/tfc_peers/protocol.py ground_mac), which shares no code with this one. Every one has bits in its top byte,
+  // so a tag cut to fewer than 32 bits is found; found by the review of core/ when the mutant `mac_tag_truncated` survived: the tests signed and checked with the same function.
+  struct Case {
+    uint8_t op_byte;
+    uint8_t node;
+    uint8_t counter;
+    uint32_t tag;
+  };
+  const std::array<Case, 6> cases{{{0x01, 1, 1, 0xbf5506dcU}, {0x04, 0, 7, 0x68028415U}, {0x84, 0, 8, 0xe4c5df8cU}, {0x05, 0, 200, 0xa70b4a35U}, {0x02, 2, 255, 0x62bb0f66U}, {0x03, 1, 33, 0xbe2f4cd9U}}};
+  for (const Case& c : cases) {
+    CHECK(ground_mac(kBenchKey, id::kGround, c.op_byte, c.node, c.counter) == c.tag);
+  }
+  const Frame f = pack_ground_auth(GroundOp::Reintegrate, 1, 1, kBenchKey);   // the same first case through the frame: the tag sits in bytes 2 to 5, least significant first
+  CHECK(f.data[2] == 0xdc && f.data[3] == 0x06 && f.data[4] == 0x55 && f.data[5] == 0xbf);
+}
+
 TFC_TEST(ground_tag_binds_the_key_the_operation_the_node_the_counter_and_the_arm_flag) {
   const AuthKey other = {{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}};
   const Frame f = pack_ground_auth(GroundOp::Disable, 1, 7, kBenchKey);

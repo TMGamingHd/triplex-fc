@@ -138,6 +138,9 @@ class FlightLog {
   void push(uint32_t frame, uint8_t mode, uint8_t valid_mask, uint8_t latched_mask, uint8_t flags, float output, float cmd_pitch_deg, float cmd_yaw_deg) noexcept {
     FlightRecord r{frame, mode, valid_mask, latched_mask, flags, logdetail::hundredths(output), logdetail::hundredths(cmd_pitch_deg), logdetail::hundredths(cmd_yaw_deg), 0U};
     r.crc = logdetail::record_crc(r);
+    if (s_.head >= N) {  // an upset in the index since boot(), which is where the header is checked: never write outside the ring (finding 6 of the review of core/)
+      s_.head = 0U;
+    }
     s_.rec[s_.head] = r;
     s_.head = (s_.head + 1U) % static_cast<uint32_t>(N);
     s_.count = s_.count < N ? s_.count + 1U : static_cast<uint32_t>(N);

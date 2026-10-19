@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Mutation check of the vehicle simulator's tests: build the tests that include a simulator header against a mutated copy of sim/vehicle and confirm at
-least one test fails. Usage: python3 tools/mutation/run_sim.py [--jobs N] [--equivalents] [NAME ...]   (exit 1 if a mutant survives).
+least one test fails. Usage: python3 tools/mutation/run_sim.py [--jobs N] [--shard K/N] [--equivalents] [NAME ...]   (exit 1 if a mutant survives).
+
+--shard K/N runs every Nth mutant starting at the Kth (1-based): the weekly workflow splits the table over several runners, none of which can finish it alone.
 
 --equivalents also runs the mutants that are documented as equivalent (changes that cannot alter behaviour): they are expected to survive, and the run says
 so; one that is killed means the test suite is stronger than the note says and the note should go.
@@ -60,8 +62,15 @@ def main(argv=None) -> int:
     ap.add_argument("names", nargs="*")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     ap.add_argument("--equivalents", action="store_true", help="also run the documented equivalent mutants (they are expected to survive)")
+    ap.add_argument("--shard", default="", help="K/N: every Nth mutant, starting at the Kth (1-based)")
     args = ap.parse_args(argv)
     names = args.names or list(MUTATIONS)
+    if args.shard:
+        k, n = (int(x) for x in args.shard.split("/"))
+        if not 1 <= k <= n:
+            ap.error("--shard K/N needs 1 <= K <= N")
+        names = names[k - 1::n]
+        print(f"shard {k}/{n}: {len(names)} mutants", flush=True)
     equivalents = list(EQUIVALENT) if args.equivalents and not args.names else []
     print(f"tests built against each mutant: {', '.join(p.name for p in sim_tests())}", flush=True)
     survived = []

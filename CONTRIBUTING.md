@@ -49,15 +49,17 @@ python3 tools/check_standard.py                                   # mechanical c
 python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98 --sim-min-line 99 --sim-min-branch 90
 cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/rel --target tfc_replay
 (cd sim && TFC_REPLAY_BIN=$PWD/../build/rel/tfc_replay python3 -m campaign.run --strict)   # about 2-4 minutes
-python3 tools/mutation/run_unit.py                                # deliberate bugs must still be caught (weekly in CI)
+python3 tools/mutation/check_tables.py                            # no mutant has gone stale (CI runs this too; a second)
+python3 tools/mutation/run_unit.py --fast --changed-since origin/main   # the mutants of the headers you changed must still be killed
+python3 tools/docs/metrics.py check && python3 tools/fmeca/fmeca.py check   # the numbers in the documents are current, the FMECA covers the fault matrix
 ```
-A new check or fallback in `core/` comes with a mutant in `tools/mutation/mutations.py` that removes it.
+A new check or fallback in `core/` comes with a mutant in `tools/mutation/mutations.py` that removes it. The full mutation run is monthly and on demand in CI (`.github/workflows/mutation.yml`, sharded); to run it all on a 12-thread machine: `python3 tools/mutation/run_unit.py --fast --rerun-survivors --jobs 12` (about two hours). A new fault kind is also a failure mode in the FMECA (`tools/fmeca/data.py`, then `python3 tools/fmeca/fmeca.py write`). A number in a current page is a marker that `python3 tools/docs/metrics.py apply` rewrites; do not type it.
 
 ## Before you push a change to the vehicle simulator (`sim/vehicle/`)
 ```bash
 ctest --test-dir build --output-on-failure                         # the whole suite, with -Werror
 python3 tools/coverage/core_coverage.py --sim-min-line 99 --sim-min-branch 90
-python3 tools/mutation/run_sim.py                                  # deliberate bugs in the simulator must still be caught (weekly in CI; about 15 minutes)
+python3 tools/mutation/run_sim.py                                  # deliberate bugs in the simulator must still be caught (monthly in CI, sharded; about two hours on 12 threads)
 ```
 `a_controlled_flight_of_the_reference_vehicle_is_unchanged_by_changes_to_the_model` (`tests/test_vehicle.cpp`) and `general_the_reference_vehicle_flies_as_the_frozen_single_vehicle_model_did` (`tests/test_vehicle_general.cpp`, against `tests/oracle/`) must still pass without edits: the reference vehicle's flight is the contract of every change. A change that moves it by even a rounding moves the quantised sensor values of the closed loop, and with them the documented sensitivity numbers. A new
 model, option or guard comes with a test that fails without it, and a mutant in `tools/mutation/sim_mutations.py` that removes it.

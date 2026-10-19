@@ -1,6 +1,6 @@
 # Fault coverage: an FMEA-style gap analysis
 
-> Status: **reference** (reviewed 5 Oct 2026), updated with the campaign run recorded in `docs/verification/FAULT_CAMPAIGN.md`. "Modelled" means the virtual peers can inject it; "Covered"
+> Status: **reference, superseded as the analysis by [`FMECA.md`](FMECA.md)** (reviewed 19 Oct 2026). This page is the gap analysis that grew the peers' fault kinds from 13 to 32 and records the response gaps the campaign found; it has no severity, probability or criticality. `FMECA.md` is the real FMECA (ECSS-Q-ST-30-02C), generated and checked against the fault matrix. Updated with the campaign run recorded in `docs/verification/FAULT_CAMPAIGN.md`. "Modelled" means the virtual peers can inject it; "Covered"
 > means a test checks the response. SpaceX-related statements are from public material or inference.
 
 ## 1. How real programs think about this
@@ -9,7 +9,7 @@ Space and aerospace programs do not start from "which faults can I inject" but f
 (FMEA/FMECA): for every function and every component, list the ways it can fail, what the failure looks like at the
 interface, what it does to the system, how it is detected, and what the response is. The common reference points are
 **ECSS-Q-ST-30-02C** (FMEA/FMECA in space projects: functional and hardware analysis, highest-criticality failures first),
-**SAE ARP4761** and **MIL-STD-1629A** (aircraft and military FMECA), and for software **NASA-STD-8719.13** and NPR 7150.2
+**SAE ARP4761** and **MIL-STD-1629A** (aircraft and military FMECA), and for software **NASA-STD-8739.8A** (which replaced NASA-STD-8719.13; the software FMEA procedure is in the guidebook NASA-GB-8719.13 appendix D) and NPR 7150.2
 (fault tolerance, safety-critical software requirements, memory scrubbing against single-event upsets) and
 **DO-178C** (airborne software, structural coverage). Launch-vehicle programs then verify the response in software-in-the-loop
 and hardware-in-the-loop rigs with **fault injection** (NASA's SLS has a dedicated Avionics and Software Integration Lab for

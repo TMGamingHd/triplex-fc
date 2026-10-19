@@ -26,6 +26,7 @@ struct ManagerTestAccess {
   static void set_safe_complement(RedundancyManager& m, uint8_t raw) { m.safe_.n_ = raw; }
   static void set_safe_primary(RedundancyManager& m, uint8_t raw) { m.safe_.v_ = raw; }
   static void flip_config_tolerance(RedundancyManager& m) { m.cfg_.tol[0] *= 2.0F; }
+  static void flip_config_split(RedundancyManager& m) { m.cfg_.sensor_split = !m.cfg_.sensor_split; }
   static void set_pending_count(RedundancyManager& m, unsigned n) { m.npending_ = n; }
   static void flip_backup_tolerance(RedundancyManager& m) { m.cfg_backup_.tol[0] *= 2.0F; }
   static void flip_arm_complement(RedundancyManager& m) { m.arm_code_.n_ = static_cast<uint8_t>(m.arm_code_.n_ ^ 0x04U); }
@@ -392,6 +393,69 @@ TFC_TEST(seu_a_changed_configuration_is_detected_and_requests_safe) {
   CHECK(m.config().tol[0] == RedundancyConfig{}.tol[0]);  // repaired from the second copy
   step(m, 21, kNone);
   CHECK(m.counters().integrity_faults == 1U);              // counted once
+}
+
+// Verifies: TFC-FDIR-025
+TFC_TEST(seu_a_flipped_sensor_split_flag_is_detected_like_any_other_configuration_field) {
+  // Found by the review of core/ (docs/verification/CODE_REVIEW_CORE.md, finding 1): config_digest() left this one flag out, so an upset in it changed how the manager judges its
+  // computers and its IMUs, and the scrub saw nothing.
+  RedundancyConfig cfg;
+  cfg.sensor_split = true;
+  RedundancyManager m(cfg);
+  for (int k = 0; k < 20; ++k) step(m, k, kNone);
+  CHECK(m.counters().integrity_faults == 0U);
+  ManagerTestAccess::flip_config_split(m);
+  const FrameReport& r = step(m, 20, kNone);
+  CHECK(m.counters().integrity_faults == 1U && (r.integrity_mask & 4U) != 0U);
+  CHECK(r.safe_request);
+  CHECK(m.config().sensor_split);  // repaired from the second copy
+}
+
+// Verifies: TFC-FDIR-025
+TFC_TEST(seu_the_configuration_checksum_covers_every_field_of_the_configuration) {
+  // When a field is added to RedundancyConfig, add it here and to config_digest(): a field the checksum does not cover is a field whose upset nobody sees.
+  const uint32_t base = config_digest(RedundancyConfig{});
+  int covered = 0;
+  const auto differs = [&](auto change) {
+    RedundancyConfig c;
+    change(c);
+    CHECK(config_digest(c) != base);
+    ++covered;
+  };
+  for (unsigned i = 0; i < kVoteChannels; ++i) {
+    differs([i](RedundancyConfig& c) { c.tol[i] *= 2.0F; });
+  }
+  differs([](RedundancyConfig& c) { c.persist_m = 2U; });
+  differs([](RedundancyConfig& c) { c.persist_n = 6U; });
+  differs([](RedundancyConfig& c) { c.digest_persist_frames = 7U; });
+  differs([](RedundancyConfig& c) { c.stuck_limit = 21U; });
+  differs([](RedundancyConfig& c) { c.alpha_k = 0.8F; });
+  differs([](RedundancyConfig& c) { c.alpha_threshold = 4.0F; });
+  differs([](RedundancyConfig& c) { c.startup_grace_frames = 9U; });
+  differs([](RedundancyConfig& c) { c.duplex_arbitration_factor = 3.0F; });
+  differs([](RedundancyConfig& c) { c.bus_alarm_per_frame = 4U; });
+  differs([](RedundancyConfig& c) { c.policy = ReintegrationPolicy::AutoTransient; });
+  differs([](RedundancyConfig& c) { c.min_dwell_frames = 201U; });
+  differs([](RedundancyConfig& c) { c.min_dwell_frames_transient = 51U; });
+  differs([](RedundancyConfig& c) { c.probation_frames = 101U; });
+  differs([](RedundancyConfig& c) { c.probation_frames_repeat = 301U; });
+  differs([](RedundancyConfig& c) { c.max_strikes = 4U; });
+  differs([](RedundancyConfig& c) { c.max_strikes_physical = 3U; });
+  differs([](RedundancyConfig& c) { c.physical_causes = reason::kStuck; });
+  differs([](RedundancyConfig& c) { c.strike_window_frames = 500U; });
+  differs([](RedundancyConfig& c) { c.auto_eligible_causes = reason::kMissing; });
+  differs([](RedundancyConfig& c) { c.auto_max_attempts = 4U; });
+  differs([](RedundancyConfig& c) { c.ground_auth = false; });
+  for (std::size_t i = 0; i < RedundancyConfig{}.ground_key.size(); ++i) {
+    differs([i](RedundancyConfig& c) { c.ground_key[i] = static_cast<uint8_t>(c.ground_key[i] ^ 0x01U); });
+  }
+  differs([](RedundancyConfig& c) { c.command_window = 33U; });
+  differs([](RedundancyConfig& c) { c.arm_window_frames = 251U; });
+  differs([](RedundancyConfig& c) { c.sensor_split = true; });
+  differs([](RedundancyConfig& c) { c.release_aware = false; });
+  differs([](RedundancyConfig& c) { c.version_tol_factor = 2.0F; });
+  differs([](RedundancyConfig& c) { c.phases = true; });
+  CHECK(covered == 8 + 27 + 16);  // 8 tolerances, 27 other fields, 16 key bytes: a field added above changes this on purpose
 }
 
 TFC_TEST(seu_a_healthy_run_never_trips_the_integrity_checks) {
@@ -923,4 +987,21 @@ TFC_TEST(seu_a_warm_bit_on_a_computer_that_is_not_resting_is_cleared_and_reporte
   CHECK((r.integrity_mask & 1U) != 0U && r.warm_mask == 0U && m.state(1) == NodeState::Healthy);
   step(m, 11, kNone);
   CHECK(m.counters().integrity_faults == 1U);
+}
+
+// Verifies: TFC-FDIR-031
+TFC_TEST(ground_a_command_the_queue_had_no_room_for_does_not_use_up_its_counter) {
+  // Finding 8 of the review of core/: an authentic, fresh command that found the queue full was dropped after its counter had been committed, so sending it again was refused as a replay.
+  RedundancyManager m;
+  m.begin_frame();
+  for (uint8_t c = 1U; c <= kMaxCommandsPerFrame + 1U; ++c) {
+    CHECK(m.on_frame(tfct::gcmd(GroundOp::Noop, 0, c)));
+  }
+  CHECK(m.counters().commands_bad == 1U && m.counters().commands_replayed == 0U);   // the last of them found no room
+  const FrameReport& r = m.end_frame();
+  CHECK(r.command_count == kMaxCommandsPerFrame);
+  m.begin_frame();
+  CHECK(m.on_frame(tfct::gcmd(GroundOp::Noop, 0, static_cast<uint8_t>(kMaxCommandsPerFrame + 1U))));   // the same command again
+  const FrameReport& r2 = m.end_frame();
+  CHECK(r2.command_count == 1U && m.counters().commands_replayed == 0U);
 }
