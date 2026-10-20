@@ -21,7 +21,7 @@ slots (A, B, C) plus ACT. A missing node is just a node that never sends frames.
 4. **Full backbone from the start.** Build the CAN backbone with all five taps (A, B, C, ACT,
    USB-CAN) and both 120 ohm terminations on day one. Adding a node only means plugging in a stub.
 5. **Identical wiring per node.** Same pins for CAN Pal, IMU (SPI), power. Copy the harness.
-6. **Printed rack has four slots** even if three are empty.
+6. **Printed rack has four slots** even if three are empty (the rack and every other printed part: `MECHANICAL_DESIGN.md`).
 7. **Digest from the start.** The estimator-state digest is computed and logged even with one
    node; it is checked against a golden run on the PC. Later it is compared across nodes.
 8. **Frames are numbered from SYNC.** Every node stamps its frames with the number of the SYNC frame of the cycle (not a counter of

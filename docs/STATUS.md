@@ -66,6 +66,7 @@ Each row is a thing that cannot be settled without the parts. "Where" is the pro
 | 11 | **The guidance and navigation in the image**: the worst-case cycle on the G474 (double precision in software on a single-precision FPU) | the board | REC-03, `GNC.md` |
 | 12 | The golden release (ADR-021) | a release that has passed the hardware stage exits | `P-REL-01` |
 | 13 | **The flight console's serial paths**: the Nucleos' consoles, the supervisor's commands and the Pico's relays and status, on the real ports | the boards; tested against pseudo-terminals and a fake Pico only | `CONSOLE.md` section 10 |
+| 14 | **The mechanical build**: the ten printed parts of the sheet and the four the sheet lacks (print coupons, the supervisor's mount, the override panel, a redrawn injector box), the measurements they are drawn from and the platform's own (travel, slop, level, alignment of each IMU) | nothing is drawn or measured yet; the platform is on the critical path of S2 | `hardware/MECHANICAL_DESIGN.md`, `P-M1-01` step 11, `PICO_TESTS.md` E3 to E9 |
 
 ## 6. What the analyses say is missing
 
