@@ -73,6 +73,7 @@
 | Page | Covers |
 |---|---|
 | [HARDWARE_PARTS.md](hardware/HARDWARE_PARTS.md) | The bill of parts, the audit of the parts sheet, what is ordered and what is not |
+| [MECHANICAL_DESIGN.md](hardware/MECHANICAL_DESIGN.md) | Everything to draw in NX (the printed parts, the gimbal, the boxes), what to measure before drawing each and what to check after printing, the order of work and the open decisions |
 | [STAGED_BUILD.md](hardware/STAGED_BUILD.md) | One flight computer first, then two, then three: the rules and the exit tests |
 | [BENCH_LOG.md](hardware/BENCH_LOG.md) | The as-run log: every bench check and measurement, dated |
 

@@ -63,6 +63,8 @@ PC (Ubuntu) --USB hub--+-- Nucleo A, B, C (flight computers)  --- CAN Pal --+
 ### 2.5 Mechanical (3D prints and hardware)
 M3 and M2 screw kits, brass heat-set inserts, M3 standoffs (the third relay module needs **4 more M3 screws and standoffs**), 623ZZ bearings, rubber feet, PLA filament (owned printer): all on the sheet, unchanged. The third relay module needs a place in the injector box print (`3D Prints` sheet, 72 x 51.7 mm, holes 65.9 x 45 mm apart).
 
+**The full list of what to design from these parts, what to measure for each and the order of work is [`MECHANICAL_DESIGN.md`](MECHANICAL_DESIGN.md)** (20 Oct 2026). It keeps the sheet's ten printed parts, redraws the injector box for three modules, and adds what the sheet has no part for: print coupons, a mount for the supervisor, a panel for the override switches (not ordered) and, optionally, a vehicle stand-in.
+
 ### 2.6 Received so far (5 and 6 Oct 2026)
 Listed by the owner on 5 and 6 Oct, before the main shipment. Of the 5 Oct parts, the USB-CAN adapter, the hub and the 120 ohm resistors have been checked (`BENCH_LOG.md`); the rest is received and not yet inspected (P-M1-01 step 1 turns "received" into "checked"). The 6 Oct batch is the second table below, and it **was checked on 6 Oct** (`BENCH_LOG.md`).
 
@@ -136,7 +138,7 @@ TS-17's paper part chose option **O3** (`TRADE_STUDIES.md` section 9c, `HARDWARE
 ## 6. Open items
 1. **The order confirmation:** the second Pico 2, the TCXO module (model, price, and that its 32 kHz output is on the board's pins) and the third relay module.
 2. **The override parts** (section 4): buy before `P-HWO-01`.
-3. Whether the injector box print is redrawn for three relay modules.
+3. Whether the injector box print is redrawn for three relay modules (**yes, planned**: `MECHANICAL_DESIGN.md` MECH-05; the supervisor, the override panel and the print calibration have no part on the sheet either: MECH-11, 12, 00).
 4. The USB hub is full (section 2.4): decide whether a second hub is wanted for later.
 5. The CAN adapter is an SH-C31A on Cannable 2.0 (section 2.6). FD support is confirmed (section 2.6); the repository does not need it. Whether to take the isolated model (SH-C30G) because the bus-stub relays are for shorting the bus is still open.
 6. An oscilloscope to borrow for the rail and servo-current measurements (section 5).
