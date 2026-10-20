@@ -122,7 +122,10 @@ def computed() -> dict[str, tuple[object, str]]:
     sup = sorted((ROOT / "supervisor" / "include" / "sup").glob("*.hpp"))
     out["core_headers"] = (len(core) + len(sup), "headers under core/include and supervisor/include")
     out["core_lines"] = (sum(len(p.read_text().splitlines()) for p in core + sup), "lines of those headers")
-    out["fmeca_rows"] = (_count(r"^\| FM-[A-Z]+\d+\*? \|", _read("docs/verification/FMECA.md")) if (ROOT / "docs/verification/FMECA.md").exists() else 0, "rows of verification/FMECA.md")
+    sys.path.insert(0, str(ROOT / "tools" / "fmeca"))
+    import data as fmeca_data  # noqa: PLC0415
+
+    out["fmeca_rows"] = (len(fmeca_data.MODES), "failure modes in tools/fmeca/data.py")
     return out
 
 

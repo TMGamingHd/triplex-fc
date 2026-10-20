@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
       - name: Every mutant of the shard must be killed by the C++ tests
-        run: python3 tools/mutation/run_unit.py --jobs 4 --fast --rerun-survivors --shard ${{ matrix.shard }}/6
+        run: python3 tools/mutation/run_unit.py --jobs 4 --fast --exclude 'test_(environment|dynamics|slosh|flex|montecarlo|imu_datasheet|aero|vehicle_files|vehicle_general|vehicle_refusals|sim_model)' --rerun-survivors --shard ${{ matrix.shard }}/6
   simulator:
     runs-on: ubuntu-24.04
     timeout-minutes: 240

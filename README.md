@@ -21,11 +21,11 @@ flowchart LR
 
 | | |
 |---|---|
-| Host tests under ASan and UBSan | <!--m:cpp_tests-->895<!--/m--> C++, <!--m:python_tests-->650<!--/m--> Python |
+| Host tests under ASan and UBSan | <!--m:cpp_tests-->896<!--/m--> C++, <!--m:python_tests-->650<!--/m--> Python |
 | Fault campaign | <!--m:campaign_scenarios-->12,362<!--/m--> scenarios, <!--m:campaign_frames_million-->4.9<!--/m--> million frames, no property violated |
-| Fault coverage | <!--m:fault_kinds-->32<!--/m--> fault kinds, <!--m:fault_matrix_rows-->103<!--/m--> fault-matrix rows, <!--m:fmeca_rows-->102<!--/m--> failure modes in the [FMECA](docs/verification/FMECA.md) |
-| Mutation testing | <!--m:mutants_unit-->469<!--/m--> deliberate bugs in the flight code and <!--m:mutants_sim-->494<!--/m--> simulator mutants; last full run: <!--m:mutation_unit_result-->not yet recorded<!--/m--> (core), <!--m:mutation_sim_result-->not yet recorded<!--/m--> (simulator) |
-| Flight-code coverage | <!--m:coverage_core_line-->0<!--/m--> % of lines, <!--m:coverage_core_branch-->0<!--/m--> % of branches (`core/`, `supervisor/`) |
+| Fault coverage | <!--m:fault_kinds-->32<!--/m--> fault kinds, <!--m:fault_matrix_rows-->103<!--/m--> fault-matrix rows, <!--m:fmeca_rows-->49<!--/m--> failure modes in the [FMECA](docs/verification/FMECA.md) |
+| Mutation testing | <!--m:mutants_unit-->469<!--/m--> deliberate bugs in the flight code and <!--m:mutants_sim-->494<!--/m--> simulator mutants; last full run: <!--m:mutation_unit_result-->469 of 469 killed<!--/m--> (core), <!--m:mutation_sim_result-->494 of 494 killed<!--/m--> (simulator) |
+| Flight-code coverage | <!--m:coverage_core_line-->100.0<!--/m--> % of lines, <!--m:coverage_core_branch-->98.2<!--/m--> % of branches (`core/`, `supervisor/`) |
 | Requirements and decisions | <!--m:requirements-->187<!--/m--> requirements, <!--m:adrs-->58<!--/m--> ADRs |
 | On a board | nothing yet |
 

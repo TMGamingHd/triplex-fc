@@ -1,0 +1,44 @@
+{
+  "coverage_core_branch": {
+    "command": "same",
+    "commit": "f461047",
+    "date": "2026-10-19",
+    "value": 98.2
+  },
+  "coverage_core_line": {
+    "command": "python3 tools/coverage/core_coverage.py --min-line 100 --min-branch 98 --sim-min-line 99 --sim-min-branch 90",
+    "commit": "f461047",
+    "date": "2026-10-19",
+    "value": 100.0
+  },
+  "coverage_sim_branch": {
+    "command": "same",
+    "commit": "f461047",
+    "date": "2026-10-19",
+    "value": 90.1
+  },
+  "coverage_sim_line": {
+    "command": "same",
+    "commit": "f461047",
+    "date": "2026-10-19",
+    "value": 99.1
+  },
+  "mutation_campaign_result": {
+    "command": "cd sim && python3 -m campaign.mutate (19 Oct 2026; the other 392 mutants are C++-only, each classified in tools/mutation/mutations.py CAMPAIGN_SKIP)",
+    "commit": "f461047",
+    "date": "2026-10-19",
+    "value": "77 of 77 reachable caught"
+  },
+  "mutation_sim_result": {
+    "command": "python3 tools/mutation/run_sim.py (19 Oct 2026, 5 h with the other runs sharing the machine)",
+    "commit": "f461047",
+    "date": "2026-10-19",
+    "value": "494 of 494 killed"
+  },
+  "mutation_unit_result": {
+    "command": "python3 tools/mutation/run_unit.py --fast --exclude <sim tests> --rerun-survivors (19 Oct 2026, 3 h on 12 threads)",
+    "commit": "f461047",
+    "date": "2026-10-19",
+    "value": "469 of 469 killed"
+  }
+}

@@ -516,7 +516,9 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
 # distinguishes them from the real code.
 CAMPAIGN_SKIP = {
     # the supervisor's code is not in the campaign's reach (the campaign drives the flight bus)
-    *(n for n in MUTATIONS if n.startswith(("sup_", "rs_", "sh_", "split_", "su_", "rel_", "t0_", "ph_", "ss_", "act_pad_", "act_frame_", "act_seu_", "act_cfg_"))),  # the supervisor, the resynchronisation and the sensor split are not in the campaign's reach (it runs the manager with the split off)
+    # (added by the review of 19 Oct 2026, with the reason for each: actg_ = ACT's ground-command path and cons_ = the sensor consensus, neither of which the campaign runs; log_ and reset_ = the flight and reset logs, which only the firmware keeps;
+    #  est_ = the estimator, which the peers do not run; int_ = the integrity guards, which only a bit flipped in memory exercises and the campaign never flips one)
+    *(n for n in MUTATIONS if n.startswith(("sup_", "rs_", "sh_", "split_", "su_", "rel_", "t0_", "ph_", "ss_", "act_pad_", "act_frame_", "act_seu_", "act_cfg_", "actg_", "cons_", "log_", "reset_", "est_", "int_"))),  # the supervisor, the resynchronisation and the sensor split are not in the campaign's reach (it runs the manager with the split off)
     # the launch sequence is not in the campaign's reach (its peers send no mission frame and no launch command)
     "mission_follower_ignores_sync_before_t_zero", "mission_flying_follower_adopts_sync", "mission_disagreement_not_reported", "mission_not_counted_through_a_gap", "mission_count_wraps_at_the_largest_value", "launch_by_a_follower", "launch_twice", "scrub_after_t_zero", "scrub_by_a_follower", "mission_countdown_boundary", "mission_flight_frames_off_by_one", "gate_accepts_two_healthy_nodes", "gate_accepts_a_node_not_ready", "gate_ignores_the_safe_request", "gate_ignores_act", "launch_needs_no_arm", "heartbeat_ready_not_packed",
     # the pad phase is not in the campaign's reach (its peers do not run the flight function)
@@ -527,6 +529,8 @@ CAMPAIGN_SKIP = {
     "config_not_sanitised", "tolerance_not_validated", "persistence_not_validated",  # the peers never present a bad configuration
     "scrub_ignores_node_state", "scrub_ignores_safe_flag", "scrub_ignores_config", "config_digest_ignores_the_split_flag",   # nor flip a bit of the manager's memory
     "config_not_restored", "queue_length_unchecked",                                  # nor overflow its command queue
+    "fm_popcount_misses_the_top_bit", "fm_alpha_threshold_exclusive", "fm_alpha_zero_threshold_latches", "fm_alpha_k_unbounded", "fm_stuck_limit_exclusive", "fm_stuck_first_sample_compared", "fm_monitor_probation_never_ends",   # exact boundaries and configuration edges of the monitors (the campaign samples around a threshold, a limit or a default and never lands on it; a monitor's own probation is not used by the manager); the C++ tests pin them exactly
+    "ground_queue_full_uses_up_the_counter",   # the campaign's operator sends one command a frame, never the five that overflow the queue
     "voter_nan_leaks",          # an int16 sample cannot be NaN or infinite
     "decoder_ignores_len",      # the peers never send a frame of the wrong length
     "counter_decrements",       # a statistics counter is not an input to any decision

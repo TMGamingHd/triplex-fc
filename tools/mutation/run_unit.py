@@ -4,7 +4,7 @@ one test fails. Usage: python3 tools/mutation/run_unit.py [--jobs N] [--fast] [-
 
 --shard K/N       run every Nth mutant starting at the Kth (1-based): the weekly workflow splits the table over several runners, none of which can finish it alone
 --changed-since   only the mutants of a header that differs from REF (a branch, a commit): what a change to core/ should be checked with before it is pushed
---rerun-survivors after a --fast pass, run again with the sanitizers the mutants that survived it: a mutant that only a sanitizer can kill costs one slow build, not all of them
+--rerun-survivors after a --fast pass, run again with the sanitizers, and with every test file whatever --exclude left out, the mutants that survived it: a mutant that only a sanitizer or a simulator test can kill costs one slow build, not all of them
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mutations import MUTATIONS, ROOT, build_include  # noqa: E402
 
 TESTS = sorted((ROOT / "tests").glob("*.cpp"))
+ALL_TESTS = list(TESTS)   # (TESTS may be cut by --exclude; the survivors are run again against all of them)
 # Test files that exercise the simulator rather than the flight core. They are slow to compile and to run, and a core mutant they alone could kill shows up as a survivor of the run without them,
 # which is then run again with them (--exclude is how the first run leaves them out).
 FLAGS = ["-std=c++17", "-O1", "-g", "-fsanitize=address,undefined", "-fno-exceptions", "-fno-rtti", "-w"]
@@ -84,6 +85,7 @@ def main(argv=None) -> int:
     if survived and args.fast and args.rerun_survivors:
         print(f"\n{len(survived)} survived the fast pass; again with the sanitizers: {', '.join(survived)}", flush=True)
         FLAGS = ["-std=c++17", "-O1", "-g", "-fsanitize=address,undefined", "-fno-exceptions", "-fno-rtti", "-w"]
+        TESTS = list(ALL_TESTS)   # and against every test file, the simulator's included: a core mutant that only those can kill is not a survivor
         again = survived
         survived = []
         with ThreadPoolExecutor(max_workers=args.jobs) as ex:

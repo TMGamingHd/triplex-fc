@@ -56,7 +56,7 @@
 |---|---|
 | [REQUIREMENTS.md](verification/REQUIREMENTS.md) | Every requirement, how it is verified and where it stands |
 | [FAULT_MATRIX.md](verification/FAULT_MATRIX.md) | Every fault, how it is injected, the expected detection and response, and the test |
-| [FMECA.md](verification/FMECA.md) | **Failure modes, effects and criticality** (ECSS-Q-ST-30-02C): <!--m:fmeca_rows-->102<!--/m--> failure modes ranked by severity and probability, the critical items and the single points, the hardware-software interaction analysis, and a software FMEA of the data faults; generated and checked against the fault matrix and the campaign |
+| [FMECA.md](verification/FMECA.md) | **Failure modes, effects and criticality** (ECSS-Q-ST-30-02C): <!--m:fmeca_rows-->49<!--/m--> failure modes ranked by severity and probability, the critical items and the single points, the hardware-software interaction analysis, and a software FMEA of the data faults; generated and checked against the fault matrix and the campaign |
 | [FMEA.md](verification/FMEA.md) | The earlier gap analysis: what is modelled, covered, or not (how the fault kinds grew from 13 to 32) |
 | [FAULT_CAMPAIGN.md](verification/FAULT_CAMPAIGN.md) | The systematic fault campaign: the numbers (generated), the edge cases found and what was done |
 | [CODING_STANDARD.md](verification/CODING_STANDARD.md) | The flight-code rules and the tool that enforces each |
