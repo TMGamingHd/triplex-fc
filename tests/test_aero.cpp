@@ -771,3 +771,42 @@ TFC_TEST(aero_cfd_the_table_is_read_and_written_and_a_bad_one_is_refused) {
   errors.clear();
   CHECK(!sim::read_vehicle(bad, v, errors));
 }
+
+// Verifies: TFC-SIM-018
+TFC_TEST(aero_the_damping_of_a_turning_body_follows_the_lift_slope_of_its_fins_with_mach) {
+  // The turning of the body adds a damping that is the fins' lift slope times their arm squared times the rate (aero.hpp rotation_increment, which repeats the Mach scaling of `slopes`): found by the repaired
+  // mutation run, where aero_fin_slope_independent_of_mach_copy2 survived. The fins' share is the difference between the finned body and the same body without them; with the speed and the dynamic
+  // pressure and speed divided out it must follow the fins' lift slope, which the summary gives, from Mach 0.5 to Mach 2.
+  sim::Params finned = shaped_body();
+  finned.spec.aero.full_regime = true;
+  sim::Params bare = finned;
+  bare.spec.stages[0].stabilizers.clear();
+  const auto damping = [](const sim::Params& p, double mach) {
+    const sim::Air air = sim::air_at(5000.0);
+    const double speed = mach * air.sound;
+    sim::Scenario still = at_speed(sim::V3{speed, 0.0, 0.0}, 5000.0);
+    sim::Scenario turning = still;
+    turning.initial.w = sim::V3{0.0, 0.0, 0.02};   // (a slow turn: the linear damping, with the local angle of attack small)
+    const sim::Vehicle6 a(p, still);
+    const sim::Vehicle6 b(p, turning);
+    return (b.current_loads().m_aero.z - a.current_loads().m_aero.z) / (a.current_loads().dynamic_pressure / speed * 0.02);   // (the damping goes as rho v w: q / v times the rate)
+  };
+  const auto fin_slope = [](const sim::Params& p, const sim::Params& q, double mach) {
+    double cn_f = 0.0;
+    double cn_b = 0.0;
+    double x = 0.0;
+    double ca = 0.0;
+    double s = 0.0;
+    sim::Vehicle6 f(p, at_speed(sim::V3{1.0, 0.0, 0.0}, 5000.0));
+    sim::Vehicle6 b(q, at_speed(sim::V3{1.0, 0.0, 0.0}, 5000.0));
+    f.aero_summary(mach, cn_f, x, ca, s);
+    b.aero_summary(mach, cn_b, x, ca, s);
+    return cn_f - cn_b;
+  };
+  const double d_low = damping(finned, 0.5) - damping(bare, 0.5);
+  const double d_high = damping(finned, 2.0) - damping(bare, 2.0);
+  const double slope_low = fin_slope(finned, bare, 0.5);
+  const double slope_high = fin_slope(finned, bare, 2.0);
+  CHECK(slope_low > 0.0 && slope_high > 0.0 && std::fabs(slope_high / slope_low - 1.0) > 0.1);   // the fins' lift slope does change between the two (otherwise the test says nothing)
+  CHECK(d_low != 0.0 && close(d_high / d_low, slope_high / slope_low, 0.03));                      // and so does the damping they add
+}

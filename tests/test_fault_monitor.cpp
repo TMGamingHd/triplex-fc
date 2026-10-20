@@ -230,3 +230,12 @@ TFC_TEST(the_stuck_detector_run_length_saturates_instead_of_wrapping) {
   CHECK(flagged);  // still flagged after 70,000 identical frames: the 16-bit run counter stopped at its maximum
   CHECK(!d.update(43));
 }
+
+TFC_TEST(stuck_detector_does_not_count_its_first_sample_as_a_repeat_even_if_it_is_zero) {
+  // The first sample has nothing before it. A detector that compared it with its initial value would flag a sensor that starts at zero one frame early (the repaired mutation run: fm_stuck_first_sample_compared).
+  StuckDetector d(3);
+  CHECK(!d.update(0));   // the baseline
+  CHECK(!d.update(0));   // 1 repeat
+  CHECK(!d.update(0));   // 2
+  CHECK(d.update(0));    // 3 repeats: stuck, on the fourth sample
+}

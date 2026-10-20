@@ -670,7 +670,7 @@ nodes) and a seed; an *oracle* is a property checked on the per-frame CSV from `
 cmake -S .. -B ../build/rel -DCMAKE_BUILD_TYPE=Release && cmake --build ../build/rel --target tfc_replay
 export TFC_REPLAY_BIN=$PWD/../build/rel/tfc_replay
 python3 -m campaign.run --list                                   # the groups and their sizes
-python3 -m campaign.run --out /tmp/campaign.jsonl                # everything (about 11,300 scenarios, 2 minutes on 12 cores)
+python3 -m campaign.run --out /tmp/campaign.jsonl                # everything (about <!--m:campaign_scenarios-->12,362<!--/m--> scenarios, a few minutes on 12 cores)
 python3 -m campaign.run --group bias_gyro --group phase_sweep    # only some groups (repeatable); --limit N for a quick look
 python3 -m campaign.report /tmp/campaign.jsonl bias_gyro drift   # the Markdown tables of docs/verification/FAULT_CAMPAIGN.md, plus response curves
 python3 -m campaign.mutate                                       # does the campaign notice deliberate bugs in core/? (about 90 minutes)
@@ -686,8 +686,8 @@ python3 -m campaign.mutate                                       # does the camp
 | `--strict` | Exit status 1 if any anomaly was raised (CI uses this). Without it the status is 0 and the anomalies are only printed and stored. |
 
 With `--strict` the exit status is 1 if any scenario raised an anomaly. Two further tools prove the *tests* can fail:
-`python3 tools/mutation/run_unit.py` (390 deliberate bugs in `core/` and `supervisor/`, each must be caught by the C++ tests) and
-`python3 -m campaign.mutate` (the 58 of them that this campaign can see, against this campaign). The decision hash in the results makes a refactor
+`python3 tools/mutation/run_unit.py` (<!--m:mutants_unit-->469<!--/m--> deliberate bugs in `core/` and `supervisor/`, each must be caught by the C++ tests) and
+`python3 -m campaign.mutate` (the <!--m:mutants_campaign-->77<!--/m--> of them that this campaign can see, against this campaign). The decision hash in the results makes a refactor
 provable: run the campaign before and after, and the hashes of every scenario must be identical.
 
 ## Tests

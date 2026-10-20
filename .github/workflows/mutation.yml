@@ -1,27 +1,45 @@
 name: mutation
 # Verifies: TFC-SW-011 (every deliberate bug in tools/mutation/mutations.py is caught by the C++ tests, and by the campaign unless it is a configuration or equivalent mutant)
-# Mutation testing is the check on the checks: deliberate bugs are injected into a copy of core/ and every one must be caught.
-# It takes a while (the unit suite rebuilds for each mutant, the campaign reruns for each), so it runs weekly and on demand,
-# not on every pull request. See docs/verification/CODING_STANDARD.md section 3.
+# Mutation testing is the check on the checks: deliberate bugs are injected into a copy of core/ and of sim/vehicle and every one must be caught.
+#
+# History, so that the next change to this file does not repeat it. The workflow used to run weekly with one job per table. Its three runs (5, 12 and 19 October 2026) never passed:
+# the unit job needs more than the six hours a job may run (it was cancelled at the limit each time), the simulator job ran 5.5 hours and then reported 17 survivors, and the three
+# jobs together used about 18 runner-hours a week against a free plan of 2,000 minutes a month. Now:
+#  * each table is split over several runners (`--shard K/N`), each of which finishes in well under two hours; the unit tables run the fast pass and then re-run its survivors with the
+#    sanitizers (`--rerun-survivors`), so only a mutant that needs a sanitizer pays for one;
+#  * it runs on the first of the month and on demand (Actions > mutation > Run workflow), about 750 runner-minutes a run, a third of the month's allowance;
+#  * a developer checks a change to core/ before pushing it with `python3 tools/mutation/run_unit.py --fast --changed-since origin/main`;
+#  * the result of the last full run is recorded in docs/metrics.json (python3 tools/docs/metrics.py record ...) so that the documents quote it with its date.
 on:
   schedule:
-    - cron: "17 5 * * 1"
+    - cron: "17 5 1 * *"
   workflow_dispatch:
 jobs:
   unit-tests:
     runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
-      - name: Every mutant must be killed by the C++ tests
-        run: python3 tools/mutation/run_unit.py --jobs 4
+      - name: Every mutant of the shard must be killed by the C++ tests
+        run: python3 tools/mutation/run_unit.py --jobs 4 --fast --exclude 'test_(environment|dynamics|slosh|flex|montecarlo|imu_datasheet|aero|vehicle_files|vehicle_general|vehicle_refusals|sim_model)' --rerun-survivors --shard ${{ matrix.shard }}/6
   simulator:
     runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
-      - name: Every deliberate bug in the vehicle simulator must be killed by the C++ tests
-        run: python3 tools/mutation/run_sim.py --jobs 4
+      - name: Every deliberate bug of the shard in the vehicle simulator must be killed by the C++ tests
+        run: python3 tools/mutation/run_sim.py --jobs 4 --shard ${{ matrix.shard }}/8
   campaign:
     runs-on: ubuntu-24.04
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
       - name: Install tools

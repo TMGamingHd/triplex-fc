@@ -388,7 +388,7 @@ class Telemetry:
             return
         if a.state != old.state:
             lvl = "ok" if a.state == 1 else "info" if a.state == 0 else "crit"
-            self.emit(t, lvl, "ACT", "act-state", f"ACT {K.STATE_NAMES_SAFE[old.state]} -> {K.STATE_NAMES_SAFE[a.state]} (cause: {P.CAUSE_NAMES[min(a.cause, 4)]})")
+            self.emit(t, lvl, "ACT", "act-state", f"ACT {K.STATE_NAMES_SAFE[old.state]} -> {K.STATE_NAMES_SAFE[a.state]} (cause: {P.CAUSE_NAMES[min(a.cause, len(P.CAUSE_NAMES) - 1)]})")
         if a.excluded_nodes != old.excluded_nodes:
             gone = [K.NODE_NAMES[i] for i in range(3) if (a.excluded_nodes >> i) & 1 and not (old.excluded_nodes >> i) & 1]
             back = [K.NODE_NAMES[i] for i in range(3) if not (a.excluded_nodes >> i) & 1 and (old.excluded_nodes >> i) & 1]
@@ -661,7 +661,7 @@ class Telemetry:
             if not self._alive(self.act_t, now, K.ACT_TIMEOUT_S):
                 add("crit", "act-silent", "ACT is silent.")
             elif self.act.state >= 2:
-                add("crit", "act-safe", f"ACT is in {P.STATE_NAMES[self.act.state]} (cause: {P.CAUSE_NAMES[min(self.act.cause, 4)]}).")
+                add("crit", "act-safe", f"ACT is in {P.STATE_NAMES[self.act.state]} (cause: {P.CAUSE_NAMES[min(self.act.cause, len(P.CAUSE_NAMES) - 1)]}).")
             if self.act.excluded_nodes:
                 add("warn", "act-excl", "ACT has excluded node " + ", ".join(K.NODE_NAMES[i] for i in range(3) if (self.act.excluded_nodes >> i) & 1) + " from its vote.")
             if self.act.held:
@@ -714,7 +714,7 @@ class Telemetry:
             a = self.act
             act = {"alive": self._alive(self.act_t, now, K.ACT_TIMEOUT_S), "age": round(max(0.0, now - self.act_t), 3), "state": a.state, "state_name": P.STATE_NAMES[a.state] if a.state < len(P.STATE_NAMES) else str(a.state),
                    "pitch": round(a.pitch_deg, 4), "yaw": round(a.yaw_deg, 4), "held": a.held, "vote_status": P.VOTE_STATUS_NAMES[min(a.vote_status, 5)],
-                   "voted": [bool((a.voted_nodes >> i) & 1) for i in range(3)], "excluded": [bool((a.excluded_nodes >> i) & 1) for i in range(3)], "cause": P.CAUSE_NAMES[min(a.cause, 4)], "frames": self.act_count}
+                   "voted": [bool((a.voted_nodes >> i) & 1) for i in range(3)], "excluded": [bool((a.excluded_nodes >> i) & 1) for i in range(3)], "cause": P.CAUSE_NAMES[min(a.cause, len(P.CAUSE_NAMES) - 1)], "frames": self.act_count}
         sim = None
         if self.sim_state is not None:
             fl = self.sim_flags

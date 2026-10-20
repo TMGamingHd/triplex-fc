@@ -4,7 +4,7 @@ A desk-scale fault-tolerant flight computer: three redundant STM32 flight comput
 
 ![CI](https://github.com/TMGamingHd/triplex-fc/actions/workflows/ci.yml/badge.svg)
 
-**Status (8 Oct 2026):** everything that can be built and checked without the hardware is built and checked; the parts have arrived and **nothing has run on a board yet** (the first bench day is [`docs/procedures/FIRST_HARDWARE_DAYS.md`](docs/procedures/FIRST_HARDWARE_DAYS.md)). [`docs/STATUS.md`](docs/STATUS.md) says what is built, what is proven, and what waits for the hardware; [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) says what is not claimed.
+**Status (19 Oct 2026):** everything that can be built and checked without the hardware is built and checked. The parts have arrived and **nothing has run on a board yet**: the timing, the real bus, the real IMUs and the detection times on hardware are the work that is left, and every hardware claim stays a target until a log exists. [`docs/STATUS.md`](docs/STATUS.md) says what is built, what is proven and what waits for the hardware; [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) says what is not claimed; [`docs/verification/FMECA.md`](docs/verification/FMECA.md) ranks what could go wrong.
 
 ```mermaid
 flowchart LR
@@ -17,33 +17,46 @@ flowchart LR
   SUP[Supervisor<br/>own clock, watchdog] -. FRAME / KICK / NRST / PWR / SAFE / T0 .- A & B & C & ACT
 ```
 
+## The evidence, in numbers
+
+| | |
+|---|---|
+| Host tests under ASan and UBSan | <!--m:cpp_tests-->896<!--/m--> C++, <!--m:python_tests-->650<!--/m--> Python |
+| Fault campaign | <!--m:campaign_scenarios-->12,362<!--/m--> scenarios, <!--m:campaign_frames_million-->4.9<!--/m--> million frames, no property violated |
+| Fault coverage | <!--m:fault_kinds-->32<!--/m--> fault kinds, <!--m:fault_matrix_rows-->103<!--/m--> fault-matrix rows, <!--m:fmeca_rows-->49<!--/m--> failure modes in the [FMECA](docs/verification/FMECA.md) |
+| Mutation testing | <!--m:mutants_unit-->469<!--/m--> deliberate bugs in the flight code and <!--m:mutants_sim-->494<!--/m--> simulator mutants; last full run: <!--m:mutation_unit_result-->469 of 469 killed<!--/m--> (core), <!--m:mutation_sim_result-->494 of 494 killed<!--/m--> (simulator) |
+| Flight-code coverage | <!--m:coverage_core_line-->100.0<!--/m--> % of lines, <!--m:coverage_core_branch-->98.2<!--/m--> % of branches (`core/`, `supervisor/`) |
+| Requirements and decisions | <!--m:requirements-->187<!--/m--> requirements, <!--m:adrs-->58<!--/m--> ADRs |
+| On a board | nothing yet |
+
+These come from `tools/docs/metrics.py`: computed from the repository, or recorded with the date of the run that made them. Each is explained, with its command, in [`docs/STATUS.md`](docs/STATUS.md) section 2.
+
+## What is built
+
 | Area | State |
 |---|---|
-| **Flight core** (`core/`, C++17, header-only, no heap, no exceptions): voter, fault manager (3-of-5 and leaky count, probation, strikes, sticky Safe, authenticated commands), sensor/compute split, resynchronisation, releases, phases, estimator, controller, ACT logic | Built. 691 host tests under ASan and UBSan, 100 % line and 98.4 % branch coverage, 390 deliberate bugs all caught ([CODING_STANDARD](docs/verification/CODING_STANDARD.md)) |
-| **Supervisor** (`supervisor/`, `firmware/supervisor`): watchdog and reset ladder, boot sequencing, T-zero, the clock of record, the override sense lines | Built (logic and Pico application); not run on a board |
-| **Firmware** (Zephyr; `firmware/`: flight computer, actuator node, Pico, supervisor) | Builds for `native_sim`, `nucleo_g474re` and `rpi_pico2`; live tests with real instances on a virtual CAN bus; see [firmware/README.md](firmware/README.md) |
-| **Simulator and virtual peers** (`sim/`, `tools/sim`): a 6-DOF model that flies **any vehicle described in a file** (stages, tanks, engines, fins, thrusters, wheels: [VEHICLE_SPEC](docs/design/VEHICLE_SPEC.md), five examples in `vehicles/`), platform model, fake FC-B and FC-C with 32 kinds of fault injection | Built; see [sim/README.md](sim/README.md) |
-| **Flight console** (`console/`, [docs/design/CONSOLE.md](docs/design/CONSOLE.md)): one web page, Python standard library only and local, that shows the launch sequence, how the three computers vote, where the vehicle is, the faults and their **measured** detection, sends the authenticated commands (launch, scrub, reintegrate, ...), and **builds the flight computers for the vehicle you pick** on the Launch tab (ADR-036: every example vehicle flown through the real firmware) | Built; exercised live against the real firmware on `vcan0`; its serial paths have not met a board |
-| **3D viewer** (`console/web/viewer/`, [docs/design/VIEWER.md](docs/design/VIEWER.md)): the flight seen as a vehicle (a Starship V3-class stack, or any vehicle file, over optional NASA Earth imagery, or a CAD model of your own) in a physically drawn sky, in seven lenses: a **broadcast** (a webcast's layout: a block for each stage, the clock, the events, a camera director and a gyroscope of the attitude; ADR-052), overview, aerodynamics (centre of pressure and centre of mass, the pressure on the skin, streamlines, the shock), atmosphere, propulsion, loads and attitude; live from the simulator or from a recorded flight | Built; live against the real firmware on `vcan0` (50 poses a second); every picture says whether it is the simulator's number, a formula or an illustration |
-| **Flow solver** (`sim/cfd`, `tools/sim/tfc_cfd.cpp`, ADR-050 and ADR-051, [docs/design/CFD.md](docs/design/CFD.md)): the Euler equations in 3D on the vehicle's own outline (a Cartesian grid with the body cut out, shocks captured; air in dissociating equilibrium; the skin friction and heating by a boundary-layer law; flaps and grid fins as geometry), offline, tables of its coefficients that **the flight flies on**, and an axisymmetric one on the graphics card in the 3D viewer's CFD view that follows the flight's Mach number | Built; checked against exact solutions (a wedge's shock, Taylor-Maccoll cones, Sod's tube, a sphere, real-gas shocks, laminar similarity and Van Driest: 0.02 to 2 % on slender bodies, 3 to 9 % at a blunt stagnation point); on the Starship-class body CN-alpha is 1.3 to 1.9 times the build-up's and its centre of pressure 20 to 30 m further forward at hypersonic speed; flown on its tables (the whole mission, 40 noise seeds) the ship reaches orbit 40 times and the booster is caught 39 times (the build-up: 40 and 39); the solver's flaps and fins are not grid-converged and the flight keeps the plant's plates; equilibrium real gas, no wake model, no separation |
-| **Real launch-site wind** (`tools/weather`, `vehicles/weather/`, ADR-049, [docs/design/ENVIRONMENT.md](docs/design/ENVIRONMENT.md) section 4): a balloon's measured wind (NOAA IGRA: Starbase, Cape Canaveral, Vandenberg, Wallops) by height and direction, so there is a crosswind where the day has one; wind exists only where there is air | Built; five real days committed, one chooser in the console's Vehicle tab; with a 70 to 83 m/s winter jet the booster is caught at Starbase and Vandenberg and **crashes 4.7 m from the pad at Cape Kennedy** (one seed) |
-| **Guidance, navigation and a whole mission** (`core/include/tfc/` `nav`, `peg`, `attitude`, `descent`, `mission`; [docs/design/GNC.md](docs/design/GNC.md), [docs/design/RECOVERY.md](docs/design/RECOVERY.md)): the flight computers navigate with a GNSS-aided strapdown solution, steer a burn to a circular orbit (PEG), turn the vehicle through any angle, and bring a stage back (boost-back, entry on grid fins, landing burn, **caught by a tower**); a single-stage rocket lands under parachutes. `build/rel/tfc_mission vehicles/missions/starship_return.json` designs and flies it: the ship reaches a 234 x 257 km orbit and the booster is caught | Built and flown **on the host only**: no timing on the board, no firmware path (GNC.md section 11); a model of a Starship V3 class vehicle from public numbers and my estimates, not SpaceX data |
-| **Fault campaign**: every fault kind over its input range, safety properties checked on every frame | 12,362 scenarios, 4.9 million frames, no property violated: [FAULT_CAMPAIGN](docs/verification/FAULT_CAMPAIGN.md), [FMEA](docs/verification/FMEA.md) |
-| **Hardware** (the platform, the rig, the supervisor's board, the overrides) | Parts arrived 8 Oct 2026; procedures written: [docs/procedures/](docs/procedures/FIRST_HARDWARE_DAYS.md) |
+| **Flight core** (`core/`, `supervisor/`; C++17, header-only, no heap, no exceptions): voter, fault manager, sensor/compute split, state resynchronisation, estimator, controller, actuator-node and supervisor logic | Built and tested on the host; reviewed by a second reader ([review](docs/verification/CODE_REVIEW_CORE.md)) |
+| **Firmware** (Zephyr; `firmware/`): flight computer, actuator node, Pico, supervisor | Builds for `native_sim`, `nucleo_g474re`, `rpi_pico2`; live tests with real instances on a virtual CAN bus ([firmware/README.md](firmware/README.md)) |
+| **Simulator and virtual peers** (`sim/`): a 6-DOF model that flies **any vehicle described in a file** ([VEHICLE_SPEC](docs/design/VEHICLE_SPEC.md)), platform model, fake FC-B and FC-C with 32 kinds of fault injection | Built ([sim/README.md](sim/README.md)) |
+| **Flight console** and **3D viewer** (`console/`): one local web page for the launch sequence, the votes, the faults and their **measured** detection, every ground command; the flight seen as a vehicle ([CONSOLE](docs/design/CONSOLE.md), [VIEWER](docs/design/VIEWER.md)) | Built; exercised live on `vcan0`; the serial paths have not met a board |
+| **Guidance, navigation and a whole mission**, with an **Euler flow solver** and real launch-site winds ([GNC](docs/design/GNC.md), [CFD](docs/design/CFD.md), [ENVIRONMENT](docs/design/ENVIRONMENT.md)): a Starship V3 class stack reaches orbit and its booster is caught by the tower, in a model built from public numbers and my estimates, not SpaceX data | Built and flown **on the host only**: no timing on the board, no mutants |
+| **Analyses** ([hazards](docs/verification/HAZARDS.md), [FMECA](docs/verification/FMECA.md), [safety case](docs/verification/SAFETY_CASE.md), [risks](docs/verification/RISKS.md), [validation](docs/verification/VALIDATION.md)) | Written; the FMECA is checked by a tool against the fault matrix and the campaign |
+| **Hardware** (the platform, the rig, the supervisor's board, the overrides) | Parts arrived 8 Oct 2026; procedures written ([docs/procedures/](docs/procedures/FIRST_HARDWARE_DAYS.md)) |
 
-## Build and test (host)
+## Build, test, run
+
 ```bash
-cmake -S . -B build -G Ninja -DTFC_SANITIZE=ON
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake -S . -B build -G Ninja -DTFC_SANITIZE=ON && cmake --build build && ctest --test-dir build --output-on-failure   # the C++ suite and the strict gates
+(cd sim && python3 -m unittest discover -s tests -t .)                                                              # the Python suite
+console/tfc-console                                                                                                  # the flight console (console/README.md)
 ```
-The whole list, including the campaign, mutation testing and the live tests, is `docs/STATUS.md` section 7.
+The whole list, including the campaign, mutation testing and the live tests, is [`docs/STATUS.md`](docs/STATUS.md) section 9.
 
 ## CI
-The workflow is `.github/workflows/ci.yml` (runs on pull requests and on `main`): strict build, ASan/UBSan tests, clang-tidy, cppcheck, the coding-standard and coverage gates, the fault campaign (a sample on pull requests), the firmware builds and the live triplex test. `.github/workflows/mutation.yml` runs the mutation checks weekly.
+`.github/workflows/ci.yml` runs on pull requests and on `main`: the documentation checks (including that every number quoted is current and that the FMECA covers the fault matrix), the strict build, the sanitizer tests, clang-tidy, cppcheck, the coding-standard and coverage gates, the fault campaign (a sample on pull requests), the mission runs, the firmware builds and the live triplex test. `.github/workflows/mutation.yml` runs the mutation checks monthly and on demand.
 
 ## Contributing
-This repo uses GitHub Flow: `main` is always green, all work happens on short-lived branches and lands by squash-merged PR. See [CONTRIBUTING.md](CONTRIBUTING.md).
+GitHub Flow: `main` is always green, all work happens on short-lived branches and lands by squash-merged PR. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Docs
 Start at the index: **[docs/README.md](docs/README.md)**. The five-minute reading is [STATUS](docs/STATUS.md), [LIMITATIONS](docs/LIMITATIONS.md), [ARCHITECTURE](docs/design/ARCHITECTURE.md) and [PROOF](docs/project/PROOF.md); the decisions are in [DECISIONS](docs/decisions/DECISIONS.md).

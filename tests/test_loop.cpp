@@ -144,6 +144,7 @@ TFC_TEST(consensus_is_not_a_value_with_no_data_or_three_that_disagree) {
   }
   in = c.consensus();
   CHECK(!in.gyro_ok);  // three valid, no two agree
+  CHECK(in.gyro_dps.v[0] == 0.0F);  // and the median of three that do not agree is not handed on as if it were a reading (the review of core/: mutant cons_failed_axis_keeps_its_value)
 }
 
 TFC_TEST(consensus_ignores_what_is_not_a_good_sensor_frame) {

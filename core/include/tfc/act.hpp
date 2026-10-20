@@ -24,6 +24,7 @@
 
 #include "tfc/crc8.hpp"
 #include "tfc/fault_monitor.hpp"
+#include "tfc/integrity.hpp"
 #include "tfc/protocol.hpp"
 #include "tfc/resetlog.hpp"
 #include "tfc/voter.hpp"
@@ -32,7 +33,7 @@ namespace tfc {
 
 enum class ActMode : uint8_t { Standby = 0, Nominal = 1, Safe = 2 };
 enum class SafePhase : uint8_t { None = 0, Hold = 1, Ramp = 2, Neutral = 3 };
-enum class SafeCause : uint8_t { None = 0, LostVotes = 1, FcRequest = 2, HardwareLine = 3, Reset = 4 };
+enum class SafeCause : uint8_t { None = 0, LostVotes = 1, FcRequest = 2, HardwareLine = 3, Reset = 4, Integrity = 5 };  // Integrity: ACT's own mode byte failed its check (ADR-015 applied to ACT)
 
 struct ActConfig {
   float tol_deg = 0.05F;             // two commands agree if they differ by no more than this
@@ -46,6 +47,65 @@ struct ActConfig {
   uint8_t persist_n = 5U;
   bool resume_from_stored = true;    // after a reset: false starts the Safe hold from neutral instead of the stored output
 };
+
+// What validate_act_config() found wrong (a bit mask). Each bad field is replaced by its default, like the manager's configuration (TFC-SAFE-005, FDIR-026).
+namespace actcfgerr {
+constexpr uint32_t kTolerance = 1U << 0;    // a vote tolerance that is not a finite positive number
+constexpr uint32_t kRate = 1U << 1;         // a slew or ramp rate that is not a finite positive number
+constexpr uint32_t kPersistence = 1U << 2;  // M-of-N outside 1 <= M <= N <= 32
+constexpr uint32_t kCount = 1U << 3;        // a frame count of zero where zero would switch the protection off (lost votes, standby, exit)
+}  // namespace actcfgerr
+
+namespace detail {
+[[nodiscard]] inline bool act_positive(float v) noexcept { return v > 0.0F && v <= 1.0e6F; }  // false for NaN and for infinity
+}  // namespace detail
+
+[[nodiscard]] inline uint32_t validate_act_config(const ActConfig& c) noexcept {
+  uint32_t e = 0U;
+  if (!detail::act_positive(c.tol_deg)) {
+    e |= actcfgerr::kTolerance;
+  }
+  if (!detail::act_positive(c.normal_slew) || !detail::act_positive(c.ramp_deg_per_frame)) {
+    e |= actcfgerr::kRate;
+  }
+  if (c.persist_m < 1U || c.persist_m > c.persist_n || c.persist_n > 32U) {
+    e |= actcfgerr::kPersistence;
+  }
+  if (c.lost_votes < 1U || c.standby_frames < 1U || c.exit_frames < 1U) {
+    e |= actcfgerr::kCount;
+  }
+  return e;
+}
+
+// The configuration ACT actually runs with; `errors` receives validate_act_config()'s verdict on the original.
+[[nodiscard]] inline ActConfig sanitize_act_config(const ActConfig& in, uint32_t& errors) noexcept {
+  const ActConfig def{};
+  ActConfig c = in;
+  errors = validate_act_config(in);
+  if ((errors & actcfgerr::kTolerance) != 0U) {
+    c.tol_deg = def.tol_deg;
+  }
+  if (!detail::act_positive(c.normal_slew)) {
+    c.normal_slew = def.normal_slew;
+  }
+  if (!detail::act_positive(c.ramp_deg_per_frame)) {
+    c.ramp_deg_per_frame = def.ramp_deg_per_frame;
+  }
+  if ((errors & actcfgerr::kPersistence) != 0U) {
+    c.persist_m = def.persist_m;
+    c.persist_n = def.persist_n;
+  }
+  if (c.lost_votes < 1U) {
+    c.lost_votes = def.lost_votes;
+  }
+  if (c.standby_frames < 1U) {
+    c.standby_frames = def.standby_frames;
+  }
+  if (c.exit_frames < 1U) {
+    c.exit_frames = def.exit_frames;
+  }
+  return c;
+}
 
 struct ActOutput {
   float pitch_deg = 0.0F;
@@ -120,19 +180,22 @@ inline uint8_t act_record_crc(const ActRecord& r) noexcept {
   return r.magic == kActMagic && r.crc == detail::act_record_crc(r) && r.mode <= static_cast<uint8_t>(ActMode::Safe);
 }
 
+struct ActTestAccess;  // fault injection in the host tests only (tests/test_act.cpp)
+
 class ActLogic {
  public:
   ActLogic() noexcept : ActLogic(ActConfig{}) {}
   explicit ActLogic(const ActConfig& cfg) noexcept
-      : cfg_(cfg),
-        mon_{ChannelMonitor(cfg.persist_m, cfg.persist_n, 100U, 3U), ChannelMonitor(cfg.persist_m, cfg.persist_n, 100U, 3U),
-             ChannelMonitor(cfg.persist_m, cfg.persist_n, 100U, 3U)} {}
+      : cfg_(sanitize_act_config(cfg, config_errors_)),
+        mon_{ChannelMonitor(cfg_.persist_m, cfg_.persist_n, 100U, 3U), ChannelMonitor(cfg_.persist_m, cfg_.persist_n, 100U, 3U),
+             ChannelMonitor(cfg_.persist_m, cfg_.persist_n, 100U, 3U)} {}
 
   // Call once at boot with the reset cause and the record found in no-init RAM.
   void boot(ResetCause cause, const ActRecord& stored) noexcept {
     out_ = ActOutput{};
+    mode_g_.set(static_cast<uint8_t>(out_.mode));
     if (cause == ResetCause::PowerOn || !act_record_valid(stored)) {
-      out_.mode = ActMode::Standby;
+      set_mode(ActMode::Standby);
       return;
     }
     if (cfg_.resume_from_stored) {
@@ -181,7 +244,7 @@ class ActLogic {
       ++refused_clears_;
       return false;
     }
-    out_.mode = ActMode::Nominal;
+    set_mode(ActMode::Nominal);
     out_.phase = SafePhase::None;
     out_.cause = SafeCause::None;
     lost_ = 0U;
@@ -198,6 +261,10 @@ class ActLogic {
 
   // The end of the frame: vote, judge the nodes, advance the mode, and return the output for this frame.
   const ActOutput& end_frame() noexcept {
+    if (!mode_intact()) {  // an upset in the mode byte: whichever mode it was, the fail-safe side is Safe, frozen where the output is (finding 2 of the review of core/)
+      ++integrity_faults_;
+      enter_safe(SafeCause::Integrity);
+    }
     float vote_pitch = 0.0F;
     float vote_yaw = 0.0F;
     const bool trusted = vote(vote_pitch, vote_yaw);
@@ -230,8 +297,14 @@ class ActLogic {
   [[nodiscard]] uint32_t refused_clears() const noexcept { return refused_clears_; }
   [[nodiscard]] uint32_t held_frames() const noexcept { return held_frames_; }
   [[nodiscard]] uint32_t good_run() const noexcept { return good_run_; }
+  // The configuration in force (sanitised), what was wrong with the one passed in (actcfgerr bits), and the upsets found in ACT's own mode byte.
+  [[nodiscard]] const ActConfig& config() const noexcept { return cfg_; }
+  [[nodiscard]] uint32_t config_errors() const noexcept { return config_errors_; }
+  [[nodiscard]] uint32_t integrity_faults() const noexcept { return integrity_faults_; }
 
  private:
+  friend struct ActTestAccess;
+
   static constexpr float clamp(float v, float lim) noexcept { return v > lim ? lim : (v < -lim ? -lim : v); }
 
   // Move `cur` toward `target` by at most `step`.
@@ -289,7 +362,7 @@ class ActLogic {
     out_.pitch_deg = approach(out_.pitch_deg, 0.0F, cfg_.normal_slew);  // neutral until Nominal
     out_.yaw_deg = approach(out_.yaw_deg, 0.0F, cfg_.normal_slew);
     if (trusted && good_run_ >= cfg_.standby_frames) {
-      out_.mode = ActMode::Nominal;
+      set_mode(ActMode::Nominal);
       lost_ = 0U;
     }
   }
@@ -312,8 +385,15 @@ class ActLogic {
     }
   }
 
+  // The mode is stored with its complement (GuardedByte): Safe (2) and Standby (0) differ by one bit, so a plain byte would let one upset undo a Safe.
+  void set_mode(ActMode m) noexcept {
+    out_.mode = m;
+    mode_g_.set(static_cast<uint8_t>(m));
+  }
+  [[nodiscard]] bool mode_intact() const noexcept { return mode_g_.intact() && mode_g_.get() == static_cast<uint8_t>(out_.mode); }
+
   void enter_safe(SafeCause cause) noexcept {
-    out_.mode = ActMode::Safe;
+    set_mode(ActMode::Safe);
     out_.phase = SafePhase::Hold;
     if (on_pad_) {  // nothing to freeze for on the pad: neutral at once
       out_.pitch_deg = 0.0F;
@@ -351,8 +431,11 @@ class ActLogic {
     }
   }
 
+  uint32_t config_errors_ = 0U;  // must precede cfg_: filled in while it is initialised
   ActConfig cfg_{};
   ActOutput out_{};
+  GuardedByte mode_g_{};          // out_.mode and its complement (Standby, the default, is 0)
+  uint32_t integrity_faults_ = 0U;
   std::array<float, kChannels> pitch_in_{};
   std::array<float, kChannels> yaw_in_{};
   uint8_t have_ = 0U;

@@ -152,6 +152,9 @@ class SensorHealth {
 
   // One frame: judge each channel, advance the probations, count the dwell. Fills `out` (the caller zeroes it first).
   void update(const Input& in, const RedundancyConfig& cfg, std::array<uint8_t, kSensorChannels>& arrival_reason, Report& out) noexcept {
+    if (frames_ < 0xFFFFFFFFU) {
+      ++frames_;
+    }
     std::array<bool, kSensorChannels> stuck_now{};
     for (unsigned k = 0; k < kSensorChannels; ++k) {
       uint8_t r = arrival_reason[k];
@@ -218,9 +221,13 @@ class SensorHealth {
   void on_latch(unsigned k, const RedundancyConfig& cfg, Report& out) noexcept {
     out.newly_latched = static_cast<uint8_t>(out.newly_latched | (1U << k));
     ++counters_.latches;
+    if (cfg.strike_window_frames != 0U && strikes_[k] != 0U && frames_ - last_latch_frame_[k] > cfg.strike_window_frames) {
+      strikes_[k] = 0U;  // old strikes are forgotten, as for a computer (the review of core/, finding 5: the IMU channels ignored the window)
+    }
     if (strikes_[k] < 0xFFU) {
       ++strikes_[k];
     }
+    last_latch_frame_[k] = frames_;
     cause_[k] = out.reason[k];
     const unsigned limit = (out.reason[k] & cfg.physical_causes) != 0U ? cfg.max_strikes_physical : cfg.max_strikes;
     dwell_[k] = 0U;
@@ -369,6 +376,8 @@ class SensorHealth {
   std::array<uint16_t, kSensorChannels> clean_{};
   std::array<uint8_t, kSensorChannels> attempts_{};
   std::array<uint8_t, kSensorChannels> cause_{};
+  std::array<uint32_t, kSensorChannels> last_latch_frame_{};
+  uint32_t frames_ = 0U;                            // frames judged so far (the clock of the strike window)
   uint8_t dwell_hold_ = 0U;
   uint8_t disabled_by_command_ = 0U;
   Counters counters_{};

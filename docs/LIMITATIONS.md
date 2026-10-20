@@ -1,6 +1,6 @@
 # Limitations
 
-> Status: **reference**, the honest list. Reviewed 8 Oct 2026. Each entry says what is *not* claimed and why, so that a reader (or an interviewer) does not have to find it out. Where a limit has a remedy, the entry names it. Nothing here is hidden elsewhere:
+> Status: **reference**, the honest list. Reviewed 19 Oct 2026. Each entry says what is *not* claimed and why, so that a reader (or an interviewer) does not have to find it out. Where a limit has a remedy, the entry names it. Nothing here is hidden elsewhere:
 > the per-fault gaps are in [`verification/FMEA.md`](verification/FMEA.md) and the campaign's edge cases in [`verification/FAULT_CAMPAIGN.md`](verification/FAULT_CAMPAIGN.md) section 6.
 
 ## 1. What the claim is, and what it is not
@@ -26,11 +26,11 @@ The servo, its rail and the platform are the plant, not the flight computer, and
 - **Real CAN effects are not modelled:** inconsistent omission and duplication, error-frame storms, arbitration under load, the real harm of a babbler, wiring faults. The digest cross-check and the state resync are the designed answer to the first; nothing proves it on a real bus.
 - **Simplex in ascent alerts only.** There is no automatic abort: an abort is a launch rule, not a flight-computer rule (owner's decision, 4 Oct 2026). Below a phase's minimum number of voters the manager reports; it does not act.
 - **Single-fault focus.** The campaign covers every fault kind alone, in pairs, as correlated faults, in cascades, and with operator commands, but not every combination; the claim for two simultaneous independent faults is "degrades as designed in the cases tried".
-- **No radiation or EMI test.** Single-event upsets are modelled by bit flips in the manager's own state (ADR-015); that is a software model, not a measurement.
+- **No radiation or EMI test.** Single-event upsets are modelled by bit flips in the manager's own state (ADR-015), in ACT's mode byte, in the configuration checksum and in the flight log's index (the review of 19 Oct 2026); that is a software model, not a measurement. **Not covered:** the detectors' own parameters (the window, the leaky count's threshold, the stuck limit) are held outside the integrity check, so an upset in one is not seen (REC-09 of `verification/FMECA.md`).
 
 ## 3. What is measured, and what is a target
 
-- **Nothing here has run on a board.** Every timing number (jitter, WCET, bus load, frame cost) is either a host figure or a *target*; SYS-001 to SYS-003 and every `M` verification wait for the rig (`STATUS.md` section 4).
+- **Nothing here has run on a board.** Every timing number (jitter, WCET, bus load, frame cost) is either a host figure or a *target*; SYS-001 to SYS-003 and every `M` verification wait for the rig (`STATUS.md` section 5).
 - **The persistence constants** (3-of-5, the leaky count, dwell and probation lengths, the strike limits) and the Safe hold time are tuned on a simulation of frame-level faults; real error rates will differ and they are re-tuned from measurements (TS-1, TS-4).
 - **The resynchronisation period (100 frames) and the digest persistence (250) were measured on the simulator, not on a real bus**, whose loss rate cannot be known until the hardware is set up. One finding limits what resync can do: the manager's 0.01 degree command tolerance
   still latches healthy computers at about 1 % frame loss at any period, while ACT's 0.05 degree tolerance does not; the remedy is a measured loss rate and a decision on the tolerance (`design/RESYNC.md` 6b).
@@ -60,7 +60,10 @@ modelled. Fine for a bench, not for a flight uplink (`FUTURE_WORK.md` 2.4). One 
 
 - **Educational scale.** This shows the technique. It is not flight-qualified, not certified to DO-178C or any standard, uses no qualified tools, and has had no independent review: one person wrote the design, the code, the tests and the oracles.
 - **Mutation testing proves the tests catch the bugs that were injected**, not all bugs. Equivalent mutants (changes that cannot alter behaviour) are judged by reasoning and listed in `tools/mutation/mutations.py` with the reason.
-- **Coverage is structural** (every line, 98.4 % of branches); it does not say the right thing is checked at each line.
+- **Coverage is structural** (<!--m:coverage_core_line-->100.0<!--/m--> % of lines, <!--m:coverage_core_branch-->98.2<!--/m--> % of branches of the flight code); it does not say the right thing is checked at each line.
+- **Mutation cover is uneven.** <!--m:headers_without_mutants-->9<!--/m--> headers of the flight code (the guidance, navigation and attitude control, the sensor driver) and <!--m:sim_headers_without_mutants-->12<!--/m--> of the simulator (the mission code, the propulsion model, the surfaces, the CFD tables) have no mutant, so "every mutant is killed" says nothing about them. Until October 2026 the unit table also had none for the monitors (the 3-of-5 window, the leaky count, the stuck detector), the MAC, the sensor consensus and ACT's ground path; the simulator table had 22 mutants whose code had moved and which silently checked nothing; and the scheduled workflow that was to run it had never finished (`verification/CODE_REVIEW_CORE.md` section 6).
+- **The review of the core is a second reader, not an independent one.** It was done by an AI model with no memory of writing the code but of the same lineage as its author, and it read about half of the flight code line by line (`verification/CODE_REVIEW_CORE.md` section 3). The guidance was not read. A human outside the project has not read any of it.
+- **The FMECA's ratings are one person's judgement.** The severity and probability numbers of `verification/FMECA.md` follow ECSS-Q-ST-30-02C, but with no failure-rate data they are qualitative; the tool checks that the analysis is complete against the fault matrix and the campaign, not that the ratings are right.
 - **Public sources only.** Statements about SpaceX or any real program come from public material or inference; nothing here is insider knowledge and the project does not claim to replicate any SpaceX design.
 
 ## 8. The flight console

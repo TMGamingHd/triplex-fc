@@ -387,7 +387,7 @@ inline uint16_t quantize_u16(float v, float lsb) noexcept {
 //   bits 4-6   vote status of the pitch vote (tfc::VoteStatus)
 //   bits 7-9   nodes whose command took part in the vote (bit n = node n)
 //   bits 10-12 nodes ACT has excluded
-//   bits 13-15 cause of Safe: 0 none, 1 lost votes, 2 flight computers' request, 3 hardware line, 4 reset
+//   bits 13-15 cause of Safe: 0 none, 1 lost votes, 2 flight computers' request, 3 hardware line, 4 reset, 5 integrity (ACT's own mode byte failed its check)
 struct ActFrame {
   float pitch_deg = 0.0F;
   float yaw_deg = 0.0F;

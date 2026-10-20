@@ -228,6 +228,12 @@ int main() {
   }
 #endif
   sup::Supervisor supervisor(sup_cfg);
+  if (!supervisor.config_ok()) {  // a clock that cannot make a whole frame of ticks: it does not act (every node keeps running, TFC-SUP-007) and says why
+    say("supervisor: the clock configuration is invalid; it will not act\n");
+    for (;;) {
+      k_sleep(K_FOREVER);
+    }
+  }
   sup::RtcReading rtc = read_rtc();
   {
     sup::MetRecord rec;

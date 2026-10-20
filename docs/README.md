@@ -6,7 +6,7 @@
 ## If you have five minutes
 | Read | For |
 |---|---|
-| [STATUS.md](STATUS.md) | Where the project stands today, in numbers, and the schedule |
+| [STATUS.md](STATUS.md) | Where the project stands today, in numbers that are computed or recorded, what waits for the hardware, what the analyses say is missing, and the schedule |
 | [LIMITATIONS.md](LIMITATIONS.md) | What the system does not claim and why |
 | [design/ARCHITECTURE.md](design/ARCHITECTURE.md) | What is built: nodes, the 100 Hz frame, voting, FDIR |
 | [project/PROOF.md](project/PROOF.md) | What to show: the checklist and the evidence that already exists |
@@ -48,7 +48,7 @@
 ## Decisions: why (`decisions/`)
 | Page | Covers |
 |---|---|
-| [DECISIONS.md](decisions/DECISIONS.md) | The 34 ADRs, with a register of what is built and what each waits for |
+| [DECISIONS.md](decisions/DECISIONS.md) | The <!--m:adrs-->58<!--/m--> ADRs, with a register of what is built and what each waits for |
 | [TRADE_STUDIES.md](decisions/TRADE_STUDIES.md) | The studies behind them, with results where they are done |
 
 ## Verification: how we know (`verification/`)
@@ -56,11 +56,14 @@
 |---|---|
 | [REQUIREMENTS.md](verification/REQUIREMENTS.md) | Every requirement, how it is verified and where it stands |
 | [FAULT_MATRIX.md](verification/FAULT_MATRIX.md) | Every fault, how it is injected, the expected detection and response, and the test |
-| [FMEA.md](verification/FMEA.md) | Failure-mode gap analysis: what is modelled, covered, or not |
+| [FMECA.md](verification/FMECA.md) | **Failure modes, effects and criticality** (ECSS-Q-ST-30-02C): <!--m:fmeca_rows-->49<!--/m--> failure modes ranked by severity and probability, the critical items and the single points, the hardware-software interaction analysis, and a software FMEA of the data faults; generated and checked against the fault matrix and the campaign |
+| [FMEA.md](verification/FMEA.md) | The earlier gap analysis: what is modelled, covered, or not (how the fault kinds grew from 13 to 32) |
 | [FAULT_CAMPAIGN.md](verification/FAULT_CAMPAIGN.md) | The systematic fault campaign: the numbers (generated), the edge cases found and what was done |
 | [CODING_STANDARD.md](verification/CODING_STANDARD.md) | The flight-code rules and the tool that enforces each |
+| [CODE_REVIEW_CORE.md](verification/CODE_REVIEW_CORE.md) | A second reader's review of the flight core: the method, what was read, eight findings (each fixed and pinned), what the checks themselves turned out to lack, what an outside human should do |
+| [RESULTS.md](verification/RESULTS.md) | The register of dated measurements: every result with its date and the command that makes it again |
 | [PICO_TESTS.md](verification/PICO_TESTS.md) | Every way to test the Pico, and the recommended order |
-| [HAZARDS.md](verification/HAZARDS.md) | The hazard analysis (STPA style): losses, hazards and 25 unsafe control actions, with what controls each and the gaps |
+| [HAZARDS.md](verification/HAZARDS.md) | The hazard analysis (STPA style, top down): losses, hazards and 25 unsafe control actions, with what controls each and the gaps; the FMECA is its bottom-up counterpart |
 | [RISKS.md](verification/RISKS.md) | The risk register: what could stop the project or the claim, ranked |
 | [SAFETY_CASE.md](verification/SAFETY_CASE.md) | The argument that joins the evidence into one claim, and what it leaves out |
 | [VALIDATION.md](verification/VALIDATION.md) | How far the models are from anything real, and the public data that would close the gap |

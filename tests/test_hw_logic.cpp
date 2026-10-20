@@ -403,6 +403,20 @@ TFC_TEST(resetlog_a_power_on_starts_a_fresh_log) {
   CHECK(log.last_cause() == ResetCause::PowerOn && !log.loop_detected());
 }
 
+TFC_TEST(resetlog_a_power_on_starts_afresh_even_if_the_memory_kept_a_valid_record) {
+  // The RAM may survive a power cycle (a short one, or a retained region). A power-on is a new run whatever the record says: the repaired mutation run found only a garbage record tested (resetlog_...: reset_power_on_keeps_the_count).
+  ResetRecord rec{};
+  ResetLog log(rec);
+  log.boot(ResetCause::PowerOn);
+  log.running(100U);
+  log.boot(ResetCause::Watchdog);
+  log.running(100U);
+  log.boot(ResetCause::Watchdog);
+  CHECK(log.valid() && log.boots() == 3U && log.short_boots() == 2U);
+  log.boot(ResetCause::PowerOn);
+  CHECK(log.boots() == 1U && log.short_boots() == 0U && log.last_cause() == ResetCause::PowerOn);
+}
+
 TFC_TEST(resetlog_three_short_boots_in_a_row_are_a_loop) {
   ResetRecord rec{};
   ResetLog log(rec);
